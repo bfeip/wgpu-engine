@@ -3,24 +3,34 @@ name = "wgpu-engine"
 version = "0.1.0"
 edition = "2021"
 
+
 # Define that this package provides both a library and a binary
 [lib]
 name = "wgpu_engine"
 crate-type = ["cdylib", "rlib"]
 path = "src/lib.rs"
 
+
 [[bin]]
 name = "wgpu-engine"
 path = "src/main.rs"
 
+
 [dependencies]
-winit = { version = "0.29", features = ["android-native-activity"] }
+winit = { version = "0.29", features = [ "android-native-activity" ] }
 env_logger = "0.10"
 log = "0.4"
 wgpu = "25.0"
 cfg-if = "1"
 pollster = "0.3"
 bytemuck = { version = "1.16", features = [ "derive" ] }
+anyhow = "1.0"
+
+
+[dependencies.image]
+version = "0.24"
+default-features = false
+features = ["png", "jpeg"]
 
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
