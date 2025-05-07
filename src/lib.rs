@@ -78,6 +78,25 @@ impl Camera {
 
         return OPENGL_TO_WGPU_MATRIX * proj * view;
     }
+
+    /// Returns the camera's forward vector
+    fn forward(&self) -> cgmath::Vector3<f32> {
+        use cgmath::InnerSpace;
+        (self.target - self.eye).normalize()
+    }
+
+    /// Returns the right vector of the camera
+    fn right(&self) -> cgmath::Vector3<f32> {
+        use cgmath::InnerSpace;
+        self.forward().cross(self.up).normalize()
+    }
+
+    /// Returns length of the camera's look vector
+    /// (the distance from the camera eye to the target)
+    fn length(&self) -> f32 {
+        use cgmath::MetricSpace;
+        self.eye.distance(self.target)
+    }
 }
 
 
@@ -111,13 +130,13 @@ struct State<'a> {
     render_pipeline: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
-    _n_vertices: u32,
     n_indices: u32,
     diffuse_bind_group: wgpu::BindGroup,
     diffuse_texture: texture::Texture,
     camera: Camera,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
+    camera_rotation_radians: f32,
 }
 
 impl<'a> State<'a> {
@@ -339,8 +358,6 @@ impl<'a> State<'a> {
             usage: wgpu::BufferUsages::VERTEX,
         });
 
-        let n_vertices = VERTICES.len() as u32;
-
         let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Index Buffer"),
             contents: bytemuck::cast_slice(INDICES),
@@ -348,6 +365,9 @@ impl<'a> State<'a> {
         });
 
         let n_indices = INDICES.len() as u32;
+
+        // A debug feature for rotating the camera without advanced controls
+        let camera_rotation_radians = 0.0;
 
         Self {
             surface,
@@ -359,13 +379,13 @@ impl<'a> State<'a> {
             render_pipeline,
             vertex_buffer,
             index_buffer,
-            _n_vertices: n_vertices,
             n_indices,
             diffuse_bind_group,
             diffuse_texture,
             camera,
             camera_buffer,
-            camera_bind_group
+            camera_bind_group,
+            camera_rotation_radians,
         }
     }
 
@@ -436,6 +456,75 @@ impl<'a> State<'a> {
     }
 }
 
+fn handle_window_event(
+    event: &WindowEvent,
+    control_flow: &winit::event_loop::EventLoopWindowTarget<()>,
+    state: &mut State
+) {
+    match event {
+        WindowEvent::CloseRequested => control_flow.exit(),
+        WindowEvent::KeyboardInput { event, .. } => handle_key_input(event, control_flow, state),
+        WindowEvent::Resized(physical_size) => state.resize(*physical_size),
+        WindowEvent::RedrawRequested => {
+            // This tells winit that we want another frame after this one
+            state.window().request_redraw();
+
+            state.update();
+            match state.render() {
+                Ok(_) => {}
+                // Reconfigure the surface if it's lost or outdated
+                Err(
+                    wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated,
+                ) => state.resize(state.size),
+                // The system is out of memory, we should probably quit
+                Err(
+                    wgpu::SurfaceError::OutOfMemory | wgpu::SurfaceError::Other,
+                ) => {
+                    log::error!("OutOfMemory");
+                    control_flow.exit();
+                }
+
+                // This happens when the a frame takes too long to present
+                Err(wgpu::SurfaceError::Timeout) => {
+                    log::warn!("Surface timeout")
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn handle_key_input(
+    event: &KeyEvent,
+    control_flow: &winit::event_loop::EventLoopWindowTarget<()>,
+    state: &mut State
+) {
+    let mut update_camera = |angle| {
+        let x = f32::sin(angle);
+        let y = state.camera.eye.y;
+        let z = f32::cos(angle);
+        state.camera.eye = cgmath::point3(x, y, z);
+
+        let mut uniform = CameraUniform::new();
+        uniform.update_view_proj(&state.camera);
+        state.queue.write_buffer(&state.camera_buffer, 0, bytemuck::bytes_of(&uniform));
+    };
+
+    use winit::keyboard::PhysicalKey;
+    match event.physical_key {
+        PhysicalKey::Code(KeyCode::Escape) => control_flow.exit(),
+        PhysicalKey::Code(KeyCode::ArrowLeft) => {
+            state.camera_rotation_radians = state.camera_rotation_radians - 0.1 % std::f32::consts::TAU;
+            update_camera(state.camera_rotation_radians);
+        },
+        PhysicalKey::Code(KeyCode::ArrowRight) => {
+            state.camera_rotation_radians = state.camera_rotation_radians + 0.1 % std::f32::consts::TAU;
+            update_camera(state.camera_rotation_radians);
+        }
+        _ => {}
+    }
+}
+
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen(start))]
 pub async fn run() {
     cfg_if::cfg_if! {
@@ -478,49 +567,7 @@ pub async fn run() {
                     ref event,
                     window_id,
                 } if window_id == state.window().id() => {
-                    if !state.input(event) {
-                        match event {
-                            WindowEvent::CloseRequested
-                            | WindowEvent::KeyboardInput {
-                                event:
-                                    KeyEvent {
-                                        state: ElementState::Pressed,
-                                        physical_key: PhysicalKey::Code(KeyCode::Escape),
-                                        ..
-                                    },
-                                ..
-                            } => control_flow.exit(),
-                            WindowEvent::Resized(physical_size) => {
-                                state.resize(*physical_size);
-                            }
-                            WindowEvent::RedrawRequested => {
-                                // This tells winit that we want another frame after this one
-                                state.window().request_redraw();
-
-                                state.update();
-                                match state.render() {
-                                    Ok(_) => {}
-                                    // Reconfigure the surface if it's lost or outdated
-                                    Err(
-                                        wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated,
-                                    ) => state.resize(state.size),
-                                    // The system is out of memory, we should probably quit
-                                    Err(
-                                        wgpu::SurfaceError::OutOfMemory | wgpu::SurfaceError::Other,
-                                    ) => {
-                                        log::error!("OutOfMemory");
-                                        control_flow.exit();
-                                    }
-
-                                    // This happens when the a frame takes too long to present
-                                    Err(wgpu::SurfaceError::Timeout) => {
-                                        log::warn!("Surface timeout")
-                                    }
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
+                    handle_window_event(event, control_flow, &mut state);
                 }
                 _ => {}
             }
