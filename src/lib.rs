@@ -13,16 +13,6 @@ use winit::{
 use wasm_bindgen::prelude::*;
 
 
-const VERTICES: &[Vertex] = &[
-    Vertex { position: [-0.0868241, 0.49240386, 0.0], tex_coords: [0.4131759, 0.00759614], }, // A
-    Vertex { position: [-0.49513406, 0.06958647, 0.0], tex_coords: [0.0048659444, 0.43041354], }, // B
-    Vertex { position: [-0.21918549, -0.44939706, 0.0], tex_coords: [0.28081453, 0.949397], }, // C
-    Vertex { position: [0.35966998, -0.3473291, 0.0], tex_coords: [0.85967, 0.84732914], }, // D
-    Vertex { position: [0.44147372, 0.2347359, 0.0], tex_coords: [0.9414737, 0.2652641], }, // E
-];
-
-const INDICES: &[u16] = &[0, 1, 4, 1, 2, 4, 2, 3, 4];
-
 #[rustfmt::skip]
 pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
     1.0, 0.0, 0.0, 0.0,
@@ -250,7 +240,7 @@ impl<'a> State<'a> {
         let camera = Camera {
             // position the camera 1 unit up and 2 units back
             // +z is out of the screen
-            eye: (0.0, 1.0, 2.0).into(),
+            eye: (0.0, 2.0, 4.0).into(),
             // have it look at the origin
             target: (0.0, 0.0, 0.0).into(),
             // which way is "up"
@@ -352,19 +342,27 @@ impl<'a> State<'a> {
             cache: None,
         });
 
+        // Load a sample OBJ
+        let monkey_bytes = include_bytes!("monkey.obj");
+        let monkey_model: obj::Obj<obj::TexturedVertex> = obj::load_obj(&monkey_bytes[..]).expect("Failed to parse monkey model");
+        let vertices: Vec<Vertex> = monkey_model.vertices.iter().map(|v: &obj::TexturedVertex| {
+            Vertex { position: v.position, tex_coords: v.texture[..2].try_into().unwrap() }
+        }).collect();
+        let indices: Vec<u16> = monkey_model.indices;
+
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),
-            contents: bytemuck::cast_slice(VERTICES),
+            contents: bytemuck::cast_slice(&vertices),
             usage: wgpu::BufferUsages::VERTEX,
         });
 
         let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Index Buffer"),
-            contents: bytemuck::cast_slice(INDICES),
+            contents: bytemuck::cast_slice(&indices),
             usage: wgpu::BufferUsages::INDEX,
         });
 
-        let n_indices = INDICES.len() as u32;
+        let n_indices = indices.len() as u32;
 
         // A debug feature for rotating the camera without advanced controls
         let camera_rotation_radians = 0.0;
