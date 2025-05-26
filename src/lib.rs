@@ -3,7 +3,7 @@ mod geometry;
 mod camera;
 
 use camera::{Camera, CameraUniform};
-use geometry::Vertex;
+use geometry::{Mesh, Vertex};
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 use winit::{
@@ -25,9 +25,7 @@ struct State<'a> {
     size: winit::dpi::PhysicalSize<u32>,
     window: &'a Window,
     render_pipeline: wgpu::RenderPipeline,
-    vertex_buffer: wgpu::Buffer,
-    index_buffer: wgpu::Buffer,
-    n_indices: u32,
+    meshes: Vec<Mesh>,
     diffuse_bind_group: wgpu::BindGroup,
     diffuse_texture: texture::Texture,
     camera: Camera,
@@ -260,25 +258,8 @@ impl<'a> State<'a> {
 
         // Load a sample OBJ
         let monkey_bytes = include_bytes!("monkey.obj");
-        let monkey_model: obj::Obj<obj::TexturedVertex> = obj::load_obj(&monkey_bytes[..]).expect("Failed to parse monkey model");
-        let vertices: Vec<Vertex> = monkey_model.vertices.iter().map(|v: &obj::TexturedVertex| {
-            Vertex { position: v.position, tex_coords: v.texture[..2].try_into().unwrap() }
-        }).collect();
-        let indices: Vec<u16> = monkey_model.indices;
-
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Vertex Buffer"),
-            contents: bytemuck::cast_slice(&vertices),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Index Buffer"),
-            contents: bytemuck::cast_slice(&indices),
-            usage: wgpu::BufferUsages::INDEX,
-        });
-
-        let n_indices = indices.len() as u32;
+        let monkey_mesh = Mesh::from_obj_bytes(&device, monkey_bytes).unwrap();
+        let meshes = vec![monkey_mesh];
 
         // A debug feature for rotating the camera without advanced controls
         let camera_rotation_radians = 0.0;
@@ -291,9 +272,7 @@ impl<'a> State<'a> {
             size,
             window,
             render_pipeline,
-            vertex_buffer,
-            index_buffer,
-            n_indices,
+            meshes,
             diffuse_bind_group,
             diffuse_texture,
             camera,
@@ -367,9 +346,9 @@ impl<'a> State<'a> {
             render_pass.set_pipeline(&self.render_pipeline);
             render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
             render_pass.set_bind_group(1, &self.camera_bind_group, &[]);
-            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-            render_pass.draw_indexed(0..self.n_indices, 0, 0..1);
+            for mesh in self.meshes.iter() {
+                mesh.draw(&mut render_pass);
+            }
         }
 
         // submit will accept anything that implements IntoIter
