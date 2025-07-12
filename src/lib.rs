@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 mod texture;
 mod geometry;
 mod camera;
@@ -17,6 +19,16 @@ use winit::{
 use wasm_bindgen::prelude::*;
 
 
+enum ShaderLocations {
+    VertexPosition = 0,
+    TextureCoords,
+    InstanceTransformRow0,
+    InstanceTransformRow1,
+    InstanceTransformRow2,
+    InstanceTransformRow3
+}
+
+
 struct State<'a> {
     surface: wgpu::Surface<'a>,
     device: wgpu::Device,
@@ -26,6 +38,8 @@ struct State<'a> {
     window: &'a Window,
     render_pipeline: wgpu::RenderPipeline,
     meshes: Vec<Mesh>,
+    instances: Vec<geometry::Instance>,
+    instance_buffer: wgpu::Buffer,
     diffuse_bind_group: wgpu::BindGroup,
     diffuse_texture: texture::Texture,
     camera: Camera,
@@ -261,6 +275,18 @@ impl<'a> State<'a> {
         let monkey_mesh = Mesh::from_obj_bytes(&device, monkey_bytes).unwrap();
         let meshes = vec![monkey_mesh];
 
+        // Set up instances
+        let instances = vec![
+            geometry::Instance::new(&meshes[0]),
+            geometry::Instance::with_position(&meshes[0], cgmath::Vector3 { x: 2., y: 0., z: 0. })
+        ];
+        let instance_data: Vec<geometry::InstanceRaw> = instances.iter().map(geometry::Instance::to_raw).collect();
+        let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("instances"),
+            contents: bytemuck::cast_slice(&instance_data),
+            usage: wgpu::BufferUsages::VERTEX
+        });
+
         // A debug feature for rotating the camera without advanced controls
         let camera_rotation_radians = 0.0;
 
@@ -273,6 +299,8 @@ impl<'a> State<'a> {
             window,
             render_pipeline,
             meshes,
+            instances,
+            instance_buffer,
             diffuse_bind_group,
             diffuse_texture,
             camera,
@@ -347,7 +375,7 @@ impl<'a> State<'a> {
             render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
             render_pass.set_bind_group(1, &self.camera_bind_group, &[]);
             for mesh in self.meshes.iter() {
-                mesh.draw(&mut render_pass);
+                mesh.draw_instances(&mut render_pass, 0..2);
             }
         }
 
