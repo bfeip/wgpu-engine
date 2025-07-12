@@ -18,6 +18,8 @@ use winit::{
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
+use crate::geometry::{Instance, InstanceRaw};
+
 
 enum ShaderLocations {
     VertexPosition = 0,
@@ -38,8 +40,6 @@ struct State<'a> {
     window: &'a Window,
     render_pipeline: wgpu::RenderPipeline,
     meshes: Vec<Mesh>,
-    instances: Vec<geometry::Instance>,
-    instance_buffer: wgpu::Buffer,
     diffuse_bind_group: wgpu::BindGroup,
     diffuse_texture: texture::Texture,
     camera: Camera,
@@ -229,7 +229,10 @@ impl<'a> State<'a> {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_main"),
-                buffers: &[Vertex::desc()],
+                buffers: &[
+                    Vertex::desc(),
+                    InstanceRaw::desc()
+                ],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -272,20 +275,17 @@ impl<'a> State<'a> {
 
         // Load a sample OBJ
         let monkey_bytes = include_bytes!("monkey.obj");
-        let monkey_mesh = Mesh::from_obj_bytes(&device, monkey_bytes).unwrap();
+        let mut monkey_mesh = Mesh::from_obj_bytes(&device, monkey_bytes).unwrap();
+        monkey_mesh.add_instance(Instance::with_position(
+            &monkey_mesh,
+            cgmath::Vector3 { x: 0., y: 0., z: 0. }
+        ));
+        monkey_mesh.add_instance(Instance::with_position(
+            &monkey_mesh,
+            cgmath::Vector3 { x: 2., y: 0., z: 0. }
+        ));
         let meshes = vec![monkey_mesh];
 
-        // Set up instances
-        let instances = vec![
-            geometry::Instance::new(&meshes[0]),
-            geometry::Instance::with_position(&meshes[0], cgmath::Vector3 { x: 2., y: 0., z: 0. })
-        ];
-        let instance_data: Vec<geometry::InstanceRaw> = instances.iter().map(geometry::Instance::to_raw).collect();
-        let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("instances"),
-            contents: bytemuck::cast_slice(&instance_data),
-            usage: wgpu::BufferUsages::VERTEX
-        });
 
         // A debug feature for rotating the camera without advanced controls
         let camera_rotation_radians = 0.0;
@@ -299,8 +299,6 @@ impl<'a> State<'a> {
             window,
             render_pipeline,
             meshes,
-            instances,
-            instance_buffer,
             diffuse_bind_group,
             diffuse_texture,
             camera,
@@ -374,8 +372,8 @@ impl<'a> State<'a> {
             render_pass.set_pipeline(&self.render_pipeline);
             render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
             render_pass.set_bind_group(1, &self.camera_bind_group, &[]);
-            for mesh in self.meshes.iter() {
-                mesh.draw_instances(&mut render_pass, 0..2);
+            for mesh in self.meshes.iter_mut() {
+                mesh.draw_instances(&self.device, &mut render_pass, 0..2);
             }
         }
 

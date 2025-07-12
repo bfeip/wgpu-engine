@@ -1,6 +1,6 @@
 use std::{fs::File, io::BufReader, ops::Range, path::Path};
 use cgmath::{Matrix4, Rotation3, SquareMatrix, Zero};
-use wgpu::util::DeviceExt;
+use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
 use crate::ShaderLocations;
 
@@ -37,32 +37,57 @@ impl Vertex {
 pub struct Mesh {
     vertices: Vec<Vertex>,
     indices: Vec<MeshIndex>,
+    instances: Vec<Instance>,
     vertex_buffer: wgpu::Buffer,
-    index_buffer: wgpu::Buffer
+    index_buffer: wgpu::Buffer,
+    instance_buffer: wgpu::Buffer,
+    instance_buffer_dirty: bool
 }
 
 impl Mesh {
     pub fn new(device: &wgpu::Device, label: Option<&str>) -> Self {
         let vertices = Vec::new();
         let indices = Vec::new();
+        let instances = Vec::new();
+
+        let vertex_buffer_label = label.and_then(| mesh_label | {
+            Some(mesh_label.to_owned() + "_vertex_buffer")
+        });
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label,
+            label: vertex_buffer_label.as_deref(),
             size: 0,
             usage: wgpu::BufferUsages::VERTEX,
             mapped_at_creation: false
         });
+
+        let index_buffer_label = label.and_then(| mesh_label | {
+            Some(mesh_label.to_owned() + "_index_buffer")
+        });
         let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label,
+            label: index_buffer_label.as_deref(),
             size: 0,
             usage: wgpu::BufferUsages::INDEX,
+            mapped_at_creation: false
+        });
+
+        let instance_buffer_label = label.and_then(| mesh_label | {
+            Some(mesh_label.to_owned() + "_instance_buffer")
+        });
+        let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: instance_buffer_label.as_deref(),
+            size: 0,
+            usage: wgpu::BufferUsages::VERTEX,
             mapped_at_creation: false
         });
 
         Self {
             vertices,
             indices,
+            instances,
             vertex_buffer,
-            index_buffer
+            index_buffer,
+            instance_buffer,
+            instance_buffer_dirty: false
         }
     }
 
@@ -71,6 +96,7 @@ impl Mesh {
             Vertex { position: v.position, tex_coords: v.texture[..2].try_into().unwrap() }
         }).collect();
         let indices: Vec<u16> = obj.indices;
+        let instances = Vec::new();
 
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),
@@ -84,11 +110,20 @@ impl Mesh {
             usage: wgpu::BufferUsages::INDEX,
         });
 
+        let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Instance Buffer"),
+            contents: &[],
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
         Ok(Self {
             vertices,
             indices,
+            instances,
             vertex_buffer,
-            index_buffer
+            index_buffer,
+            instance_buffer,
+            instance_buffer_dirty: false
         })
     }
 
@@ -104,9 +139,31 @@ impl Mesh {
         Self::from_obj(device, obj)
     }
 
-    pub fn draw_instances(&self, render_pass: &mut wgpu::RenderPass, instances: Range<u32>) {
+    pub fn add_instance(&mut self, instance: Instance) {
+        self.instances.push(instance);
+        self.instance_buffer_dirty = true;
+    }
+
+    pub fn draw_instances(
+        &mut self,
+        device: &wgpu::Device,
+        render_pass: &mut wgpu::RenderPass,
+        instances: Range<u32>
+    ) {
+        if(self.instance_buffer_dirty) {
+            let instance_raws: Vec<InstanceRaw> = self.instances.iter().map(|instance|
+                instance.to_raw()
+            ).collect();
+            self.instance_buffer = device.create_buffer_init(&BufferInitDescriptor {
+                label: Some("Instance Buffer"),
+                contents: bytemuck::cast_slice(&instance_raws),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+            self.instance_buffer_dirty = false;
+        }
         let n_indices = self.indices.len() as u32;
         render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+        render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
         render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
         render_pass.draw_indexed(0..n_indices, 0, instances);
     }
@@ -155,7 +212,7 @@ pub struct InstanceRaw {
 }
 
 impl InstanceRaw {
-    fn desc() -> wgpu::VertexBufferLayout<'static> {
+    pub fn desc() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
             array_stride: size_of::<Self>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Instance,
