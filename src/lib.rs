@@ -29,6 +29,7 @@ use crate::light::Light;
 enum ShaderLocations {
     VertexPosition = 0,
     TextureCoords,
+    VertexNormal,
     InstanceTransformRow0,
     InstanceTransformRow1,
     InstanceTransformRow2,

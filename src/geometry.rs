@@ -10,7 +10,8 @@ type MeshIndex = u16;
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vertex {
     pub position: [f32; 3],
-    pub tex_coords: [f32; 2]
+    pub tex_coords: [f32; 3],
+    pub normal: [f32; 3]
 }
 
 impl Vertex {
@@ -27,8 +28,13 @@ impl Vertex {
                 wgpu::VertexAttribute {
                     offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
                     shader_location: ShaderLocations::TextureCoords as u32,
-                    format: wgpu::VertexFormat::Float32x2,
+                    format: wgpu::VertexFormat::Float32x3,
                 },
+                wgpu::VertexAttribute {
+                    offset: std::mem::size_of::<[f32; 3*2]>() as wgpu::BufferAddress,
+                    shader_location: ShaderLocations::VertexNormal as u32,
+                    format: wgpu::VertexFormat::Float32x3
+                }
             ],
         }
     }
@@ -93,7 +99,11 @@ impl Mesh {
 
     pub fn from_obj(device: &wgpu::Device, obj: obj::Obj<obj::TexturedVertex>)-> anyhow::Result<Self> {
         let vertices: Vec<Vertex> = obj.vertices.iter().map(|v: &obj::TexturedVertex| {
-            Vertex { position: v.position, tex_coords: v.texture[..2].try_into().unwrap() }
+            Vertex { 
+                position: v.position,
+                tex_coords: v.texture,
+                normal: v.normal
+            }
         }).collect();
         let indices: Vec<u16> = obj.indices;
         let instances = Vec::new();

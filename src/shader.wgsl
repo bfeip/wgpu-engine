@@ -9,20 +9,22 @@ struct LightsUniform {
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
-    @location(1) tex_coords: vec2<f32>,
+    @location(1) tex_coords: vec3<f32>,
+    @location(2) normal: vec3<f32>
 };
 
 struct InstanceInput {
-    @location(2) model_matrix_0: vec4<f32>,
-    @location(3) model_matrix_1: vec4<f32>,
-    @location(4) model_matrix_2: vec4<f32>,
-    @location(5) model_matrix_3: vec4<f32>,
+    @location(3) model_matrix_0: vec4<f32>,
+    @location(4) model_matrix_1: vec4<f32>,
+    @location(5) model_matrix_2: vec4<f32>,
+    @location(6) model_matrix_3: vec4<f32>,
 };
 
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
-    @location(0) tex_coords: vec2<f32>
+    @location(0) tex_coords: vec2<f32>,
+    @location(1) normal: vec3<f32>
 };
 
 // VERTEX //////////////////
@@ -45,7 +47,8 @@ fn vs_main(
 
     var out: VertexOutput;
     out.clip_position = camera.view_proj * transform * vec4<f32>(model.position, 1.0);
-    out.tex_coords = model.tex_coords;
+    out.tex_coords = model.tex_coords.xy; // Third coord unused for now
+    out.normal = model.normal;
     return out;
 }
 
