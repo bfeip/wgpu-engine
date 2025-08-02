@@ -3,10 +3,13 @@
 mod texture;
 mod geometry;
 mod camera;
+mod light;
+mod common;
 
 use camera::{Camera, CameraUniform};
 use geometry::{Mesh, Vertex};
 use wgpu::util::DeviceExt;
+use wgpu::Color;
 use winit::window::Window;
 use winit::{
     event::*,
@@ -18,7 +21,9 @@ use winit::{
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
+use crate::common::RgbaColor;
 use crate::geometry::{Instance, InstanceRaw};
+use crate::light::Light;
 
 
 enum ShaderLocations {
@@ -45,6 +50,9 @@ struct State<'a> {
     camera: Camera,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
+    lights: Vec<Light>,
+    lights_buffer: wgpu::Buffer,
+    lights_bind_group: wgpu::BindGroup,
     camera_rotation_radians: f32,
     depth_texture: texture::Texture
 }
@@ -209,6 +217,47 @@ impl<'a> State<'a> {
             label: Some("camera_bind_group"),
         });
 
+        let lights = vec![
+            Light::new(
+                cgmath::Vector3 { x: 3., y: 3., z: 3. },
+                RgbaColor { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+            )
+        ];
+        // I think for now I can only handle one light. Once I have that figured out,
+        // I'll work on figuring out how to support multiple.
+        let light_uniform = lights[0].to_uniform();
+        let lights_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Light buffer"),
+            contents: bytemuck::cast_slice(&[light_uniform]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST
+        });
+
+        let light_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            entries: &[
+                wgpu::BindGroupLayoutEntry{
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None
+                    },
+                    count: None
+                }
+            ],
+            label: Some("Light bind group layout")
+        });
+        let lights_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &light_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: lights_buffer.as_entire_binding()
+                }
+            ],
+            label: Some("Light bind group")
+        });
+
         let depth_texture = texture::Texture::create_depth_texture(&device, &config, "depth_texture");
 
         let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
@@ -218,7 +267,8 @@ impl<'a> State<'a> {
                 label: Some("Render Pipeline Layout"),
                 bind_group_layouts: &[
                     &texture_bind_group_layout,
-                    &camera_bind_group_layout
+                    &camera_bind_group_layout,
+                    &light_bind_group_layout
                 ],
                 push_constant_ranges: &[],
             });
@@ -286,7 +336,6 @@ impl<'a> State<'a> {
         ));
         let meshes = vec![monkey_mesh];
 
-
         // A debug feature for rotating the camera without advanced controls
         let camera_rotation_radians = 0.0;
 
@@ -304,6 +353,9 @@ impl<'a> State<'a> {
             camera,
             camera_buffer,
             camera_bind_group,
+            lights,
+            lights_buffer,
+            lights_bind_group,
             camera_rotation_radians,
             depth_texture
         }
@@ -372,6 +424,7 @@ impl<'a> State<'a> {
             render_pass.set_pipeline(&self.render_pipeline);
             render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
             render_pass.set_bind_group(1, &self.camera_bind_group, &[]);
+            render_pass.set_bind_group(2, &self.lights_bind_group, &[]);
             for mesh in self.meshes.iter_mut() {
                 mesh.draw_instances(&self.device, &mut render_pass, 0..2);
             }

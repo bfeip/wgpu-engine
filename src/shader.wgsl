@@ -2,6 +2,11 @@ struct CameraUniform {
     view_proj: mat4x4<f32>,
 };
 
+struct LightsUniform {
+    position: vec3<f32>,
+    color: vec4<f32>
+}
+
 struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) tex_coords: vec2<f32>,
@@ -20,8 +25,11 @@ struct VertexOutput {
     @location(0) tex_coords: vec2<f32>
 };
 
+// VERTEX //////////////////
 @group(1) @binding(0)
 var<uniform> camera: CameraUniform;
+@group(2) @binding(0)
+var<uniform> lights: LightsUniform;
 
 @vertex
 fn vs_main(
@@ -42,6 +50,7 @@ fn vs_main(
 }
 
 
+// FRAGMENT /////////////////////
 @group(0) @binding(0)
 var t_diffuse: texture_2d<f32>;
 @group(0) @binding(1)
