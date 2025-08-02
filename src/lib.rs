@@ -26,7 +26,7 @@ use crate::geometry::{Instance, InstanceRaw};
 use crate::light::Light;
 
 
-enum ShaderLocations {
+enum VertexShaderLocations {
     VertexPosition = 0,
     TextureCoords,
     VertexNormal,
