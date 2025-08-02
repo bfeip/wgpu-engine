@@ -24,7 +24,8 @@ struct InstanceInput {
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) tex_coords: vec2<f32>,
-    @location(1) normal: vec3<f32>
+    @location(1) world_normal: vec3<f32>,
+    @location(2) world_position: vec3<f32>
 };
 
 // VERTEX //////////////////
@@ -46,9 +47,11 @@ fn vs_main(
     );
 
     var out: VertexOutput;
-    out.clip_position = camera.view_proj * transform * vec4<f32>(model.position, 1.0);
     out.tex_coords = model.tex_coords.xy; // Third coord unused for now
-    out.normal = model.normal;
+    out.world_normal = model.normal;
+    let world_position: vec4<f32> = transform * vec4<f32>(model.position, 1.0);
+    out.world_position = world_position.xyz;
+    out.clip_position = camera.view_proj * world_position;
     return out;
 }
 
@@ -61,5 +64,14 @@ var s_diffuse: sampler;
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    return textureSample(t_diffuse, s_diffuse, in.tex_coords);
+    let object_color = textureSample(t_diffuse, s_diffuse, in.tex_coords);
+
+    let light_dir = normalize(lights.position - in.world_position);
+
+    let diffuse_strength = max(dot(in.world_normal, light_dir), 0.0) * lights.color.a;
+    let diffuse_color = lights.color.rgb * diffuse_strength;
+
+    let result = diffuse_color * object_color.rgb;
+
+    return vec4<f32>(result, object_color.z);
 }
