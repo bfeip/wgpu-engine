@@ -73,5 +73,5 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     let result = diffuse_color * object_color.rgb;
 
-    return vec4<f32>(result, object_color.z);
+    return vec4<f32>(result, object_color.a);
 }

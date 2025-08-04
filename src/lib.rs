@@ -7,6 +7,7 @@ mod light;
 mod common;
 
 use camera::{Camera, CameraUniform};
+use cgmath::Rotation3;
 use geometry::{Mesh, Vertex};
 use wgpu::util::DeviceExt;
 use wgpu::Color;
@@ -331,10 +332,12 @@ impl<'a> State<'a> {
             &monkey_mesh,
             cgmath::Vector3 { x: 0., y: 0., z: 0. }
         ));
-        monkey_mesh.add_instance(Instance::with_position(
+        let mut second_instance = Instance::with_position(
             &monkey_mesh,
             cgmath::Vector3 { x: 2., y: 0., z: 0. }
-        ));
+        );
+        second_instance.rotation = cgmath::Quaternion::from_angle_z(cgmath::Rad(3.14_f32));
+        monkey_mesh.add_instance(second_instance);
         let meshes = vec![monkey_mesh];
 
         // A debug feature for rotating the camera without advanced controls
