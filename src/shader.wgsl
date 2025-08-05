@@ -18,6 +18,9 @@ struct InstanceInput {
     @location(4) model_matrix_1: vec4<f32>,
     @location(5) model_matrix_2: vec4<f32>,
     @location(6) model_matrix_3: vec4<f32>,
+    @location(7) normal_matrix_0: vec3<f32>,
+    @location(8) normal_matrix_1: vec3<f32>,
+    @location(9) normal_matrix_2: vec3<f32>,
 };
 
 
@@ -45,10 +48,15 @@ fn vs_main(
         instance.model_matrix_2,
         instance.model_matrix_3
     );
+    let normal_mat = mat3x3<f32>(
+        instance.normal_matrix_0,
+        instance.normal_matrix_1,
+        instance.normal_matrix_2,
+    );
 
     var out: VertexOutput;
     out.tex_coords = model.tex_coords.xy; // Third coord unused for now
-    out.world_normal = model.normal;
+    out.world_normal = normal_mat * model.normal;
     let world_position: vec4<f32> = transform * vec4<f32>(model.position, 1.0);
     out.world_position = world_position.xyz;
     out.clip_position = camera.view_proj * world_position;

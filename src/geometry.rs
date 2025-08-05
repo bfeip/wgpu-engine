@@ -1,5 +1,5 @@
 use std::{fs::File, io::BufReader, ops::Range, path::Path};
-use cgmath::{Matrix4, Rotation3, SquareMatrix, Zero};
+use cgmath::{Matrix3, Matrix4, Rotation3, SquareMatrix, Zero};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
 use crate::VertexShaderLocations;
@@ -205,11 +205,12 @@ impl Instance {
 
     pub fn to_raw(&self) -> InstanceRaw {
         let translation = Matrix4::from_translation(self.position);
-        let rotation = Matrix4::from(self.rotation);
-        let transform = translation * rotation;
+        let transform: Matrix4<f32> = translation * Matrix4::from(self.rotation);
+        let rotation = Matrix3::from(self.rotation);
 
         InstanceRaw {
-            transform: transform.into()
+            transform: transform.into(),
+            normal_mat: rotation.into()
         }
     }
 }
@@ -218,7 +219,8 @@ impl Instance {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct InstanceRaw {
-    transform: [[f32; 4]; 4]
+    transform: [[f32; 4]; 4],
+    normal_mat: [[f32; 3]; 3]
 }
 
 impl InstanceRaw {
@@ -246,7 +248,23 @@ impl InstanceRaw {
                     offset: size_of::<[f32; 4*3]>() as wgpu::BufferAddress,
                     shader_location: crate::VertexShaderLocations::InstanceTransformRow3 as u32,
                     format: wgpu::VertexFormat::Float32x4
-                }
+                },
+
+                wgpu::VertexAttribute {
+                    offset: size_of::<[f32; 4*4]>() as wgpu::BufferAddress,
+                    shader_location: crate::VertexShaderLocations::InstanceNormalRow0 as u32,
+                    format: wgpu::VertexFormat::Float32x3
+                },
+                wgpu::VertexAttribute {
+                    offset: size_of::<[f32; (4*4) + (3*1)]>() as wgpu::BufferAddress,
+                    shader_location: crate::VertexShaderLocations::InstanceNormalRow1 as u32,
+                    format: wgpu::VertexFormat::Float32x3
+                },
+                wgpu::VertexAttribute {
+                    offset: size_of::<[f32; (4*4) + (3*2)]>() as wgpu::BufferAddress,
+                    shader_location: crate::VertexShaderLocations::InstanceNormalRow2 as u32,
+                    format: wgpu::VertexFormat::Float32x3
+                },
             ]
         }
     }

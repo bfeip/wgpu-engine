@@ -34,7 +34,10 @@ enum VertexShaderLocations {
     InstanceTransformRow0,
     InstanceTransformRow1,
     InstanceTransformRow2,
-    InstanceTransformRow3
+    InstanceTransformRow3,
+    InstanceNormalRow0,
+    InstanceNormalRow1,
+    InstanceNormalRow2,
 }
 
 
