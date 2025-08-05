@@ -5,11 +5,13 @@ mod geometry;
 mod camera;
 mod light;
 mod common;
+mod scene;
 
 use camera::{Camera, CameraUniform};
 use cgmath::Rotation3;
 use geometry::{Mesh, Vertex};
 use wgpu::util::DeviceExt;
+use wgpu::wgc::device;
 use wgpu::Color;
 use winit::window::Window;
 use winit::{
@@ -24,7 +26,8 @@ use wasm_bindgen::prelude::*;
 
 use crate::common::RgbaColor;
 use crate::geometry::{Instance, InstanceRaw};
-use crate::light::Light;
+use crate::light::{Light, LightUniform};
+use crate::scene::Scene;
 
 
 enum VertexShaderLocations {
@@ -49,13 +52,11 @@ struct State<'a> {
     size: winit::dpi::PhysicalSize<u32>,
     window: &'a Window,
     render_pipeline: wgpu::RenderPipeline,
-    meshes: Vec<Mesh>,
     diffuse_bind_group: wgpu::BindGroup,
     diffuse_texture: texture::Texture,
     camera: Camera,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
-    lights: Vec<Light>,
     lights_buffer: wgpu::Buffer,
     lights_bind_group: wgpu::BindGroup,
     camera_rotation_radians: f32,
@@ -222,19 +223,11 @@ impl<'a> State<'a> {
             label: Some("camera_bind_group"),
         });
 
-        let lights = vec![
-            Light::new(
-                cgmath::Vector3 { x: 3., y: 3., z: 3. },
-                RgbaColor { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
-            )
-        ];
-        // I think for now I can only handle one light. Once I have that figured out,
-        // I'll work on figuring out how to support multiple.
-        let light_uniform = lights[0].to_uniform();
-        let lights_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let lights_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Light buffer"),
-            contents: bytemuck::cast_slice(&[light_uniform]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            size: std::mem::size_of::<LightUniform>() as wgpu::BufferAddress,
+            mapped_at_creation: false
         });
 
         let light_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -328,21 +321,6 @@ impl<'a> State<'a> {
             cache: None,
         });
 
-        // Load a sample OBJ
-        let monkey_bytes = include_bytes!("monkey.obj");
-        let mut monkey_mesh = Mesh::from_obj_bytes(&device, monkey_bytes).unwrap();
-        monkey_mesh.add_instance(Instance::with_position(
-            &monkey_mesh,
-            cgmath::Vector3 { x: 0., y: 0., z: 0. }
-        ));
-        let mut second_instance = Instance::with_position(
-            &monkey_mesh,
-            cgmath::Vector3 { x: 2., y: 0., z: 0. }
-        );
-        second_instance.rotation = cgmath::Quaternion::from_angle_z(cgmath::Rad(3.14_f32));
-        monkey_mesh.add_instance(second_instance);
-        let meshes = vec![monkey_mesh];
-
         // A debug feature for rotating the camera without advanced controls
         let camera_rotation_radians = 0.0;
 
@@ -354,13 +332,11 @@ impl<'a> State<'a> {
             size,
             window,
             render_pipeline,
-            meshes,
             diffuse_bind_group,
             diffuse_texture,
             camera,
             camera_buffer,
             camera_bind_group,
-            lights,
             lights_buffer,
             lights_bind_group,
             camera_rotation_radians,
@@ -383,13 +359,7 @@ impl<'a> State<'a> {
         }
     }
 
-    fn input(&mut self, event: &WindowEvent) -> bool {
-        false
-    }
-
-    fn update(&mut self) {}
-
-    fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
+    fn render(&mut self, scene: &mut Scene) -> Result<(), wgpu::SurfaceError> {
         let output = self.surface.get_current_texture()?;
         let view = output
             .texture
@@ -432,10 +402,14 @@ impl<'a> State<'a> {
             render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
             render_pass.set_bind_group(1, &self.camera_bind_group, &[]);
             render_pass.set_bind_group(2, &self.lights_bind_group, &[]);
-            for mesh in self.meshes.iter_mut() {
+            for mesh in scene.meshes.iter_mut() {
                 mesh.draw_instances(&self.device, &mut render_pass, 0..2);
             }
         }
+
+        let light_uniform_slice = &[scene.lights[0].to_uniform()];
+        let light_buffer_contents: &[u8] = bytemuck::cast_slice(light_uniform_slice);
+        self.queue.write_buffer(&self.lights_buffer, 0, light_buffer_contents);
 
         // submit will accept anything that implements IntoIter
         self.queue.submit(std::iter::once(encoder.finish()));
@@ -448,7 +422,8 @@ impl<'a> State<'a> {
 fn handle_window_event(
     event: &WindowEvent,
     control_flow: &winit::event_loop::EventLoopWindowTarget<()>,
-    state: &mut State
+    state: &mut State,
+    scene: &mut Scene
 ) {
     match event {
         WindowEvent::CloseRequested => control_flow.exit(),
@@ -461,8 +436,7 @@ fn handle_window_event(
             // This tells winit that we want another frame after this one
             state.window().request_redraw();
 
-            state.update();
-            match state.render() {
+            match state.render(scene) {
                 Ok(_) => {}
                 // Reconfigure the surface if it's lost or outdated
                 Err(
@@ -554,6 +528,7 @@ pub async fn run() {
     }
 
     let mut state = State::new(&window).await;
+    let mut scene = Scene::demo(&state.device);
 
     event_loop
         .run(move |event, control_flow| {
@@ -562,7 +537,7 @@ pub async fn run() {
                     ref event,
                     window_id,
                 } if window_id == state.window().id() => {
-                    handle_window_event(event, control_flow, &mut state);
+                    handle_window_event(event, control_flow, &mut state, &mut scene);
                 }
                 _ => {}
             }
