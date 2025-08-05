@@ -42,6 +42,12 @@ impl Camera {
         use cgmath::MetricSpace;
         self.eye.distance(self.target)
     }
+
+    pub fn to_uniform(&self) -> CameraUniform {
+        let mut ret = CameraUniform::new();
+        ret.update_view_proj(&self);
+        return ret;
+    }
 }
 
 
