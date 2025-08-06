@@ -1,5 +1,5 @@
 use std::{fs::File, io::BufReader, ops::Range, path::Path};
-use cgmath::{Matrix3, Matrix4, Rotation3, SquareMatrix, Zero};
+use cgmath::{Matrix3, Matrix4, Rotation3, Zero};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
 use crate::VertexShaderLocations;

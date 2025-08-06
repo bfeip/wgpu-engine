@@ -1,4 +1,4 @@
-#![allow(unused)]
+#![allow(dead_code)]
 
 mod texture;
 mod geometry;
@@ -7,14 +7,8 @@ mod light;
 mod common;
 mod scene;
 mod drawstate;
+mod renderer;
 
-use camera::{Camera, CameraUniform};
-use cgmath::Rotation3;
-use geometry::{Mesh, Vertex};
-use wgpu::util::DeviceExt;
-use wgpu::wgc::device;
-use wgpu::Color;
-use winit::window::Window;
 use winit::{
     event::*,
     event_loop::EventLoop,
@@ -25,9 +19,6 @@ use winit::{
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
-use crate::common::RgbaColor;
-use crate::geometry::{Instance, InstanceRaw};
-use crate::light::{Light, LightUniform};
 use crate::scene::Scene;
 use crate::drawstate::DrawState;
 

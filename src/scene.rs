@@ -1,4 +1,11 @@
-use crate::{common::RgbaColor, geometry::{Instance, Mesh}, light::Light};
+use crate::{
+    common::RgbaColor,
+    geometry::{
+        Instance,
+        Mesh
+    },
+    light::Light
+};
 
 pub struct Scene {
     pub meshes: Vec<Mesh>,
