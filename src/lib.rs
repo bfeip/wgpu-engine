@@ -7,7 +7,8 @@ mod light;
 mod common;
 mod scene;
 mod drawstate;
-mod renderer;
+mod material;
+mod shaders;
 
 use winit::{
     event::*,
@@ -56,21 +57,26 @@ fn handle_window_event(
 
             match state.render(scene) {
                 Ok(_) => {}
-                // Reconfigure the surface if it's lost or outdated
-                Err(
-                    wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated,
-                ) => state.resize(state.size),
-                // The system is out of memory, we should probably quit
-                Err(
-                    wgpu::SurfaceError::OutOfMemory | wgpu::SurfaceError::Other,
-                ) => {
-                    log::error!("OutOfMemory");
-                    control_flow.exit();
-                }
-
-                // This happens when the a frame takes too long to present
-                Err(wgpu::SurfaceError::Timeout) => {
-                    log::warn!("Surface timeout")
+                Err(err) => {
+                    // Check if the error is a surface error that we can handle
+                    if let Some(surface_err) = err.downcast_ref::<wgpu::SurfaceError>() {
+                        match surface_err {
+                            wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated => {
+                                state.resize(state.size);
+                            }
+                            wgpu::SurfaceError::OutOfMemory | wgpu::SurfaceError::Other => {
+                                log::error!("OutOfMemory: {}", surface_err);
+                                control_flow.exit();
+                            }
+                            wgpu::SurfaceError::Timeout => {
+                                log::warn!("Surface timeout: {}", surface_err);
+                            }
+                        }
+                    } else {
+                        // Handle other types of errors
+                        log::error!("Render error: {}", err);
+                        control_flow.exit();
+                    }
                 }
             }
         }

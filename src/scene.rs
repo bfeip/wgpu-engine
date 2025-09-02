@@ -35,10 +35,12 @@ impl Scene {
         let mut monkey_mesh = Mesh::from_obj_bytes(&device, monkey_bytes).unwrap();
         monkey_mesh.add_instance(Instance::with_position(
             &monkey_mesh,
+            0,
             cgmath::Vector3 { x: 0., y: 0., z: 0. }
         ));
         let mut second_instance = Instance::with_position(
             &monkey_mesh,
+            0,
             cgmath::Vector3 { x: 2., y: 0., z: 0. }
         );
         second_instance.rotation = cgmath::Quaternion::from_angle_z(cgmath::Rad(3.14_f32));

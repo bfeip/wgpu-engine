@@ -1,8 +1,8 @@
-use std::{fs::File, io::BufReader, ops::Range, path::Path};
+use std::{collections::HashMap, fs::File, io::BufReader, path::Path};
 use cgmath::{Matrix3, Matrix4, Rotation3, Zero};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
-use crate::VertexShaderLocations;
+use crate::{material::MaterialId, VertexShaderLocations};
 
 type MeshIndex = u16;
 
@@ -43,18 +43,17 @@ impl Vertex {
 pub struct Mesh {
     vertices: Vec<Vertex>,
     indices: Vec<MeshIndex>,
-    instances: Vec<Instance>,
+    instances: HashMap<MaterialId, Vec<Instance>>,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     instance_buffer: wgpu::Buffer,
-    instance_buffer_dirty: bool
 }
 
 impl Mesh {
     pub fn new(device: &wgpu::Device, label: Option<&str>) -> Self {
         let vertices = Vec::new();
         let indices = Vec::new();
-        let instances = Vec::new();
+        let instances = HashMap::new();
 
         let vertex_buffer_label = label.and_then(| mesh_label | {
             Some(mesh_label.to_owned() + "_vertex_buffer")
@@ -93,7 +92,6 @@ impl Mesh {
             vertex_buffer,
             index_buffer,
             instance_buffer,
-            instance_buffer_dirty: false
         }
     }
 
@@ -106,7 +104,7 @@ impl Mesh {
             }
         }).collect();
         let indices: Vec<u16> = obj.indices;
-        let instances = Vec::new();
+        let instances = HashMap::new();
 
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),
@@ -133,7 +131,6 @@ impl Mesh {
             vertex_buffer,
             index_buffer,
             instance_buffer,
-            instance_buffer_dirty: false
         })
     }
 
@@ -150,54 +147,67 @@ impl Mesh {
     }
 
     pub fn add_instance(&mut self, instance: Instance) {
-        self.instances.push(instance);
-        self.instance_buffer_dirty = true;
+        if !self.instances.contains_key(&instance.material) {
+            self.instances.insert(instance.material, Vec::new());
+        }
+        
+        let material_instances = self.instances.get_mut(&instance.material).unwrap();
+        material_instances.push(instance);
     }
 
+    pub fn get_instances_by_material(&self) -> &HashMap<MaterialId, Vec<Instance>> {
+        &self.instances
+    }
+
+    // TODO: This function should not exist.
+    // We are creating buffers for groups of instances based on material while we are drawing them.
+    // We should maintain this data so that we can simply retrieve it when we are drawing.
+    // We should not be passing in the instances we want to draw from outside this function.
     pub fn draw_instances(
-        &mut self,
+        &self,
         device: &wgpu::Device,
-        render_pass: &mut wgpu::RenderPass,
-        instances: Range<u32>
+        pass: &mut wgpu::RenderPass,
+        instances: &[Instance]
     ) {
-        if(self.instance_buffer_dirty) {
-            let instance_raws: Vec<InstanceRaw> = self.instances.iter().map(|instance|
-                instance.to_raw()
-            ).collect();
-            self.instance_buffer = device.create_buffer_init(&BufferInitDescriptor {
-                label: Some("Instance Buffer"),
-                contents: bytemuck::cast_slice(&instance_raws),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
-            self.instance_buffer_dirty = false;
-        }
+        let instance_raws: Vec<InstanceRaw> = instances.iter().map(|instance| {
+            instance.to_raw()
+        }).collect();
+        let instance_buffer = device.create_buffer_init(&BufferInitDescriptor {
+            label: Some("Instance Buffer"),
+            contents: bytemuck::cast_slice(&instance_raws),
+            usage: wgpu::BufferUsages::VERTEX
+        });
         let n_indices = self.indices.len() as u32;
-        render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-        render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
-        render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-        render_pass.draw_indexed(0..n_indices, 0, instances);
+        let n_instances = instances.len() as u32;
+        pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+        pass.set_vertex_buffer(1, instance_buffer.slice(..));
+        pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+        pass.draw_indexed(0..n_indices, 0, 0..n_instances);
     }
 }
 
 
 pub struct Instance {
     mesh: *const Mesh,
+    pub material: MaterialId,
     pub position: cgmath::Vector3<f32>,
     pub rotation: cgmath::Quaternion<f32>
 }
 
 impl Instance {
-    pub fn new(mesh: *const Mesh) -> Self {
+    pub fn new(mesh: *const Mesh, material: MaterialId) -> Self {
         Self {
             mesh,
+            material,
             position: cgmath::Vector3::zero(),
             rotation: cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_z(), cgmath::Rad(0.0))
         }
     }
 
-    pub fn with_position(mesh: *const Mesh, position: cgmath::Vector3<f32>) -> Self {
+    pub fn with_position(mesh: *const Mesh, material: MaterialId, position: cgmath::Vector3<f32>) -> Self {
         Self {
             mesh,
+            material,
             position,
             rotation: cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_z(), cgmath::Rad(0.0))
         }

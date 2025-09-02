@@ -1,4 +1,4 @@
-use wgpu::util::DeviceExt;
+use wgpu::{util::DeviceExt};
 use winit::window::Window;
 
 use crate::{
@@ -11,7 +11,12 @@ use crate::{
         Vertex
     },
     light::LightUniform,
+    material::{
+        MaterialManager,
+        MaterialType
+    },
     scene::Scene,
+    shaders::ShaderBuilder,
     texture
 };
 
@@ -22,10 +27,14 @@ pub struct DrawState<'a> {
     pub config: wgpu::SurfaceConfiguration,
     pub size: winit::dpi::PhysicalSize<u32>,
     pub window: &'a Window,
-    render_pipeline: wgpu::RenderPipeline,
-    diffuse_bind_group: wgpu::BindGroup,
-    diffuse_texture: texture::Texture,
     pub camera: Camera,
+
+    pub material_manager: MaterialManager,
+    shader_builder: ShaderBuilder,
+
+    color_material_pipeline_layout: wgpu::PipelineLayout,
+    texture_material_pipeline_layout: wgpu::PipelineLayout,
+
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
     lights_buffer: wgpu::Buffer,
@@ -99,48 +108,9 @@ impl<'a> DrawState<'a> {
         };
 
         surface.configure(&device, &config);
-        let diffuse_bytes = include_bytes!("happy-tree.png"); // CHANGED!
-        let diffuse_texture = texture::Texture::from_bytes(&device, &queue, diffuse_bytes, "happy-tree.png").unwrap(); // CHANGED!
 
-        let texture_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            multisampled: false,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        // This should match the filterable field of the
-                        // corresponding Texture entry above.
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-                label: Some("texture_bind_group_layout"),
-            });
-
-        let diffuse_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &texture_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&diffuse_texture.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&diffuse_texture.sampler),
-                },
-            ],
-            label: Some("diffuse_bind_group"),
-        });
+        let material_manager = MaterialManager::new(&device);
+        let shader_builder = ShaderBuilder::new();
 
         let camera = Camera {
             // position the camera 1 unit up and 2 units back
@@ -216,6 +186,7 @@ impl<'a> DrawState<'a> {
             ],
             label: Some("Light bind group layout")
         });
+
         let lights_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &light_bind_group_layout,
             entries: &[
@@ -227,24 +198,69 @@ impl<'a> DrawState<'a> {
             label: Some("Light bind group")
         });
 
+        let color_material_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Color Material Pipeline Layout"),
+            bind_group_layouts: &[
+                &camera_bind_group_layout,
+                &light_bind_group_layout,
+                &material_manager.color_bind_group_layout
+            ],
+            push_constant_ranges: &[],
+        });
+
+        let texture_material_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Texture Material Pipeline Layout"),
+            bind_group_layouts: &[
+                &camera_bind_group_layout,
+                &light_bind_group_layout,
+                &material_manager.texture_bind_group_layout
+            ],
+            push_constant_ranges: &[]
+        });
+
         let depth_texture = texture::Texture::create_depth_texture(&device, &config, "depth_texture");
 
-        let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
+        // A debug feature for rotating the camera without advanced controls
+        let camera_rotation_radians = 0.0;
 
-        let render_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[
-                    &texture_bind_group_layout,
-                    &camera_bind_group_layout,
-                    &light_bind_group_layout
-                ],
-                push_constant_ranges: &[],
-            });
+        Self {
+            surface,
+            device,
+            queue,
+            config,
+            size,
+            window,
+            material_manager,
+            shader_builder,
+            color_material_pipeline_layout,
+            texture_material_pipeline_layout,
+            camera,
+            camera_buffer,
+            camera_bind_group,
+            lights_buffer,
+            lights_bind_group,
+            camera_rotation_radians,
+            depth_texture
+        }
+    }
 
-        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    pub fn create_pipeline(&self, material: MaterialType) -> wgpu::RenderPipeline {
+        let (pipeline_layout, shader) = match material {
+            MaterialType::Color => {
+                let layout = &self.color_material_pipeline_layout;
+                let shader = self.shader_builder.generate_shader(&self.device, material);
+                (layout, shader)
+            },
+            MaterialType::Texture => {
+                let layout = &self.texture_material_pipeline_layout;
+                let shader = self.shader_builder.generate_shader(&self.device, material);
+                (layout, shader)
+            }
+        };
+
+        self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Render Pipeline"),
-            layout: Some(&render_pipeline_layout),
+            layout: Some(pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_main"),
@@ -258,7 +274,7 @@ impl<'a> DrawState<'a> {
                 module: &shader,
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: config.format,
+                    format: self.config.format,
                     blend: Some(wgpu::BlendState::REPLACE),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -290,29 +306,7 @@ impl<'a> DrawState<'a> {
             },
             multiview: None,
             cache: None,
-        });
-
-        // A debug feature for rotating the camera without advanced controls
-        let camera_rotation_radians = 0.0;
-
-        Self {
-            surface,
-            device,
-            queue,
-            config,
-            size,
-            window,
-            render_pipeline,
-            diffuse_bind_group,
-            diffuse_texture,
-            camera,
-            camera_buffer,
-            camera_bind_group,
-            lights_buffer,
-            lights_bind_group,
-            camera_rotation_radians,
-            depth_texture
-        }
+        })
     }
 
     pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
@@ -326,7 +320,7 @@ impl<'a> DrawState<'a> {
         }
     }
 
-    pub fn render(&mut self, scene: &mut Scene) -> Result<(), wgpu::SurfaceError> {
+    pub fn render(&mut self, scene: &mut Scene) -> anyhow::Result<()> {
         let output = self.surface.get_current_texture()?;
         let view = output
             .texture
@@ -336,6 +330,14 @@ impl<'a> DrawState<'a> {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Render Encoder"),
             });
+
+        let camera_uniform_slice = &[self.camera.to_uniform()];
+        let camera_buffer_contents: &[u8] = bytemuck::cast_slice(camera_uniform_slice);
+        self.queue.write_buffer(&self.camera_buffer, 0, camera_buffer_contents);
+
+        let light_uniform_slice = &[scene.lights[0].to_uniform()];
+        let light_buffer_contents: &[u8] = bytemuck::cast_slice(light_uniform_slice);
+        self.queue.write_buffer(&self.lights_buffer, 0, light_buffer_contents);
 
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -365,22 +367,21 @@ impl<'a> DrawState<'a> {
                 timestamp_writes: None,
             });
 
-            render_pass.set_pipeline(&self.render_pipeline);
-            render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
-            render_pass.set_bind_group(1, &self.camera_bind_group, &[]);
-            render_pass.set_bind_group(2, &self.lights_bind_group, &[]);
+            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            render_pass.set_bind_group(1, &self.lights_bind_group, &[]);
+
             for mesh in scene.meshes.iter_mut() {
-                mesh.draw_instances(&self.device, &mut render_pass, 0..2);
+                for (material_id, instances) in mesh.get_instances_by_material() {
+                    let material = self.material_manager.get(*material_id).ok_or(
+                        anyhow::anyhow!("Failed to get material")
+                    )?;
+                    let pipeline = self.create_pipeline(material.material_type());
+                    render_pass.set_pipeline(&pipeline);
+                    material.bind(&mut render_pass)?;
+                    mesh.draw_instances(&self.device, &mut render_pass, instances);
+                }
             }
         }
-
-        let camera_uniform_slice = &[self.camera.to_uniform()];
-        let camera_buffer_contents: &[u8] = bytemuck::cast_slice(camera_uniform_slice);
-        self.queue.write_buffer(&self.camera_buffer, 0, camera_buffer_contents);
-
-        let light_uniform_slice = &[scene.lights[0].to_uniform()];
-        let light_buffer_contents: &[u8] = bytemuck::cast_slice(light_uniform_slice);
-        self.queue.write_buffer(&self.lights_buffer, 0, light_buffer_contents);
 
         // submit will accept anything that implements IntoIter
         self.queue.submit(std::iter::once(encoder.finish()));
