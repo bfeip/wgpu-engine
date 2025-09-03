@@ -2,7 +2,6 @@
 
 ## Jots
 - Proper API
-- Material class
 - Normal maps
 - Multiple lights
 - Scene from GLTF

@@ -4,7 +4,8 @@ use crate::{
         Instance,
         Mesh
     },
-    light::Light
+    light::Light,
+    material::MaterialId
 };
 
 pub struct Scene {
@@ -20,7 +21,7 @@ impl Scene {
         }
     }
 
-    pub fn demo(device: &wgpu::Device) -> Self {
+    pub fn demo(device: &wgpu::Device, material_id: MaterialId) -> Self {
         use cgmath::Rotation3;
 
         let lights = vec![
@@ -40,7 +41,7 @@ impl Scene {
         ));
         let mut second_instance = Instance::with_position(
             &monkey_mesh,
-            0,
+            material_id,
             cgmath::Vector3 { x: 2., y: 0., z: 0. }
         );
         second_instance.rotation = cgmath::Quaternion::from_angle_z(cgmath::Rad(3.14_f32));

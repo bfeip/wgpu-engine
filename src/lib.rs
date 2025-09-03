@@ -147,8 +147,14 @@ pub async fn run() {
             .expect("Couldn't append canvas to document body.");
     }
 
+    // DEMO CODE
     let mut state = DrawState::new(&window).await;
-    let mut scene = Scene::demo(&state.device);
+    let texture = state.material_manager.create_texture_material_from_path(
+        &state.device,
+        &state.queue,
+        "/home/zachary/src/wgpu-engine/src/happy-tree.png"
+    ).unwrap();
+    let mut scene = Scene::demo(&state.device, texture);
 
     event_loop
         .run(move |event, control_flow| {
