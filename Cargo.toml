@@ -1,7 +1,7 @@
 [package]
 name = "wgpu-engine"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 
 # Define that this package provides both a library and a binary
@@ -27,6 +27,7 @@ bytemuck = { version = "1.16", features = [ "derive" ] }
 anyhow = "1.0"
 cgmath = "0.18"
 obj-rs = "0.7"
+gltf = "1"
 
 
 [dependencies.image]
