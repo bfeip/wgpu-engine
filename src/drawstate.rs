@@ -6,7 +6,7 @@ use crate::{
         Camera,
         CameraUniform
     },
-    geometry::{
+    scene::{
         InstanceRaw,
         Vertex
     },

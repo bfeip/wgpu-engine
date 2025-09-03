@@ -1,7 +1,6 @@
 #![allow(dead_code)]
 
 mod texture;
-mod geometry;
 mod camera;
 mod light;
 mod common;

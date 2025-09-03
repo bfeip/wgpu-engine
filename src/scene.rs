@@ -1,9 +1,11 @@
+mod mesh;
+mod instance;
+
+pub use mesh::{Mesh, Vertex};
+pub use instance::{Instance, InstanceRaw};
+
 use crate::{
     common::RgbaColor,
-    geometry::{
-        Instance,
-        Mesh
-    },
     light::Light,
     material::MaterialId
 };
