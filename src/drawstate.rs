@@ -87,9 +87,6 @@ impl<'a> DrawState<'a> {
             .unwrap();
 
         let surface_caps = surface.get_capabilities(&adapter);
-        // Shader code in this tutorial assumes an sRGB surface texture. Using a different
-        // one will result in all the colors coming out darker. If you want to support non
-        // sRGB surfaces, you'll need to account for that when drawing to the frame.
         let surface_format = surface_caps
             .formats
             .iter()
@@ -113,12 +110,8 @@ impl<'a> DrawState<'a> {
         let shader_builder = ShaderBuilder::new();
 
         let camera = Camera {
-            // position the camera 1 unit up and 2 units back
-            // +z is out of the screen
             eye: (0.0, 2.0, 4.0).into(),
-            // have it look at the origin
             target: (0.0, 0.0, 0.0).into(),
-            // which way is "up"
             up: cgmath::Vector3::unit_y(),
             aspect: config.width as f32 / config.height as f32,
             fovy: 45.0,
@@ -370,16 +363,27 @@ impl<'a> DrawState<'a> {
             render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
             render_pass.set_bind_group(1, &self.lights_bind_group, &[]);
 
-            for mesh in scene.meshes.iter_mut() {
-                for (material_id, instances) in mesh.get_instances_by_material() {
-                    let material = self.material_manager.get(*material_id).ok_or(
-                        anyhow::anyhow!("Failed to get material")
-                    )?;
-                    let pipeline = self.create_pipeline(material.material_type());
-                    render_pass.set_pipeline(&pipeline);
-                    material.bind(&mut render_pass)?;
-                    mesh.draw_instances(&self.device, &mut render_pass, instances);
-                }
+            //for mesh in scene.meshes.iter_mut() {
+            //    for (material_id, instances) in mesh.get_instances_by_material() {
+            //        let material = self.material_manager.get(*material_id).ok_or(
+            //            anyhow::anyhow!("Failed to get material")
+            //        )?;
+            //        let pipeline = self.create_pipeline(material.material_type());
+            //        render_pass.set_pipeline(&pipeline);
+            //        material.bind(&mut render_pass)?;
+            //        mesh.draw_instances(&self.device, &mut render_pass, instances);
+            //    }
+            //}
+            for instance in scene.instances.values() {
+                let mesh = scene.meshes.get(&instance.mesh).unwrap();
+                let material = self.material_manager.get(instance.material).unwrap();
+                let pipeline = self.create_pipeline(material.material_type());
+                render_pass.set_pipeline(&pipeline);
+                material.bind(&mut render_pass)?;
+
+                
+
+                todo!();
             }
         }
 

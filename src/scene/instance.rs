@@ -1,47 +1,66 @@
 use std::mem::size_of;
-use cgmath::{Matrix3, Matrix4, Rotation3, Zero};
+use std::cell::Cell;
+use cgmath::{EuclideanSpace, Matrix3, Matrix4, Rotation3};
 
 use crate::{
     material::MaterialId,
 };
 
-use super::mesh::Mesh;
+use super::mesh::MeshId;
+
+pub type InstanceId = u32;
 
 pub struct Instance {
-    mesh: *const Mesh,
+    pub id: InstanceId,
+
+    pub mesh: MeshId,
     pub material: MaterialId,
-    pub position: cgmath::Vector3<f32>,
-    pub rotation: cgmath::Quaternion<f32>
+    position: cgmath::Point3<f32>,
+    rotation: cgmath::Quaternion<f32>,
+
+    raw: Cell<InstanceRaw>,
+    dirty: bool
 }
 
 impl Instance {
-    pub fn new(mesh: *const Mesh, material: MaterialId) -> Self {
+    pub fn new(
+        id: InstanceId,
+        mesh: MeshId,
+        material: MaterialId,
+        position: Option<cgmath::Point3<f32>>,
+        rotation: Option<cgmath::Quaternion<f32>>
+    ) -> Self {
+        let position = position.unwrap_or(cgmath::Point3::origin());
+        let rotation = rotation.unwrap_or(
+            cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_z(), cgmath::Rad(0.0))
+        );
         Self {
-            mesh,
-            material,
-            position: cgmath::Vector3::zero(),
-            rotation: cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_z(), cgmath::Rad(0.0))
-        }
-    }
-
-    pub fn with_position(mesh: *const Mesh, material: MaterialId, position: cgmath::Vector3<f32>) -> Self {
-        Self {
+            id,
             mesh,
             material,
             position,
-            rotation: cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_z(), cgmath::Rad(0.0))
+            rotation,
+            raw: Cell::new(unsafe { std::mem::zeroed() }),
+            dirty: true
         }
     }
 
     pub fn to_raw(&self) -> InstanceRaw {
-        let translation = Matrix4::from_translation(self.position);
+        if !self.dirty {
+            return self.raw.get();
+        }
+        
+        let translation = Matrix4::from_translation(self.position.to_vec());
         let transform: Matrix4<f32> = translation * Matrix4::from(self.rotation);
         let rotation = Matrix3::from(self.rotation);
 
-        InstanceRaw {
+        let raw = InstanceRaw {
             transform: transform.into(),
             normal_mat: rotation.into()
-        }
+        };
+        self.raw.set(raw);
+
+        raw
     }
 }
 

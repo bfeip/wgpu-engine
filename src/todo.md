@@ -2,9 +2,12 @@
 
 ## Jots
 - Proper API
+- Events and operators
+- Screen trees and octrees
 - Normal maps
 - Multiple lights
 - Scene from GLTF
+- Selection
 - Slang support
 
 ## Material classes

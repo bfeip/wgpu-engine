@@ -1,13 +1,13 @@
-use std::{collections::HashMap, fs::File, io::BufReader, path::Path};
+use std::{fs::File, io::BufReader, path::Path};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
 use crate::{
-    material::MaterialId,
     VertexShaderLocations
 };
 
 use super::instance::{Instance, InstanceRaw};
 
+pub type MeshId = u32;
 type MeshIndex = u16;
 
 #[repr(C)]
@@ -44,20 +44,49 @@ impl Vertex {
     }
 }
 
+
+// TODO: I don't like having these generic parameters
+// They have to be specified for every branch of this enum, even when irrelevant
+pub enum ObjMesh<'a, P: AsRef<Path>> {
+    Bytes(&'a [u8]),
+    Path(P)
+}
+
+pub enum MeshDescriptor<'a, P: AsRef<Path>> {
+    Empty,
+    Obj(ObjMesh<'a, P>)
+}
+
 pub struct Mesh {
+    pub id: MeshId,
     vertices: Vec<Vertex>,
     indices: Vec<MeshIndex>,
-    instances: HashMap<MaterialId, Vec<Instance>>,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     instance_buffer: wgpu::Buffer,
 }
 
 impl Mesh {
-    pub fn new(device: &wgpu::Device, label: Option<&str>) -> Self {
+    pub fn new<P: AsRef<Path>>(
+        id: MeshId,
+        device: &wgpu::Device,
+        descriptor: MeshDescriptor<P>,
+        label: Option<&str>
+    ) -> anyhow::Result<Self> {
+        match descriptor {
+            MeshDescriptor::Empty => Ok(Self::new_empty(id, device, label)),
+            MeshDescriptor::Obj(obj_desc) => {
+                match obj_desc {
+                    ObjMesh::Bytes(bytes) => Self::from_obj_bytes(id, device, &bytes, label),
+                    ObjMesh::Path(path) => Self::from_obj_path(id, device, path, label)
+                }
+            }
+        }
+    }
+
+    fn new_empty(id: MeshId, device: &wgpu::Device, label: Option<&str>) -> Self {
         let vertices = Vec::new();
         let indices = Vec::new();
-        let instances = HashMap::new();
 
         let vertex_buffer_label = label.and_then(| mesh_label | {
             Some(mesh_label.to_owned() + "_vertex_buffer")
@@ -90,16 +119,21 @@ impl Mesh {
         });
 
         Self {
+            id,
             vertices,
             indices,
-            instances,
             vertex_buffer,
             index_buffer,
             instance_buffer,
         }
     }
 
-    pub fn from_obj(device: &wgpu::Device, obj: obj::Obj<obj::TexturedVertex>)-> anyhow::Result<Self> {
+    fn from_obj(
+        id: MeshId,
+        device: &wgpu::Device,
+        obj: obj::Obj<obj::TexturedVertex>,
+        label: Option<&str>
+    )-> anyhow::Result<Self> {
         let vertices: Vec<Vertex> = obj.vertices.iter().map(|v: &obj::TexturedVertex| {
             Vertex { 
                 position: v.position,
@@ -108,59 +142,54 @@ impl Mesh {
             }
         }).collect();
         let indices: Vec<u16> = obj.indices;
-        let instances = HashMap::new();
 
+        let vertex_buffer_label = label.and_then(| mesh_label | {
+            Some(mesh_label.to_owned() + "_vertex_buffer")
+        });
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Vertex Buffer"),
+            label: vertex_buffer_label.as_deref(),
             contents: bytemuck::cast_slice(&vertices),
             usage: wgpu::BufferUsages::VERTEX,
         });
 
+        let index_buffer_label = label.and_then(| mesh_label | {
+            Some(mesh_label.to_owned() + "_index_buffer")
+        });
         let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Index Buffer"),
+            label: index_buffer_label.as_deref(),
             contents: bytemuck::cast_slice(&indices),
             usage: wgpu::BufferUsages::INDEX,
         });
 
+        let instance_buffer_label = label.and_then(| mesh_label | {
+            Some(mesh_label.to_owned() + "_instance_buffer")
+        });
         let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Instance Buffer"),
+            label: instance_buffer_label.as_deref(),
             contents: &[],
             usage: wgpu::BufferUsages::VERTEX,
         });
 
         Ok(Self {
+            id,
             vertices,
             indices,
-            instances,
             vertex_buffer,
             index_buffer,
             instance_buffer,
         })
     }
 
-    pub fn from_obj_bytes(device: &wgpu::Device, obj_bytes: &[u8]) -> anyhow::Result<Self> {
+    fn from_obj_bytes(id: MeshId, device: &wgpu::Device, obj_bytes: &[u8], label: Option<&str>) -> anyhow::Result<Self> {
         let obj: obj::Obj<obj::TexturedVertex> = obj::load_obj(obj_bytes)?;
-        Self::from_obj(device, obj)
+        Self::from_obj(id, device, obj, label)
     }
 
-    pub fn from_obj_path<P: AsRef<Path>>(device: &wgpu::Device, obj_path: P) -> anyhow::Result<Self> {
+    fn from_obj_path<P: AsRef<Path>>(id: MeshId, device: &wgpu::Device, obj_path: P, label: Option<&str>) -> anyhow::Result<Self> {
         let obj_file = File::open(obj_path)?;
         let obj_reader = BufReader::new(obj_file);
         let obj: obj::Obj<obj::TexturedVertex> = obj::load_obj(obj_reader)?;
-        Self::from_obj(device, obj)
-    }
-
-    pub fn add_instance(&mut self, instance: Instance) {
-        if !self.instances.contains_key(&instance.material) {
-            self.instances.insert(instance.material, Vec::new());
-        }
-        
-        let material_instances = self.instances.get_mut(&instance.material).unwrap();
-        material_instances.push(instance);
-    }
-
-    pub fn get_instances_by_material(&self) -> &HashMap<MaterialId, Vec<Instance>> {
-        &self.instances
+        Self::from_obj(id, device, obj, label)
     }
 
     // TODO: This function should not exist.
