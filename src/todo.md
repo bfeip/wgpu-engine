@@ -4,6 +4,7 @@
 - Proper API
 - Events and operators
 - Screen trees and octrees
+- Optimize drawing
 - Normal maps
 - Multiple lights
 - Scene from GLTF

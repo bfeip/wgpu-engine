@@ -200,7 +200,7 @@ impl Mesh {
         &self,
         device: &wgpu::Device,
         pass: &mut wgpu::RenderPass,
-        instances: &[Instance]
+        instances: &[&Instance]
     ) {
         let instance_raws: Vec<InstanceRaw> = instances.iter().map(|instance| {
             instance.to_raw()

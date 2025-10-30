@@ -363,17 +363,6 @@ impl<'a> DrawState<'a> {
             render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
             render_pass.set_bind_group(1, &self.lights_bind_group, &[]);
 
-            //for mesh in scene.meshes.iter_mut() {
-            //    for (material_id, instances) in mesh.get_instances_by_material() {
-            //        let material = self.material_manager.get(*material_id).ok_or(
-            //            anyhow::anyhow!("Failed to get material")
-            //        )?;
-            //        let pipeline = self.create_pipeline(material.material_type());
-            //        render_pass.set_pipeline(&pipeline);
-            //        material.bind(&mut render_pass)?;
-            //        mesh.draw_instances(&self.device, &mut render_pass, instances);
-            //    }
-            //}
             for instance in scene.instances.values() {
                 let mesh = scene.meshes.get(&instance.mesh).unwrap();
                 let material = self.material_manager.get(instance.material).unwrap();
@@ -381,9 +370,7 @@ impl<'a> DrawState<'a> {
                 render_pass.set_pipeline(&pipeline);
                 material.bind(&mut render_pass)?;
 
-                
-
-                todo!();
+                mesh.draw_instances(&self.device, &mut render_pass, &[instance]);
             }
         }
 
