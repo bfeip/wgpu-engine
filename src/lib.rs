@@ -9,6 +9,7 @@ mod drawstate;
 mod material;
 mod shaders;
 mod gltf;
+mod event;
 
 use winit::{
     event::*,

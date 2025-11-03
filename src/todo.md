@@ -1,14 +1,14 @@
 # TODO
 
 ## Jots
-- Proper API
 - Events and operators
 - Screen trees and octrees
-- Optimize drawing
-- Normal maps
-- Multiple lights
 - Scene from GLTF
 - Selection
+- Multiple lights
+- Optimize drawing
+- Proper API
+- Normal maps
 - Slang support
 
 ## Material classes
