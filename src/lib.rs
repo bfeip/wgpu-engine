@@ -12,7 +12,6 @@ mod gltf;
 mod event;
 
 use winit::{
-    event::*,
     event_loop::EventLoop,
     keyboard::KeyCode,
     window::WindowBuilder,
@@ -23,6 +22,7 @@ use wasm_bindgen::prelude::*;
 
 use crate::scene::Scene;
 use crate::drawstate::DrawState;
+use crate::event::{EventDispatcher, EventKind, EventContext};
 
 
 enum VertexShaderLocations {
@@ -36,80 +36,6 @@ enum VertexShaderLocations {
     InstanceNormalRow0,
     InstanceNormalRow1,
     InstanceNormalRow2,
-}
-
-
-fn handle_window_event(
-    event: &WindowEvent,
-    control_flow: &winit::event_loop::EventLoopWindowTarget<()>,
-    state: &mut DrawState,
-    scene: &mut Scene
-) {
-    match event {
-        WindowEvent::CloseRequested => control_flow.exit(),
-        WindowEvent::KeyboardInput { event, .. } => handle_key_input(event, control_flow, state),
-        WindowEvent::Resized(physical_size) => state.resize(*physical_size),
-        WindowEvent::RedrawRequested => {
-            if !state.window.is_visible().unwrap() {
-                state.window.set_visible(true);
-            }
-            // This tells winit that we want another frame after this one
-            state.window.request_redraw();
-
-            match state.render(scene) {
-                Ok(_) => {}
-                Err(err) => {
-                    // Check if the error is a surface error that we can handle
-                    if let Some(surface_err) = err.downcast_ref::<wgpu::SurfaceError>() {
-                        match surface_err {
-                            wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated => {
-                                state.resize(state.size);
-                            }
-                            wgpu::SurfaceError::OutOfMemory | wgpu::SurfaceError::Other => {
-                                log::error!("OutOfMemory: {}", surface_err);
-                                control_flow.exit();
-                            }
-                            wgpu::SurfaceError::Timeout => {
-                                log::warn!("Surface timeout: {}", surface_err);
-                            }
-                        }
-                    } else {
-                        // Handle other types of errors
-                        log::error!("Render error: {}", err);
-                        control_flow.exit();
-                    }
-                }
-            }
-        }
-        _ => {}
-    }
-}
-
-fn handle_key_input(
-    event: &KeyEvent,
-    control_flow: &winit::event_loop::EventLoopWindowTarget<()>,
-    state: &mut DrawState
-) {
-    let mut update_camera = |angle| {
-        let x = f32::sin(angle) * 5.;
-        let y = state.camera.eye.y;
-        let z = f32::cos(angle) * 5.;
-        state.camera.eye = cgmath::point3(x, y, z);
-    };
-
-    use winit::keyboard::PhysicalKey;
-    match event.physical_key {
-        PhysicalKey::Code(KeyCode::Escape) => control_flow.exit(),
-        PhysicalKey::Code(KeyCode::ArrowLeft) => {
-            state.camera_rotation_radians = state.camera_rotation_radians - 0.1 % std::f32::consts::TAU;
-            update_camera(state.camera_rotation_radians);
-        },
-        PhysicalKey::Code(KeyCode::ArrowRight) => {
-            state.camera_rotation_radians = state.camera_rotation_radians + 0.1 % std::f32::consts::TAU;
-            update_camera(state.camera_rotation_radians);
-        }
-        _ => {}
-    }
 }
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen(start))]
@@ -157,16 +83,101 @@ pub async fn run() {
     ).unwrap();
     let mut scene = Scene::demo(&state.device, texture);
 
+    // Set up event dispatcher
+    let mut dispatcher = EventDispatcher::new();
+
+    // Register CloseRequested handler
+    dispatcher.register(EventKind::CloseRequested, |_event, ctx| {
+        ctx.control_flow.exit();
+        true
+    });
+
+    // Register Resized handler
+    dispatcher.register(EventKind::Resized, |event, ctx| {
+        if let crate::event::Event::Resized(physical_size) = event {
+            ctx.state.resize(*physical_size);
+        }
+        true
+    });
+
+    // Register RedrawRequested handler
+    dispatcher.register(EventKind::RedrawRequested, |_event, ctx| {
+        if !ctx.state.window.is_visible().unwrap() {
+            ctx.state.window.set_visible(true);
+        }
+        // This tells winit that we want another frame after this one
+        ctx.state.window.request_redraw();
+
+        match ctx.state.render(ctx.scene) {
+            Ok(_) => {}
+            Err(err) => {
+                // Check if the error is a surface error that we can handle
+                if let Some(surface_err) = err.downcast_ref::<wgpu::SurfaceError>() {
+                    match surface_err {
+                        wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated => {
+                            ctx.state.resize(ctx.state.size);
+                        }
+                        wgpu::SurfaceError::OutOfMemory | wgpu::SurfaceError::Other => {
+                            log::error!("OutOfMemory: {}", surface_err);
+                            ctx.control_flow.exit();
+                        }
+                        wgpu::SurfaceError::Timeout => {
+                            log::warn!("Surface timeout: {}", surface_err);
+                        }
+                    }
+                } else {
+                    // Handle other types of errors
+                    log::error!("Render error: {}", err);
+                    ctx.control_flow.exit();
+                }
+            }
+        }
+        true
+    });
+
+    // Register KeyboardInput handler
+    dispatcher.register(EventKind::KeyboardInput, |event, ctx| {
+        if let crate::event::Event::KeyboardInput { event: key_event, .. } = event {
+            use winit::keyboard::PhysicalKey;
+
+            let mut update_camera = |angle: f32| {
+                let x = f32::sin(angle) * 5.;
+                let y = ctx.state.camera.eye.y;
+                let z = f32::cos(angle) * 5.;
+                ctx.state.camera.eye = cgmath::point3(x, y, z);
+            };
+
+            match key_event.physical_key {
+                PhysicalKey::Code(KeyCode::Escape) => {
+                    ctx.control_flow.exit();
+                },
+                PhysicalKey::Code(KeyCode::ArrowLeft) => {
+                    ctx.state.camera_rotation_radians =
+                        ctx.state.camera_rotation_radians - 0.1 % std::f32::consts::TAU;
+                    update_camera(ctx.state.camera_rotation_radians);
+                },
+                PhysicalKey::Code(KeyCode::ArrowRight) => {
+                    ctx.state.camera_rotation_radians =
+                        ctx.state.camera_rotation_radians + 0.1 % std::f32::consts::TAU;
+                    update_camera(ctx.state.camera_rotation_radians);
+                }
+                _ => return false,
+            }
+            true
+        } else {
+            false
+        }
+    });
+
     event_loop
         .run(move |event, control_flow| {
-            match event {
-                Event::WindowEvent {
-                    ref event,
-                    window_id,
-                } if window_id == state.window.id() => {
-                    handle_window_event(event, control_flow, &mut state, &mut scene);
-                }
-                _ => {}
+            if let Some(app_event) = crate::event::Event::from_winit_event(event) {
+                let mut ctx = EventContext {
+                    state: &mut state,
+                    scene: &mut scene,
+                    control_flow,
+                };
+                dispatcher.dispatch(&app_event, &mut ctx);
             }
         })
         .unwrap();

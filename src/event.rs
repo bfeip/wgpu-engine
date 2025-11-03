@@ -7,13 +7,17 @@ use crate::scene::Scene;
 ///
 /// This struct bundles all the mutable state that event callbacks need to access,
 /// including the rendering state, scene, and event loop control flow.
-pub struct EventContext<'a> {
+///
+/// ## Lifetime Parameters
+/// - `'w`: The window lifetime - DrawState holds a reference to the Window with this lifetime
+/// - `'c`: The callback lifetime - represents the duration of a single event callback invocation
+pub struct EventContext<'w, 'c> {
     /// Mutable reference to the rendering state
-    pub state: &'a mut DrawState<'a>,
+    pub state: &'c mut DrawState<'w>,
     /// Mutable reference to the scene
-    pub scene: &'a mut Scene,
+    pub scene: &'c mut Scene,
     /// Reference to the event loop control flow (for exiting the application, etc.)
-    pub control_flow: &'a winit::event_loop::EventLoopWindowTarget<()>,
+    pub control_flow: &'c winit::event_loop::EventLoopWindowTarget<()>,
 }
 
 /// Type alias for event callback functions.
@@ -21,7 +25,7 @@ pub struct EventContext<'a> {
 /// Callbacks receive a reference to the event and mutable access to the event context.
 /// They return `true` to stop event propagation or `false` to continue processing
 /// additional callbacks for the same event kind.
-type EventCallback = Box<dyn for<'a> Fn(&Event, &mut EventContext<'a>) -> bool>;
+type EventCallback = Box<dyn for<'w, 'c> Fn(&Event, &mut EventContext<'w, 'c>) -> bool>;
 
 /// enum representing event types.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
@@ -168,7 +172,7 @@ impl EventDispatcher {
     /// be called in registration order when an event of that kind is dispatched.
     pub fn register<F>(&mut self, kind: EventKind, callback: F)
     where
-        F: for<'a> Fn(&Event, &mut EventContext<'a>) -> bool + 'static
+        F: for<'w, 'c> Fn(&Event, &mut EventContext<'w, 'c>) -> bool + 'static
     {
         self.callback_map
             .entry(kind)
@@ -180,7 +184,7 @@ impl EventDispatcher {
     ///
     /// Callbacks are invoked in registration order. If a callback returns `true`,
     /// no further callbacks are invoked (propagation is stopped).
-    pub fn dispatch(&self, event: &Event, ctx: &mut EventContext) -> bool {
+    pub fn dispatch<'w, 'c>(&self, event: &Event, ctx: &mut EventContext<'w, 'c>) -> bool {
         if let Some(callbacks) = self.callback_map.get(&event.kind()) {
             for callback in callbacks {
                 if callback(event, ctx) {
