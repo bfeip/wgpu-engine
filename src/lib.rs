@@ -24,7 +24,7 @@ use wasm_bindgen::prelude::*;
 use crate::scene::Scene;
 use crate::drawstate::DrawState;
 use crate::event::{EventDispatcher, EventKind, EventContext};
-use crate::operator::{OperatorManager, NavigationOperator, NAVIGATION_OPERATOR_ID};
+use crate::operator::{OperatorManager, NavigationOperator, BuiltinOperatorId};
 
 
 enum VertexShaderLocations {
@@ -90,7 +90,7 @@ pub async fn run() {
 
     // Set up operator manager and add navigation operator
     let mut operator_manager = OperatorManager::new();
-    let nav_operator = Box::new(NavigationOperator::new(NAVIGATION_OPERATOR_ID));
+    let nav_operator = Box::new(NavigationOperator::new(BuiltinOperatorId::Navigation.into()));
     operator_manager.add_operator(nav_operator, 1, &mut dispatcher);
 
     // Register CloseRequested handler

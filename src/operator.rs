@@ -15,6 +15,12 @@ pub enum BuiltinOperatorId {
     Navigation = 0
 }
 
+impl Into<OperatorId> for BuiltinOperatorId {
+    fn into(self) -> OperatorId {
+        self as OperatorId
+    }
+}
+
 /// Operators encapsulate interaction logic and manage their own state. They register
 /// callbacks with the EventDispatcher and can be dynamically activated/deactivated.
 ///
