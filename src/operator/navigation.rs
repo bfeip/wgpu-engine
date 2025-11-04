@@ -15,9 +15,13 @@ struct NavState {
     azimuth: f32,
     /// Elevation angle in radians (vertical rotation, clamped to avoid gimbal lock).
     elevation: f32,
-    /// Distance from camera to target (orbit radius).
+    /// Base distance from camera to target.
     radius: f32,
 }
+
+// Camera distance bounds for zoom
+const MIN_RADIUS: f32 = 0.5; // Minimum camera distance
+const MAX_RADIUS: f32 = 50.0; // Maximum camera distance
 
 impl NavState {
     fn new() -> Self {
@@ -30,8 +34,9 @@ impl NavState {
     }
 
     /// Initialize parameters from current camera state.
+    /// Called when starting a drag operation.
     fn init_from_camera(&mut self, camera: &Camera) {
-        // Calculate radius (distance from eye to target)
+        // Calculate base radius (distance from eye to target) and reset zoom offset
         self.radius = camera.eye.distance(camera.target);
 
         // Calculate direction vector from target to eye
@@ -47,12 +52,26 @@ impl NavState {
 
     /// Update camera position based on current orbit parameters.
     fn update_camera_position(&self, camera: &mut Camera) {
-        // Convert spherical coordinates to Cartesian
+        // Convert spherical coordinates to Cartesian using effective radius
         let x = camera.target.x + self.radius * self.elevation.cos() * self.azimuth.sin();
         let y = camera.target.y + self.radius * self.elevation.sin();
         let z = camera.target.z + self.radius * self.elevation.cos() * self.azimuth.cos();
 
         camera.eye = cgmath::point3(x, y, z);
+    }
+
+    /// Handle zoom via mouse wheel by adjusting camera distance.
+    /// Positive delta = zoom in (decrease radius)
+    /// Negative delta = zoom out (increase radius)
+    fn handle_zoom(&mut self, delta: f32, camera: &mut Camera) {
+        const ZOOM_SENSITIVITY: f32 = 0.5; // Distance units per wheel unit
+
+        // Adjust zoom offset and clamp (positive delta decreases radius = zoom in)
+        self.radius -= delta * ZOOM_SENSITIVITY;
+        self.radius = self.radius.clamp(MIN_RADIUS, MAX_RADIUS);
+
+        // Update camera position with new radius
+        self.update_camera_position(camera);
     }
 }
 
@@ -139,7 +158,30 @@ impl Operator for NavigationOperator {
             }
         });
 
-        self.callback_ids = vec![mouse_input_callback, mouse_motion_callback];
+        // Register MouseWheel handler for zoom
+        let operator_state = self.state.clone();
+        let mouse_wheel_callback = dispatcher.register(EventKind::MouseWheel, move |event, ctx| {
+            if let Event::MouseWheel { delta } = event {
+                use winit::event::MouseScrollDelta;
+
+                let mut s = operator_state.borrow_mut();
+
+                // Extract the scroll amount (positive = zoom in, negative = zoom out)
+                let scroll_amount = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => *y,
+                    MouseScrollDelta::PixelDelta(pos) => (pos.y / 10.0) as f32, // Scale pixel delta
+                };
+
+                s.init_from_camera(&ctx.state.camera);
+                s.handle_zoom(scroll_amount, &mut ctx.state.camera);
+
+                true
+            } else {
+                false
+            }
+        });
+
+        self.callback_ids = vec![mouse_input_callback, mouse_motion_callback, mouse_wheel_callback];
     }
 
     fn deactivate(&mut self, dispatcher: &mut EventDispatcher) {
