@@ -1,6 +1,9 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use cgmath::MetricSpace;
+
+use crate::camera::Camera;
 use crate::event::{CallbackId, Event, EventDispatcher, EventKind};
 use crate::operator::{Operator, OperatorId};
 
@@ -8,13 +11,48 @@ use crate::operator::{Operator, OperatorId};
 struct NavState {
     /// Whether the user is currently dragging (mouse button held down).
     is_dragging: bool,
+    /// Azimuth angle in radians (horizontal rotation around target).
+    azimuth: f32,
+    /// Elevation angle in radians (vertical rotation, clamped to avoid gimbal lock).
+    elevation: f32,
+    /// Distance from camera to target (orbit radius).
+    radius: f32,
 }
 
 impl NavState {
     fn new() -> Self {
         Self {
             is_dragging: false,
+            azimuth: 0.0,
+            elevation: 0.0,
+            radius: 5.0,
         }
+    }
+
+    /// Initialize parameters from current camera state.
+    fn init_from_camera(&mut self, camera: &Camera) {
+        // Calculate radius (distance from eye to target)
+        self.radius = camera.eye.distance(camera.target);
+
+        // Calculate direction vector from target to eye
+        let direction = camera.eye - camera.target;
+
+        // Calculate azimuth (horizontal angle around Y-axis, measured from +Z toward +X)
+        self.azimuth = direction.x.atan2(direction.z);
+
+        // Calculate elevation (vertical angle from horizontal plane)
+        let horizontal_distance = (direction.x * direction.x + direction.z * direction.z).sqrt();
+        self.elevation = direction.y.atan2(horizontal_distance);
+    }
+
+    /// Update camera position based on current orbit parameters.
+    fn update_camera_position(&self, camera: &mut Camera) {
+        // Convert spherical coordinates to Cartesian
+        let x = camera.target.x + self.radius * self.elevation.cos() * self.azimuth.sin();
+        let y = camera.target.y + self.radius * self.elevation.sin();
+        let z = camera.target.z + self.radius * self.elevation.cos() * self.azimuth.cos();
+
+        camera.eye = cgmath::point3(x, y, z);
     }
 }
 
@@ -43,7 +81,7 @@ impl Operator for NavigationOperator {
     fn activate(&mut self, dispatcher: &mut EventDispatcher) {
         // Register MouseInput handler to track dragging state
         let operator_state = self.state.clone();
-        let mouse_input_callback = dispatcher.register(EventKind::MouseInput, move |event, _ctx| {
+        let mouse_input_callback = dispatcher.register(EventKind::MouseInput, move |event, ctx| {
             if let Event::MouseInput {
                 state: button_state,
                 button,
@@ -54,6 +92,8 @@ impl Operator for NavigationOperator {
                 let mut s = operator_state.borrow_mut();
                 match (button, button_state) {
                     (MouseButton::Left, ElementState::Pressed) => {
+                        // Initialize orbit parameters from current camera state
+                        s.init_from_camera(&ctx.state.camera);
                         s.is_dragging = true;
                     }
                     (MouseButton::Left, ElementState::Released) => {
@@ -71,23 +111,24 @@ impl Operator for NavigationOperator {
         let operator_state = self.state.clone();
         let mouse_motion_callback = dispatcher.register(EventKind::MouseMotion, move |event, ctx| {
             if let Event::MouseMotion { delta } = event {
-                let s = operator_state.borrow();
+                let mut s = operator_state.borrow_mut();
 
                 if s.is_dragging {
-                    // Update camera rotation based on mouse movement
+                    // Update orbit angles based on mouse movement
                     let sensitivity = 0.005;
                     let dx = delta.0 as f32 * sensitivity;
+                    let dy = delta.1 as f32 * sensitivity;
 
-                    ctx.state.camera_rotation_radians -= dx;
-                    ctx.state.camera_rotation_radians %= std::f32::consts::TAU;
+                    // Update azimuth (horizontal rotation)
+                    s.azimuth -= dx;
 
-                    // Update camera position in an orbit around the origin
-                    let angle = ctx.state.camera_rotation_radians;
-                    let radius = 5.0;
-                    let x = f32::sin(angle) * radius;
-                    let y = ctx.state.camera.eye.y;
-                    let z = f32::cos(angle) * radius;
-                    ctx.state.camera.eye = cgmath::point3(x, y, z);
+                    // Update elevation (vertical rotation) with clamping to avoid gimbal lock
+                    s.elevation += dy;
+                    const MAX_ELEVATION: f32 = std::f32::consts::FRAC_PI_2 - 0.01; // Just under 90 degrees
+                    s.elevation = s.elevation.clamp(-MAX_ELEVATION, MAX_ELEVATION);
+
+                    // Update camera position based on new angles
+                    s.update_camera_position(&mut ctx.state.camera);
 
                     true
                 } else {
