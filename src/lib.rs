@@ -10,6 +10,7 @@ mod material;
 mod shaders;
 mod gltf;
 mod event;
+mod operator;
 
 use winit::{
     event_loop::EventLoop,
@@ -23,6 +24,7 @@ use wasm_bindgen::prelude::*;
 use crate::scene::Scene;
 use crate::drawstate::DrawState;
 use crate::event::{EventDispatcher, EventKind, EventContext};
+use crate::operator::{OperatorManager, NavigationOperator, NAVIGATION_OPERATOR_ID};
 
 
 enum VertexShaderLocations {
@@ -86,6 +88,11 @@ pub async fn run() {
     // Set up event dispatcher
     let mut dispatcher = EventDispatcher::new();
 
+    // Set up operator manager and add navigation operator
+    let mut operator_manager = OperatorManager::new();
+    let nav_operator = Box::new(NavigationOperator::new(NAVIGATION_OPERATOR_ID));
+    operator_manager.add_operator(nav_operator, 1, &mut dispatcher);
+
     // Register CloseRequested handler
     dispatcher.register(EventKind::CloseRequested, |_event, ctx| {
         ctx.control_flow.exit();
@@ -140,27 +147,10 @@ pub async fn run() {
         if let crate::event::Event::KeyboardInput { event: key_event, .. } = event {
             use winit::keyboard::PhysicalKey;
 
-            let mut update_camera = |angle: f32| {
-                let x = f32::sin(angle) * 5.;
-                let y = ctx.state.camera.eye.y;
-                let z = f32::cos(angle) * 5.;
-                ctx.state.camera.eye = cgmath::point3(x, y, z);
-            };
-
             match key_event.physical_key {
                 PhysicalKey::Code(KeyCode::Escape) => {
                     ctx.control_flow.exit();
                 },
-                PhysicalKey::Code(KeyCode::ArrowLeft) => {
-                    ctx.state.camera_rotation_radians =
-                        ctx.state.camera_rotation_radians - 0.1 % std::f32::consts::TAU;
-                    update_camera(ctx.state.camera_rotation_radians);
-                },
-                PhysicalKey::Code(KeyCode::ArrowRight) => {
-                    ctx.state.camera_rotation_radians =
-                        ctx.state.camera_rotation_radians + 0.1 % std::f32::consts::TAU;
-                    update_camera(ctx.state.camera_rotation_radians);
-                }
                 _ => return false,
             }
             true

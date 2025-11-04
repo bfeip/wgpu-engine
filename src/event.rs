@@ -20,6 +20,9 @@ pub struct EventContext<'w, 'c> {
     pub control_flow: &'c winit::event_loop::EventLoopWindowTarget<()>,
 }
 
+/// Unique identifier for a registered callback.
+pub type CallbackId = u32;
+
 /// Type alias for event callback functions.
 ///
 /// Callbacks receive a reference to the event and mutable access to the event context.
@@ -153,31 +156,96 @@ impl Event {
 ///
 /// Callbacks are registered by [`EventKind`] and invoked when matching events
 /// are dispatched. Multiple callbacks can be registered for the same event kind,
-/// and they are called in registration order until one returns `true`.
+/// and they are called until one returns `true`.
+///
+/// Each callback is assigned a unique [`CallbackId`] when registered.
 pub struct EventDispatcher {
-    callback_map: HashMap<EventKind, Vec<EventCallback>>
+    callback_map: HashMap<EventKind, Vec<(CallbackId, EventCallback)>>,
+    next_id: u32,
 }
 
 impl EventDispatcher {
     /// Creates a new empty event dispatcher.
     pub fn new() -> Self {
         Self {
-            callback_map: HashMap::new()
+            callback_map: HashMap::new(),
+            next_id: 0,
         }
     }
 
     /// Registers a callback for a specific event kind.
     ///
     /// Multiple callbacks can be registered for the same event kind. They will
-    /// be called in registration order when an event of that kind is dispatched.
-    pub fn register<F>(&mut self, kind: EventKind, callback: F)
+    /// be called in order when an event of that kind is dispatched.
+    ///
+    /// Returns a [`CallbackId`] that can be used to unregister or reorder this callback.
+    pub fn register<F>(&mut self, kind: EventKind, callback: F) -> CallbackId
     where
         F: for<'w, 'c> Fn(&Event, &mut EventContext<'w, 'c>) -> bool + 'static
     {
+        let id = self.next_id;
+        self.next_id += 1;
+
         self.callback_map
             .entry(kind)
             .or_insert_with(Vec::new)
-            .push(Box::new(callback));
+            .push((id, Box::new(callback)));
+
+        id
+    }
+
+    /// Unregisters a callback by its ID.
+    ///
+    /// Find and remove the callback with the given ID.
+    /// Returns `true` if the callback was found and removed, `false` otherwise.
+    pub fn unregister(&mut self, id: CallbackId) -> bool {
+        for callbacks in self.callback_map.values_mut() {
+            if let Some(pos) = callbacks.iter().position(|(cid, _)| *cid == id) {
+                let _ = callbacks.remove(pos);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Reorders callbacks for a specific event kind.
+    ///
+    /// The callbacks will be reordered according to the provided slice of IDs.
+    /// Any callbacks not mentioned in the IDs slice will remain at the end in their current order.
+    /// IDs that don't exist are ignored.
+    ///
+    /// Returns `true` if the event kind exists, `false` otherwise.
+    pub fn reorder_kind(&mut self, kind: EventKind, ids: &[CallbackId]) -> bool {
+        if let Some(callbacks) = self.callback_map.get_mut(&kind) {
+            let mut reordered = Vec::new();
+
+            // Add callbacks in the order specified by ids
+            for &id in ids {
+                if let Some(pos) = callbacks.iter().position(|(cid, _)| *cid == id) {
+                    reordered.push(callbacks.remove(pos));
+                }
+            }
+
+            // Append any remaining callbacks that weren't in the ids list
+            reordered.append(callbacks);
+
+            *callbacks = reordered;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Reorders callbacks for all registered event kinds.
+    ///
+    /// This applies the same reordering to all event kinds that have callbacks registered.
+    /// Any callbacks not mentioned in the IDs slice will remain at the end in their current order.
+    pub fn reorder(&mut self, ids: &[CallbackId]) {
+        // Collect event kinds first to avoid borrowing issues
+        let kinds: Vec<EventKind> = self.callback_map.keys().copied().collect();
+        for kind in kinds {
+            self.reorder_kind(kind, ids);
+        }
     }
 
     /// Dispatches an event to all registered callbacks for its kind.
@@ -186,7 +254,7 @@ impl EventDispatcher {
     /// no further callbacks are invoked (propagation is stopped).
     pub fn dispatch<'w, 'c>(&self, event: &Event, ctx: &mut EventContext<'w, 'c>) -> bool {
         if let Some(callbacks) = self.callback_map.get(&event.kind()) {
-            for callback in callbacks {
+            for (_id, callback) in callbacks {
                 if callback(event, ctx) {
                     return true;
                 }
