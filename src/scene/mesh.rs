@@ -52,7 +52,11 @@ pub enum ObjMesh<'a, P: AsRef<Path>> {
 
 pub enum MeshDescriptor<'a, P: AsRef<Path>> {
     Empty,
-    Obj(ObjMesh<'a, P>)
+    Obj(ObjMesh<'a, P>),
+    Raw {
+        vertices: Vec<Vertex>,
+        indices: Vec<MeshIndex>,
+    },
 }
 
 pub struct Mesh {
@@ -61,7 +65,6 @@ pub struct Mesh {
     indices: Vec<MeshIndex>,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
-    instance_buffer: wgpu::Buffer,
 }
 
 impl Mesh {
@@ -79,6 +82,41 @@ impl Mesh {
                     ObjMesh::Path(path) => Self::from_obj_path(id, device, path, label)
                 }
             }
+            MeshDescriptor::Raw { vertices, indices } => {
+                Ok(Self::from_raw(id, device, vertices, indices, label))
+            }
+        }
+    }
+
+    fn from_raw(
+        id: MeshId,
+        device: &wgpu::Device,
+        vertices: Vec<Vertex>,
+        indices: Vec<MeshIndex>,
+        label: Option<&str>
+    ) -> Self {
+        use wgpu::util::DeviceExt;
+
+        let vertex_buffer_label = label.map(|l| format!("{}_vertex_buffer", l));
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: vertex_buffer_label.as_deref(),
+            contents: bytemuck::cast_slice(&vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
+        let index_buffer_label = label.map(|l| format!("{}_index_buffer", l));
+        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: index_buffer_label.as_deref(),
+            contents: bytemuck::cast_slice(&indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+
+        Self {
+            id,
+            vertices,
+            indices,
+            vertex_buffer,
+            index_buffer,
         }
     }
 
@@ -106,23 +144,12 @@ impl Mesh {
             mapped_at_creation: false
         });
 
-        let instance_buffer_label = label.and_then(| mesh_label | {
-            Some(mesh_label.to_owned() + "_instance_buffer")
-        });
-        let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: instance_buffer_label.as_deref(),
-            size: 0,
-            usage: wgpu::BufferUsages::VERTEX,
-            mapped_at_creation: false
-        });
-
         Self {
             id,
             vertices,
             indices,
             vertex_buffer,
             index_buffer,
-            instance_buffer,
         }
     }
 
@@ -159,22 +186,12 @@ impl Mesh {
             usage: wgpu::BufferUsages::INDEX,
         });
 
-        let instance_buffer_label = label.and_then(| mesh_label | {
-            Some(mesh_label.to_owned() + "_instance_buffer")
-        });
-        let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: instance_buffer_label.as_deref(),
-            contents: &[],
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-
         Ok(Self {
             id,
             vertices,
             indices,
             vertex_buffer,
             index_buffer,
-            instance_buffer,
         })
     }
 

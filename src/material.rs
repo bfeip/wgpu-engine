@@ -112,7 +112,7 @@ pub struct TextureMaterial {
 }
 
 impl TextureMaterial {
-    fn new(
+    fn new_from_path(
         id: MaterialId,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -122,27 +122,35 @@ impl TextureMaterial {
         let image_bytes = std::fs::read(path)?;
         let diffuse = Texture::from_bytes(device, queue, &image_bytes, "Texture Material Diffuse Texture")?;
 
+        Self::new_from_texture(id, device, bind_group_layout, diffuse)
+    }
+
+    fn new_from_texture(
+        id: MaterialId,
+        device: &wgpu::Device,
+        bind_group_layout: &wgpu::BindGroupLayout,
+        texture: Texture,
+    ) -> anyhow::Result<Self> {
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Texture Material Bind Group"),
             layout: bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&diffuse.view)
+                    resource: wgpu::BindingResource::TextureView(&texture.view)
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&diffuse.sampler)
+                    resource: wgpu::BindingResource::Sampler(&texture.sampler)
                 }
             ]
         });
 
-        let ret = Self {
+        Ok(Self {
             id,
-            diffuse,
+            diffuse: texture,
             bind_group
-        };
-        Ok(ret)
+        })
     }
 
     fn bind(&self, pass: &mut wgpu::RenderPass) -> anyhow::Result<()> {
@@ -235,12 +243,32 @@ impl MaterialManager {
         let id = self.next_id;
         self.next_id += 1;
 
-        let material = TextureMaterial::new(
+        let material = TextureMaterial::new_from_path(
             id,
             device,
             queue,
             &self.texture_bind_group_layout,
             diffuse_path.as_ref()
+        )?;
+
+        self.materials.insert(id, Material::Texture(material));
+
+        Ok(id)
+    }
+
+    pub fn create_texture_material(
+        &mut self,
+        device: &wgpu::Device,
+        texture: crate::texture::Texture,
+    ) -> anyhow::Result<MaterialId> {
+        let id = self.next_id;
+        self.next_id += 1;
+
+        let material = TextureMaterial::new_from_texture(
+            id,
+            device,
+            &self.texture_bind_group_layout,
+            texture,
         )?;
 
         self.materials.insert(id, Material::Texture(material));

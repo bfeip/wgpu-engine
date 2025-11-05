@@ -62,6 +62,8 @@ DrawBatch currently requires a matching material and mesh for instances to be ba
 together. However, we could do another type of batching for instances that share a
 material but not a mesh, where the vertices and indices of the mesh are buffered
 together and drawn together.
+We currently create an instance buffer with the instance transforms every time we
+draw. We should keep these buffers attached to the draw items so they can be reused.
 
 ## Don't forget
 - Initialize light buffer with light data
