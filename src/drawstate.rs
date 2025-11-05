@@ -39,7 +39,6 @@ pub struct DrawState<'a> {
     camera_bind_group: wgpu::BindGroup,
     lights_buffer: wgpu::Buffer,
     lights_bind_group: wgpu::BindGroup,
-    pub camera_rotation_radians: f32,
     depth_texture: texture::Texture
 }
 
@@ -213,9 +212,6 @@ impl<'a> DrawState<'a> {
 
         let depth_texture = texture::Texture::create_depth_texture(&device, &config, "depth_texture");
 
-        // A debug feature for rotating the camera without advanced controls
-        let camera_rotation_radians = 0.0;
-
         Self {
             surface,
             device,
@@ -232,7 +228,6 @@ impl<'a> DrawState<'a> {
             camera_bind_group,
             lights_buffer,
             lights_bind_group,
-            camera_rotation_radians,
             depth_texture
         }
     }

@@ -9,18 +9,19 @@ use crate::operator::{Operator, OperatorId};
 
 /// Internal state for the navigation operator.
 struct NavState {
-    /// Whether the user is currently orbit-dragging (left mouse button held down).
+    /// Whether the user is currently orbit-dragging.
     is_orbit_dragging: bool,
-    /// Whether the user is currently pan-dragging (right mouse button held down).
+    /// Whether the user is currently pan-dragging.
     is_pan_dragging: bool,
     /// Azimuth angle in radians (horizontal rotation around target).
     azimuth: f32,
-    /// Elevation angle in radians (vertical rotation, clamped to avoid gimbal lock).
+    /// Elevation angle in radians (vertical rotation).
     elevation: f32,
     /// Base distance from camera to target.
     radius: f32,
 }
 
+// TODO: in the future these should be proportional to the model bounds
 // Camera distance bounds for zoom
 const MIN_RADIUS: f32 = 0.5; // Minimum camera distance
 const MAX_RADIUS: f32 = 50.0; // Maximum camera distance
@@ -37,27 +38,26 @@ impl NavState {
     }
 
     /// Initialize parameters from current camera state.
-    /// Called when starting a drag operation.
     fn init_from_camera(&mut self, camera: &Camera) {
-        // Calculate base radius (distance from eye to target) and reset zoom offset
+        // Calculate radius (distance from eye to target)
         self.radius = camera.eye.distance(camera.target);
 
         // Calculate direction vector from target to eye
         let direction = camera.eye - camera.target;
 
-        // Calculate azimuth (horizontal angle around Y-axis, measured from +Z toward +X)
-        self.azimuth = direction.x.atan2(direction.z);
+        // Calculate azimuth (horizontal angle around Y-axis)
+        self.azimuth = f32::atan2(direction.x, direction.z);
 
         // Calculate elevation (vertical angle from horizontal plane)
-        let horizontal_distance = (direction.x * direction.x + direction.z * direction.z).sqrt();
-        self.elevation = direction.y.atan2(horizontal_distance);
+        let horizontal_distance = f32::sqrt(direction.x * direction.x + direction.z * direction.z);
+        self.elevation = f32::atan2(direction.y, horizontal_distance);
     }
 
     /// Update camera position based on current orbit parameters.
     fn update_camera_position(&self, camera: &mut Camera) {
         use cgmath::InnerSpace;
 
-        // Convert spherical coordinates to Cartesian using effective radius
+        // Convert spherical coordinates to Cartesian
         let x = camera.target.x + self.radius * self.elevation.cos() * self.azimuth.sin();
         let y = camera.target.y + self.radius * self.elevation.sin();
         let z = camera.target.z + self.radius * self.elevation.cos() * self.azimuth.cos();
@@ -80,6 +80,7 @@ impl NavState {
     /// Positive delta = zoom in (decrease radius)
     /// Negative delta = zoom out (increase radius)
     fn handle_zoom(&mut self, delta: f32, camera: &mut Camera) {
+        // TODO: in the future zoom amount should be proportional to model radius.
         const ZOOM_SENSITIVITY: f32 = 0.5; // Distance units per wheel unit
 
         // Adjust zoom offset and clamp (positive delta decreases radius = zoom in)
@@ -118,7 +119,7 @@ impl NavState {
         let dx = dx as f32 * PAN_SENSITIVITY;
         let dy = dy as f32 * PAN_SENSITIVITY;
 
-        // Get camera right and up vectors (perpendicular to view direction)
+        // Get camera right and up vectors
         let right = camera.right();
         let up_view = camera.up;
 
