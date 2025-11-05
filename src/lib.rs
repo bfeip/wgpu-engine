@@ -76,14 +76,23 @@ pub async fn run() {
             .expect("Couldn't append canvas to document body.");
     }
 
-    // DEMO CODE
+    // Initialize rendering state
     let mut state = DrawState::new(&window).await;
-    let texture = state.material_manager.create_texture_material_from_path(
+
+    // Load BoomBox glTF scene
+    let mut scene = crate::gltf::load_gltf_scene(
+        "/home/zachary/src/glTF-Sample-Models/2.0/BoomBox/glTF/BoomBox.gltf",
         &state.device,
         &state.queue,
-        "/home/zachary/src/wgpu-engine/src/happy-tree.png"
+        &mut state.material_manager,
     ).unwrap();
-    let mut scene = Scene::demo(&state.device, texture);
+
+    scene.lights = vec![
+            light::Light::new(
+                cgmath::Vector3 { x: 3., y: 3., z: 3. },
+                common::RgbaColor { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+            )
+        ];
 
     // Set up event dispatcher
     let mut dispatcher = EventDispatcher::new();
