@@ -192,26 +192,36 @@ impl Mesh {
         Self::from_obj(id, device, obj, label)
     }
 
-    // TODO: This function should not exist.
-    // We are creating buffers for groups of instances based on material while we are drawing them.
-    // We should maintain this data so that we can simply retrieve it when we are drawing.
-    // We should not be passing in the instances we want to draw from outside this function.
+    /// Draws instances of this mesh using pre-computed transforms.
+    ///
+    /// Transforms are provided by the scene tree traversal and batch collection.
+    /// This method creates an instance buffer from the transforms and issues a draw call.
     pub fn draw_instances(
         &self,
         device: &wgpu::Device,
         pass: &mut wgpu::RenderPass,
-        instances: &[&Instance]
+        instance_transforms: &[super::tree::InstanceTransform]
     ) {
-        let instance_raws: Vec<InstanceRaw> = instances.iter().map(|instance| {
-            instance.to_raw()
+        use super::InstanceRaw;
+
+        // Convert InstanceTransforms to InstanceRaw for the GPU
+        let instance_raws: Vec<InstanceRaw> = instance_transforms.iter().map(|inst_transform| {
+            InstanceRaw {
+                transform: inst_transform.world_transform.into(),
+                normal_mat: inst_transform.normal_matrix.into(),
+            }
         }).collect();
+
+        // Create instance buffer
         let instance_buffer = device.create_buffer_init(&BufferInitDescriptor {
             label: Some("Instance Buffer"),
             contents: bytemuck::cast_slice(&instance_raws),
             usage: wgpu::BufferUsages::VERTEX
         });
+
+        // Draw
         let n_indices = self.indices.len() as u32;
-        let n_instances = instances.len() as u32;
+        let n_instances = instance_transforms.len() as u32;
         pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         pass.set_vertex_buffer(1, instance_buffer.slice(..));
         pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);

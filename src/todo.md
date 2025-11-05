@@ -1,10 +1,9 @@
 # TODO
 
 ## Jots
-- Events and operators
-- NURBS
-- Screen trees and octrees
+- Scene tree
 - Scene from GLTF
+- NURBS
 - Selection
 - Multiple lights
 - Optimize drawing
@@ -32,43 +31,37 @@ for each material. All of the material specific information for a pipeline is in
 layout and the bind groups of the materials.
 
 ## glTF support and scene layout
-I want to implement a layout for scenes and I'm looking at glTF as a reference.
-I think most objects will have IDs, e.g. MeshIds, MaterialIds, and InstanceIds.
-One thing I'm worried about right now is that the concept of an instance is
-contained as part of a mesh. Mesh objects own their instances, I think when we have a scene
-That's going to change. I did that for a good reason, because we want to draw instances
-of the same mesh with the same material together. But I think what I'll need to do
-instead is have the concepts separated and then walk the scene tree looking for instances
-that we want to draw, and _then_ grouping them by what's best to draw together.
+I want to work towards being able to lead scenes from GLTF. GLTF has a tree-like structure
+so probably the first step for use to implement this is to do our scene tree. I've been
+putting this off for as long as possible because I wanted to have a clear idea of what I'm
+trying to accomplish before I write something so important. Bearing that in mind, I think
+it's still a good idea to leave the scene tree as simple as possible. I've considered
+approaches that involve octrees, but those are only really relevant if I have many
+instances. With the simple scenes I'm working with right now I think I can keep it
+simple and simply have a scene made of nodes, each node has a transform, and it can
+contain instances. Instances reference the mesh they're an instance of. When drawing
+the scene we walk the tree to compute the full transforms of the instances, determine if
+they're in the view frustum (we can probably leave this for later), and gather the instances
+according to material so their batches can be merged into the same draw call OR if there's
+more than a certain number of instances (3 for example), instead of merging those by material
+we draw them all together.
 
-## Operators
-I'm going to be adding Operators which will facilitate interaction with the 3d scene.
-To begin with, I'll add the base Operator trait and the OperatorManager which will hold
-a priority queue of objects that implement the Operator trait. These operators will
-interact with the recently developed Event system. When an operator is added onto the
-OperatorManager's priority queue, the operators methods will have to link up to the
-EventDispatcher via a callback created by the operator.
+### Step 1:
+Implement a scene tree with nodes. Each node will have a transform and contain either child
+nodes or instances.
 
-This will require some changes to Events and the EventDispatcher, firstly since the
-operators exist in a priority queue that can be rearranged at runtime depending on what
-operators the user is using, the callback order that the EventDispatcher dispatches to
-will have to be similarly re-worked so that callbacks can be recognized, and removed
-or re-ordered during runtime. Likely every callback will be assigned an ID when it's
-registered with the dispatcher, then that ID can later be used to un-register the
-callback.
+### Step 2:
+Implement a scene walker that will walk the scene tree, gathering the transforms on nodes
+so that we can compute the final transform on instances. The walker will sort the instances
+into draw items, buffers to be sent to the GPU optimized to minimize the number of draw calls.
 
-Another thing we will have to change in the event system is that event callbacks will
-likely want to modify data in their operators. For example, an operator that tracks 
-mouse drags for camera movement will first have to listen for mouse down events, then
-after a key down happens it will listen to mouse movement to move the camera. The 
-dragging ends when a mouse button up event occurs. In order to do this we may wand to
-find a way to attach additional context to an EventCallback. I'm not sure exactly how
-to do that in Rust though.
-
-The only operator I might do in this first pass might be the navigation operator.
-Selection is the other operator I really want but I think I should have a way to do
-ray casting before I start work on that. That kind of opens a whole door into deeper
-geometry query questions.
+### Impl notes:
+Ensure that the dirty flag is handled properly. Children of nodes that are marked dirty
+will need to be updated as well.
+DrawBatch currently requires a matching material and mesh for instances to be batched
+together. However, we could do another type of batching for instances that share a
+material but not a mesh, where the vertices and indices of the mesh are buffered
+together and drawn together.
 
 ## Don't forget
 - Initialize light buffer with light data

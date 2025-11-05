@@ -358,14 +358,29 @@ impl<'a> DrawState<'a> {
             render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
             render_pass.set_bind_group(1, &self.lights_bind_group, &[]);
 
-            for instance in scene.instances.values() {
-                let mesh = scene.meshes.get(&instance.mesh).unwrap();
-                let material = self.material_manager.get(instance.material).unwrap();
-                let pipeline = self.create_pipeline(material.material_type());
-                render_pass.set_pipeline(&pipeline);
+            // Collect all instances into batches grouped by mesh and material
+            let batches = scene.collect_draw_batches();
+
+            // Track current material type to minimize pipeline changes
+            let mut current_material_type: Option<crate::material::MaterialType> = None;
+
+            // Render each batch
+            for batch in batches {
+                let mesh = scene.meshes.get(&batch.mesh_id).unwrap();
+                let material = self.material_manager.get(batch.material_id).unwrap();
+
+                // Only change pipeline if material type changes
+                if current_material_type != Some(material.material_type()) {
+                    let pipeline = self.create_pipeline(material.material_type());
+                    render_pass.set_pipeline(&pipeline);
+                    current_material_type = Some(material.material_type());
+                }
+
+                // Bind material for this batch
                 material.bind(&mut render_pass)?;
 
-                mesh.draw_instances(&self.device, &mut render_pass, &[instance]);
+                // Draw all instances in this batch
+                mesh.draw_instances(&self.device, &mut render_pass, &batch.instances);
             }
         }
 

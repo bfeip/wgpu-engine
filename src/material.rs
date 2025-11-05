@@ -22,6 +22,7 @@ const DEFAULT_COLOR: RgbaColor = RgbaColor {
 
 pub type MaterialId = u32;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MaterialType {
     Color,
     Texture
