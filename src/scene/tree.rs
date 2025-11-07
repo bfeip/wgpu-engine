@@ -1,6 +1,6 @@
 use crate::common;
+use super::{InstanceId, NodeId, Scene};
 
-use super::{InstanceId, Node, NodeId, Scene};
 use cgmath::{Matrix3, Matrix4, SquareMatrix};
 
 /// Trait for implementing tree traversal operations.

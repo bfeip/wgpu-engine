@@ -21,7 +21,6 @@ use winit::{
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
-use crate::scene::Scene;
 use crate::drawstate::DrawState;
 use crate::event::{EventDispatcher, EventKind, EventContext};
 use crate::operator::{OperatorManager, NavigationOperator, BuiltinOperatorId};
