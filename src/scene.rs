@@ -7,7 +7,7 @@ mod batch;
 pub use mesh::{Mesh, MeshId, Vertex};
 pub use instance::{Instance, InstanceId, InstanceRaw};
 pub use node::{Node, NodeId};
-pub use tree::{InstanceTransform, collect_instance_transforms, walk_tree_recursive};
+pub use tree::{collect_instance_transforms};
 pub use batch::DrawBatch;
 
 use crate::{

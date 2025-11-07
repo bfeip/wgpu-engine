@@ -1,6 +1,27 @@
 use super::{InstanceId, Node, NodeId, Scene};
 use cgmath::{Matrix3, Matrix4, SquareMatrix};
 
+/// Trait for implementing custom tree traversal operations.
+///
+/// Implementors of this trait can be passed to tree walking functions
+/// to perform arbitrary operations on each node during traversal.
+///
+/// The visitor receives callbacks when entering and exiting nodes,
+/// allowing it to maintain state (like a transform stack) during traversal.
+pub trait TreeVisitor {
+    /// Called when entering a node (before processing its children).
+    ///
+    /// # Arguments
+    /// * `node` - Reference to the current node
+    fn enter_node(&mut self, node: &Node);
+
+    /// Called when exiting a node (after processing its children).
+    ///
+    /// # Arguments
+    /// * `node` - Reference to the current node
+    fn exit_node(&mut self, node: &Node);
+}
+
 /// Represents an instance with its computed world transform.
 pub struct InstanceTransform {
     pub instance_id: InstanceId,
@@ -59,21 +80,20 @@ pub fn compute_normal_matrix(world_transform: &Matrix4<f32>) -> Matrix3<f32> {
     }
 }
 
-/// Recursively walks the scene tree starting from a given node,
-/// computing world transforms and collecting instances.
+/// Recursively walks the scene tree starting from a given node.
+///
+/// This is a generic tree traversal function that calls visitor methods
+/// at appropriate times. All domain-specific logic (transforms, etc.)
+/// is delegated to the visitor implementation.
 ///
 /// # Arguments
-/// * `scene` - The scene containing all nodes and instances
+/// * `scene` - The scene containing all nodes
 /// * `node_id` - The ID of the current node to process
-/// * `parent_transform` - The accumulated world transform from the parent
-/// * `parent_changed` - Whether the parent's transform changed (forces recomputation)
-/// * `results` - Vector to collect instance transforms into
-pub fn walk_tree_recursive(
+/// * `visitor` - The visitor implementation to call for each node
+pub fn walk_tree_recursive<V: TreeVisitor>(
     scene: &Scene,
     node_id: NodeId,
-    parent_transform: Matrix4<f32>,
-    parent_changed: bool,
-    results: &mut Vec<InstanceTransform>,
+    visitor: &mut V,
 ) {
     // Get the node (return early if not found)
     let node = match scene.get_node(node_id) {
@@ -81,52 +101,109 @@ pub fn walk_tree_recursive(
         None => return,
     };
 
-    // Determine if we need to recompute this node's world transform
-    let node_dirty = node.is_dirty();
-    let needs_recompute = parent_changed || node_dirty;
+    // Enter this node
+    visitor.enter_node(node);
 
-    let world_transform = if needs_recompute {
-        // Compute world transform: parent * local
-        let local_transform = node.compute_local_transform();
-        let new_world_transform = parent_transform * local_transform;
-
-        // Cache the result
-        node.set_cached_world_transform(new_world_transform);
-
-        new_world_transform
-    } else {
-        // Use cached transform
-        node.cached_world_transform()
-    };
-
-    // If this node has an instance, collect it
-    if let Some(instance_id) = node.instance() {
-        results.push(InstanceTransform::new(instance_id, world_transform));
+    // Recurse for all children
+    for &child_id in node.children() {
+        walk_tree_recursive(scene, child_id, visitor);
     }
 
-    // Recurse for all children (they need recomputation if this node changed)
-    for &child_id in node.children() {
-        walk_tree_recursive(scene, child_id, world_transform, needs_recompute, results);
+    // Exit this node
+    visitor.exit_node(node);
+}
+
+/// Visitor implementation that collects instance transforms during tree traversal.
+///
+/// This visitor maintains a stack of world transforms as it walks the tree,
+/// computing transforms incrementally and caching them in nodes. It optimizes
+/// by using cached transforms when neither the node nor any parent is dirty.
+pub struct InstanceTransformCollector {
+    /// Stack of world transforms (one per tree depth level)
+    transform_stack: Vec<Matrix4<f32>>,
+    /// Stack tracking whether recomputation is needed at each level
+    needs_recompute_stack: Vec<bool>,
+    /// Collected instance transforms
+    results: Vec<InstanceTransform>,
+}
+
+impl InstanceTransformCollector {
+    /// Creates a new collector with an empty results vector.
+    pub fn new() -> Self {
+        Self {
+            transform_stack: vec![Matrix4::identity()], // Start with identity at root
+            needs_recompute_stack: vec![false], // Root level doesn't force recompute
+            results: Vec::new(),
+        }
+    }
+
+    /// Consumes the collector and returns the collected instance transforms.
+    pub fn into_results(self) -> Vec<InstanceTransform> {
+        self.results
+    }
+
+    /// Gets the current parent transform from the top of the stack.
+    fn current_parent_transform(&self) -> Matrix4<f32> {
+        *self.transform_stack.last().unwrap()
+    }
+
+    /// Gets whether any parent forced a recomputation.
+    fn parent_changed(&self) -> bool {
+        *self.needs_recompute_stack.last().unwrap()
+    }
+}
+
+impl TreeVisitor for InstanceTransformCollector {
+    fn enter_node(&mut self, node: &Node) {
+        let parent_transform = self.current_parent_transform();
+        let parent_changed = self.parent_changed();
+
+        // Determine if we need to recompute this node's world transform
+        let node_dirty = node.is_dirty();
+        let needs_recompute = parent_changed || node_dirty;
+
+        let world_transform = if needs_recompute {
+            // Compute world transform: parent * local
+            let local_transform = node.compute_local_transform();
+            let new_world_transform = parent_transform * local_transform;
+
+            // Cache the result
+            node.set_cached_world_transform(new_world_transform);
+
+            new_world_transform
+        } else {
+            // Use cached transform
+            node.cached_world_transform()
+        };
+
+        // Push state onto stacks for children
+        self.transform_stack.push(world_transform);
+        self.needs_recompute_stack.push(needs_recompute);
+
+        // If this node has an instance, collect it
+        if let Some(instance_id) = node.instance() {
+            self.results.push(InstanceTransform::new(instance_id, world_transform));
+        }
+    }
+
+    fn exit_node(&mut self, _node: &Node) {
+        // Pop the stacks when leaving the node
+        self.transform_stack.pop();
+        self.needs_recompute_stack.pop();
     }
 }
 
 /// Walks the entire scene tree and collects all instances with their world transforms.
 ///
 /// This starts from all root nodes (nodes with no parent) and recursively
-/// processes the entire tree.
+/// processes the entire tree, computing world transforms along the way.
 pub fn collect_instance_transforms(scene: &Scene) -> Vec<InstanceTransform> {
-    let mut results = Vec::new();
-    let identity = Matrix4::identity();
+    let mut visitor = InstanceTransformCollector::new();
 
     // Process each root node
     for &root_id in scene.root_nodes() {
-        // Check if the root node is dirty to avoid unnecessary recomputation
-        let parent_changed = scene.get_node(root_id)
-            .map(|node| node.is_dirty())
-            .unwrap_or(true); // If node not found, force recompute
-
-        walk_tree_recursive(scene, root_id, identity, parent_changed, &mut results);
+        walk_tree_recursive(scene, root_id, &mut visitor);
     }
 
-    results
+    visitor.into_results()
 }

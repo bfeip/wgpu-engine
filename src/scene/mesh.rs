@@ -5,8 +5,6 @@ use crate::{
     VertexShaderLocations
 };
 
-use super::instance::{Instance, InstanceRaw};
-
 pub type MeshId = u32;
 type MeshIndex = u16;
 
