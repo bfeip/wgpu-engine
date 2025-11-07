@@ -23,7 +23,7 @@ struct NavState {
 
 // TODO: in the future these should be proportional to the model bounds
 // Camera distance bounds for zoom
-const MIN_RADIUS: f32 = 0.5; // Minimum camera distance
+const MIN_RADIUS: f32 = 0.01; // Minimum camera distance
 const MAX_RADIUS: f32 = 50.0; // Maximum camera distance
 
 impl NavState {
@@ -81,7 +81,7 @@ impl NavState {
     /// Negative delta = zoom out (increase radius)
     fn handle_zoom(&mut self, delta: f32, camera: &mut Camera) {
         // TODO: in the future zoom amount should be proportional to model radius.
-        const ZOOM_SENSITIVITY: f32 = 0.5; // Distance units per wheel unit
+        const ZOOM_SENSITIVITY: f32 = 0.01; // Distance units per wheel unit
 
         // Adjust zoom offset and clamp (positive delta decreases radius = zoom in)
         self.radius -= delta * ZOOM_SENSITIVITY;
