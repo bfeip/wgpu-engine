@@ -1,24 +1,19 @@
+use crate::common;
+
 use super::{InstanceId, Node, NodeId, Scene};
 use cgmath::{Matrix3, Matrix4, SquareMatrix};
 
-/// Trait for implementing custom tree traversal operations.
+/// Trait for implementing tree traversal operations.
 ///
 /// Implementors of this trait can be passed to tree walking functions
 /// to perform arbitrary operations on each node during traversal.
 ///
-/// The visitor receives callbacks when entering and exiting nodes,
-/// allowing it to maintain state (like a transform stack) during traversal.
+/// The visitor receives callbacks when entering and exiting nodes.
 pub trait TreeVisitor {
     /// Called when entering a node (before processing its children).
-    ///
-    /// # Arguments
-    /// * `node` - Reference to the current node
     fn enter_node(&mut self, node: &Node);
 
     /// Called when exiting a node (after processing its children).
-    ///
-    /// # Arguments
-    /// * `node` - Reference to the current node
     fn exit_node(&mut self, node: &Node);
 }
 
@@ -33,7 +28,7 @@ impl InstanceTransform {
     /// Creates a new InstanceTransform with the given world transform.
     /// The normal matrix is computed from the world transform.
     pub fn new(instance_id: InstanceId, world_transform: Matrix4<f32>) -> Self {
-        let normal_matrix = compute_normal_matrix(&world_transform);
+        let normal_matrix = common::compute_normal_matrix(&world_transform);
         Self {
             instance_id,
             world_transform,
@@ -42,54 +37,7 @@ impl InstanceTransform {
     }
 }
 
-/// Computes the normal matrix from a world transform matrix.
-///
-/// The normal matrix is the inverse-transpose of the upper-left 3x3 portion
-/// of the transform matrix. This is necessary for correct normal transformation
-/// when non-uniform scaling is present.
-///
-/// If the matrix is not invertible, returns an identity matrix.
-pub fn compute_normal_matrix(world_transform: &Matrix4<f32>) -> Matrix3<f32> {
-    // Extract the upper-left 3x3 matrix
-    let mat3 = Matrix3::new(
-        world_transform[0][0],
-        world_transform[0][1],
-        world_transform[0][2],
-        world_transform[1][0],
-        world_transform[1][1],
-        world_transform[1][2],
-        world_transform[2][0],
-        world_transform[2][1],
-        world_transform[2][2],
-    );
-
-    // Compute inverse-transpose
-    match mat3.invert() {
-        Some(inv) => {
-            // Transpose by accessing columns as rows
-            Matrix3::new(
-                inv[0][0], inv[1][0], inv[2][0], // First row = first column of inv
-                inv[0][1], inv[1][1], inv[2][1], // Second row = second column of inv
-                inv[0][2], inv[1][2], inv[2][2], // Third row = third column of inv
-            )
-        }
-        None => {
-            // If not invertible, use identity (shouldn't happen in practice)
-            Matrix3::identity()
-        }
-    }
-}
-
 /// Recursively walks the scene tree starting from a given node.
-///
-/// This is a generic tree traversal function that calls visitor methods
-/// at appropriate times. All domain-specific logic (transforms, etc.)
-/// is delegated to the visitor implementation.
-///
-/// # Arguments
-/// * `scene` - The scene containing all nodes
-/// * `node_id` - The ID of the current node to process
-/// * `visitor` - The visitor implementation to call for each node
 pub fn walk_tree_recursive<V: TreeVisitor>(
     scene: &Scene,
     node_id: NodeId,
@@ -114,10 +62,6 @@ pub fn walk_tree_recursive<V: TreeVisitor>(
 }
 
 /// Visitor implementation that collects instance transforms during tree traversal.
-///
-/// This visitor maintains a stack of world transforms as it walks the tree,
-/// computing transforms incrementally and caching them in nodes. It optimizes
-/// by using cached transforms when neither the node nor any parent is dirty.
 pub struct InstanceTransformCollector {
     /// Stack of world transforms (one per tree depth level)
     transform_stack: Vec<Matrix4<f32>>,
@@ -131,8 +75,8 @@ impl InstanceTransformCollector {
     /// Creates a new collector with an empty results vector.
     pub fn new() -> Self {
         Self {
-            transform_stack: vec![Matrix4::identity()], // Start with identity at root
-            needs_recompute_stack: vec![false], // Root level doesn't force recompute
+            transform_stack: Vec::new(),
+            needs_recompute_stack: Vec::new(),
             results: Vec::new(),
         }
     }
@@ -144,12 +88,12 @@ impl InstanceTransformCollector {
 
     /// Gets the current parent transform from the top of the stack.
     fn current_parent_transform(&self) -> Matrix4<f32> {
-        *self.transform_stack.last().unwrap()
+        *self.transform_stack.last().unwrap_or(&Matrix4::identity())
     }
 
     /// Gets whether any parent forced a recomputation.
     fn parent_changed(&self) -> bool {
-        *self.needs_recompute_stack.last().unwrap()
+        *self.needs_recompute_stack.last().unwrap_or(&false)
     }
 }
 
@@ -194,9 +138,6 @@ impl TreeVisitor for InstanceTransformCollector {
 }
 
 /// Walks the entire scene tree and collects all instances with their world transforms.
-///
-/// This starts from all root nodes (nodes with no parent) and recursively
-/// processes the entire tree, computing world transforms along the way.
 pub fn collect_instance_transforms(scene: &Scene) -> Vec<InstanceTransform> {
     let mut visitor = InstanceTransformCollector::new();
 
