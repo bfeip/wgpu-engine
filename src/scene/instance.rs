@@ -6,10 +6,6 @@ use super::mesh::MeshId;
 pub type InstanceId = u32;
 
 /// An instance references a mesh and material to be rendered.
-///
-/// Instances are now pure data objects - they no longer store transforms.
-/// Transforms are managed by Nodes in the scene tree, and computed during
-/// tree traversal to generate InstanceRaw data for the GPU.
 pub struct Instance {
     pub id: InstanceId,
     pub mesh: MeshId,

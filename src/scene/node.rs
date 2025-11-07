@@ -5,13 +5,6 @@ use std::cell::Cell;
 pub type NodeId = u32;
 
 /// A node in the scene tree hierarchy.
-///
-/// Nodes form a tree structure where each node has:
-/// - A local transform (position, rotation, scale)
-/// - Optional parent and children nodes
-/// - Optional reference to an instance (for renderable nodes)
-///
-/// World transforms are computed by multiplying parent transforms down the tree.
 pub struct Node {
     pub id: NodeId,
     pub name: Option<String>,
