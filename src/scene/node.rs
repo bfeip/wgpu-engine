@@ -1,5 +1,5 @@
 use super::InstanceId;
-use cgmath::{EuclideanSpace, Matrix4, Point3, Quaternion, Vector3};
+use cgmath::{EuclideanSpace, Matrix4, Point3, Quaternion, SquareMatrix, Vector3};
 use std::cell::Cell;
 
 pub type NodeId = u32;
@@ -43,7 +43,7 @@ impl Node {
             parent: None,
             children: Vec::new(),
             instance: None,
-            world_transform: Cell::new(Matrix4::from_scale(1.0)),
+            world_transform: Cell::new(Matrix4::identity()),
             world_transform_dirty: Cell::new(true),
         }
     }

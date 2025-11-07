@@ -8,50 +8,47 @@ fn load_vertices(
     primitive: &gltf::Primitive,
     buffers: &[gltf::buffer::Data],
 ) -> anyhow::Result<Vec<Vertex>> {
-    // Get position accessor
-    let positions = primitive
-        .get(&gltf::Semantic::Positions)
+    // Create a reader for this primitive
+    let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
+
+    // Read positions (required)
+    let positions = reader
+        .read_positions()
         .ok_or_else(|| anyhow::anyhow!("Primitive missing positions"))?;
 
-    // Get normals accessor (required for lighting)
-    let normals = primitive
-        .get(&gltf::Semantic::Normals)
+    // Read normals (required for lighting)
+    let normals = reader
+        .read_normals()
         .ok_or_else(|| anyhow::anyhow!("Primitive missing normals"))?;
 
-    // Get texture coordinates (optional, default to [0, 0] if missing)
-    let tex_coords = primitive.get(&gltf::Semantic::TexCoords(0));
+    // Read texture coordinates (optional, default to [0, 0] if missing)
+    let tex_coords = reader.read_tex_coords(0);
 
-    let vertex_count = positions.count();
+    // Build vertex array by zipping iterators
+    let vertices = if let Some(tex_coords) = tex_coords {
+        // Map tex_coords to f32 in case it's u8 or u16 normalized format
+        let tex_coords_f32 = tex_coords.into_f32();
 
-    // Read position data
-    let pos_reader = read_accessor_vec3(&positions, buffers)?;
-
-    // Read normal data
-    let normal_reader = read_accessor_vec3(&normals, buffers)?;
-
-    // Read tex coord data (optional)
-    let tex_coord_reader = if let Some(tex_coords) = tex_coords {
-        Some(read_accessor_vec2(&tex_coords, buffers)?)
+        positions
+            .zip(normals)
+            .zip(tex_coords_f32)
+            .map(|((position, normal), tex_coords)| Vertex {
+                position,
+                normal,
+                tex_coords: [tex_coords[0], tex_coords[1], 0.0], // glTF uses 2D, we use 3D
+            })
+            .collect()
     } else {
-        None
+        // No texture coordinates, use default
+        positions
+            .zip(normals)
+            .map(|(position, normal)| Vertex {
+                position,
+                normal,
+                tex_coords: [0.0, 0.0, 0.0],
+            })
+            .collect()
     };
-
-    // Build vertex array
-    let mut vertices = Vec::with_capacity(vertex_count);
-    for i in 0..vertex_count {
-        let position = pos_reader[i];
-        let normal = normal_reader[i];
-        let tex_coords = tex_coord_reader
-            .as_ref()
-            .map(|reader| reader[i])
-            .unwrap_or([0.0, 0.0]);
-
-        vertices.push(Vertex {
-            position,
-            tex_coords: [tex_coords[0], tex_coords[1], 0.0], // glTF uses 2D tex coords, we use 3D
-            normal,
-        });
-    }
 
     Ok(vertices)
 }
@@ -61,99 +58,18 @@ fn load_indices(
     primitive: &gltf::Primitive,
     buffers: &[gltf::buffer::Data],
 ) -> anyhow::Result<Vec<u16>> {
-    let indices_accessor = primitive
-        .indices()
-        .ok_or_else(|| anyhow::anyhow!("Primitive missing indices"))?;
+    // Create a reader for this primitive
+    let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
 
-    read_accessor_u16(&indices_accessor, buffers)
-}
+    // Read indices and convert to u16
+    let indices = reader
+        .read_indices()
+        .ok_or_else(|| anyhow::anyhow!("Primitive missing indices"))?
+        .into_u32()
+        .map(|i| i as u16) // Convert u32 to u16 (assumes small meshes)
+        .collect();
 
-/// Reads vec3 data from an accessor.
-fn read_accessor_vec3(
-    accessor: &gltf::Accessor,
-    buffers: &[gltf::buffer::Data],
-) -> anyhow::Result<Vec<[f32; 3]>> {
-    let view = accessor.view().ok_or_else(|| anyhow::anyhow!("Accessor missing buffer view"))?;
-    let buffer = &buffers[view.buffer().index()];
-    let start = view.offset() + accessor.offset();
-    let stride = view.stride().unwrap_or(12); // Default stride for vec3
-
-    let mut data = Vec::with_capacity(accessor.count());
-    for i in 0..accessor.count() {
-        let offset = start + i * stride;
-        let bytes = &buffer[offset..offset + 12];
-        let floats: [f32; 3] = [
-            f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
-            f32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]),
-            f32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]),
-        ];
-        data.push(floats);
-    }
-
-    Ok(data)
-}
-
-/// Reads vec2 data from an accessor.
-fn read_accessor_vec2(
-    accessor: &gltf::Accessor,
-    buffers: &[gltf::buffer::Data],
-) -> anyhow::Result<Vec<[f32; 2]>> {
-    let view = accessor.view().ok_or_else(|| anyhow::anyhow!("Accessor missing buffer view"))?;
-    let buffer = &buffers[view.buffer().index()];
-    let start = view.offset() + accessor.offset();
-    let stride = view.stride().unwrap_or(8); // Default stride for vec2
-
-    let mut data = Vec::with_capacity(accessor.count());
-    for i in 0..accessor.count() {
-        let offset = start + i * stride;
-        let bytes = &buffer[offset..offset + 8];
-        let floats: [f32; 2] = [
-            f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
-            f32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]),
-        ];
-        data.push(floats);
-    }
-
-    Ok(data)
-}
-
-/// Reads u16 index data from an accessor.
-fn read_accessor_u16(
-    accessor: &gltf::Accessor,
-    buffers: &[gltf::buffer::Data],
-) -> anyhow::Result<Vec<u16>> {
-    let view = accessor.view().ok_or_else(|| anyhow::anyhow!("Accessor missing buffer view"))?;
-    let buffer = &buffers[view.buffer().index()];
-    let start = view.offset() + accessor.offset();
-
-    let mut data = Vec::with_capacity(accessor.count());
-
-    // Handle different index formats
-    match accessor.data_type() {
-        gltf::accessor::DataType::U16 => {
-            let stride = view.stride().unwrap_or(2);
-            for i in 0..accessor.count() {
-                let offset = start + i * stride;
-                let bytes = &buffer[offset..offset + 2];
-                data.push(u16::from_le_bytes([bytes[0], bytes[1]]));
-            }
-        }
-        gltf::accessor::DataType::U32 => {
-            // Convert u32 to u16 (may truncate - assumes small meshes)
-            let stride = view.stride().unwrap_or(4);
-            for i in 0..accessor.count() {
-                let offset = start + i * stride;
-                let bytes = &buffer[offset..offset + 4];
-                let value = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-                data.push(value as u16);
-            }
-        }
-        _ => {
-            return Err(anyhow::anyhow!("Unsupported index data type"));
-        }
-    }
-
-    Ok(data)
+    Ok(indices)
 }
 
 /// Loads a material from a glTF material definition.

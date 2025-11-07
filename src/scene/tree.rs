@@ -1,4 +1,4 @@
-use crate::common;
+use crate::{common, scene::Node};
 use super::{InstanceId, NodeId, Scene};
 
 use cgmath::{Matrix3, Matrix4, SquareMatrix};
