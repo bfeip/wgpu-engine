@@ -87,12 +87,11 @@ fn load_material(
     let pbr = material.pbr_metallic_roughness();
 
     // Check if material has a base color texture
-    if let Some(texture_info) = pbr.base_color_texture() {
-        let texture = texture_info.texture();
-        let image_index = texture.source().index();
+    if let Some(gltf_texture_info) = pbr.base_color_texture() {
+        let gltf_texture = gltf_texture_info.texture();
+        let image_index = gltf_texture.source().index();
         let gltf_image = &images[image_index];
 
-        // Convert gltf::image::Data to image::DynamicImage
         let dynamic_image = match gltf_image.format {
             gltf::image::Format::R8G8B8A8 => {
                 image::DynamicImage::ImageRgba8(
@@ -139,25 +138,23 @@ fn load_material(
 
 /// Decomposes a glTF transform into position, rotation, and scale.
 fn decompose_transform(transform: &gltf::scene::Transform) -> (cgmath::Point3<f32>, cgmath::Quaternion<f32>, cgmath::Vector3<f32>) {
-    use cgmath::{Point3, Quaternion, Vector3};
+    use cgmath::{Matrix4, Point3, Quaternion, Vector3};
 
     match transform {
         gltf::scene::Transform::Matrix { matrix } => {
-            // TODO: Properly decompose the matrix into TRS
-            // For now, extract translation and use identity for rotation/scale
-            let translation = Point3::new(matrix[3][0], matrix[3][1], matrix[3][2]);
-            let rotation = Quaternion::new(1.0, 0.0, 0.0, 0.0); // Identity
-            let scale = Vector3::new(1.0, 1.0, 1.0);
-            (translation, rotation, scale)
+            // glTF uses column-major order, same as cgmath
+            let cgmath_matrix = Matrix4::from(*matrix);
+            // Use the decompose_matrix function from common.rs
+            crate::common::decompose_matrix(&cgmath_matrix)
         }
         gltf::scene::Transform::Decomposed {
             translation,
             rotation,
             scale,
         } => {
-            let pos = Point3::new(translation[0], translation[1], translation[2]);
+            let pos = Point3::from(*translation);
             let rot = Quaternion::new(rotation[3], rotation[0], rotation[1], rotation[2]); // glTF: [x,y,z,w], cgmath: w,x,y,z
-            let scl = Vector3::new(scale[0], scale[1], scale[2]);
+            let scl = Vector3::from(*scale);
             (pos, rot, scl)
         }
     }
@@ -180,10 +177,10 @@ pub fn load_gltf_scene<P: AsRef<Path>>(
     let mut scene = Scene::new();
 
     // Load all materials first
-    let mut material_map: HashMap<usize, crate::material::MaterialId> = HashMap::new();
-    for (idx, material) in document.materials().enumerate() {
+    let mut material_map: Vec<crate::material::MaterialId> = Vec::new();
+    for material in document.materials() {
         let mat_id = load_material(&material, &images, device, queue, material_manager)?;
-        material_map.insert(idx, mat_id);
+        material_map.push(mat_id);
     }
 
     // Default material for primitives without a material
@@ -197,14 +194,20 @@ pub fn load_gltf_scene<P: AsRef<Path>>(
         },
     );
 
-    // Load all meshes
-    let mut mesh_map: HashMap<usize, Vec<(crate::scene::MeshId, crate::material::MaterialId)>> =
-        HashMap::new();
+    // Maps glTF mesh index -> list of (scene mesh, material) pairs
+    // We need this structure because glTF nodes reference mesh indices, and each glTF mesh
+    // can contain multiple primitives. We load each primitive as a separate scene mesh.
+    let mut mesh_map: Vec<Vec<(crate::scene::MeshId, crate::material::MaterialId)>> = Vec::new();
 
-    for (mesh_idx, mesh) in document.meshes().enumerate() {
+    for mesh in document.meshes() {
         let mut primitives_data = Vec::new();
 
         for (prim_idx, primitive) in mesh.primitives().enumerate() {
+            // Skip non-triangle primitives (we only support triangle rendering)
+            if primitive.mode() != gltf::mesh::Mode::Triangles {
+                continue;
+            }
+
             // Load vertex and index data
             let vertices = load_vertices(&primitive, &buffers)?;
             let indices = load_indices(&primitive, &buffers)?;
@@ -213,7 +216,7 @@ pub fn load_gltf_scene<P: AsRef<Path>>(
             let mesh_label = format!(
                 "{}_{}_prim_{}",
                 mesh.name().unwrap_or("mesh"),
-                mesh_idx,
+                mesh.index(),
                 prim_idx
             );
 
@@ -228,13 +231,13 @@ pub fn load_gltf_scene<P: AsRef<Path>>(
             let material_id = primitive
                 .material()
                 .index()
-                .and_then(|idx| material_map.get(&idx).copied())
+                .and_then(|idx| material_map.get(idx).copied())
                 .unwrap_or(default_material);
 
             primitives_data.push((mesh_id, material_id));
         }
 
-        mesh_map.insert(mesh_idx, primitives_data);
+        mesh_map.push(primitives_data);
     }
 
     // Load the scene hierarchy
@@ -256,65 +259,51 @@ fn load_node_recursive(
     gltf_node: &gltf::Node,
     parent: Option<crate::scene::NodeId>,
     scene: &mut crate::scene::Scene,
-    mesh_map: &std::collections::HashMap<usize, Vec<(crate::scene::MeshId, crate::material::MaterialId)>>,
+    mesh_map: &[Vec<(crate::scene::MeshId, crate::material::MaterialId)>],
     node_map: &mut std::collections::HashMap<usize, crate::scene::NodeId>,
 ) {
 
     // Decompose transform
     let (position, rotation, scale) = decompose_transform(&gltf_node.transform());
 
-    // Check if this node has a mesh
-    if let Some(mesh) = gltf_node.mesh() {
-        let primitives = &mesh_map[&mesh.index()];
+    // Create node(s) and track the parent node ID for child recursion
+    let node_id = if let Some(mesh) = gltf_node.mesh() {
+        let primitives = &mesh_map[mesh.index()];
 
-        // For multi-primitive meshes, create a parent node and child nodes for each primitive
-        if primitives.len() > 1 {
-            // Create parent node without an instance
+        if primitives.is_empty() {
+            // Mesh has no triangle primitives (only lines/points), treat as transform node
+            scene.add_node(parent, position, rotation, scale)
+        } else if primitives.len() > 1 {
+            // Multi-primitive mesh: create parent node and child nodes for each primitive
             let parent_node_id = scene.add_node(parent, position, rotation, scale);
-            node_map.insert(gltf_node.index(), parent_node_id);
 
-            // Create child nodes for each primitive
+            // Create child nodes for each primitive with identity transform
             for (mesh_id, material_id) in primitives {
                 scene.add_instance_node(
                     Some(parent_node_id),
                     *mesh_id,
                     *material_id,
-                    cgmath::Point3::new(0.0, 0.0, 0.0), // Identity transform (parent has the transform)
+                    cgmath::Point3::new(0.0, 0.0, 0.0),
                     cgmath::Quaternion::new(1.0, 0.0, 0.0, 0.0),
                     cgmath::Vector3::new(1.0, 1.0, 1.0),
                 );
             }
 
-            // Recurse for children
-            for child in gltf_node.children() {
-                load_node_recursive(&child, Some(parent_node_id), scene, mesh_map, node_map);
-            }
+            parent_node_id
         } else {
-            // Single primitive, create a single instance node
+            // Single primitive: create a single instance node
             let (mesh_id, material_id) = primitives[0];
-            let node_id = scene.add_instance_node(
-                parent,
-                mesh_id,
-                material_id,
-                position,
-                rotation,
-                scale,
-            );
-            node_map.insert(gltf_node.index(), node_id);
-
-            // Recurse for children
-            for child in gltf_node.children() {
-                load_node_recursive(&child, Some(node_id), scene, mesh_map, node_map);
-            }
+            scene.add_instance_node(parent, mesh_id, material_id, position, rotation, scale)
         }
     } else {
         // No mesh, just a transform node
-        let node_id = scene.add_node(parent, position, rotation, scale);
-        node_map.insert(gltf_node.index(), node_id);
+        scene.add_node(parent, position, rotation, scale)
+    };
 
-        // Recurse for children
-        for child in gltf_node.children() {
-            load_node_recursive(&child, Some(node_id), scene, mesh_map, node_map);
-        }
+    node_map.insert(gltf_node.index(), node_id);
+
+    // Recurse for all children
+    for child in gltf_node.children() {
+        load_node_recursive(&child, Some(node_id), scene, mesh_map, node_map);
     }
 }
