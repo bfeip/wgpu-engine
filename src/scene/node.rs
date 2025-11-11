@@ -1,4 +1,5 @@
 use super::InstanceId;
+use crate::common::Aabb;
 use cgmath::{EuclideanSpace, Matrix4, Point3, Quaternion, SquareMatrix, Vector3};
 use std::cell::Cell;
 
@@ -24,6 +25,9 @@ pub struct Node {
     // Cached world transform (for optimization)
     world_transform: Cell<Matrix4<f32>>,
     world_transform_dirty: Cell<bool>,
+
+    // Cached world-space bounding box (for optimization)
+    cached_bounds: Cell<Option<Aabb>>,
 }
 
 impl Node {
@@ -45,6 +49,7 @@ impl Node {
             instance: None,
             world_transform: Cell::new(Matrix4::identity()),
             world_transform_dirty: Cell::new(true),
+            cached_bounds: Cell::new(None),
         }
     }
 
@@ -140,6 +145,7 @@ impl Node {
     /// for propagating dirty flags to children.
     pub fn mark_dirty(&self) {
         self.world_transform_dirty.set(true);
+        self.cached_bounds.set(None);
     }
 
     pub fn is_dirty(&self) -> bool {
@@ -153,5 +159,15 @@ impl Node {
     pub fn set_cached_world_transform(&self, transform: Matrix4<f32>) {
         self.world_transform.set(transform);
         self.world_transform_dirty.set(false);
+    }
+
+    // Bounding box caching
+
+    pub fn cached_bounds(&self) -> Option<Aabb> {
+        self.cached_bounds.get()
+    }
+
+    pub fn set_cached_bounds(&self, bounds: Option<Aabb>) {
+        self.cached_bounds.set(bounds);
     }
 }

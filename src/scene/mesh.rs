@@ -242,4 +242,14 @@ impl Mesh {
         pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
         pass.draw_indexed(0..n_indices, 0, 0..n_instances);
     }
+
+    /// Returns a reference to the mesh's vertex data.
+    pub fn vertices(&self) -> &[Vertex] {
+        &self.vertices
+    }
+
+    /// Returns a reference to the mesh's index data.
+    pub fn indices(&self) -> &[MeshIndex] {
+        &self.indices
+    }
 }

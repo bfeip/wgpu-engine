@@ -5,8 +5,16 @@
     - Boundings
     - Ray casting
     - Volumes
+- Top level readme
+- Requesting a nodes transform or bounding should do the computation if dirty
+- Tree walker feature to skip subtrees on condition
+- Re-work ray picking walker to use TreeWalker trait
+- Ability to walk the scene with multiple walkers at once
+- Ensure scene walkers are optimal
+    - Ray selection uses transform and bounding walks. Combine.
 - Fix navigation operator to use bounding for sensitivity
 - Add fit camera to bounding
+- Drag and drop GLTF loading operator
 - Line and point rendering
 - NURBS
 - WESL
