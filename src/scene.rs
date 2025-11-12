@@ -4,14 +4,15 @@ mod node;
 mod tree;
 mod batch;
 
-pub use mesh::{Mesh, MeshDescriptor, MeshId, Vertex};
+use cgmath::{Matrix4, SquareMatrix};
+pub use mesh::{Mesh, MeshDescriptor, MeshHit, MeshId, Vertex};
 pub use instance::{Instance, InstanceId, InstanceRaw};
 pub use node::{Node, NodeId};
-pub use tree::{collect_instance_transforms};
+pub use tree::{collect_instance_transforms, TreeVisitor, walk_tree};
 pub use batch::DrawBatch;
 
 use crate::{
-    common::RgbaColor,
+    common::{Aabb, RgbaColor},
     light::Light,
     material::MaterialId,
 };
@@ -197,6 +198,121 @@ impl Scene {
             Quaternion::new(1.0, 0.0, 0.0, 0.0), // Identity quaternion
             Vector3::new(1.0, 1.0, 1.0),
         )
+    }
+
+    /// Gets the world transform of a node.
+    ///
+    /// This returns the cached transform if valid, otherwise computes it by
+    /// walking from the root to the node, computing and caching transforms
+    /// along the way.
+    pub fn nodes_transform(&self, node_id: NodeId) -> Matrix4<f32> {
+        let node = self.get_node(node_id).expect("Node not found");
+
+        // If cached and valid, return it
+        if let Some(cached) = node.cached_world_transform() {
+            return cached;
+        }
+
+        // Need to compute: build path from root to node
+        let mut path = Vec::new();
+        let mut current_id = node_id;
+
+        // Walk up to root
+        loop {
+            path.push(current_id);
+            if let Some(current) = self.get_node(current_id) {
+                if let Some(parent_id) = current.parent() {
+                    current_id = parent_id;
+                } else {
+                    // Reached root
+                    break;
+                }
+            } else {
+                panic!("Invalid node in hierarchy");
+            }
+        }
+
+        // Reverse to get root-to-node path
+        path.reverse();
+
+        // Walk down the path, computing transforms
+        let mut world_transform = Matrix4::identity();
+
+        for &id in &path {
+            let node = self.get_node(id).expect("Node not found");
+
+            // Check if this node has cached transform
+            if let Some(cached) = node.cached_world_transform() {
+                world_transform = cached;
+            } else {
+                // Compute: world = parent_world * local
+                let local_transform = node.compute_local_transform();
+                world_transform = world_transform * local_transform;
+
+                // Cache it
+                node.set_cached_world_transform(world_transform);
+            }
+        }
+
+        world_transform
+    }
+
+    /// Gets the world-space bounding box of a node and its subtree.
+    ///
+    /// This returns the cached bounds if valid, otherwise recursively computes
+    /// them bottom-up for the entire subtree rooted at this node.
+    ///
+    /// The bounds include both the node's instance (if any) and all descendants.
+    pub fn nodes_bounding(&self, node_id: NodeId) -> Option<Aabb> {
+        let node = self.get_node(node_id).expect("Node not found");
+
+        // If cached and valid, return it
+        if !node.bounds_dirty() {
+            return node.cached_bounds();
+        }
+
+        // Need to compute: first ensure transform is valid
+        let world_transform = self.nodes_transform(node_id);
+
+        // Recursively compute bounds for children
+        let mut merged_bounds: Option<Aabb> = None;
+
+        for &child_id in node.children() {
+            if let Some(child_bounds) = self.nodes_bounding(child_id) {
+                merged_bounds = match merged_bounds {
+                    Some(existing) => Some(existing.merge(&child_bounds)),
+                    None => Some(child_bounds),
+                };
+            }
+        }
+
+        // If this node has an instance, get its mesh bounds and transform to world space
+        let node_bounds = if let Some(instance_id) = node.instance() {
+            let instance = self.instances.get(&instance_id)
+                .expect("Instance referenced by node not found in scene");
+            let mesh = self.meshes.get(&instance.mesh)
+                .expect("Mesh referenced by instance not found in scene");
+
+            let local_bounds = mesh.bounding();
+            let world_bounds = local_bounds.map(|bounds| {
+                bounds.transform(&world_transform)
+            });
+
+            // Merge with child bounds
+            match (world_bounds, merged_bounds) {
+                (Some(wb), Some(cb)) => Some(wb.merge(&cb)),
+                (Some(wb), None) => Some(wb),
+                (None, cb) => cb,
+            }
+        } else {
+            // Branch node - just use merged child bounds
+            merged_bounds
+        };
+
+        // Cache it
+        node.set_cached_bounds(node_bounds);
+
+        node_bounds
     }
 
     pub fn demo(device: &wgpu::Device, material_id: MaterialId) -> Self {

@@ -5,6 +5,7 @@ mod camera;
 mod light;
 mod common;
 mod scene;
+mod geom_query;
 mod drawstate;
 mod material;
 mod shaders;

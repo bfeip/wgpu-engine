@@ -1,4 +1,5 @@
 use super::InstanceId;
+use crate::common::Aabb;
 use cgmath::{EuclideanSpace, Matrix4, Point3, Quaternion, SquareMatrix, Vector3};
 use std::cell::Cell;
 
@@ -21,9 +22,9 @@ pub struct Node {
     // Content: This node can reference an instance to be rendered
     instance: Option<InstanceId>,
 
-    // Cached world transform (for optimization)
-    world_transform: Cell<Matrix4<f32>>,
-    world_transform_dirty: Cell<bool>,
+    // Cached computed values (for optimization)
+    cached_world_transform: Cell<Option<Matrix4<f32>>>,
+    cached_bounds: Cell<Option<Aabb>>,
 }
 
 impl Node {
@@ -43,8 +44,8 @@ impl Node {
             parent: None,
             children: Vec::new(),
             instance: None,
-            world_transform: Cell::new(Matrix4::identity()),
-            world_transform_dirty: Cell::new(true),
+            cached_world_transform: Cell::new(None),
+            cached_bounds: Cell::new(None),
         }
     }
 
@@ -133,25 +134,41 @@ impl Node {
         self.instance = instance;
     }
 
-    // World transform caching
-
-    /// Marks this node's world transform as dirty (needs recomputation).
+    /// Marks this node's computed values as dirty (needs recomputation).
     /// Note: This only marks this node, not descendants. The Scene is responsible
     /// for propagating dirty flags to children.
     pub fn mark_dirty(&self) {
-        self.world_transform_dirty.set(true);
+        self.cached_world_transform.set(None);
+        self.cached_bounds.set(None);
     }
 
-    pub fn is_dirty(&self) -> bool {
-        self.world_transform_dirty.get()
+    pub fn transform_dirty(&self) -> bool {
+        self.cached_world_transform.get().is_none()
     }
 
-    pub fn cached_world_transform(&self) -> Matrix4<f32> {
-        self.world_transform.get()
+    pub fn bounds_dirty(&self) -> bool {
+        self.cached_bounds.get().is_none()
     }
 
-    pub fn set_cached_world_transform(&self, transform: Matrix4<f32>) {
-        self.world_transform.set(transform);
-        self.world_transform_dirty.set(false);
+    /// Gets the cached world transform if valid
+    /// You probably want [crate::scene::Scene::nodes_transform]
+    pub(super) fn cached_world_transform(&self) -> Option<Matrix4<f32>> {
+        self.cached_world_transform.get()
+    }
+
+    /// Sets the cached world transform
+    pub(super) fn set_cached_world_transform(&self, transform: Matrix4<f32>) {
+        self.cached_world_transform.set(Some(transform));
+    }
+
+    /// Gets the cached bounding box if valid
+    /// You probably want [crate::scene::Scene::nodes_bounding]
+    pub(super) fn cached_bounds(&self) -> Option<Aabb> {
+        self.cached_bounds.get()
+    }
+
+    /// Sets the cached bounding box
+    pub(super) fn set_cached_bounds(&self, bounds: Option<Aabb>) {
+        self.cached_bounds.set(bounds);
     }
 }

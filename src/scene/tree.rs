@@ -37,8 +37,8 @@ impl InstanceTransform {
     }
 }
 
-/// Recursively walks the scene tree starting from a given node.
-pub fn walk_tree_recursive<V: TreeVisitor>(
+/// Walks the scene tree starting from a given node.
+pub fn walk_tree<V: TreeVisitor>(
     scene: &Scene,
     node_id: NodeId,
     visitor: &mut V,
@@ -54,7 +54,7 @@ pub fn walk_tree_recursive<V: TreeVisitor>(
 
     // Recurse for all children
     for &child_id in node.children() {
-        walk_tree_recursive(scene, child_id, visitor);
+        walk_tree(scene, child_id, visitor);
     }
 
     // Exit this node
@@ -103,7 +103,7 @@ impl TreeVisitor for InstanceTransformCollector {
         let parent_changed = self.parent_changed();
 
         // Determine if we need to recompute this node's world transform
-        let node_dirty = node.is_dirty();
+        let node_dirty = node.transform_dirty();
         let needs_recompute = parent_changed || node_dirty;
 
         let world_transform = if needs_recompute {
@@ -117,7 +117,7 @@ impl TreeVisitor for InstanceTransformCollector {
             new_world_transform
         } else {
             // Use cached transform
-            node.cached_world_transform()
+            node.cached_world_transform().unwrap()
         };
 
         // Push state onto stacks for children
@@ -143,7 +143,7 @@ pub fn collect_instance_transforms(scene: &Scene) -> Vec<InstanceTransform> {
 
     // Process each root node
     for &root_id in scene.root_nodes() {
-        walk_tree_recursive(scene, root_id, &mut visitor);
+        walk_tree(scene, root_id, &mut visitor);
     }
 
     visitor.into_results()
