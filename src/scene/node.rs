@@ -1,6 +1,6 @@
 use super::InstanceId;
 use crate::common::Aabb;
-use cgmath::{EuclideanSpace, Matrix4, Point3, Quaternion, SquareMatrix, Vector3};
+use cgmath::{EuclideanSpace, Matrix4, Point3, Quaternion, Vector3};
 use std::cell::Cell;
 
 pub type NodeId = u32;

@@ -1,5 +1,5 @@
 use crate::common::Ray;
-use crate::scene::{NodeId, InstanceId, Scene, collect_instance_transforms};
+use crate::scene::{NodeId, InstanceId, Scene};
 use cgmath::{InnerSpace, Point3, SquareMatrix};
 
 /// Result of a ray-instance intersection test.
@@ -18,7 +18,6 @@ pub struct PickResult {
 }
 
 /// Recursively tests a ray against a node and its descendants.
-/// Uses cached bounding boxes to prune entire subtrees.
 fn pick_node_from_ray(
     ray: &Ray,
     node_id: NodeId,

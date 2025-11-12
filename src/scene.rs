@@ -5,10 +5,10 @@ mod tree;
 mod batch;
 
 use cgmath::{Matrix4, SquareMatrix};
-pub use mesh::{Mesh, MeshDescriptor, MeshHit, MeshId, Vertex};
+pub use mesh::{Mesh, MeshDescriptor, MeshId, Vertex};
 pub use instance::{Instance, InstanceId, InstanceRaw};
 pub use node::{Node, NodeId};
-pub use tree::{collect_instance_transforms, TreeVisitor, walk_tree};
+pub use tree::{collect_instance_transforms};
 pub use batch::DrawBatch;
 
 use crate::{
@@ -220,15 +220,12 @@ impl Scene {
         // Walk up to root
         loop {
             path.push(current_id);
-            if let Some(current) = self.get_node(current_id) {
-                if let Some(parent_id) = current.parent() {
-                    current_id = parent_id;
-                } else {
-                    // Reached root
-                    break;
-                }
+            let current = self.get_node(current_id).unwrap();
+            if let Some(parent_id) = current.parent() {
+                current_id = parent_id;
             } else {
-                panic!("Invalid node in hierarchy");
+                // Reached root
+                break;
             }
         }
 
