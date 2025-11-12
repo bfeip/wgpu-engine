@@ -12,7 +12,7 @@ pub use tree::{collect_instance_transforms};
 pub use batch::DrawBatch;
 
 use crate::{
-    common::{Aabb, RgbaColor},
+    common::{Aabb},
     light::Light,
     material::MaterialId,
 };
@@ -310,44 +310,5 @@ impl Scene {
         node.set_cached_bounds(node_bounds);
 
         node_bounds
-    }
-
-    pub fn demo(device: &wgpu::Device, material_id: MaterialId) -> Self {
-        use cgmath::{Point3, Quaternion, Rotation3, Vector3};
-
-        let mut scene = Self::new();
-        scene.lights = vec![
-            Light::new(
-                cgmath::Vector3 { x: 3., y: 3., z: 3. },
-                RgbaColor { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
-            )
-        ];
-
-        // Load a sample OBJ
-        let monkey_bytes = include_bytes!("monkey.obj");
-        let monkey_mesh_desc: MeshDescriptor<&str> = MeshDescriptor::Obj(mesh::ObjMesh::Bytes(monkey_bytes));
-        let monkey_mesh = scene.add_mesh(device, monkey_mesh_desc, Some("monkey_mesh")).unwrap();
-
-        // Create first instance at origin
-        scene.add_instance_node(
-            None,
-            monkey_mesh,
-            0,
-            Point3::new(0.0, 0.0, 0.0),
-            Quaternion::from_axis_angle(Vector3::unit_z(), cgmath::Rad(0.0)),
-            Vector3::new(1.0, 1.0, 1.0),
-        );
-
-        // Create second instance with rotation
-        scene.add_instance_node(
-            None,
-            monkey_mesh,
-            material_id,
-            Point3::new(2.0, 0.0, 0.0),
-            Quaternion::from_angle_z(cgmath::Rad(3.14_f32)),
-            Vector3::new(1.0, 1.0, 1.0),
-        );
-
-        scene
     }
 }
