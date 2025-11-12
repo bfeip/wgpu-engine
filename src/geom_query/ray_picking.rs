@@ -102,7 +102,7 @@ fn pick_node_recursive(
             .expect("Mesh referenced by instance not found in scene");
 
         // Get world transform for this node
-        let world_transform = node.cached_world_transform();
+        let world_transform = scene.nodes_transform(node_id);
         let world_to_local = world_transform.invert()
             .expect("Node world transform is not invertible");
 

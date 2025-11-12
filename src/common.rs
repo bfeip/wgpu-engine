@@ -98,7 +98,6 @@ impl Ray {
     }
 
     /// Transforms the ray by the given 4x4 transformation matrix.
-    /// The origin is transformed as a point, the direction as a vector.
     pub fn transform(&self, matrix: &Matrix4<f32>) -> Self {
         // Transform origin as a point (with w=1)
         let origin_homogeneous = matrix * self.origin.to_homogeneous();
@@ -151,12 +150,8 @@ impl Aabb {
         Some(Self { min, max })
     }
 
-    /// Transforms the AABB by the given 4x4 transformation matrix.
-    /// This handles rotation/scaling/shearing by transforming all 8 corners
-    /// and computing a new axis-aligned bounding box.
-    pub fn transform(&self, matrix: &Matrix4<f32>) -> Self {
-        // Transform all 8 corners of the box
-        let corners = [
+    pub fn corners(&self) -> [Point3<f32>; 8] {
+        [
             Point3::new(self.min.x, self.min.y, self.min.z),
             Point3::new(self.max.x, self.min.y, self.min.z),
             Point3::new(self.min.x, self.max.y, self.min.z),
@@ -165,7 +160,15 @@ impl Aabb {
             Point3::new(self.max.x, self.min.y, self.max.z),
             Point3::new(self.min.x, self.max.y, self.max.z),
             Point3::new(self.max.x, self.max.y, self.max.z),
-        ];
+        ]
+    }
+
+    /// Transforms the AABB by the given 4x4 transformation matrix.
+    /// This handles rotation/scaling/shearing by transforming all 8 corners
+    /// and computing a new axis-aligned bounding box.
+    pub fn transform(&self, matrix: &Matrix4<f32>) -> Self {
+        // Transform all 8 corners of the box
+        let corners = self.corners();
 
         let transformed_corners: Vec<Point3<f32>> = corners
             .iter()

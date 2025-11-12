@@ -1,8 +1,9 @@
-use std::{fs::File, io::BufReader, path::Path};
+use std::{cell::Cell, fs::File, io::BufReader, path::Path};
+use cgmath::Point3;
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
 use crate::{
-    VertexShaderLocations
+    VertexShaderLocations, common::Aabb
 };
 
 pub type MeshId = u32;
@@ -65,6 +66,8 @@ pub struct Mesh {
     indices: Vec<MeshIndex>,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
+
+    cached_bounding: Cell<Option<Aabb>>
 }
 
 impl Mesh {
@@ -117,6 +120,7 @@ impl Mesh {
             indices,
             vertex_buffer,
             index_buffer,
+            cached_bounding: Cell::new(None)
         }
     }
 
@@ -150,6 +154,7 @@ impl Mesh {
             indices,
             vertex_buffer,
             index_buffer,
+            cached_bounding: Cell::new(None)
         }
     }
 
@@ -192,6 +197,7 @@ impl Mesh {
             indices,
             vertex_buffer,
             index_buffer,
+            cached_bounding: Cell::new(None)
         })
     }
 
@@ -241,6 +247,31 @@ impl Mesh {
         pass.set_vertex_buffer(1, instance_buffer.slice(..));
         pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
         pass.draw_indexed(0..n_indices, 0, 0..n_instances);
+    }
+    
+    /// Computes the local-space axis-aligned bounding box for a mesh.
+    /// Returns None if the mesh has no vertices.
+    pub fn bounding(&self) -> Option<Aabb> {
+        let cached_bounding = self.cached_bounding.get();
+        if cached_bounding.is_some() {
+            // We only have to compute a bounding once per mesh unless we make
+            // meshes mutable somehow.
+            return cached_bounding
+        }
+
+        if self.vertices.is_empty() {
+            return None;
+        }
+
+        // Extract positions from vertices
+        let positions: Vec<Point3<f32>> = self.vertices
+            .iter()
+            .map(|v| Point3::new(v.position[0], v.position[1], v.position[2]))
+            .collect();
+
+        let bounding = Aabb::from_points(&positions);
+        self.cached_bounding.set(bounding);
+        bounding
     }
 
     /// Returns a reference to the mesh's vertex data.

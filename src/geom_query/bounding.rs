@@ -1,23 +1,6 @@
 use crate::common::Aabb;
-use crate::scene::{TreeVisitor, walk_tree_recursive, Mesh, Node, Scene};
+use crate::scene::{TreeVisitor, walk_tree, Mesh, Node, Scene};
 use cgmath::Point3;
-
-/// Computes the local-space axis-aligned bounding box for a mesh.
-/// Returns None if the mesh has no vertices.
-pub fn compute_mesh_bounds(mesh: &Mesh) -> Option<Aabb> {
-    let vertices = mesh.vertices();
-    if vertices.is_empty() {
-        return None;
-    }
-
-    // Extract positions from vertices
-    let positions: Vec<Point3<f32>> = vertices
-        .iter()
-        .map(|v| Point3::new(v.position[0], v.position[1], v.position[2]))
-        .collect();
-
-    Aabb::from_points(&positions)
-}
 
 /// Visitor implementation that computes and caches bounding boxes during tree traversal.
 pub struct BoundingBoxCollector<'a> {
@@ -40,6 +23,7 @@ impl<'a> BoundingBoxCollector<'a> {
 impl<'a> TreeVisitor for BoundingBoxCollector<'a> {
     fn enter_node(&mut self, _node: &Node) {
         // Push a new level onto the stack for this node's children
+        // This will be mutated if the node has children to contain their bounding.
         self.bounds_stack.push(None);
     }
 
@@ -56,9 +40,9 @@ impl<'a> TreeVisitor for BoundingBoxCollector<'a> {
                 .expect("Mesh referenced by instance not found in scene");
 
             // Get local-space mesh bounds and transform to world space
-            let local_bounds = compute_mesh_bounds(mesh);
+            let local_bounds = mesh.bounding();
             let world_bounds = local_bounds.map(|bounds| {
-                let world_transform = node.cached_world_transform();
+                let world_transform = self.scene.nodes_transform(node.id);
                 bounds.transform(&world_transform)
             });
 
@@ -99,6 +83,6 @@ pub fn compute_node_bounds(scene: &Scene) {
 
     // Process each root node
     for &root_id in scene.root_nodes() {
-        walk_tree_recursive(scene, root_id, &mut visitor);
+        walk_tree(scene, root_id, &mut visitor);
     }
 }
