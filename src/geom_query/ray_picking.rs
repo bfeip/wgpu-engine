@@ -29,11 +29,11 @@ fn pick_node_from_ray(
         .expect("Node ID not found in scene during picking");
 
     // Broad phase: Test against this node's bounding box
-    if let Some(bounds) = node.cached_bounds() {
-        if bounds.intersects_ray(ray).is_none() {
-            // Ray doesn't hit this node's bounds, skip entire subtree
-            return;
-        }
+    let Some(bounds) = scene.nodes_bounding(node_id) else {
+        return; // Subtree has no geometry, skip
+    };
+    if bounds.intersects_ray(ray).is_none() {
+        return; // Ray doesn't hit bounds, skip entire subtree
     }
 
     // If this node has an instance, test it
@@ -94,12 +94,6 @@ fn pick_node_from_ray(
 ///
 /// Returns a vector of PickResult sorted by distance (closest first).
 pub fn pick_all_from_ray(ray: &Ray, scene: &Scene) -> Vec<PickResult> {
-    // Ensure transforms are up-to-date (required for bounding box computation)
-    collect_instance_transforms(scene);
-
-    // Ensure bounding boxes are computed and cached
-    super::bounding::compute_node_bounds(scene);
-
     let mut results = Vec::new();
 
     // Walk the tree from each root node

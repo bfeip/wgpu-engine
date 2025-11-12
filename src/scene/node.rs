@@ -152,23 +152,23 @@ impl Node {
 
     /// Gets the cached world transform if valid
     /// You probably want [crate::scene::Scene::nodes_transform]
-    pub fn cached_world_transform(&self) -> Option<Matrix4<f32>> {
+    pub(super) fn cached_world_transform(&self) -> Option<Matrix4<f32>> {
         self.cached_world_transform.get()
     }
 
     /// Sets the cached world transform
-    pub fn set_cached_world_transform(&self, transform: Matrix4<f32>) {
+    pub(super) fn set_cached_world_transform(&self, transform: Matrix4<f32>) {
         self.cached_world_transform.set(Some(transform));
     }
 
     /// Gets the cached bounding box if valid
     /// You probably want [crate::scene::Scene::nodes_bounding]
-    pub fn cached_bounds(&self) -> Option<Aabb> {
+    pub(super) fn cached_bounds(&self) -> Option<Aabb> {
         self.cached_bounds.get()
     }
 
     /// Sets the cached bounding box
-    pub fn set_cached_bounds(&self, bounds: Option<Aabb>) {
+    pub(super) fn set_cached_bounds(&self, bounds: Option<Aabb>) {
         self.cached_bounds.set(bounds);
     }
 }

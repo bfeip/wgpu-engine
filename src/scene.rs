@@ -5,7 +5,7 @@ mod tree;
 mod batch;
 
 use cgmath::{Matrix4, SquareMatrix};
-pub use mesh::{Mesh, MeshDescriptor, MeshId, Vertex};
+pub use mesh::{Mesh, MeshDescriptor, MeshHit, MeshId, Vertex};
 pub use instance::{Instance, InstanceId, InstanceRaw};
 pub use node::{Node, NodeId};
 pub use tree::{collect_instance_transforms, TreeVisitor, walk_tree};
