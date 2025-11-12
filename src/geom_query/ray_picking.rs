@@ -83,14 +83,8 @@ fn pick_node_from_ray(
 
 /// Picks all instances intersected by a ray, sorted by distance from near to far.
 ///
-/// This function performs a hierarchical two-phase picking algorithm:
-/// 1. Broad phase: Test ray against node bounding boxes, pruning entire subtrees
-/// 2. Narrow phase: Test ray against individual triangles for nodes that passed broad phase
-///
 /// The ray should be in world space. The function walks the scene tree from root nodes,
 /// using cached bounding boxes to eliminate large portions of the scene efficiently.
-///
-/// Note: This function ensures bounding boxes and transforms are up-to-date before picking.
 ///
 /// Returns a vector of PickResult sorted by distance (closest first).
 pub fn pick_all_from_ray(ray: &Ray, scene: &Scene) -> Vec<PickResult> {
