@@ -328,7 +328,7 @@ impl Aabb {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cgmath::{Deg, Matrix4, Point3, Vector3};
+    use cgmath::{Matrix3, Matrix4, Point3, Vector3, EuclideanSpace};
 
     #[test]
     fn test_ray_creation_normalizes_direction() {
@@ -436,5 +436,541 @@ mod tests {
         let ray = Ray::new(Point3::new(-5.0, 5.0, 0.0), Vector3::new(1.0, 0.0, 0.0));
 
         assert!(aabb.intersects_ray(&ray).is_none());
+    }
+
+    // ===== compute_normal_matrix Tests =====
+
+    #[test]
+    fn test_normal_matrix_identity() {
+        let identity = Matrix4::<f32>::identity();
+        let normal_mat = compute_normal_matrix(&identity);
+        let expected = Matrix3::<f32>::identity();
+
+        // Compare each element
+        for i in 0..3 {
+            for j in 0..3 {
+                let diff: f32 = normal_mat[i][j] - expected[i][j];
+                assert!(diff.abs() < EPSILON);
+            }
+        }
+    }
+
+    #[test]
+    fn test_normal_matrix_uniform_scale() {
+        // Uniform scale by 2
+        let scale = Matrix4::from_scale(2.0);
+        let normal_mat = compute_normal_matrix(&scale);
+
+        // For uniform scale s, normal matrix should be scaled by 1/s
+        let expected_scale = 0.5;
+        assert!((normal_mat[0][0] - expected_scale).abs() < EPSILON);
+        assert!((normal_mat[1][1] - expected_scale).abs() < EPSILON);
+        assert!((normal_mat[2][2] - expected_scale).abs() < EPSILON);
+    }
+
+    #[test]
+    fn test_normal_matrix_non_uniform_scale() {
+        use cgmath::Matrix4;
+        // Non-uniform scale
+        let scale = Matrix4::from_nonuniform_scale(2.0, 3.0, 4.0);
+        let normal_mat = compute_normal_matrix(&scale);
+
+        // Normal matrix should correct for non-uniform scaling
+        // inv-transpose of diagonal should give reciprocals
+        assert!((normal_mat[0][0] - 0.5).abs() < EPSILON);
+        assert!((normal_mat[1][1] - (1.0/3.0)).abs() < EPSILON);
+        assert!((normal_mat[2][2] - 0.25).abs() < EPSILON);
+    }
+
+    #[test]
+    fn test_normal_matrix_rotation() {
+        use cgmath::{Matrix4, Rad};
+        // Rotation should preserve the rotation in normal matrix
+        let rotation = Matrix4::from_angle_z(Rad(std::f32::consts::PI / 4.0));
+        let normal_mat = compute_normal_matrix(&rotation);
+
+        // For pure rotation, normal matrix should equal rotation matrix (upper 3x3)
+        for i in 0..3 {
+            for j in 0..3 {
+                assert!((normal_mat[i][j] - rotation[i][j]).abs() < EPSILON);
+            }
+        }
+    }
+
+    #[test]
+    fn test_normal_matrix_combined_transforms() {
+        use cgmath::{Matrix4, Rad};
+        // Translation doesn't affect normal matrix, but rotation and scale do
+        // Transform: T(10,20,30) * R_y(90°) * S(2)
+        let transform = Matrix4::from_translation(Vector3::new(10.0, 20.0, 30.0))
+            * Matrix4::from_angle_y(Rad(std::f32::consts::PI / 2.0))
+            * Matrix4::from_scale(2.0);
+
+        let normal_mat = compute_normal_matrix(&transform);
+
+        // Normal matrix = inverse-transpose of upper 3x3
+        // For this transform:
+        // - Translation is ignored (doesn't affect 3x3 portion)
+        // - 90° rotation around Y: X→-Z, Y→Y, Z→X
+        // - Uniform scale by 2 → normal matrix scaled by 1/2 = 0.5
+        //
+        // Expected normal matrix (in row-major for clarity):
+        //   Row 0: [ ~0    0   0.5]
+        //   Row 1: [  0   0.5   0 ]
+        //   Row 2: [-0.5  0   ~0 ]
+        //
+        // In cgmath (column-major), matrix[col][row]:
+
+        // Check key elements that define the transformation
+        assert!((normal_mat[0][0]).abs() < EPSILON);           // col 0, row 0 ≈ 0
+        assert!((normal_mat[0][2] - -0.5).abs() < 0.001);      // col 0, row 2 ≈ -0.5
+        assert!((normal_mat[1][1] - 0.5).abs() < EPSILON);     // col 1, row 1 ≈ 0.5
+        assert!((normal_mat[2][0] - 0.5).abs() < 0.001);       // col 2, row 0 ≈ 0.5
+        assert!((normal_mat[2][2]).abs() < EPSILON);           // col 2, row 2 ≈ 0
+
+        // Verify the matrix represents correct normal transformation behavior
+        // A normal pointing in +X should transform correctly under rotation + scale
+        let normal_x = Vector3::new(1.0, 0.0, 0.0);
+        let transformed_x = normal_mat * normal_x;
+        // After 90° Y rotation and scale: X → -Z direction, scaled by 0.5
+        assert!((transformed_x.x).abs() < 0.001);
+        assert!((transformed_x.y).abs() < 0.001);
+        assert!((transformed_x.z - -0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_normal_matrix_non_invertible() {
+        // Zero scale matrix is non-invertible
+        let zero_scale = Matrix4::from_scale(0.0);
+        let normal_mat = compute_normal_matrix(&zero_scale);
+
+        // Should return identity for non-invertible matrix
+        let identity = Matrix3::<f32>::identity();
+        for i in 0..3 {
+            for j in 0..3 {
+                let diff: f32 = normal_mat[i][j] - identity[i][j];
+                assert!(diff.abs() < EPSILON);
+            }
+        }
+    }
+
+    // ===== decompose_matrix Tests =====
+
+    #[test]
+    fn test_decompose_identity() {
+        let identity = Matrix4::identity();
+        let (translation, rotation, scale) = decompose_matrix(&identity);
+
+        assert!((translation.x - 0.0).abs() < EPSILON);
+        assert!((translation.y - 0.0).abs() < EPSILON);
+        assert!((translation.z - 0.0).abs() < EPSILON);
+
+        // Identity quaternion is (w=1, x=0, y=0, z=0) or (s=1, v=0)
+        assert!((rotation.s - 1.0).abs() < EPSILON || (rotation.s + 1.0).abs() < EPSILON);
+
+        assert!((scale.x - 1.0).abs() < EPSILON);
+        assert!((scale.y - 1.0).abs() < EPSILON);
+        assert!((scale.z - 1.0).abs() < EPSILON);
+    }
+
+    #[test]
+    fn test_decompose_translation_only() {
+        let translation_vec = Vector3::new(5.0, 10.0, 15.0);
+        let matrix = Matrix4::from_translation(translation_vec);
+        let (translation, _rotation, scale) = decompose_matrix(&matrix);
+
+        assert!((translation.x - 5.0).abs() < EPSILON);
+        assert!((translation.y - 10.0).abs() < EPSILON);
+        assert!((translation.z - 15.0).abs() < EPSILON);
+
+        assert!((scale.x - 1.0).abs() < EPSILON);
+        assert!((scale.y - 1.0).abs() < EPSILON);
+        assert!((scale.z - 1.0).abs() < EPSILON);
+    }
+
+    #[test]
+    fn test_decompose_rotation_only() {
+        use cgmath::Rad;
+        let matrix = Matrix4::from_angle_y(Rad(std::f32::consts::PI / 2.0));
+        let (translation, rotation, scale) = decompose_matrix(&matrix);
+
+        assert!((translation.x - 0.0).abs() < EPSILON);
+        assert!((translation.y - 0.0).abs() < EPSILON);
+        assert!((translation.z - 0.0).abs() < EPSILON);
+
+        // Scale should be 1
+        assert!((scale.x - 1.0).abs() < EPSILON);
+        assert!((scale.y - 1.0).abs() < EPSILON);
+        assert!((scale.z - 1.0).abs() < EPSILON);
+
+        // Rotation should be 90° around Y axis
+        // Quaternion for rotation around Y by θ: (cos(θ/2), 0, sin(θ/2), 0)
+        // For θ = π/2: (cos(π/4), 0, sin(π/4), 0) = (√2/2, 0, √2/2, 0)
+        let sqrt2_over_2 = std::f32::consts::SQRT_2 / 2.0;
+        assert!((rotation.s - sqrt2_over_2).abs() < 0.001);  // scalar part
+        assert!((rotation.v.x - 0.0).abs() < EPSILON);        // x component
+        assert!((rotation.v.y - sqrt2_over_2).abs() < 0.001); // y component
+        assert!((rotation.v.z - 0.0).abs() < EPSILON);        // z component
+    }
+
+    #[test]
+    fn test_decompose_scale_only() {
+        let matrix = Matrix4::from_nonuniform_scale(2.0, 3.0, 4.0);
+        let (translation, _rotation, scale) = decompose_matrix(&matrix);
+
+        assert!((translation.x - 0.0).abs() < EPSILON);
+        assert!((translation.y - 0.0).abs() < EPSILON);
+        assert!((translation.z - 0.0).abs() < EPSILON);
+
+        assert!((scale.x - 2.0).abs() < EPSILON);
+        assert!((scale.y - 3.0).abs() < EPSILON);
+        assert!((scale.z - 4.0).abs() < EPSILON);
+    }
+
+    #[test]
+    fn test_decompose_trs_composition() {
+        use cgmath::Rad;
+        // Create a TRS matrix
+        let t = Matrix4::from_translation(Vector3::new(1.0, 2.0, 3.0));
+        let r = Matrix4::from_angle_z(Rad(std::f32::consts::PI / 4.0));
+        let s = Matrix4::from_scale(2.0);
+        let trs = t * r * s;
+
+        let (translation, rotation, scale) = decompose_matrix(&trs);
+
+        assert!((translation.x - 1.0).abs() < EPSILON);
+        assert!((translation.y - 2.0).abs() < EPSILON);
+        assert!((translation.z - 3.0).abs() < EPSILON);
+
+        assert!((scale.x - 2.0).abs() < EPSILON);
+        assert!((scale.y - 2.0).abs() < EPSILON);
+        assert!((scale.z - 2.0).abs() < EPSILON);
+
+        // Rotation should be 45° around Z axis
+        // Quaternion for rotation around Z by θ: (cos(θ/2), 0, 0, sin(θ/2))
+        // For θ = π/4: (cos(π/8), 0, 0, sin(π/8))
+        let half_angle = std::f32::consts::PI / 8.0;
+        let expected_s = half_angle.cos();  // cos(π/8) ≈ 0.9239
+        let expected_z = half_angle.sin();  // sin(π/8) ≈ 0.3827
+
+        assert!((rotation.s - expected_s).abs() < 0.001);     // scalar part
+        assert!((rotation.v.x - 0.0).abs() < EPSILON);        // x component
+        assert!((rotation.v.y - 0.0).abs() < EPSILON);        // y component
+        assert!((rotation.v.z - expected_z).abs() < 0.001);   // z component
+    }
+
+    #[test]
+    fn test_decompose_negative_scale() {
+        let matrix = Matrix4::from_nonuniform_scale(-1.0, 2.0, 3.0);
+        let (_translation, _rotation, scale) = decompose_matrix(&matrix);
+
+        // Negative scale should be preserved in magnitude
+        assert!((scale.x.abs() - 1.0).abs() < EPSILON);
+        assert!((scale.y - 2.0).abs() < EPSILON);
+        assert!((scale.z - 3.0).abs() < EPSILON);
+    }
+
+    #[test]
+    fn test_decompose_recompose_identity() {
+        // Decompose and recompose should give us back the original (approximately)
+        let original = Matrix4::from_translation(Vector3::new(5.0, 0.0, 0.0))
+            * Matrix4::from_scale(2.0);
+
+        let (translation, rotation, scale) = decompose_matrix(&original);
+
+        // Recompose: T * R * S
+        let t_mat = Matrix4::from_translation(translation.to_vec());
+        let r_mat = Matrix4::from(Matrix3::from(rotation));
+        let s_mat = Matrix4::from_nonuniform_scale(scale.x, scale.y, scale.z);
+        let recomposed = t_mat * r_mat * s_mat;
+
+        // Compare matrices (they should be very close)
+        for i in 0..4 {
+            for j in 0..4 {
+                let diff: f32 = original[i][j] - recomposed[i][j];
+                assert!(diff.abs() < 0.001);
+            }
+        }
+    }
+
+    // ===== Additional Ray Tests =====
+
+    #[test]
+    fn test_ray_triangle_intersection_hit() {
+        // Simple triangle in XY plane at z=0
+        let v0 = Point3::new(0.0, 0.0, 0.0);
+        let v1 = Point3::new(1.0, 0.0, 0.0);
+        let v2 = Point3::new(0.0, 1.0, 0.0);
+
+        // Ray shooting from -Z toward triangle center
+        let ray = Ray::new(Point3::new(0.25, 0.25, -1.0), Vector3::new(0.0, 0.0, 1.0));
+
+        let result = ray.intersect_triangle(v0, v1, v2);
+        assert!(result.is_some());
+
+        let (t, u, v) = result.unwrap();
+        assert!(t > 0.0); // Hit is in front of ray
+        assert!(u >= 0.0 && u <= 1.0);
+        assert!(v >= 0.0 && v <= 1.0);
+        assert!(u + v <= 1.0);
+    }
+
+    #[test]
+    fn test_ray_triangle_intersection_miss() {
+        let v0 = Point3::new(0.0, 0.0, 0.0);
+        let v1 = Point3::new(1.0, 0.0, 0.0);
+        let v2 = Point3::new(0.0, 1.0, 0.0);
+
+        // Ray shooting away from triangle
+        let ray = Ray::new(Point3::new(0.5, 0.5, -1.0), Vector3::new(0.0, 0.0, -1.0));
+
+        assert!(ray.intersect_triangle(v0, v1, v2).is_none());
+    }
+
+    #[test]
+    fn test_ray_triangle_intersection_parallel() {
+        let v0 = Point3::new(0.0, 0.0, 0.0);
+        let v1 = Point3::new(1.0, 0.0, 0.0);
+        let v2 = Point3::new(0.0, 1.0, 0.0);
+
+        // Ray parallel to triangle plane (XY plane)
+        let ray = Ray::new(Point3::new(0.5, 0.5, 1.0), Vector3::new(1.0, 0.0, 0.0));
+
+        assert!(ray.intersect_triangle(v0, v1, v2).is_none());
+    }
+
+    #[test]
+    fn test_ray_triangle_intersection_behind_ray() {
+        let v0 = Point3::new(0.0, 0.0, 0.0);
+        let v1 = Point3::new(1.0, 0.0, 0.0);
+        let v2 = Point3::new(0.0, 1.0, 0.0);
+
+        // Ray origin is past the triangle
+        let ray = Ray::new(Point3::new(0.25, 0.25, 1.0), Vector3::new(0.0, 0.0, 1.0));
+
+        assert!(ray.intersect_triangle(v0, v1, v2).is_none());
+    }
+
+    #[test]
+    fn test_ray_triangle_intersection_edge_cases() {
+        let v0 = Point3::new(0.0, 0.0, 0.0);
+        let v1 = Point3::new(1.0, 0.0, 0.0);
+        let v2 = Point3::new(0.0, 1.0, 0.0);
+
+        // Ray hitting exactly at v0
+        let ray = Ray::new(Point3::new(0.0, 0.0, -1.0), Vector3::new(0.0, 0.0, 1.0));
+        let result = ray.intersect_triangle(v0, v1, v2);
+        assert!(result.is_some());
+
+        let (_t, u, v) = result.unwrap();
+        // At v0: u=0, v=0
+        assert!(u.abs() < EPSILON);
+        assert!(v.abs() < EPSILON);
+    }
+
+    #[test]
+    fn test_ray_triangle_barycentric_coordinates() {
+        let v0 = Point3::new(0.0, 0.0, 0.0);
+        let v1 = Point3::new(1.0, 0.0, 0.0);
+        let v2 = Point3::new(0.0, 1.0, 0.0);
+
+        // Ray hitting triangle center
+        let ray = Ray::new(Point3::new(1.0/3.0, 1.0/3.0, -1.0), Vector3::new(0.0, 0.0, 1.0));
+
+        let result = ray.intersect_triangle(v0, v1, v2);
+        assert!(result.is_some());
+
+        let (_t, u, v) = result.unwrap();
+        let w = 1.0 - u - v;
+
+        // At center: u ≈ 1/3, v ≈ 1/3, w ≈ 1/3
+        assert!((u - 1.0/3.0).abs() < 0.01);
+        assert!((v - 1.0/3.0).abs() < 0.01);
+        assert!((w - 1.0/3.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_ray_transform_preserves_direction_normalization() {
+        let ray = Ray::new(Point3::new(0.0, 0.0, 0.0), Vector3::new(3.0, 4.0, 0.0));
+        let transform = Matrix4::from_translation(Vector3::new(1.0, 2.0, 3.0));
+
+        let transformed = ray.transform(&transform);
+
+        // Direction should still be normalized
+        assert!((transformed.direction.magnitude() - 1.0).abs() < EPSILON);
+    }
+
+    #[test]
+    fn test_ray_transform_with_rotation() {
+        use cgmath::Rad;
+        let ray = Ray::new(Point3::new(0.0, 0.0, 0.0), Vector3::new(1.0, 0.0, 0.0));
+
+        // Rotate 90 degrees around Z axis
+        let rotation = Matrix4::from_angle_z(Rad(std::f32::consts::PI / 2.0));
+        let transformed = ray.transform(&rotation);
+
+        // Direction should now point in +Y
+        assert!((transformed.direction.x - 0.0).abs() < EPSILON);
+        assert!((transformed.direction.y - 1.0).abs() < 0.001);
+        assert!((transformed.direction.z - 0.0).abs() < EPSILON);
+    }
+
+    #[test]
+    fn test_ray_transform_with_scale() {
+        let ray = Ray::new(Point3::new(1.0, 0.0, 0.0), Vector3::new(1.0, 0.0, 0.0));
+        let scale = Matrix4::from_scale(2.0);
+
+        let transformed = ray.transform(&scale);
+
+        // Origin should be scaled
+        assert!((transformed.origin.x - 2.0).abs() < EPSILON);
+        // Direction should still be normalized
+        assert!((transformed.direction.magnitude() - 1.0).abs() < EPSILON);
+    }
+
+    // ===== Additional AABB Tests =====
+
+    #[test]
+    fn test_aabb_corners() {
+        let aabb = Aabb::new(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 2.0, 3.0));
+        let corners = aabb.corners();
+
+        assert_eq!(corners.len(), 8);
+
+        // Verify min corner
+        assert_eq!(corners[0], Point3::new(0.0, 0.0, 0.0));
+        // Verify max corner
+        assert_eq!(corners[7], Point3::new(1.0, 2.0, 3.0));
+
+        // Verify all corners are within bounds
+        for corner in corners.iter() {
+            assert!(corner.x >= aabb.min.x && corner.x <= aabb.max.x);
+            assert!(corner.y >= aabb.min.y && corner.y <= aabb.max.y);
+            assert!(corner.z >= aabb.min.z && corner.z <= aabb.max.z);
+        }
+    }
+
+    #[test]
+    fn test_aabb_transform_rotation() {
+        use cgmath::Rad;
+        // Unit cube at origin
+        let aabb = Aabb::new(Point3::new(-0.5, -0.5, -0.5), Point3::new(0.5, 0.5, 0.5));
+
+        // Rotate 45 degrees around Z
+        let rotation = Matrix4::from_angle_z(Rad(std::f32::consts::PI / 4.0));
+        let transformed = aabb.transform(&rotation);
+
+        // Rotated AABB should be larger in X and Y (but same in Z)
+        let original_size_x = aabb.max.x - aabb.min.x;
+        let transformed_size_x = transformed.max.x - transformed.min.x;
+
+        assert!(transformed_size_x > original_size_x);
+
+        // Z size should be unchanged
+        let original_size_z = aabb.max.z - aabb.min.z;
+        let transformed_size_z = transformed.max.z - transformed.min.z;
+        assert!((transformed_size_z - original_size_z).abs() < EPSILON);
+    }
+
+    #[test]
+    fn test_aabb_transform_scale() {
+        let aabb = Aabb::new(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 1.0, 1.0));
+        let scale = Matrix4::from_scale(2.0);
+
+        let transformed = aabb.transform(&scale);
+
+        assert_eq!(transformed.min, Point3::new(0.0, 0.0, 0.0));
+        assert_eq!(transformed.max, Point3::new(2.0, 2.0, 2.0));
+    }
+
+    #[test]
+    fn test_aabb_transform_translation() {
+        let aabb = Aabb::new(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 1.0, 1.0));
+        let translation = Matrix4::from_translation(Vector3::new(5.0, 10.0, 15.0));
+
+        let transformed = aabb.transform(&translation);
+
+        assert_eq!(transformed.min, Point3::new(5.0, 10.0, 15.0));
+        assert_eq!(transformed.max, Point3::new(6.0, 11.0, 16.0));
+    }
+
+    #[test]
+    fn test_aabb_transform_combined() {
+        use cgmath::Rad;
+        let aabb = Aabb::new(Point3::new(-1.0, -1.0, -1.0), Point3::new(1.0, 1.0, 1.0));
+
+        // Combine translation, rotation, and scale
+        let transform = Matrix4::from_translation(Vector3::new(10.0, 0.0, 0.0))
+            * Matrix4::from_angle_z(Rad(std::f32::consts::PI / 4.0))
+            * Matrix4::from_scale(2.0);
+
+        let transformed = aabb.transform(&transform);
+
+        // Should have moved and grown
+        assert!(transformed.max.x > aabb.max.x);
+        assert!(transformed.min.x > aabb.min.x);
+    }
+
+    #[test]
+    fn test_aabb_merge_disjoint() {
+        // Two boxes that don't overlap
+        let aabb1 = Aabb::new(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 1.0, 1.0));
+        let aabb2 = Aabb::new(Point3::new(5.0, 5.0, 5.0), Point3::new(6.0, 6.0, 6.0));
+
+        let merged = aabb1.merge(&aabb2);
+
+        // Should encompass both
+        assert_eq!(merged.min, Point3::new(0.0, 0.0, 0.0));
+        assert_eq!(merged.max, Point3::new(6.0, 6.0, 6.0));
+    }
+
+    #[test]
+    fn test_aabb_merge_contained() {
+        // Small box inside large box
+        let large = Aabb::new(Point3::new(0.0, 0.0, 0.0), Point3::new(10.0, 10.0, 10.0));
+        let small = Aabb::new(Point3::new(2.0, 2.0, 2.0), Point3::new(3.0, 3.0, 3.0));
+
+        let merged = large.merge(&small);
+
+        // Should be same as large box
+        assert_eq!(merged.min, large.min);
+        assert_eq!(merged.max, large.max);
+    }
+
+    #[test]
+    fn test_aabb_expand_internal_point() {
+        let aabb = Aabb::new(Point3::new(0.0, 0.0, 0.0), Point3::new(10.0, 10.0, 10.0));
+
+        // Point already inside
+        let internal_point = Point3::new(5.0, 5.0, 5.0);
+        let expanded = aabb.expand(internal_point);
+
+        // Should be unchanged
+        assert_eq!(expanded.min, aabb.min);
+        assert_eq!(expanded.max, aabb.max);
+    }
+
+    #[test]
+    fn test_aabb_intersects_ray_grazing() {
+        let aabb = Aabb::new(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 1.0, 1.0));
+
+        // Ray just touching the top edge
+        let ray = Ray::new(Point3::new(-1.0, 1.0, 0.5), Vector3::new(1.0, 0.0, 0.0));
+
+        let result = aabb.intersects_ray(&ray);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_aabb_intersects_ray_from_corner() {
+        let aabb = Aabb::new(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 1.0, 1.0));
+
+        // Ray starting at corner, shooting out
+        let ray = Ray::new(Point3::new(0.0, 0.0, 0.0), Vector3::new(-1.0, -1.0, -1.0));
+
+        let result = aabb.intersects_ray(&ray);
+        // Should return 0 since origin is at corner (inside/on surface)
+        assert!(result.is_some());
+        assert!((result.unwrap() - 0.0).abs() < EPSILON);
     }
 }
