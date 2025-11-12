@@ -112,6 +112,64 @@ impl Ray {
             direction: new_direction.normalize(),
         }
     }
+
+    /// Tests if a ray intersects a triangle using the Möller-Trumbore algorithm.
+    ///
+    /// Returns Some((t, u, v)) if the ray hits the triangle, where:
+    /// - t: distance along the ray
+    /// - u, v: barycentric coordinates (w = 1 - u - v)
+    ///
+    /// Returns None if there's no intersection or if the intersection is behind the ray origin.
+    pub fn intersect_triangle(
+        &self,
+        v0: Point3<f32>,
+        v1: Point3<f32>,
+        v2: Point3<f32>,
+    ) -> Option<(f32, f32, f32)> {
+        // Compute edges from v0
+        let edge1 = v1 - v0;
+        let edge2 = v2 - v0;
+
+        // Begin calculating determinant - also used to calculate u parameter
+        let h = self.direction.cross(edge2);
+        let det = edge1.dot(h);
+
+        // If determinant is near zero, ray lies in plane of triangle or is parallel
+        if det.abs() < EPSILON {
+            return None;
+        }
+
+        let inv_det = 1.0 / det;
+
+        // Calculate distance from v0 to ray origin
+        let s = self.origin - v0;
+
+        // Calculate u parameter and test bounds
+        let u = inv_det * s.dot(h);
+        if u < 0.0 || u > 1.0 {
+            return None;
+        }
+
+        // Prepare to test v parameter
+        let q = s.cross(edge1);
+
+        // Calculate v parameter and test bounds
+        let v = inv_det * self.direction.dot(q);
+        if v < 0.0 || u + v > 1.0 {
+            return None;
+        }
+
+        // At this stage we can compute t to find out where the intersection point is on the line
+        let t = inv_det * edge2.dot(q);
+
+        // Ray intersection
+        if t > EPSILON {
+            Some((t, u, v))
+        } else {
+            // Line intersection but not a ray intersection (behind ray origin)
+            None
+        }
+    }
 }
 
 /// An axis-aligned bounding box (AABB) in 3D space.

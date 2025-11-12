@@ -3,11 +3,25 @@ use cgmath::Point3;
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
 use crate::{
-    VertexShaderLocations, common::Aabb
+    VertexShaderLocations,
+    common::{Aabb, Ray}
 };
 
 pub type MeshId = u32;
 type MeshIndex = u16;
+
+/// Result of a ray-mesh intersection test in local mesh space.
+#[derive(Debug, Clone)]
+pub struct MeshHit {
+    /// Distance along the ray to the hit point (in local space)
+    pub distance: f32,
+    /// Hit location in local mesh space
+    pub hit_point: Point3<f32>,
+    /// Index of the triangle that was hit (index into the mesh's index buffer / 3)
+    pub triangle_index: usize,
+    /// Barycentric coordinates of the hit point on the triangle (u, v, w) where w = 1 - u - v
+    pub barycentric: (f32, f32, f32),
+}
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -282,5 +296,37 @@ impl Mesh {
     /// Returns a reference to the mesh's index data.
     pub fn indices(&self) -> &[MeshIndex] {
         &self.indices
+    }
+
+    /// Tests a ray against all triangles in the mesh.
+    ///
+    /// The ray should be in local mesh space. Returns all intersections found,
+    /// unsorted (caller can sort by distance if needed).
+    pub fn intersect_ray(&self, ray: &Ray) -> Vec<MeshHit> {
+        let mut hits = Vec::new();
+
+        // Iterate through triangles (indices come in groups of 3)
+        for triangle_index in 0..(self.indices.len() / 3) {
+            let i0 = self.indices[triangle_index * 3] as usize;
+            let i1 = self.indices[triangle_index * 3 + 1] as usize;
+            let i2 = self.indices[triangle_index * 3 + 2] as usize;
+
+            let v0 = Point3::from(self.vertices[i0].position);
+            let v1 = Point3::from(self.vertices[i1].position);
+            let v2 = Point3::from(self.vertices[i2].position);
+
+            // Test ray-triangle intersection
+            if let Some((t, u, v)) = ray.intersect_triangle(v0, v1, v2) {
+                let w = 1.0 - u - v;
+                hits.push(MeshHit {
+                    distance: t,
+                    hit_point: ray.point_at(t),
+                    triangle_index,
+                    barycentric: (u, v, w),
+                });
+            }
+        }
+
+        hits
     }
 }
