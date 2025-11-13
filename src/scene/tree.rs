@@ -148,3 +148,144 @@ pub fn collect_instance_transforms(scene: &Scene) -> Vec<InstanceTransform> {
 
     visitor.into_results()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cgmath::{Matrix4, Vector3, SquareMatrix, Deg, Rotation3, Quaternion};
+    use crate::common::EPSILON;
+
+    // ========================================================================
+    // InstanceTransform Tests
+    // ========================================================================
+
+    #[test]
+    fn test_instance_transform_creation() {
+        let transform = Matrix4::from_scale(2.0);
+        let instance_transform = InstanceTransform::new(42, transform);
+
+        assert_eq!(instance_transform.instance_id, 42);
+        assert_eq!(instance_transform.world_transform, transform);
+    }
+
+    #[test]
+    fn test_instance_transform_identity() {
+        let identity = Matrix4::identity();
+        let instance_transform = InstanceTransform::new(1, identity);
+
+        // Verify identity transform
+        for i in 0..4 {
+            for j in 0..4 {
+                if i == j {
+                    assert_eq!(instance_transform.world_transform[i][j], 1.0);
+                } else {
+                    assert_eq!(instance_transform.world_transform[i][j], 0.0);
+                }
+            }
+        }
+
+        // Verify identity normal matrix
+        for i in 0..3 {
+            for j in 0..3 {
+                if i == j {
+                    assert_eq!(instance_transform.normal_matrix[i][j], 1.0);
+                } else {
+                    assert_eq!(instance_transform.normal_matrix[i][j], 0.0);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_instance_transform_normal_matrix_computed() {
+        let transform = Matrix4::from_scale(2.0);
+        let instance_transform = InstanceTransform::new(1, transform);
+
+        // Normal matrix should be inverse-transpose
+        // For uniform scale of 2.0, normal matrix should be 0.5
+        assert!((instance_transform.normal_matrix[0][0] - 0.5).abs() < EPSILON);
+        assert!((instance_transform.normal_matrix[1][1] - 0.5).abs() < EPSILON);
+        assert!((instance_transform.normal_matrix[2][2] - 0.5).abs() < EPSILON);
+    }
+
+    #[test]
+    fn test_instance_transform_translation() {
+        let transform = Matrix4::from_translation(Vector3::new(5.0, 10.0, 15.0));
+        let instance_transform = InstanceTransform::new(1, transform);
+
+        // Translation should be in the transform
+        assert_eq!(instance_transform.world_transform[3][0], 5.0);
+        assert_eq!(instance_transform.world_transform[3][1], 10.0);
+        assert_eq!(instance_transform.world_transform[3][2], 15.0);
+
+        // Normal matrix should remain identity (translation doesn't affect normals)
+        assert_eq!(instance_transform.normal_matrix[0][0], 1.0);
+        assert_eq!(instance_transform.normal_matrix[1][1], 1.0);
+        assert_eq!(instance_transform.normal_matrix[2][2], 1.0);
+    }
+
+    #[test]
+    fn test_instance_transform_rotation() {
+        let rotation = Quaternion::from_angle_z(Deg(90.0));
+        let transform = Matrix4::from(rotation);
+        let instance_transform = InstanceTransform::new(1, transform);
+
+        // Normal matrix should match rotation (orthogonal matrices)
+        // For 90 degree Z rotation: (1,0,0) -> (0,1,0)
+        let normal = instance_transform.normal_matrix;
+
+        // Check that applying normal matrix to (1,0,0) gives approximately (0,1,0)
+        let x = normal[0][0] * 1.0 + normal[1][0] * 0.0 + normal[2][0] * 0.0;
+        let y = normal[0][1] * 1.0 + normal[1][1] * 0.0 + normal[2][1] * 0.0;
+
+        assert!(x.abs() < EPSILON);
+        assert!((y - 1.0).abs() < EPSILON);
+    }
+
+    #[test]
+    fn test_instance_transform_non_uniform_scale() {
+        let transform = Matrix4::from_nonuniform_scale(2.0, 3.0, 4.0);
+        let instance_transform = InstanceTransform::new(1, transform);
+
+        // Normal matrix should handle non-uniform scale correctly
+        // Inverse of diagonal matrix (2,3,4) is (0.5, 0.333..., 0.25)
+        assert!((instance_transform.normal_matrix[0][0] - 0.5).abs() < EPSILON);
+        assert!((instance_transform.normal_matrix[1][1] - 1.0/3.0).abs() < EPSILON);
+        assert!((instance_transform.normal_matrix[2][2] - 0.25).abs() < EPSILON);
+    }
+
+    #[test]
+    fn test_instance_transform_different_instances_different_ids() {
+        let transform = Matrix4::identity();
+        let instance1 = InstanceTransform::new(1, transform);
+        let instance2 = InstanceTransform::new(2, transform);
+        let instance3 = InstanceTransform::new(3, transform);
+
+        assert_ne!(instance1.instance_id, instance2.instance_id);
+        assert_ne!(instance1.instance_id, instance3.instance_id);
+        assert_ne!(instance2.instance_id, instance3.instance_id);
+    }
+
+    #[test]
+    fn test_instance_transform_with_complex_transform() {
+        // Combine translation, rotation, and scale
+        let translation = Matrix4::from_translation(Vector3::new(10.0, 20.0, 30.0));
+        let rotation = Matrix4::from(Quaternion::from_angle_y(Deg(45.0)));
+        let scale = Matrix4::from_scale(2.0);
+        let transform = translation * rotation * scale;
+
+        let instance_transform = InstanceTransform::new(42, transform);
+
+        assert_eq!(instance_transform.instance_id, 42);
+        assert_eq!(instance_transform.world_transform, transform);
+
+        // Verify normal matrix was computed (not identity)
+        let expected_normal = common::compute_normal_matrix(&transform);
+
+        for i in 0..3 {
+            for j in 0..3 {
+                assert!((instance_transform.normal_matrix[i][j] - expected_normal[i][j]).abs() < EPSILON);
+            }
+        }
+    }
+}
