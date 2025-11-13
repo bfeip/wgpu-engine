@@ -263,3 +263,327 @@ impl EventDispatcher {
         false
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use winit::dpi::{PhysicalPosition, PhysicalSize};
+    use winit::event::{ElementState, MouseButton, MouseScrollDelta};
+    use std::rc::Rc;
+    use std::cell::Cell;
+
+    // ===== Helper Functions =====
+
+    /// Creates a mock EventContext for testing.
+    ///
+    /// SAFETY: This creates dangling references that should NEVER be dereferenced.
+    /// It's only safe to use in test callbacks that don't actually access the context fields.
+    /// We use non-null pointers to avoid triggering the zero-initialization check.
+    #[allow(invalid_reference_casting)]
+    unsafe fn create_mock_context<'w, 'c>() -> EventContext<'w, 'c> {
+        let dangling = std::ptr::NonNull::dangling();
+        EventContext {
+            state: unsafe { &mut *(dangling.as_ptr() as *mut DrawState) },
+            scene: unsafe { &mut *(dangling.as_ptr() as *mut Scene) },
+            control_flow: unsafe { &*(dangling.as_ptr() as *const winit::event_loop::EventLoopWindowTarget<()>) },
+        }
+    }
+
+    // ===== EventDispatcher Tests =====
+
+    #[test]
+    fn test_dispatcher_new() {
+        let dispatcher = EventDispatcher::new();
+        assert_eq!(dispatcher.callback_map.len(), 0);
+        assert_eq!(dispatcher.next_id, 0);
+    }
+
+    #[test]
+    fn test_dispatcher_register() {
+        let mut dispatcher = EventDispatcher::new();
+
+        let id = dispatcher.register(EventKind::CloseRequested, |_event, _ctx| false);
+
+        assert_eq!(id, 0);
+        assert!(dispatcher.callback_map.contains_key(&EventKind::CloseRequested));
+        assert_eq!(dispatcher.callback_map[&EventKind::CloseRequested].len(), 1);
+    }
+
+    #[test]
+    fn test_dispatcher_register_multiple_same_kind() {
+        let mut dispatcher = EventDispatcher::new();
+
+        let id1 = dispatcher.register(EventKind::KeyboardInput, |_event, _ctx| false);
+        let id2 = dispatcher.register(EventKind::KeyboardInput, |_event, _ctx| false);
+        let id3 = dispatcher.register(EventKind::KeyboardInput, |_event, _ctx| false);
+
+        // All IDs should be unique
+        assert_eq!(id1, 0);
+        assert_eq!(id2, 1);
+        assert_eq!(id3, 2);
+
+        // All callbacks should be registered for the same event kind
+        assert_eq!(dispatcher.callback_map[&EventKind::KeyboardInput].len(), 3);
+    }
+
+    #[test]
+    fn test_dispatcher_register_different_kinds() {
+        let mut dispatcher = EventDispatcher::new();
+
+        let id1 = dispatcher.register(EventKind::KeyboardInput, |_event, _ctx| false);
+        let id2 = dispatcher.register(EventKind::MouseInput, |_event, _ctx| false);
+        let id3 = dispatcher.register(EventKind::CloseRequested, |_event, _ctx| false);
+
+        // All IDs should be unique
+        assert_eq!(id1, 0);
+        assert_eq!(id2, 1);
+        assert_eq!(id3, 2);
+
+        // Each event kind should have one callback
+        assert_eq!(dispatcher.callback_map.len(), 3);
+        assert_eq!(dispatcher.callback_map[&EventKind::KeyboardInput].len(), 1);
+        assert_eq!(dispatcher.callback_map[&EventKind::MouseInput].len(), 1);
+        assert_eq!(dispatcher.callback_map[&EventKind::CloseRequested].len(), 1);
+    }
+
+    #[test]
+    fn test_dispatcher_unregister() {
+        let mut dispatcher = EventDispatcher::new();
+
+        let id = dispatcher.register(EventKind::MouseMotion, |_event, _ctx| false);
+
+        // Callback should be registered
+        assert_eq!(dispatcher.callback_map[&EventKind::MouseMotion].len(), 1);
+
+        // Unregister should succeed
+        let result = dispatcher.unregister(id);
+        assert!(result);
+
+        // Callback should be removed
+        assert_eq!(dispatcher.callback_map[&EventKind::MouseMotion].len(), 0);
+    }
+
+    #[test]
+    fn test_dispatcher_unregister_nonexistent() {
+        let mut dispatcher = EventDispatcher::new();
+
+        // Try to unregister an ID that was never registered
+        let result = dispatcher.unregister(999);
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_dispatcher_dispatch_no_callbacks() {
+        let dispatcher = EventDispatcher::new();
+        let event = Event::CloseRequested;
+
+        // SAFETY: We're creating a mock context that won't be used
+        let mut ctx = unsafe { create_mock_context() };
+
+        // Should not panic and should return false
+        let result = dispatcher.dispatch(&event, &mut ctx);
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_dispatcher_dispatch_single_callback() {
+        let mut dispatcher = EventDispatcher::new();
+        let counter = Rc::new(Cell::new(0));
+        let counter_clone = Rc::clone(&counter);
+
+        dispatcher.register(EventKind::CloseRequested, move |_event, _ctx| {
+            counter_clone.set(counter_clone.get() + 1);
+            false
+        });
+
+        let event = Event::CloseRequested;
+        let mut ctx = unsafe { create_mock_context() };
+
+        dispatcher.dispatch(&event, &mut ctx);
+
+        // Callback should have been invoked once
+        assert_eq!(counter.get(), 1);
+    }
+
+    #[test]
+    fn test_dispatcher_dispatch_multiple_callbacks() {
+        let mut dispatcher = EventDispatcher::new();
+        let counter = Rc::new(Cell::new(0));
+
+        let c1 = Rc::clone(&counter);
+        dispatcher.register(EventKind::MouseInput, move |_event, _ctx| {
+            c1.set(c1.get() + 1);
+            false
+        });
+
+        let c2 = Rc::clone(&counter);
+        dispatcher.register(EventKind::MouseInput, move |_event, _ctx| {
+            c2.set(c2.get() + 10);
+            false
+        });
+
+        let c3 = Rc::clone(&counter);
+        dispatcher.register(EventKind::MouseInput, move |_event, _ctx| {
+            c3.set(c3.get() + 100);
+            false
+        });
+
+        let event = Event::MouseInput {
+            state: ElementState::Pressed,
+            button: MouseButton::Left,
+        };
+        let mut ctx = unsafe { create_mock_context() };
+
+        dispatcher.dispatch(&event, &mut ctx);
+
+        // All three callbacks should have been invoked
+        assert_eq!(counter.get(), 111);
+    }
+
+    #[test]
+    fn test_dispatcher_dispatch_stop_propagation() {
+        let mut dispatcher = EventDispatcher::new();
+        let counter = Rc::new(Cell::new(0));
+
+        let c1 = Rc::clone(&counter);
+        dispatcher.register(EventKind::CursorMoved, move |_event, _ctx| {
+            c1.set(c1.get() + 1);
+            false // Continue
+        });
+
+        let c2 = Rc::clone(&counter);
+        dispatcher.register(EventKind::CursorMoved, move |_event, _ctx| {
+            c2.set(c2.get() + 10);
+            true // Stop propagation
+        });
+
+        let c3 = Rc::clone(&counter);
+        dispatcher.register(EventKind::CursorMoved, move |_event, _ctx| {
+            c3.set(c3.get() + 100);
+            false // This should never run
+        });
+
+        let event = Event::CursorMoved {
+            position: PhysicalPosition::new(100.0, 200.0),
+        };
+        let mut ctx = unsafe { create_mock_context() };
+
+        let result = dispatcher.dispatch(&event, &mut ctx);
+
+        // First two callbacks ran, third did not
+        assert_eq!(counter.get(), 11);
+        assert!(result); // dispatch should return true when propagation stopped
+    }
+
+    #[test]
+    fn test_dispatcher_dispatch_continue_propagation() {
+        let mut dispatcher = EventDispatcher::new();
+        let counter = Rc::new(Cell::new(0));
+
+        let c1 = Rc::clone(&counter);
+        dispatcher.register(EventKind::MouseWheel, move |_event, _ctx| {
+            c1.set(c1.get() + 1);
+            false // Continue
+        });
+
+        let c2 = Rc::clone(&counter);
+        dispatcher.register(EventKind::MouseWheel, move |_event, _ctx| {
+            c2.set(c2.get() + 10);
+            false // Continue
+        });
+
+        let event = Event::MouseWheel {
+            delta: MouseScrollDelta::LineDelta(0.0, 1.0),
+        };
+        let mut ctx = unsafe { create_mock_context() };
+
+        let result = dispatcher.dispatch(&event, &mut ctx);
+
+        // Both callbacks should have run
+        assert_eq!(counter.get(), 11);
+        assert!(!result); // dispatch should return false when no callback stopped propagation
+    }
+
+    #[test]
+    fn test_dispatcher_reorder_kind() {
+        let mut dispatcher = EventDispatcher::new();
+
+        let id1 = dispatcher.register(EventKind::Resized, |_event, _ctx| false);
+        let id2 = dispatcher.register(EventKind::Resized, |_event, _ctx| false);
+        let id3 = dispatcher.register(EventKind::Resized, |_event, _ctx| false);
+
+        // Original order: id1, id2, id3
+        let callbacks = &dispatcher.callback_map[&EventKind::Resized];
+        assert_eq!(callbacks[0].0, id1);
+        assert_eq!(callbacks[1].0, id2);
+        assert_eq!(callbacks[2].0, id3);
+
+        // Reorder to: id3, id1, id2
+        let result = dispatcher.reorder_kind(EventKind::Resized, &[id3, id1, id2]);
+        assert!(result);
+
+        let callbacks = &dispatcher.callback_map[&EventKind::Resized];
+        assert_eq!(callbacks[0].0, id3);
+        assert_eq!(callbacks[1].0, id1);
+        assert_eq!(callbacks[2].0, id2);
+    }
+
+    #[test]
+    fn test_dispatcher_reorder_all() {
+        let mut dispatcher = EventDispatcher::new();
+
+        // Register callbacks for multiple event kinds
+        let id1 = dispatcher.register(EventKind::MouseInput, |_event, _ctx| false);
+        let id2 = dispatcher.register(EventKind::MouseInput, |_event, _ctx| false);
+        let id3 = dispatcher.register(EventKind::KeyboardInput, |_event, _ctx| false);
+        let id4 = dispatcher.register(EventKind::KeyboardInput, |_event, _ctx| false);
+
+        // Reorder all to: id2, id4, id1, id3
+        dispatcher.reorder(&[id2, id4, id1, id3]);
+
+        // Check MouseInput order
+        let mouse_callbacks = &dispatcher.callback_map[&EventKind::MouseInput];
+        assert_eq!(mouse_callbacks[0].0, id2);
+        assert_eq!(mouse_callbacks[1].0, id1);
+
+        // Check KeyboardInput order
+        let key_callbacks = &dispatcher.callback_map[&EventKind::KeyboardInput];
+        assert_eq!(key_callbacks[0].0, id4);
+        assert_eq!(key_callbacks[1].0, id3);
+    }
+
+    #[test]
+    fn test_dispatcher_reorder_partial_ids() {
+        let mut dispatcher = EventDispatcher::new();
+
+        let id1 = dispatcher.register(EventKind::CursorMoved, |_event, _ctx| false);
+        let id2 = dispatcher.register(EventKind::CursorMoved, |_event, _ctx| false);
+        let id3 = dispatcher.register(EventKind::CursorMoved, |_event, _ctx| false);
+
+        // Only reorder id2 - id1 and id3 should remain at end in original order
+        let result = dispatcher.reorder_kind(EventKind::CursorMoved, &[id2]);
+        assert!(result);
+
+        let callbacks = &dispatcher.callback_map[&EventKind::CursorMoved];
+        assert_eq!(callbacks[0].0, id2); // Specified first
+        assert_eq!(callbacks[1].0, id1); // Remaining in original order
+        assert_eq!(callbacks[2].0, id3); // Remaining in original order
+    }
+
+    #[test]
+    fn test_dispatcher_reorder_nonexistent_ids() {
+        let mut dispatcher = EventDispatcher::new();
+
+        let id1 = dispatcher.register(EventKind::RedrawRequested, |_event, _ctx| false);
+        let id2 = dispatcher.register(EventKind::RedrawRequested, |_event, _ctx| false);
+
+        // Try to reorder with some nonexistent IDs
+        let result = dispatcher.reorder_kind(EventKind::RedrawRequested, &[999, id2, 888, id1, 777]);
+        assert!(result);
+
+        // Only the valid IDs should be reordered
+        let callbacks = &dispatcher.callback_map[&EventKind::RedrawRequested];
+        assert_eq!(callbacks[0].0, id2);
+        assert_eq!(callbacks[1].0, id1);
+    }
+}
