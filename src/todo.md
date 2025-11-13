@@ -2,10 +2,7 @@
 
 ## Jots
 - Geometry Query
-    - Boundings
-    - Ray casting
     - Volumes
-- Requesting a nodes transform or bounding should do the computation if dirty
 - Tree walker feature to skip subtrees on condition
 - Re-work ray picking walker to use TreeWalker trait
 - Ability to walk the scene with multiple walkers at once
@@ -14,9 +11,7 @@
 - Fix navigation operator to use bounding for sensitivity
 - Add fit camera to bounding
 
-- Top level readme
 - API and docs review
-- Tests tests tests
 
 - Drag and drop GLTF loading operator
 - Line and point rendering
