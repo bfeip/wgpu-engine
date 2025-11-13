@@ -117,6 +117,7 @@ impl Node {
     pub fn add_child(&mut self, child: NodeId) {
         if !self.children.contains(&child) {
             self.children.push(child);
+            self.mark_dirty();
         }
     }
 
@@ -132,6 +133,8 @@ impl Node {
 
     pub fn set_instance(&mut self, instance: Option<InstanceId>) {
         self.instance = instance;
+        // Only invalidate bounds, not transform (instance doesn't affect transform)
+        self.cached_bounds.set(None);
     }
 
     /// Marks this node's computed values as dirty (needs recomputation).
@@ -170,5 +173,562 @@ impl Node {
     /// Sets the cached bounding box
     pub(super) fn set_cached_bounds(&self, bounds: Option<Aabb>) {
         self.cached_bounds.set(bounds);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::common::EPSILON;
+    use cgmath::{Deg, Quaternion, Rotation3, Vector3, EuclideanSpace};
+
+    // ========================================================================
+    // Node Creation Tests
+    // ========================================================================
+
+    #[test]
+    fn test_node_new() {
+        let position = Point3::new(1.0, 2.0, 3.0);
+        let rotation = Quaternion::new(1.0, 0.0, 0.0, 0.0);
+        let scale = Vector3::new(2.0, 2.0, 2.0);
+
+        let node = Node::new(42, position, rotation, scale);
+
+        assert_eq!(node.id, 42);
+        assert_eq!(node.position(), position);
+        assert_eq!(node.rotation(), rotation);
+        assert_eq!(node.scale(), scale);
+    }
+
+    #[test]
+    fn test_node_default_values() {
+        let node = Node::new_default(7);
+
+        assert_eq!(node.id, 7);
+        assert_eq!(node.name, None);
+        assert_eq!(node.parent(), None);
+        assert_eq!(node.children().len(), 0);
+        assert_eq!(node.instance(), None);
+    }
+
+    #[test]
+    fn test_node_local_transform_identity() {
+        let node = Node::new_default(0);
+        let transform = node.compute_local_transform();
+
+        // Identity transform should be close to Matrix4::from_scale(1.0)
+        let identity = Matrix4::from_scale(1.0);
+
+        // Check each element is close to identity
+        for i in 0..4 {
+            for j in 0..4 {
+                assert!(
+                    (transform[i][j] - identity[i][j]).abs() < EPSILON,
+                    "Transform element [{i}][{j}] = {}, expected {}",
+                    transform[i][j],
+                    identity[i][j]
+                );
+            }
+        }
+    }
+
+    // ========================================================================
+    // Node Transform Tests
+    // ========================================================================
+
+    #[test]
+    fn test_compute_local_transform_translation_only() {
+        let position = Point3::new(5.0, 10.0, 15.0);
+        let rotation = Quaternion::new(1.0, 0.0, 0.0, 0.0); // Identity
+        let scale = Vector3::new(1.0, 1.0, 1.0); // Unity scale
+
+        let node = Node::new(0, position, rotation, scale);
+        let transform = node.compute_local_transform();
+
+        // Check translation components (last column)
+        assert!((transform[3][0] - 5.0).abs() < EPSILON);
+        assert!((transform[3][1] - 10.0).abs() < EPSILON);
+        assert!((transform[3][2] - 15.0).abs() < EPSILON);
+        assert!((transform[3][3] - 1.0).abs() < EPSILON);
+    }
+
+    #[test]
+    fn test_compute_local_transform_rotation_only() {
+        let position = Point3::new(0.0, 0.0, 0.0);
+        let rotation = Quaternion::from_angle_z(Deg(90.0)); // 90 degrees around Z
+        let scale = Vector3::new(1.0, 1.0, 1.0);
+
+        let node = Node::new(0, position, rotation, scale);
+        let transform = node.compute_local_transform();
+
+        // Apply transform to point (1, 0, 0) - should become roughly (0, 1, 0)
+        let point = Vector3::new(1.0, 0.0, 0.0);
+        let rotated_x = transform[0][0] * point.x + transform[1][0] * point.y + transform[2][0] * point.z;
+        let rotated_y = transform[0][1] * point.x + transform[1][1] * point.y + transform[2][1] * point.z;
+        let rotated_z = transform[0][2] * point.x + transform[1][2] * point.y + transform[2][2] * point.z;
+
+        assert!(rotated_x.abs() < EPSILON, "Expected x ≈ 0, got {}", rotated_x);
+        assert!((rotated_y - 1.0).abs() < EPSILON, "Expected y ≈ 1, got {}", rotated_y);
+        assert!(rotated_z.abs() < EPSILON, "Expected z ≈ 0, got {}", rotated_z);
+    }
+
+    #[test]
+    fn test_compute_local_transform_scale_only() {
+        let position = Point3::new(0.0, 0.0, 0.0);
+        let rotation = Quaternion::new(1.0, 0.0, 0.0, 0.0);
+        let scale = Vector3::new(2.0, 3.0, 4.0);
+
+        let node = Node::new(0, position, rotation, scale);
+        let transform = node.compute_local_transform();
+
+        // Check diagonal elements (scale factors)
+        assert!((transform[0][0] - 2.0).abs() < EPSILON);
+        assert!((transform[1][1] - 3.0).abs() < EPSILON);
+        assert!((transform[2][2] - 4.0).abs() < EPSILON);
+    }
+
+    #[test]
+    fn test_compute_local_transform_trs_composition() {
+        // Translation × Rotation × Scale
+        let position = Point3::new(10.0, 20.0, 30.0);
+        let rotation = Quaternion::from_angle_y(Deg(45.0));
+        let scale = Vector3::new(2.0, 2.0, 2.0);
+
+        let node = Node::new(0, position, rotation, scale);
+        let transform = node.compute_local_transform();
+
+        // Manually compute expected transform
+        let translation_matrix = Matrix4::from_translation(position.to_vec());
+        let rotation_matrix = Matrix4::from(rotation);
+        let scale_matrix = Matrix4::from_nonuniform_scale(scale.x, scale.y, scale.z);
+        let expected = translation_matrix * rotation_matrix * scale_matrix;
+
+        // Compare all elements
+        for i in 0..4 {
+            for j in 0..4 {
+                assert!(
+                    (transform[i][j] - expected[i][j]).abs() < EPSILON,
+                    "Transform element [{i}][{j}] = {}, expected {}",
+                    transform[i][j],
+                    expected[i][j]
+                );
+            }
+        }
+    }
+
+    // ========================================================================
+    // Node Hierarchy Tests
+    // ========================================================================
+
+    #[test]
+    fn test_set_parent() {
+        let mut node = Node::new_default(1);
+        assert_eq!(node.parent(), None);
+
+        node.set_parent(Some(10));
+        assert_eq!(node.parent(), Some(10));
+
+        node.set_parent(None);
+        assert_eq!(node.parent(), None);
+    }
+
+    #[test]
+    fn test_add_child() {
+        let mut parent = Node::new_default(1);
+        let mut child1 = Node::new_default(5);
+        let mut child2 = Node::new_default(7);
+
+        assert_eq!(parent.children().len(), 0);
+        assert_eq!(child1.parent(), None);
+        assert_eq!(child2.parent(), None);
+
+        // Add first child (bidirectional setup)
+        parent.add_child(5);
+        child1.set_parent(Some(1));
+
+        assert_eq!(parent.children().len(), 1);
+        assert_eq!(parent.children()[0], 5);
+        assert_eq!(child1.parent(), Some(1));
+
+        // Add second child (bidirectional setup)
+        parent.add_child(7);
+        child2.set_parent(Some(1));
+
+        assert_eq!(parent.children().len(), 2);
+        assert!(parent.children().contains(&5));
+        assert!(parent.children().contains(&7));
+        assert_eq!(child1.parent(), Some(1));
+        assert_eq!(child2.parent(), Some(1));
+    }
+
+    #[test]
+    fn test_add_child_duplicate_ignored() {
+        let mut node = Node::new_default(1);
+
+        node.add_child(5);
+        node.add_child(5); // Duplicate
+        node.add_child(5); // Duplicate
+
+        // Should only have one child
+        assert_eq!(node.children().len(), 1);
+        assert_eq!(node.children()[0], 5);
+    }
+
+    #[test]
+    fn test_remove_child() {
+        let mut node = Node::new_default(1);
+
+        node.add_child(5);
+        node.add_child(10);
+        node.add_child(15);
+
+        assert_eq!(node.children().len(), 3);
+
+        node.remove_child(10);
+        assert_eq!(node.children().len(), 2);
+        assert!(node.children().contains(&5));
+        assert!(!node.children().contains(&10));
+        assert!(node.children().contains(&15));
+    }
+
+    #[test]
+    fn test_remove_child_nonexistent() {
+        let mut node = Node::new_default(1);
+        node.add_child(5);
+
+        // Removing non-existent child should not panic
+        node.remove_child(999);
+        assert_eq!(node.children().len(), 1);
+        assert_eq!(node.children()[0], 5);
+    }
+
+    // ========================================================================
+    // Node Cache Tests
+    // ========================================================================
+
+    #[test]
+    fn test_cached_world_transform_initially_none() {
+        let node = Node::new_default(0);
+        assert!(node.cached_world_transform().is_none());
+    }
+
+    #[test]
+    fn test_set_cached_world_transform() {
+        let node = Node::new_default(0);
+        let transform = Matrix4::from_translation(Vector3::new(1.0, 2.0, 3.0));
+
+        node.set_cached_world_transform(transform);
+
+        let cached = node.cached_world_transform();
+        assert!(cached.is_some());
+
+        let cached_transform = cached.unwrap();
+        for i in 0..4 {
+            for j in 0..4 {
+                assert_eq!(cached_transform[i][j], transform[i][j]);
+            }
+        }
+    }
+
+    #[test]
+    fn test_cached_world_transform_retrieval() {
+        let node = Node::new_default(0);
+
+        // Initially None
+        assert!(node.cached_world_transform().is_none());
+
+        // Set and retrieve
+        let transform1 = Matrix4::from_scale(2.0);
+        node.set_cached_world_transform(transform1);
+        assert!(node.cached_world_transform().is_some());
+
+        // Set different value
+        let transform2 = Matrix4::from_scale(3.0);
+        node.set_cached_world_transform(transform2);
+        let cached = node.cached_world_transform().unwrap();
+        assert!((cached[0][0] - 3.0).abs() < EPSILON);
+    }
+
+    #[test]
+    fn test_cached_bounds_initially_none() {
+        let node = Node::new_default(0);
+        assert!(node.cached_bounds().is_none());
+    }
+
+    #[test]
+    fn test_set_cached_bounds() {
+        let node = Node::new_default(0);
+        let bounds = Aabb {
+            min: Point3::new(-1.0, -1.0, -1.0),
+            max: Point3::new(1.0, 1.0, 1.0),
+        };
+
+        node.set_cached_bounds(Some(bounds));
+
+        let cached = node.cached_bounds();
+        assert!(cached.is_some());
+
+        let cached_bounds = cached.unwrap();
+        assert_eq!(cached_bounds.min, bounds.min);
+        assert_eq!(cached_bounds.max, bounds.max);
+    }
+
+    #[test]
+    fn test_cached_bounds_retrieval() {
+        let node = Node::new_default(0);
+
+        // Initially None
+        assert!(node.cached_bounds().is_none());
+
+        // Set and retrieve
+        let bounds = Aabb {
+            min: Point3::new(0.0, 0.0, 0.0),
+            max: Point3::new(10.0, 10.0, 10.0),
+        };
+        node.set_cached_bounds(Some(bounds));
+        assert!(node.cached_bounds().is_some());
+
+        // Can set to None
+        node.set_cached_bounds(None);
+        assert!(node.cached_bounds().is_none());
+    }
+
+    #[test]
+    fn test_bounds_dirty_flag() {
+        let node = Node::new_default(0);
+
+        // Initially dirty (no cache)
+        assert!(node.bounds_dirty());
+
+        // Set cache - no longer dirty
+        let bounds = Aabb {
+            min: Point3::new(-1.0, -1.0, -1.0),
+            max: Point3::new(1.0, 1.0, 1.0),
+        };
+        node.set_cached_bounds(Some(bounds));
+        assert!(!node.bounds_dirty());
+
+        // Mark dirty
+        node.mark_dirty();
+        assert!(node.bounds_dirty());
+    }
+
+    #[test]
+    fn test_transform_dirty_flag() {
+        let node = Node::new_default(0);
+
+        // Initially dirty (no cache)
+        assert!(node.transform_dirty());
+
+        // Set cache - no longer dirty
+        let transform = Matrix4::from_scale(1.0);
+        node.set_cached_world_transform(transform);
+        assert!(!node.transform_dirty());
+
+        // Mark dirty
+        node.mark_dirty();
+        assert!(node.transform_dirty());
+    }
+
+    #[test]
+    fn test_mark_dirty_clears_both_caches() {
+        let node = Node::new_default(0);
+
+        // Set both caches
+        let transform = Matrix4::from_scale(1.0);
+        node.set_cached_world_transform(transform);
+
+        let bounds = Aabb {
+            min: Point3::new(-1.0, -1.0, -1.0),
+            max: Point3::new(1.0, 1.0, 1.0),
+        };
+        node.set_cached_bounds(Some(bounds));
+
+        assert!(!node.transform_dirty());
+        assert!(!node.bounds_dirty());
+
+        // Mark dirty should clear both
+        node.mark_dirty();
+        assert!(node.transform_dirty());
+        assert!(node.bounds_dirty());
+    }
+
+    #[test]
+    fn test_set_position_marks_dirty() {
+        let mut node = Node::new_default(0);
+
+        // Set cache
+        node.set_cached_world_transform(Matrix4::from_scale(1.0));
+        assert!(!node.transform_dirty());
+
+        // Change position should mark dirty
+        node.set_position(Point3::new(5.0, 5.0, 5.0));
+        assert!(node.transform_dirty());
+    }
+
+    #[test]
+    fn test_set_rotation_marks_dirty() {
+        let mut node = Node::new_default(0);
+
+        // Set cache
+        node.set_cached_world_transform(Matrix4::from_scale(1.0));
+        assert!(!node.transform_dirty());
+
+        // Change rotation should mark dirty
+        node.set_rotation(Quaternion::from_angle_z(Deg(45.0)));
+        assert!(node.transform_dirty());
+    }
+
+    #[test]
+    fn test_set_scale_marks_dirty() {
+        let mut node = Node::new_default(0);
+
+        // Set cache
+        node.set_cached_world_transform(Matrix4::from_scale(1.0));
+        assert!(!node.transform_dirty());
+
+        // Change scale should mark dirty
+        node.set_scale(Vector3::new(2.0, 2.0, 2.0));
+        assert!(node.transform_dirty());
+    }
+
+    #[test]
+    fn test_set_parent_marks_dirty() {
+        let mut node = Node::new_default(0);
+
+        // Set cache
+        node.set_cached_world_transform(Matrix4::from_scale(1.0));
+        assert!(!node.transform_dirty());
+
+        // Change parent should mark dirty
+        node.set_parent(Some(10));
+        assert!(node.transform_dirty());
+    }
+
+    #[test]
+    fn test_add_child_marks_dirty() {
+        let mut node = Node::new_default(0);
+
+        // Set cache
+        node.set_cached_world_transform(Matrix4::from_scale(1.0));
+        assert!(!node.transform_dirty());
+
+        // Add child should mark dirty
+        node.add_child(2);
+        assert!(node.transform_dirty());
+    }
+
+    // ========================================================================
+    // Node Instance Tests
+    // ========================================================================
+
+    #[test]
+    fn test_instance_none_by_default() {
+        let node = Node::new_default(0);
+        assert_eq!(node.instance(), None);
+    }
+
+    #[test]
+    fn test_set_instance() {
+        let mut node = Node::new_default(0);
+
+        node.set_instance(Some(42));
+        assert_eq!(node.instance(), Some(42));
+
+        node.set_instance(Some(99));
+        assert_eq!(node.instance(), Some(99));
+    }
+
+    #[test]
+    fn test_instance_retrieval() {
+        let mut node = Node::new_default(0);
+
+        // Initially None
+        assert_eq!(node.instance(), None);
+
+        // Set to Some value
+        node.set_instance(Some(123));
+        assert_eq!(node.instance(), Some(123));
+
+        // Set back to None
+        node.set_instance(None);
+        assert_eq!(node.instance(), None);
+    }
+
+    #[test]
+    fn test_set_instance_marks_dirty() {
+        let mut node = Node::new_default(0);
+
+        // Set cache
+        node.set_cached_world_transform(Matrix4::from_scale(1.0));
+        node.set_cached_bounds(Some(Aabb::new(
+            Point3::new(-1., -1., -1.),
+            Point3::new(1., 1., 1.)
+        )));
+        assert!(!node.transform_dirty());
+
+        node.set_instance(Some(42));
+        assert!(!node.transform_dirty()); // instance doesn't affect transform
+        assert!(node.bounds_dirty()); // instance affects bounds
+    }
+
+    // ========================================================================
+    // Additional Edge Case Tests
+    // ========================================================================
+
+    #[test]
+    fn test_node_with_name() {
+        let mut node = Node::new_default(0);
+        assert_eq!(node.name, None);
+
+        node.name = Some("TestNode".to_string());
+        assert_eq!(node.name, Some("TestNode".to_string()));
+    }
+
+    #[test]
+    fn test_zero_scale() {
+        let position = Point3::new(0.0, 0.0, 0.0);
+        let rotation = Quaternion::new(1.0, 0.0, 0.0, 0.0);
+        let scale = Vector3::new(0.0, 0.0, 0.0);
+
+        let node = Node::new(0, position, rotation, scale);
+        let transform = node.compute_local_transform();
+
+        // Should produce a zero-scale transform (degenerate)
+        assert_eq!(transform[0][0], 0.0);
+        assert_eq!(transform[1][1], 0.0);
+        assert_eq!(transform[2][2], 0.0);
+    }
+
+    #[test]
+    fn test_negative_scale() {
+        let position = Point3::new(0.0, 0.0, 0.0);
+        let rotation = Quaternion::new(1.0, 0.0, 0.0, 0.0);
+        let scale = Vector3::new(-1.0, 1.0, 1.0); // Flip X
+
+        let node = Node::new(0, position, rotation, scale);
+        let transform = node.compute_local_transform();
+
+        // X axis should be flipped
+        assert!((transform[0][0] - (-1.0)).abs() < EPSILON);
+        assert!((transform[1][1] - 1.0).abs() < EPSILON);
+        assert!((transform[2][2] - 1.0).abs() < EPSILON);
+    }
+
+    #[test]
+    fn test_large_hierarchy() {
+        let mut parent = Node::new_default(0);
+
+        // Add 1000 children
+        for i in 1..=1000 {
+            parent.add_child(i);
+        }
+
+        assert_eq!(parent.children().len(), 1000);
+
+        // Check all children are present
+        for i in 1..=1000 {
+            assert!(parent.children().contains(&i));
+        }
     }
 }
