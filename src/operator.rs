@@ -148,3 +148,328 @@ impl OperatorManager {
         self.operators.iter().map(|(_, op)| op.as_ref())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    /// Mock operator for testing
+    struct MockOperator {
+        id: OperatorId,
+        name: String,
+        active: bool,
+        callbacks: Vec<CallbackId>,
+        activate_count: Rc<Cell<u32>>,
+        deactivate_count: Rc<Cell<u32>>,
+    }
+
+    impl MockOperator {
+        fn new(
+            id: OperatorId,
+            name: &str,
+            activate_count: Rc<Cell<u32>>,
+            deactivate_count: Rc<Cell<u32>>,
+        ) -> Self {
+            Self {
+                id,
+                name: name.to_string(),
+                active: false,
+                callbacks: Vec::new(),
+                activate_count,
+                deactivate_count,
+            }
+        }
+    }
+
+    impl Operator for MockOperator {
+        fn activate(&mut self, _dispatcher: &mut EventDispatcher) {
+            self.active = true;
+            // Simulate registering 2 callbacks with unique IDs based on operator ID
+            self.callbacks.push(100 + self.id);
+            self.callbacks.push(200 + self.id);
+            self.activate_count.set(self.activate_count.get() + 1);
+        }
+
+        fn deactivate(&mut self, _dispatcher: &mut EventDispatcher) {
+            self.active = false;
+            self.callbacks.clear();
+            self.deactivate_count.set(self.deactivate_count.get() + 1);
+        }
+
+        fn id(&self) -> OperatorId {
+            self.id
+        }
+
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        fn callback_ids(&self) -> &[CallbackId] {
+            &self.callbacks
+        }
+
+        fn is_active(&self) -> bool {
+            self.active
+        }
+    }
+
+    // ===== OperatorManager Tests =====
+
+    #[test]
+    fn test_operator_manager_new() {
+        let manager = OperatorManager::new();
+        assert!(manager.is_empty());
+        assert_eq!(manager.len(), 0);
+    }
+
+    #[test]
+    fn test_operator_manager_len() {
+        let mut manager = OperatorManager::new();
+        let mut dispatcher = EventDispatcher::new();
+
+        assert_eq!(manager.len(), 0);
+
+        let activate_count = Rc::new(Cell::new(0));
+        let deactivate_count = Rc::new(Cell::new(0));
+        let op1 = Box::new(MockOperator::new(1, "Op1", Rc::clone(&activate_count), Rc::clone(&deactivate_count)));
+        manager.add_operator(op1, 1, &mut dispatcher);
+
+        assert_eq!(manager.len(), 1);
+
+        let op2 = Box::new(MockOperator::new(2, "Op2", Rc::clone(&activate_count), Rc::clone(&deactivate_count)));
+        manager.add_operator(op2, 2, &mut dispatcher);
+
+        assert_eq!(manager.len(), 2);
+    }
+
+    #[test]
+    fn test_operator_manager_is_empty() {
+        let mut manager = OperatorManager::new();
+        let mut dispatcher = EventDispatcher::new();
+
+        assert!(manager.is_empty());
+
+        let activate_count = Rc::new(Cell::new(0));
+        let deactivate_count = Rc::new(Cell::new(0));
+        let op = Box::new(MockOperator::new(1, "Op1", Rc::clone(&activate_count), Rc::clone(&deactivate_count)));
+        manager.add_operator(op, 1, &mut dispatcher);
+
+        assert!(!manager.is_empty());
+
+        manager.remove_operator(1, &mut dispatcher);
+
+        assert!(manager.is_empty());
+    }
+
+    #[test]
+    fn test_add_operator_activates() {
+        let mut manager = OperatorManager::new();
+        let mut dispatcher = EventDispatcher::new();
+
+        let activate_count = Rc::new(Cell::new(0));
+        let deactivate_count = Rc::new(Cell::new(0));
+
+        let op = Box::new(MockOperator::new(
+            1,
+            "TestOp",
+            Rc::clone(&activate_count),
+            Rc::clone(&deactivate_count),
+        ));
+
+        // Operator should not be active initially
+        assert!(!op.is_active());
+
+        manager.add_operator(op, 1, &mut dispatcher);
+
+        // Activate should have been called
+        assert_eq!(activate_count.get(), 1);
+        assert_eq!(deactivate_count.get(), 0);
+
+        // Operator should now be active
+        let op_ref = manager.iter().next().unwrap();
+        assert!(op_ref.is_active());
+        assert_eq!(op_ref.callback_ids().len(), 2); // MockOperator registers 2 callbacks
+    }
+
+    #[test]
+    fn test_add_operator_priority_ordering() {
+        let mut manager = OperatorManager::new();
+        let mut dispatcher = EventDispatcher::new();
+
+        let activate_count = Rc::new(Cell::new(0));
+        let deactivate_count = Rc::new(Cell::new(0));
+
+        // Add operator with priority 10 (lower priority)
+        let op1 = Box::new(MockOperator::new(1, "Op1", Rc::clone(&activate_count), Rc::clone(&deactivate_count)));
+        manager.add_operator(op1, 10, &mut dispatcher);
+
+        // Add operator with priority 5 (higher priority - should come first)
+        let op2 = Box::new(MockOperator::new(2, "Op2", Rc::clone(&activate_count), Rc::clone(&deactivate_count)));
+        manager.add_operator(op2, 5, &mut dispatcher);
+
+        // Collect operator IDs in order
+        let ids: Vec<OperatorId> = manager.iter().map(|op| op.id()).collect();
+
+        // Op2 (priority 5) should come before Op1 (priority 10)
+        assert_eq!(ids, vec![2, 1]);
+    }
+
+    #[test]
+    fn test_add_operator_inserts_in_order() {
+        let mut manager = OperatorManager::new();
+        let mut dispatcher = EventDispatcher::new();
+
+        let activate_count = Rc::new(Cell::new(0));
+        let deactivate_count = Rc::new(Cell::new(0));
+
+        // Add operators with various priorities
+        let op1 = Box::new(MockOperator::new(1, "Op1", Rc::clone(&activate_count), Rc::clone(&deactivate_count)));
+        manager.add_operator(op1, 30, &mut dispatcher);
+
+        let op2 = Box::new(MockOperator::new(2, "Op2", Rc::clone(&activate_count), Rc::clone(&deactivate_count)));
+        manager.add_operator(op2, 10, &mut dispatcher);
+
+        let op3 = Box::new(MockOperator::new(3, "Op3", Rc::clone(&activate_count), Rc::clone(&deactivate_count)));
+        manager.add_operator(op3, 20, &mut dispatcher);
+
+        let op4 = Box::new(MockOperator::new(4, "Op4", Rc::clone(&activate_count), Rc::clone(&deactivate_count)));
+        manager.add_operator(op4, 5, &mut dispatcher);
+
+        // Should be ordered by priority: 5, 10, 20, 30
+        let ids: Vec<OperatorId> = manager.iter().map(|op| op.id()).collect();
+        assert_eq!(ids, vec![4, 2, 3, 1]);
+
+        // Verify priorities are correct
+        let priorities: Vec<u32> = manager.operators.iter().map(|(pri, _)| *pri).collect();
+        assert_eq!(priorities, vec![5, 10, 20, 30]);
+    }
+
+    #[test]
+    fn test_remove_operator_deactivates() {
+        let mut manager = OperatorManager::new();
+        let mut dispatcher = EventDispatcher::new();
+
+        let activate_count = Rc::new(Cell::new(0));
+        let deactivate_count = Rc::new(Cell::new(0));
+
+        let op = Box::new(MockOperator::new(
+            1,
+            "TestOp",
+            Rc::clone(&activate_count),
+            Rc::clone(&deactivate_count),
+        ));
+
+        manager.add_operator(op, 1, &mut dispatcher);
+
+        // Activate should have been called once
+        assert_eq!(activate_count.get(), 1);
+        assert_eq!(deactivate_count.get(), 0);
+
+        // Remove the operator
+        let removed = manager.remove_operator(1, &mut dispatcher);
+        assert!(removed);
+
+        // Deactivate should have been called
+        assert_eq!(activate_count.get(), 1);
+        assert_eq!(deactivate_count.get(), 1);
+
+        // Manager should now be empty
+        assert!(manager.is_empty());
+    }
+
+    #[test]
+    fn test_remove_operator_reorders() {
+        let mut manager = OperatorManager::new();
+        let mut dispatcher = EventDispatcher::new();
+
+        let activate_count = Rc::new(Cell::new(0));
+        let deactivate_count = Rc::new(Cell::new(0));
+
+        // Add three operators
+        let op1 = Box::new(MockOperator::new(1, "Op1", Rc::clone(&activate_count), Rc::clone(&deactivate_count)));
+        manager.add_operator(op1, 10, &mut dispatcher);
+
+        let op2 = Box::new(MockOperator::new(2, "Op2", Rc::clone(&activate_count), Rc::clone(&deactivate_count)));
+        manager.add_operator(op2, 20, &mut dispatcher);
+
+        let op3 = Box::new(MockOperator::new(3, "Op3", Rc::clone(&activate_count), Rc::clone(&deactivate_count)));
+        manager.add_operator(op3, 30, &mut dispatcher);
+
+        // Remove the middle operator
+        let removed = manager.remove_operator(2, &mut dispatcher);
+        assert!(removed);
+
+        // Should have 2 operators left
+        assert_eq!(manager.len(), 2);
+
+        // Remaining operators should be in order
+        let ids: Vec<OperatorId> = manager.iter().map(|op| op.id()).collect();
+        assert_eq!(ids, vec![1, 3]);
+
+        // Deactivate should have been called once (for op2)
+        assert_eq!(deactivate_count.get(), 1);
+    }
+
+    #[test]
+    fn test_remove_operator_nonexistent() {
+        let mut manager = OperatorManager::new();
+        let mut dispatcher = EventDispatcher::new();
+
+        let activate_count = Rc::new(Cell::new(0));
+        let deactivate_count = Rc::new(Cell::new(0));
+
+        let op = Box::new(MockOperator::new(1, "Op1", Rc::clone(&activate_count), Rc::clone(&deactivate_count)));
+        manager.add_operator(op, 1, &mut dispatcher);
+
+        // Try to remove an operator that doesn't exist
+        let removed = manager.remove_operator(999, &mut dispatcher);
+        assert!(!removed);
+
+        // Manager should still have 1 operator
+        assert_eq!(manager.len(), 1);
+
+        // Deactivate should not have been called
+        assert_eq!(deactivate_count.get(), 0);
+    }
+
+    #[test]
+    fn test_operator_manager_iter() {
+        let mut manager = OperatorManager::new();
+        let mut dispatcher = EventDispatcher::new();
+
+        let activate_count = Rc::new(Cell::new(0));
+        let deactivate_count = Rc::new(Cell::new(0));
+
+        // Add operators with specific priorities and names
+        let op1 = Box::new(MockOperator::new(1, "LowPriority", Rc::clone(&activate_count), Rc::clone(&deactivate_count)));
+        manager.add_operator(op1, 100, &mut dispatcher);
+
+        let op2 = Box::new(MockOperator::new(2, "HighPriority", Rc::clone(&activate_count), Rc::clone(&deactivate_count)));
+        manager.add_operator(op2, 10, &mut dispatcher);
+
+        let op3 = Box::new(MockOperator::new(3, "MediumPriority", Rc::clone(&activate_count), Rc::clone(&deactivate_count)));
+        manager.add_operator(op3, 50, &mut dispatcher);
+
+        // Iterate and verify order (should be sorted by priority: 10, 50, 100)
+        let mut iter = manager.iter();
+
+        let first = iter.next().unwrap();
+        assert_eq!(first.id(), 2);
+        assert_eq!(first.name(), "HighPriority");
+        assert!(first.is_active());
+
+        let second = iter.next().unwrap();
+        assert_eq!(second.id(), 3);
+        assert_eq!(second.name(), "MediumPriority");
+        assert!(second.is_active());
+
+        let third = iter.next().unwrap();
+        assert_eq!(third.id(), 1);
+        assert_eq!(third.name(), "LowPriority");
+        assert!(third.is_active());
+
+        assert!(iter.next().is_none());
+    }
+}
