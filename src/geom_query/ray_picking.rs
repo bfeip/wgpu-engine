@@ -5,6 +5,8 @@ use cgmath::{InnerSpace, Point3, SquareMatrix};
 /// Result of a ray-instance intersection test.
 #[derive(Debug, Clone)]
 pub struct PickResult {
+    /// The node that was hit
+    pub node_id: NodeId,
     /// The instance that was hit
     pub instance_id: InstanceId,
     /// Distance along the ray to the hit point
@@ -65,6 +67,7 @@ fn pick_node_from_ray(
             let distance = (world_hit_point - ray.origin).magnitude();
 
             results.push(PickResult {
+                node_id,
                 instance_id,
                 distance,
                 hit_point: world_hit_point,
