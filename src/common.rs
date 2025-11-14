@@ -113,6 +113,55 @@ impl Ray {
         }
     }
 
+    /// Creates a ray from a screen-space point, unprojecting it to world space.
+    ///
+    /// The ray originates at the camera's eye position and points through the specified
+    /// screen pixel into the 3D world. This is useful for mouse picking and selection.
+    ///
+    /// # Arguments
+    /// * `screen_x` - X coordinate in screen space (0 = left edge)
+    /// * `screen_y` - Y coordinate in screen space (0 = top edge)
+    /// * `screen_width` - Width of the screen/viewport in pixels
+    /// * `screen_height` - Height of the screen/viewport in pixels
+    /// * `camera` - Camera to use for unprojection
+    ///
+    /// # Returns
+    /// A ray originating at the camera's eye position, pointing through the screen point
+    /// into the 3D world.
+    pub fn from_screen_point(
+        screen_x: f32,
+        screen_y: f32,
+        screen_width: u32,
+        screen_height: u32,
+        camera: &crate::camera::Camera,
+    ) -> Self {
+        // Unproject points at near and far planes
+        let world_near = camera.unproject_point_screen(
+            screen_x,
+            screen_y,
+            0.0, // Near plane
+            screen_width,
+            screen_height,
+        ).expect("Camera view-projection matrix should be invertible");
+
+        let world_far = camera.unproject_point_screen(
+            screen_x,
+            screen_y,
+            1.0, // Far plane
+            screen_width,
+            screen_height,
+        ).expect("Camera view-projection matrix should be invertible");
+
+        // Create ray from camera eye through the unprojected points
+        // Direction is from near point to far point
+        let direction = (world_far - world_near).normalize();
+
+        Self {
+            origin: world_near,
+            direction,
+        }
+    }
+
     /// Tests if a ray intersects a triangle using the Möller-Trumbore algorithm.
     ///
     /// Returns Some((t, u, v)) if the ray hits the triangle, where:
@@ -135,11 +184,13 @@ impl Ray {
         let det = edge1.dot(h);
 
         // If determinant is near zero, ray lies in plane of triangle or is parallel
+        // For double-sided intersection, we check absolute value but then normalize
         if det.abs() < EPSILON {
             return None;
         }
 
-        let inv_det = 1.0 / det;
+        // For double-sided intersection, use absolute value of det to avoid sign flips
+        let inv_det = 1.0 / det.abs();
 
         // Calculate distance from v0 to ray origin
         let s = self.origin - v0;

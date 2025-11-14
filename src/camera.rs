@@ -48,6 +48,119 @@ impl Camera {
         ret.update_view_proj(&self);
         return ret;
     }
+
+    /// Projects a 3D world-space point to normalized device coordinates (NDC).
+    ///
+    /// # Arguments
+    /// * `world_point` - Point in world space
+    ///
+    /// # Returns
+    /// A 3D point in NDC space where:
+    /// - X and Y are in range [-1, 1] (left/right, bottom/top)
+    /// - Z is in range [0, 1] (near/far in WGPU depth convention)
+    pub fn project_point_ndc(&self, world_point: cgmath::Point3<f32>) -> cgmath::Point3<f32> {
+        let vp = self.build_view_projection_matrix();
+        let homogeneous = vp * world_point.to_homogeneous();
+
+        // Perform perspective division
+        cgmath::Point3::from_homogeneous(homogeneous)
+    }
+
+    /// Unprojects a point from normalized device coordinates (NDC) to world space.
+    ///
+    /// # Arguments
+    /// * `ndc_point` - Point in NDC space where:
+    ///   - X and Y are in range [-1, 1] (left/right, bottom/top)
+    ///   - Z is in range [0, 1] (near/far in WGPU depth convention)
+    ///
+    /// # Returns
+    /// A 3D point in world space, or None if the view-projection matrix is not invertible.
+    pub fn unproject_point_ndc(&self, ndc_point: cgmath::Point3<f32>) -> Option<cgmath::Point3<f32>> {
+        use cgmath::SquareMatrix;
+
+        // For unprojection, we need to use the view-projection matrix WITHOUT the
+        // OPENGL_TO_WGPU correction, because we're already in WGPU's [0,1] depth range.
+        // The correction matrix converts FROM OpenGL [-1,1] TO WGPU [0,1], but we're
+        // starting with WGPU coordinates, so we don't need (and shouldn't use) that conversion.
+        let view = cgmath::Matrix4::look_at_rh(self.eye, self.target, self.up);
+        let proj = cgmath::perspective(cgmath::Deg(self.fovy), self.aspect, self.znear, self.zfar);
+
+        // Convert WGPU depth [0,1] to OpenGL depth [-1,1] for unprojection
+        let ndc_opengl = cgmath::Point3::new(
+            ndc_point.x,
+            ndc_point.y,
+            ndc_point.z * 2.0 - 1.0  // [0,1] → [-1,1]
+        );
+
+        let vp = proj * view;
+        let inv_vp = vp.invert()?;
+
+        // Convert NDC point to homogeneous coordinates
+        let homogeneous = inv_vp * ndc_opengl.to_homogeneous();
+
+        // Perform perspective division
+        Some(cgmath::Point3::from_homogeneous(homogeneous))
+    }
+
+    /// Projects a 3D world-space point to screen-space pixel coordinates.
+    ///
+    /// # Arguments
+    /// * `world_point` - Point in world space
+    /// * `screen_width` - Width of the screen/viewport in pixels
+    /// * `screen_height` - Height of the screen/viewport in pixels
+    ///
+    /// # Returns
+    /// A 3D point in screen space where:
+    /// - X is in range [0, screen_width] (left to right)
+    /// - Y is in range [0, screen_height] (top to bottom)
+    /// - Z is the depth value in range [0, 1]
+    pub fn project_point_screen(
+        &self,
+        world_point: cgmath::Point3<f32>,
+        screen_width: u32,
+        screen_height: u32,
+    ) -> cgmath::Point3<f32> {
+        let ndc = self.project_point_ndc(world_point);
+
+        // Convert NDC to screen coordinates
+        // NDC: [-1, 1] × [-1, 1], Y-up
+        // Screen: [0, width] × [0, height], Y-down
+        let screen_x = (ndc.x + 1.0) * 0.5 * screen_width as f32;
+        let screen_y = (1.0 - ndc.y) * 0.5 * screen_height as f32; // Flip Y
+        let screen_z = ndc.z; // Keep depth as-is
+
+        cgmath::Point3::new(screen_x, screen_y, screen_z)
+    }
+
+    /// Unprojects a screen-space pixel coordinate to a point in world space.
+    ///
+    /// # Arguments
+    /// * `screen_x` - X coordinate in screen space (0 = left edge)
+    /// * `screen_y` - Y coordinate in screen space (0 = top edge)
+    /// * `depth` - Depth value in range [0, 1] (0 = near plane, 1 = far plane)
+    /// * `screen_width` - Width of the screen/viewport in pixels
+    /// * `screen_height` - Height of the screen/viewport in pixels
+    ///
+    /// # Returns
+    /// A 3D point in world space, or None if the view-projection matrix is not invertible.
+    pub fn unproject_point_screen(
+        &self,
+        screen_x: f32,
+        screen_y: f32,
+        depth: f32,
+        screen_width: u32,
+        screen_height: u32,
+    ) -> Option<cgmath::Point3<f32>> {
+        // Convert screen coordinates to NDC
+        // Screen: [0, width] × [0, height], Y-down
+        // NDC: [-1, 1] × [-1, 1], Y-up
+        let ndc_x = (screen_x / screen_width as f32) * 2.0 - 1.0;
+        let ndc_y = 1.0 - (screen_y / screen_height as f32) * 2.0; // Flip Y
+        let ndc_z = depth;
+
+        let ndc_point = cgmath::Point3::new(ndc_x, ndc_y, ndc_z);
+        self.unproject_point_ndc(ndc_point)
+    }
 }
 
 

@@ -25,7 +25,7 @@ use wasm_bindgen::prelude::*;
 
 use crate::drawstate::DrawState;
 use crate::event::{EventDispatcher, EventKind, EventContext};
-use crate::operator::{OperatorManager, NavigationOperator, BuiltinOperatorId};
+use crate::operator::{OperatorManager, NavigationOperator, SelectionOperator, BuiltinOperatorId};
 
 
 enum VertexShaderLocations {
@@ -101,8 +101,14 @@ pub async fn run() {
     // Set up event dispatcher
     let mut dispatcher = EventDispatcher::new();
 
-    // Set up operator manager and add navigation operator
+    // Set up operator manager and add operators
     let mut operator_manager = OperatorManager::new();
+
+    // Add selection operator with priority 0 (highest priority)
+    let selection_operator = Box::new(SelectionOperator::new(BuiltinOperatorId::Selection.into()));
+    operator_manager.add_operator(selection_operator, 0, &mut dispatcher);
+
+    // Add navigation operator with priority 1
     let nav_operator = Box::new(NavigationOperator::new(BuiltinOperatorId::Navigation.into()));
     operator_manager.add_operator(nav_operator, 1, &mut dispatcher);
 
@@ -170,6 +176,14 @@ pub async fn run() {
         } else {
             false
         }
+    });
+
+    // Register CursorMoved handler to track cursor position
+    dispatcher.register(EventKind::CursorMoved, |event, ctx| {
+        if let crate::event::Event::CursorMoved { position } = event {
+            ctx.state.cursor_position = Some((position.x as f32, position.y as f32));
+        }
+        false // Don't stop propagation - other handlers may need cursor position too
     });
 
     event_loop

@@ -30,6 +30,8 @@ pub struct DrawState<'a> {
     pub size: winit::dpi::PhysicalSize<u32>,
     pub window: &'a Window,
     pub camera: Camera,
+    /// Current cursor position in screen coordinates (x, y), or None if cursor is not over the window
+    pub cursor_position: Option<(f32, f32)>,
 
     pub material_manager: MaterialManager,
     shader_builder: ShaderBuilder,
@@ -223,11 +225,12 @@ impl<'a> DrawState<'a> {
             config,
             size,
             window,
+            camera,
+            cursor_position: None,
             material_manager,
             shader_builder,
             color_material_pipeline_layout,
             texture_material_pipeline_layout,
-            camera,
             camera_buffer,
             camera_bind_group,
             lights_buffer,
