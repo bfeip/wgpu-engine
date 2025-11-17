@@ -34,6 +34,19 @@ const DEFAULT_POINT_COLOR: RgbaColor = RgbaColor {
     a: 1.0
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DefaultMaterial {
+    Face = 0,
+    Line,
+    Point
+}
+
+impl Into<MaterialId> for DefaultMaterial {
+    fn into(self) -> MaterialId {
+        self as MaterialId
+    }
+}
+
 pub type MaterialId = u32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -289,7 +302,7 @@ pub struct MaterialManager {
 impl MaterialManager {
     pub fn new(device: &wgpu::Device) -> Self {
         let mut materials = HashMap::new();
-        let next_id = 1; // 0 is the default material
+        let next_id = 3; // 0-2 are default materials
 
         let color_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Color Layout"),
@@ -332,8 +345,18 @@ impl MaterialManager {
                 label: Some("texture_bind_group_layout"),
             });
 
-        let default_face_color_material = FaceColorMaterial::new(0, device, &color_bind_group_layout, DEFAULT_FACE_COLOR);
-        materials.insert(0, Material::FaceColor(default_face_color_material));
+        let default_face_color_material = FaceColorMaterial::new(
+            DefaultMaterial::Face as u32, device, &color_bind_group_layout, DEFAULT_FACE_COLOR
+        );
+        let default_line_color_material = LineColorMaterial::new(
+            DefaultMaterial::Line as u32, device, &color_bind_group_layout, DEFAULT_LINE_COLOR
+        );
+        let default_point_color_material = PointColorMaterial::new(
+            DefaultMaterial::Point as u32, device, &color_bind_group_layout, DEFAULT_POINT_COLOR
+        );
+        materials.insert(DefaultMaterial::Face as u32, Material::FaceColor(default_face_color_material));
+        materials.insert(DefaultMaterial::Line as u32, Material::LineColor(default_line_color_material));
+        materials.insert(DefaultMaterial::Point as u32, Material::PointColor(default_point_color_material));
 
         Self {
             materials,

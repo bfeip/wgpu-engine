@@ -1,10 +1,9 @@
 use std::path::Path;
-use crate::scene::{Vertex, MeshPrimitive, PrimitiveType};
+use crate::{material::DefaultMaterial, scene::{MeshPrimitive, PrimitiveType, Vertex}};
 
 /// Loads vertex data from a glTF primitive.
 ///
 /// Reads positions, normals, and texture coordinates from the primitive's attributes.
-/// Normals are optional - if missing, uses zero normals (for lines/points that don't need lighting).
 fn load_vertices(
     primitive: &gltf::Primitive,
     buffers: &[gltf::buffer::Data],
@@ -50,7 +49,7 @@ fn load_vertices(
                 .collect()
         }
         (None, Some(tex_coords)) => {
-            // Has texture coordinates but no normals (lines/points)
+            // Has texture coordinates but no normals
             let tex_coords_f32 = tex_coords.into_f32();
             positions
                 .zip(tex_coords_f32)
@@ -110,8 +109,6 @@ fn map_primitive_mode(mode: gltf::mesh::Mode) -> Option<PrimitiveType> {
 fn create_material_for_primitive(
     primitive: &gltf::Primitive,
     primitive_type: PrimitiveType,
-    device: &wgpu::Device,
-    material_manager: &mut crate::material::MaterialManager,
     material_map: &[crate::material::MaterialId],
     default_face_material: crate::material::MaterialId,
 ) -> crate::material::MaterialId {
@@ -124,29 +121,8 @@ fn create_material_for_primitive(
                 .and_then(|idx| material_map.get(idx).copied())
                 .unwrap_or(default_face_material)
         }
-        PrimitiveType::LineList | PrimitiveType::PointList => {
-            // For lines and points, use base color from material
-            let color = primitive
-                .material()
-                .pbr_metallic_roughness()
-                .base_color_factor();
-            let rgba_color = crate::common::RgbaColor {
-                r: color[0],
-                g: color[1],
-                b: color[2],
-                a: color[3],
-            };
-
-            match primitive_type {
-                PrimitiveType::LineList => {
-                    material_manager.create_line_color_material(device, rgba_color)
-                }
-                PrimitiveType::PointList => {
-                    material_manager.create_point_color_material(device, rgba_color)
-                }
-                _ => unreachable!(),
-            }
-        }
+        PrimitiveType::LineList => DefaultMaterial::Line.into(),
+        PrimitiveType::PointList => DefaultMaterial::Point.into(),
     }
 }
 
@@ -315,8 +291,6 @@ pub fn load_gltf_scene<P: AsRef<Path>>(
             let material_id = create_material_for_primitive(
                 &primitive,
                 primitive_type,
-                device,
-                material_manager,
                 &material_map,
                 default_material,
             );
