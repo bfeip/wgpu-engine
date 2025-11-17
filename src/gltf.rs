@@ -5,6 +5,7 @@ use crate::drawstate::PrimitiveType;
 /// Loads vertex data from a glTF primitive.
 ///
 /// Reads positions, normals, and texture coordinates from the primitive's attributes.
+/// Normals are optional - if missing, uses zero normals (for lines/points that don't need lighting).
 fn load_vertices(
     primitive: &gltf::Primitive,
     buffers: &[gltf::buffer::Data],
@@ -17,38 +18,60 @@ fn load_vertices(
         .read_positions()
         .ok_or_else(|| anyhow::anyhow!("Primitive missing positions"))?;
 
-    // Read normals (required for lighting)
-    let normals = reader
-        .read_normals()
-        .ok_or_else(|| anyhow::anyhow!("Primitive missing normals"))?;
+    // Read normals (optional - lines and points don't need them)
+    let normals = reader.read_normals();
 
     // Read texture coordinates (optional, default to [0, 0] if missing)
     let tex_coords = reader.read_tex_coords(0);
 
     // Build vertex array by zipping iterators
-    let vertices = if let Some(tex_coords) = tex_coords {
-        // Map tex_coords to f32 in case it's u8 or u16 normalized format
-        let tex_coords_f32 = tex_coords.into_f32();
-
-        positions
-            .zip(normals)
-            .zip(tex_coords_f32)
-            .map(|((position, normal), tex_coords)| Vertex {
-                position,
-                normal,
-                tex_coords: [tex_coords[0], tex_coords[1], 0.0], // glTF uses 2D, we use 3D
-            })
-            .collect()
-    } else {
-        // No texture coordinates, use default
-        positions
-            .zip(normals)
-            .map(|(position, normal)| Vertex {
-                position,
-                normal,
-                tex_coords: [0.0, 0.0, 0.0],
-            })
-            .collect()
+    let vertices = match (normals, tex_coords) {
+        (Some(normals), Some(tex_coords)) => {
+            // Has normals and texture coordinates
+            let tex_coords_f32 = tex_coords.into_f32();
+            positions
+                .zip(normals)
+                .zip(tex_coords_f32)
+                .map(|((position, normal), tex_coords)| Vertex {
+                    position,
+                    normal,
+                    tex_coords: [tex_coords[0], tex_coords[1], 0.0],
+                })
+                .collect()
+        }
+        (Some(normals), None) => {
+            // Has normals but no texture coordinates
+            positions
+                .zip(normals)
+                .map(|(position, normal)| Vertex {
+                    position,
+                    normal,
+                    tex_coords: [0.0, 0.0, 0.0],
+                })
+                .collect()
+        }
+        (None, Some(tex_coords)) => {
+            // Has texture coordinates but no normals (lines/points)
+            let tex_coords_f32 = tex_coords.into_f32();
+            positions
+                .zip(tex_coords_f32)
+                .map(|(position, tex_coords)| Vertex {
+                    position,
+                    normal: [0.0, 0.0, 0.0],
+                    tex_coords: [tex_coords[0], tex_coords[1], 0.0],
+                })
+                .collect()
+        }
+        (None, None) => {
+            // No normals or texture coordinates (lines/points)
+            positions
+                .map(|position| Vertex {
+                    position,
+                    normal: [0.0, 0.0, 0.0],
+                    tex_coords: [0.0, 0.0, 0.0],
+                })
+                .collect()
+        }
     };
 
     Ok(vertices)
@@ -71,6 +94,63 @@ fn load_indices(
         .collect();
 
     Ok(indices)
+}
+
+/// Maps a glTF primitive mode to our PrimitiveType.
+/// Returns None for unsupported modes.
+fn map_primitive_mode(mode: gltf::mesh::Mode) -> Option<PrimitiveType> {
+    match mode {
+        gltf::mesh::Mode::Triangles => Some(PrimitiveType::TriangleList),
+        gltf::mesh::Mode::Lines | gltf::mesh::Mode::LineStrip | gltf::mesh::Mode::LineLoop => {
+            Some(PrimitiveType::LineList)
+        }
+        gltf::mesh::Mode::Points => Some(PrimitiveType::PointList),
+        _ => None, // TriangleFan, TriangleStrip not supported
+    }
+}
+
+/// Creates an appropriate material for a glTF primitive based on its type.
+fn create_material_for_primitive(
+    primitive: &gltf::Primitive,
+    primitive_type: PrimitiveType,
+    device: &wgpu::Device,
+    material_manager: &mut crate::material::MaterialManager,
+    material_map: &[crate::material::MaterialId],
+    default_face_material: crate::material::MaterialId,
+) -> crate::material::MaterialId {
+    match primitive_type {
+        PrimitiveType::TriangleList => {
+            // For triangles, use the glTF material if available
+            primitive
+                .material()
+                .index()
+                .and_then(|idx| material_map.get(idx).copied())
+                .unwrap_or(default_face_material)
+        }
+        PrimitiveType::LineList | PrimitiveType::PointList => {
+            // For lines and points, use base color from material
+            let color = primitive
+                .material()
+                .pbr_metallic_roughness()
+                .base_color_factor();
+            let rgba_color = crate::common::RgbaColor {
+                r: color[0],
+                g: color[1],
+                b: color[2],
+                a: color[3],
+            };
+
+            match primitive_type {
+                PrimitiveType::LineList => {
+                    material_manager.create_line_color_material(device, rgba_color)
+                }
+                PrimitiveType::PointList => {
+                    material_manager.create_point_color_material(device, rgba_color)
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
 }
 
 /// Loads a material from a glTF material definition.
@@ -121,7 +201,7 @@ fn load_material(
         let texture = Texture::from_image(device, queue, &dynamic_image, Some("gltf_texture"))?;
 
         // Create TextureMaterial
-        let mat_id = material_manager.create_texture_material(device, texture)?;
+        let mat_id = material_manager.create_face_texture_material(device, texture)?;
         Ok(mat_id)
     } else {
         // No texture, use base color factor as ColorMaterial
@@ -133,7 +213,7 @@ fn load_material(
             a: base_color[3],
         };
 
-        Ok(material_manager.create_color_material(device, color))
+        Ok(material_manager.create_face_color_material(device, color))
     }
 }
 
@@ -185,7 +265,7 @@ pub fn load_gltf_scene<P: AsRef<Path>>(
     }
 
     // Default material for primitives without a material
-    let default_material = material_manager.create_color_material(
+    let default_material = material_manager.create_face_color_material(
         device,
         crate::common::RgbaColor {
             r: 0.8,
@@ -204,10 +284,15 @@ pub fn load_gltf_scene<P: AsRef<Path>>(
         let mut primitives_data = Vec::new();
 
         for (prim_idx, primitive) in mesh.primitives().enumerate() {
-            // Skip non-triangle primitives (we only support triangle rendering)
-            if primitive.mode() != gltf::mesh::Mode::Triangles {
+            // Map glTF primitive mode to our PrimitiveType
+            let Some(primitive_type) = map_primitive_mode(primitive.mode()) else {
+                log::warn!(
+                    "Skipping unsupported primitive mode {:?} in mesh {}",
+                    primitive.mode(),
+                    mesh.name().unwrap_or("unnamed")
+                );
                 continue;
-            }
+            };
 
             // Load vertex and index data
             let vertices = load_vertices(&primitive, &buffers)?;
@@ -221,25 +306,23 @@ pub fn load_gltf_scene<P: AsRef<Path>>(
                 prim_idx
             );
 
-            // glTF primitives are triangles by default
             let primitives = vec![MeshPrimitive {
-                primitive_type: PrimitiveType::TriangleList,
+                primitive_type,
                 indices,
             }];
 
             let mesh_descriptor: MeshDescriptor<&str> = MeshDescriptor::Raw { vertices, primitives };
-            let mesh_id = scene.add_mesh(
-                device,
-                mesh_descriptor,
-                Some(&mesh_label),
-            )?;
+            let mesh_id = scene.add_mesh(device, mesh_descriptor, Some(&mesh_label))?;
 
-            // Get material for this primitive
-            let material_id = primitive
-                .material()
-                .index()
-                .and_then(|idx| material_map.get(idx).copied())
-                .unwrap_or(default_material);
+            // Create appropriate material for this primitive type
+            let material_id = create_material_for_primitive(
+                &primitive,
+                primitive_type,
+                device,
+                material_manager,
+                &material_map,
+                default_material,
+            );
 
             primitives_data.push((mesh_id, material_id));
         }
