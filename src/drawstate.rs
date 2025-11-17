@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use wgpu::{util::DeviceExt};
 use winit::window::Window;
 
@@ -39,7 +41,9 @@ pub struct DrawState<'a> {
     camera_bind_group: wgpu::BindGroup,
     lights_buffer: wgpu::Buffer,
     lights_bind_group: wgpu::BindGroup,
-    depth_texture: texture::Texture
+    depth_texture: texture::Texture,
+
+    pipeline_cache: HashMap<MaterialType, wgpu::RenderPipeline>,
 }
 
 impl<'a> DrawState<'a> {
@@ -228,87 +232,90 @@ impl<'a> DrawState<'a> {
             camera_bind_group,
             lights_buffer,
             lights_bind_group,
-            depth_texture
+            depth_texture,
+            pipeline_cache: HashMap::new(),
         }
     }
 
-    pub fn create_pipeline(&self, material: MaterialType) -> wgpu::RenderPipeline {
-        let (pipeline_layout, shader, topology) = match material {
-            MaterialType::FaceColor => {
-                let layout = &self.color_material_pipeline_layout;
-                let shader = self.shader_builder.generate_shader(&self.device, material);
-                (layout, shader, wgpu::PrimitiveTopology::TriangleList)
-            },
-            MaterialType::FaceTexture => {
-                let layout = &self.texture_material_pipeline_layout;
-                let shader = self.shader_builder.generate_shader(&self.device, material);
-                (layout, shader, wgpu::PrimitiveTopology::TriangleList)
-            },
-            MaterialType::LineColor => {
-                let layout = &self.color_material_pipeline_layout;
-                let shader = self.shader_builder.generate_shader(&self.device, material);
-                (layout, shader, wgpu::PrimitiveTopology::LineList)
-            },
-            MaterialType::PointColor => {
-                let layout = &self.color_material_pipeline_layout;
-                let shader = self.shader_builder.generate_shader(&self.device, material);
-                (layout, shader, wgpu::PrimitiveTopology::PointList)
-            },
-        };
-
-        self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Render Pipeline"),
-            layout: Some(pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[
-                    Vertex::desc(),
-                    InstanceRaw::desc()
-                ],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: self.config.format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                // Only cull for triangles, not for lines or points
-                cull_mode: if topology == wgpu::PrimitiveTopology::TriangleList {
-                    Some(wgpu::Face::Back)
-                } else {
-                    None
+    fn get_or_create_pipeline(&mut self, material_type: MaterialType) -> &wgpu::RenderPipeline {
+        self.pipeline_cache.entry(material_type).or_insert_with(|| {
+            let (pipeline_layout, shader, topology) = match material_type {
+                MaterialType::FaceColor => {
+                    let layout = &self.color_material_pipeline_layout;
+                    let shader = self.shader_builder.generate_shader(&self.device, material_type);
+                    (layout, shader, wgpu::PrimitiveTopology::TriangleList)
                 },
-                // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
-                polygon_mode: wgpu::PolygonMode::Fill,
-                // Requires Features::DEPTH_CLIP_CONTROL
-                unclipped_depth: false,
-                // Requires Features::CONSERVATIVE_RASTERIZATION
-                conservative: false,
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: texture::Texture::DEPTH_FORMAT,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default()
-            }),
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            multiview: None,
-            cache: None,
+                MaterialType::FaceTexture => {
+                    let layout = &self.texture_material_pipeline_layout;
+                    let shader = self.shader_builder.generate_shader(&self.device, material_type);
+                    (layout, shader, wgpu::PrimitiveTopology::TriangleList)
+                },
+                MaterialType::LineColor => {
+                    let layout = &self.color_material_pipeline_layout;
+                    let shader = self.shader_builder.generate_shader(&self.device, material_type);
+                    (layout, shader, wgpu::PrimitiveTopology::LineList)
+                },
+                MaterialType::PointColor => {
+                    let layout = &self.color_material_pipeline_layout;
+                    let shader = self.shader_builder.generate_shader(&self.device, material_type);
+                    (layout, shader, wgpu::PrimitiveTopology::PointList)
+                },
+            };
+
+            self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("Render Pipeline"),
+                layout: Some(pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[
+                        Vertex::desc(),
+                        InstanceRaw::desc()
+                    ],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: self.config.format,
+                        blend: Some(wgpu::BlendState::REPLACE),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    // Only cull for triangles, not for lines or points
+                    cull_mode: if topology == wgpu::PrimitiveTopology::TriangleList {
+                        Some(wgpu::Face::Back)
+                    } else {
+                        None
+                    },
+                    // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    // Requires Features::DEPTH_CLIP_CONTROL
+                    unclipped_depth: false,
+                    // Requires Features::CONSERVATIVE_RASTERIZATION
+                    conservative: false,
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: texture::Texture::DEPTH_FORMAT,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default()
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                multiview: None,
+                cache: None,
+            })
         })
     }
 
@@ -382,17 +389,19 @@ impl<'a> DrawState<'a> {
             // Render each batch
             for batch in batches {
                 let mesh = scene.meshes.get(&batch.mesh_id).unwrap();
-                let material = self.material_manager.get(batch.material_id).unwrap();
+                let batch_material_type = {
+                    let material = self.material_manager.get(batch.material_id).unwrap();
+                    // Bind material for this batch
+                    material.bind(&mut render_pass)?;
+                    material.material_type()
+                };
 
                 // Only change pipeline if material type changes
-                if current_material_type != Some(material.material_type()) {
-                    let pipeline = self.create_pipeline(material.material_type());
-                    render_pass.set_pipeline(&pipeline);
-                    current_material_type = Some(material.material_type());
+                if current_material_type != Some(batch_material_type) {
+                    let pipeline = self.get_or_create_pipeline(batch_material_type);
+                    render_pass.set_pipeline(pipeline);
+                    current_material_type = Some(batch_material_type);
                 }
-
-                // Bind material for this batch
-                material.bind(&mut render_pass)?;
 
                 // Draw all instances in this batch
                 mesh.draw_instances(&self.device, &mut render_pass, batch.primitive_type, &batch.instances);
