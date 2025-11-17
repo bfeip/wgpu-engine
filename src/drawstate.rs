@@ -241,17 +241,27 @@ impl<'a> DrawState<'a> {
     }
 
     pub fn create_pipeline(&self, material: MaterialType) -> wgpu::RenderPipeline {
-        let (pipeline_layout, shader) = match material {
-            MaterialType::Color => {
+        let (pipeline_layout, shader, topology) = match material {
+            MaterialType::FaceColor => {
                 let layout = &self.color_material_pipeline_layout;
                 let shader = self.shader_builder.generate_shader(&self.device, material);
-                (layout, shader)
+                (layout, shader, wgpu::PrimitiveTopology::TriangleList)
             },
-            MaterialType::Texture => {
+            MaterialType::FaceTexture => {
                 let layout = &self.texture_material_pipeline_layout;
                 let shader = self.shader_builder.generate_shader(&self.device, material);
-                (layout, shader)
-            }
+                (layout, shader, wgpu::PrimitiveTopology::TriangleList)
+            },
+            MaterialType::LineColor => {
+                let layout = &self.color_material_pipeline_layout;
+                let shader = self.shader_builder.generate_shader(&self.device, material);
+                (layout, shader, wgpu::PrimitiveTopology::LineList)
+            },
+            MaterialType::PointColor => {
+                let layout = &self.color_material_pipeline_layout;
+                let shader = self.shader_builder.generate_shader(&self.device, material);
+                (layout, shader, wgpu::PrimitiveTopology::PointList)
+            },
         };
 
         self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -277,10 +287,15 @@ impl<'a> DrawState<'a> {
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             }),
             primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
+                topology,
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
+                // Only cull for triangles, not for lines or points
+                cull_mode: if topology == wgpu::PrimitiveTopology::TriangleList {
+                    Some(wgpu::Face::Back)
+                } else {
+                    None
+                },
                 // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
                 polygon_mode: wgpu::PolygonMode::Fill,
                 // Requires Features::DEPTH_CLIP_CONTROL

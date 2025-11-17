@@ -13,10 +13,24 @@ use crate::{
     common::RgbaColor, texture::Texture
 };
 
-const DEFAULT_COLOR: RgbaColor = RgbaColor {
+const DEFAULT_FACE_COLOR: RgbaColor = RgbaColor {
     r: 1.0,
     g: 0.3,
     b: 1.0,
+    a: 1.0
+};
+
+const DEFAULT_LINE_COLOR: RgbaColor = RgbaColor {
+    r: 0.0,
+    g: 0.0,
+    b: 0.0,
+    a: 1.0
+};
+
+const DEFAULT_POINT_COLOR: RgbaColor = RgbaColor {
+    r: 0.0,
+    g: 0.0,
+    b: 0.0,
     a: 1.0
 };
 
@@ -24,40 +38,50 @@ pub type MaterialId = u32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MaterialType {
-    Color,
-    Texture
+    FaceColor,
+    FaceTexture,
+    LineColor,
+    PointColor,
 }
 
 pub enum Material {
-    Color(ColorMaterial),
-    Texture(TextureMaterial)
+    FaceColor(FaceColorMaterial),
+    FaceTexture(FaceTextureMaterial),
+    LineColor(LineColorMaterial),
+    PointColor(PointColorMaterial),
 }
 
 impl Material {
     pub fn id(&self) -> MaterialId {
         match self {
-            Self::Color(material) => material.id,
-            Self::Texture(material) => material.id,
+            Self::FaceColor(material) => material.id,
+            Self::FaceTexture(material) => material.id,
+            Self::LineColor(material) => material.id,
+            Self::PointColor(material) => material.id,
         }
     }
 
     pub fn bind(&self, pass: &mut wgpu::RenderPass) -> anyhow::Result<()> {
         match self {
-            Self::Color(material) => material.bind(pass),
-            Self::Texture(material) => material.bind(pass),
+            Self::FaceColor(material) => material.bind(pass),
+            Self::FaceTexture(material) => material.bind(pass),
+            Self::LineColor(material) => material.bind(pass),
+            Self::PointColor(material) => material.bind(pass),
         }
     }
 
     pub fn material_type(&self) -> MaterialType {
         match self {
-            Self::Color(_) => MaterialType::Color,
-            Self::Texture(_) => MaterialType::Texture
+            Self::FaceColor(_) => MaterialType::FaceColor,
+            Self::FaceTexture(_) => MaterialType::FaceTexture,
+            Self::LineColor(_) => MaterialType::LineColor,
+            Self::PointColor(_) => MaterialType::PointColor,
         }
     }
 }
 
 
-pub struct ColorMaterial {
+pub struct FaceColorMaterial {
     pub id: MaterialId,
     pub diffuse: RgbaColor,
 
@@ -65,7 +89,7 @@ pub struct ColorMaterial {
     bind_group: wgpu::BindGroup
 }
 
-impl ColorMaterial {
+impl FaceColorMaterial {
     fn new(
         id: MaterialId,
         device: &wgpu::Device,
@@ -73,13 +97,13 @@ impl ColorMaterial {
         diffuse: RgbaColor
     ) -> Self {
         let buffer = device.create_buffer_init(&BufferInitDescriptor {
-            label: Some("Color Material Buffer"),
+            label: Some("Face Color Material Buffer"),
             contents: bytes_of(&diffuse),
             usage: wgpu::BufferUsages::UNIFORM
         });
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Color Material Bind Group"),
+            label: Some("Face Color Material Bind Group"),
             layout: bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
@@ -104,14 +128,14 @@ impl ColorMaterial {
 }
 
 
-pub struct TextureMaterial {
+pub struct FaceTextureMaterial {
     pub id: MaterialId,
     pub diffuse: Texture,
 
     bind_group: wgpu::BindGroup
 }
 
-impl TextureMaterial {
+impl FaceTextureMaterial {
     fn new_from_path(
         id: MaterialId,
         device: &wgpu::Device,
@@ -120,7 +144,7 @@ impl TextureMaterial {
         path: &Path
     ) -> anyhow::Result<Self> {
         let image_bytes = std::fs::read(path)?;
-        let diffuse = Texture::from_bytes(device, queue, &image_bytes, "Texture Material Diffuse Texture")?;
+        let diffuse = Texture::from_bytes(device, queue, &image_bytes, "Face Texture Material Diffuse Texture")?;
 
         Self::new_from_texture(id, device, bind_group_layout, diffuse)
     }
@@ -132,7 +156,7 @@ impl TextureMaterial {
         texture: Texture,
     ) -> anyhow::Result<Self> {
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Texture Material Bind Group"),
+            label: Some("Face Texture Material Bind Group"),
             layout: bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
@@ -151,6 +175,100 @@ impl TextureMaterial {
             diffuse: texture,
             bind_group
         })
+    }
+
+    fn bind(&self, pass: &mut wgpu::RenderPass) -> anyhow::Result<()> {
+        pass.set_bind_group(2, &self.bind_group, &[]);
+        Ok(())
+    }
+}
+
+
+pub struct LineColorMaterial {
+    pub id: MaterialId,
+    pub color: RgbaColor,
+
+    buffer: wgpu::Buffer,
+    bind_group: wgpu::BindGroup
+}
+
+impl LineColorMaterial {
+    fn new(
+        id: MaterialId,
+        device: &wgpu::Device,
+        bind_group_layout: &wgpu::BindGroupLayout,
+        color: RgbaColor
+    ) -> Self {
+        let buffer = device.create_buffer_init(&BufferInitDescriptor {
+            label: Some("Line Color Material Buffer"),
+            contents: bytes_of(&color),
+            usage: wgpu::BufferUsages::UNIFORM
+        });
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Line Color Material Bind Group"),
+            layout: bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buffer.as_entire_binding()
+                }
+            ]
+        });
+
+        Self {
+            id,
+            color,
+            buffer,
+            bind_group
+        }
+    }
+
+    fn bind(&self, pass: &mut wgpu::RenderPass) -> anyhow::Result<()> {
+        pass.set_bind_group(2, &self.bind_group, &[]);
+        Ok(())
+    }
+}
+
+
+pub struct PointColorMaterial {
+    pub id: MaterialId,
+    pub color: RgbaColor,
+
+    buffer: wgpu::Buffer,
+    bind_group: wgpu::BindGroup
+}
+
+impl PointColorMaterial {
+    fn new(
+        id: MaterialId,
+        device: &wgpu::Device,
+        bind_group_layout: &wgpu::BindGroupLayout,
+        color: RgbaColor
+    ) -> Self {
+        let buffer = device.create_buffer_init(&BufferInitDescriptor {
+            label: Some("Point Color Material Buffer"),
+            contents: bytes_of(&color),
+            usage: wgpu::BufferUsages::UNIFORM
+        });
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Point Color Material Bind Group"),
+            layout: bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buffer.as_entire_binding()
+                }
+            ]
+        });
+
+        Self {
+            id,
+            color,
+            buffer,
+            bind_group
+        }
     }
 
     fn bind(&self, pass: &mut wgpu::RenderPass) -> anyhow::Result<()> {
@@ -214,8 +332,8 @@ impl MaterialManager {
                 label: Some("texture_bind_group_layout"),
             });
 
-        let default_color_material = ColorMaterial::new(0, device, &color_bind_group_layout, DEFAULT_COLOR);
-        materials.insert(0, Material::Color(default_color_material));
+        let default_face_color_material = FaceColorMaterial::new(0, device, &color_bind_group_layout, DEFAULT_FACE_COLOR);
+        materials.insert(0, Material::FaceColor(default_face_color_material));
 
         Self {
             materials,
@@ -225,16 +343,31 @@ impl MaterialManager {
         }
     }
 
-    pub fn create_color_material(&mut self, device: &wgpu::Device, color: RgbaColor) -> MaterialId {
+    pub fn create_face_color_material(&mut self, device: &wgpu::Device, color: RgbaColor) -> MaterialId {
         let id = self.next_id;
         self.next_id += 1;
-        let material = ColorMaterial::new(id, device, &self.color_bind_group_layout, color);
-        self.materials.insert(id, Material::Color(material));
-
+        let material = FaceColorMaterial::new(id, device, &self.color_bind_group_layout, color);
+        self.materials.insert(id, Material::FaceColor(material));
         id
     }
 
-    pub fn create_texture_material_from_path<P: AsRef<Path>>(
+    pub fn create_line_color_material(&mut self, device: &wgpu::Device, color: RgbaColor) -> MaterialId {
+        let id = self.next_id;
+        self.next_id += 1;
+        let material = LineColorMaterial::new(id, device, &self.color_bind_group_layout, color);
+        self.materials.insert(id, Material::LineColor(material));
+        id
+    }
+
+    pub fn create_point_color_material(&mut self, device: &wgpu::Device, color: RgbaColor) -> MaterialId {
+        let id = self.next_id;
+        self.next_id += 1;
+        let material = PointColorMaterial::new(id, device, &self.color_bind_group_layout, color);
+        self.materials.insert(id, Material::PointColor(material));
+        id
+    }
+
+    pub fn create_face_texture_material_from_path<P: AsRef<Path>>(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -243,7 +376,7 @@ impl MaterialManager {
         let id = self.next_id;
         self.next_id += 1;
 
-        let material = TextureMaterial::new_from_path(
+        let material = FaceTextureMaterial::new_from_path(
             id,
             device,
             queue,
@@ -251,12 +384,12 @@ impl MaterialManager {
             diffuse_path.as_ref()
         )?;
 
-        self.materials.insert(id, Material::Texture(material));
+        self.materials.insert(id, Material::FaceTexture(material));
 
         Ok(id)
     }
 
-    pub fn create_texture_material(
+    pub fn create_face_texture_material(
         &mut self,
         device: &wgpu::Device,
         texture: crate::texture::Texture,
@@ -264,14 +397,14 @@ impl MaterialManager {
         let id = self.next_id;
         self.next_id += 1;
 
-        let material = TextureMaterial::new_from_texture(
+        let material = FaceTextureMaterial::new_from_texture(
             id,
             device,
             &self.texture_bind_group_layout,
             texture,
         )?;
 
-        self.materials.insert(id, Material::Texture(material));
+        self.materials.insert(id, Material::FaceTexture(material));
 
         Ok(id)
     }
