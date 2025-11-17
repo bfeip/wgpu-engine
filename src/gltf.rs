@@ -101,9 +101,7 @@ fn load_indices(
 fn map_primitive_mode(mode: gltf::mesh::Mode) -> Option<PrimitiveType> {
     match mode {
         gltf::mesh::Mode::Triangles => Some(PrimitiveType::TriangleList),
-        gltf::mesh::Mode::Lines | gltf::mesh::Mode::LineStrip | gltf::mesh::Mode::LineLoop => {
-            Some(PrimitiveType::LineList)
-        }
+        gltf::mesh::Mode::Lines => Some(PrimitiveType::LineList),
         gltf::mesh::Mode::Points => Some(PrimitiveType::PointList),
         _ => None, // TriangleFan, TriangleStrip not supported
     }
