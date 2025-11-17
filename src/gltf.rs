@@ -105,12 +105,11 @@ fn map_primitive_mode(mode: gltf::mesh::Mode) -> Option<PrimitiveType> {
     }
 }
 
-/// Creates an appropriate material for a glTF primitive based on its type.
-fn create_material_for_primitive(
+/// Gets an appropriate material for a glTF primitive based on its type.
+fn get_material_for_primitive(
     primitive: &gltf::Primitive,
     primitive_type: PrimitiveType,
     material_map: &[crate::material::MaterialId],
-    default_face_material: crate::material::MaterialId,
 ) -> crate::material::MaterialId {
     match primitive_type {
         PrimitiveType::TriangleList => {
@@ -119,7 +118,7 @@ fn create_material_for_primitive(
                 .material()
                 .index()
                 .and_then(|idx| material_map.get(idx).copied())
-                .unwrap_or(default_face_material)
+                .unwrap_or(DefaultMaterial::Face.into())
         }
         PrimitiveType::LineList => DefaultMaterial::Line.into(),
         PrimitiveType::PointList => DefaultMaterial::Point.into(),
@@ -130,7 +129,7 @@ fn create_material_for_primitive(
 ///
 /// Converts glTF PBR materials to either ColorMaterial or TextureMaterial.
 fn load_material(
-    material: &gltf::Material,
+    gltf_material: &gltf::Material,
     images: &[gltf::image::Data],
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -138,7 +137,7 @@ fn load_material(
 ) -> anyhow::Result<crate::material::MaterialId> {
     use crate::texture::Texture;
 
-    let pbr = material.pbr_metallic_roughness();
+    let pbr = gltf_material.pbr_metallic_roughness();
 
     // Check if material has a base color texture
     if let Some(gltf_texture_info) = pbr.base_color_texture() {
@@ -237,17 +236,6 @@ pub fn load_gltf_scene<P: AsRef<Path>>(
         material_map.push(mat_id);
     }
 
-    // Default material for primitives without a material
-    let default_material = material_manager.create_face_color_material(
-        device,
-        crate::common::RgbaColor {
-            r: 0.8,
-            g: 0.8,
-            b: 0.8,
-            a: 1.0,
-        },
-    );
-
     // Maps glTF mesh index -> list of (scene mesh, material) pairs
     // We need this structure because glTF nodes reference mesh indices, and each glTF mesh
     // can contain multiple primitives. We load each primitive as a separate scene mesh.
@@ -288,11 +276,10 @@ pub fn load_gltf_scene<P: AsRef<Path>>(
             let mesh_id = scene.add_mesh(device, mesh_descriptor, Some(&mesh_label))?;
 
             // Create appropriate material for this primitive type
-            let material_id = create_material_for_primitive(
+            let material_id = get_material_for_primitive(
                 &primitive,
                 primitive_type,
                 &material_map,
-                default_material,
             );
 
             primitives_data.push((mesh_id, material_id));
