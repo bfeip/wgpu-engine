@@ -1,5 +1,6 @@
 use std::path::Path;
-use crate::scene::Vertex;
+use crate::scene::{Vertex, MeshPrimitive};
+use crate::drawstate::PrimitiveType;
 
 /// Loads vertex data from a glTF primitive.
 ///
@@ -220,7 +221,13 @@ pub fn load_gltf_scene<P: AsRef<Path>>(
                 prim_idx
             );
 
-            let mesh_descriptor: MeshDescriptor<&str> = MeshDescriptor::Raw { vertices, indices };
+            // glTF primitives are triangles by default
+            let primitives = vec![MeshPrimitive {
+                primitive_type: PrimitiveType::TriangleList,
+                indices,
+            }];
+
+            let mesh_descriptor: MeshDescriptor<&str> = MeshDescriptor::Raw { vertices, primitives };
             let mesh_id = scene.add_mesh(
                 device,
                 mesh_descriptor,

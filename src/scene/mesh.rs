@@ -4,11 +4,19 @@ use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
 use crate::{
     VertexShaderLocations,
-    common::{Aabb, Ray}
+    common::{Aabb, Ray},
+    drawstate::PrimitiveType,
 };
 
 pub type MeshId = u32;
 type MeshIndex = u16;
+
+/// A collection of indices representing a single primitive type in a mesh
+#[derive(Debug, Clone)]
+pub struct MeshPrimitive {
+    pub primitive_type: PrimitiveType,
+    pub indices: Vec<MeshIndex>,
+}
 
 /// Result of a ray-mesh intersection test in local mesh space.
 #[derive(Debug, Clone)]
@@ -70,16 +78,20 @@ pub enum MeshDescriptor<'a, P: AsRef<Path>> {
     Obj(ObjMesh<'a, P>),
     Raw {
         vertices: Vec<Vertex>,
-        indices: Vec<MeshIndex>,
+        primitives: Vec<MeshPrimitive>,
     },
 }
 
 pub struct Mesh {
     pub id: MeshId,
     vertices: Vec<Vertex>,
-    indices: Vec<MeshIndex>,
+    primitives: Vec<MeshPrimitive>,
+
     vertex_buffer: wgpu::Buffer,
-    index_buffer: wgpu::Buffer,
+    // Index buffers for each primitive type (created on-demand)
+    triangle_index_buffer: wgpu::Buffer,
+    line_index_buffer: wgpu::Buffer,
+    point_index_buffer: wgpu::Buffer,
 
     cached_bounding: Cell<Option<Aabb>>
 }
@@ -99,8 +111,8 @@ impl Mesh {
                     ObjMesh::Path(path) => Self::from_obj_path(id, device, path, label)
                 }
             }
-            MeshDescriptor::Raw { vertices, indices } => {
-                Ok(Self::from_raw(id, device, vertices, indices, label))
+            MeshDescriptor::Raw { vertices, primitives } => {
+                Ok(Self::from_raw(id, device, vertices, primitives, label))
             }
         }
     }
@@ -109,7 +121,7 @@ impl Mesh {
         id: MeshId,
         device: &wgpu::Device,
         vertices: Vec<Vertex>,
-        indices: Vec<MeshIndex>,
+        primitives: Vec<MeshPrimitive>,
         label: Option<&str>
     ) -> Self {
         use wgpu::util::DeviceExt;
@@ -121,26 +133,48 @@ impl Mesh {
             usage: wgpu::BufferUsages::VERTEX,
         });
 
-        let index_buffer_label = label.map(|l| format!("{}_index_buffer", l));
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: index_buffer_label.as_deref(),
-            contents: bytemuck::cast_slice(&indices),
-            usage: wgpu::BufferUsages::INDEX,
-        });
+        // Helper function to create index buffer for a specific primitive type
+        let create_index_buffer = |prim_type: PrimitiveType, label_suffix: &str| -> wgpu::Buffer {
+            let indices: Vec<MeshIndex> = primitives.iter()
+                .filter(|p| p.primitive_type == prim_type)
+                .flat_map(|p| p.indices.iter().copied())
+                .collect();
+
+            if indices.is_empty() {
+                device.create_buffer(&wgpu::BufferDescriptor {
+                    label: label.map(|l| format!("{}_{}", l, label_suffix)).as_deref(),
+                    size: 0,
+                    usage: wgpu::BufferUsages::INDEX,
+                    mapped_at_creation: false,
+                })
+            } else {
+                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: label.map(|l| format!("{}_{}", l, label_suffix)).as_deref(),
+                    contents: bytemuck::cast_slice(&indices),
+                    usage: wgpu::BufferUsages::INDEX,
+                })
+            }
+        };
+
+        let triangle_index_buffer = create_index_buffer(PrimitiveType::TriangleList, "triangle_index_buffer");
+        let line_index_buffer = create_index_buffer(PrimitiveType::LineList, "line_index_buffer");
+        let point_index_buffer = create_index_buffer(PrimitiveType::PointList, "point_index_buffer");
 
         Self {
             id,
             vertices,
-            indices,
+            primitives,
             vertex_buffer,
-            index_buffer,
+            triangle_index_buffer,
+            line_index_buffer,
+            point_index_buffer,
             cached_bounding: Cell::new(None)
         }
     }
 
     fn new_empty(id: MeshId, device: &wgpu::Device, label: Option<&str>) -> Self {
         let vertices = Vec::new();
-        let indices = Vec::new();
+        let primitives = Vec::new();
 
         let vertex_buffer_label = label.and_then(| mesh_label | {
             Some(mesh_label.to_owned() + "_vertex_buffer")
@@ -152,11 +186,23 @@ impl Mesh {
             mapped_at_creation: false
         });
 
-        let index_buffer_label = label.and_then(| mesh_label | {
-            Some(mesh_label.to_owned() + "_index_buffer")
+        // Create empty index buffers for all primitive types
+        let triangle_index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: label.map(|l| format!("{}_triangle_index_buffer", l)).as_deref(),
+            size: 0,
+            usage: wgpu::BufferUsages::INDEX,
+            mapped_at_creation: false
         });
-        let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: index_buffer_label.as_deref(),
+
+        let line_index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: label.map(|l| format!("{}_line_index_buffer", l)).as_deref(),
+            size: 0,
+            usage: wgpu::BufferUsages::INDEX,
+            mapped_at_creation: false
+        });
+
+        let point_index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: label.map(|l| format!("{}_point_index_buffer", l)).as_deref(),
             size: 0,
             usage: wgpu::BufferUsages::INDEX,
             mapped_at_creation: false
@@ -165,9 +211,11 @@ impl Mesh {
         Self {
             id,
             vertices,
-            indices,
+            primitives,
             vertex_buffer,
-            index_buffer,
+            triangle_index_buffer,
+            line_index_buffer,
+            point_index_buffer,
             cached_bounding: Cell::new(None)
         }
     }
@@ -179,40 +227,20 @@ impl Mesh {
         label: Option<&str>
     )-> anyhow::Result<Self> {
         let vertices: Vec<Vertex> = obj.vertices.iter().map(|v: &obj::TexturedVertex| {
-            Vertex { 
+            Vertex {
                 position: v.position,
                 tex_coords: v.texture,
                 normal: v.normal
             }
         }).collect();
-        let indices: Vec<u16> = obj.indices;
 
-        let vertex_buffer_label = label.and_then(| mesh_label | {
-            Some(mesh_label.to_owned() + "_vertex_buffer")
-        });
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: vertex_buffer_label.as_deref(),
-            contents: bytemuck::cast_slice(&vertices),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
+        // OBJ files contain triangles, so create a triangle primitive
+        let primitives = vec![MeshPrimitive {
+            primitive_type: PrimitiveType::TriangleList,
+            indices: obj.indices,
+        }];
 
-        let index_buffer_label = label.and_then(| mesh_label | {
-            Some(mesh_label.to_owned() + "_index_buffer")
-        });
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: index_buffer_label.as_deref(),
-            contents: bytemuck::cast_slice(&indices),
-            usage: wgpu::BufferUsages::INDEX,
-        });
-
-        Ok(Self {
-            id,
-            vertices,
-            indices,
-            vertex_buffer,
-            index_buffer,
-            cached_bounding: Cell::new(None)
-        })
+        Ok(Self::from_raw(id, device, vertices, primitives, label))
     }
 
     fn from_obj_bytes(id: MeshId, device: &wgpu::Device, obj_bytes: &[u8], label: Option<&str>) -> anyhow::Result<Self> {
@@ -235,6 +263,7 @@ impl Mesh {
         &self,
         device: &wgpu::Device,
         pass: &mut wgpu::RenderPass,
+        primitive_type: PrimitiveType,
         instance_transforms: &[super::tree::InstanceTransform]
     ) {
         use super::InstanceRaw;
@@ -254,12 +283,41 @@ impl Mesh {
             usage: wgpu::BufferUsages::VERTEX
         });
 
+        // Select the appropriate index buffer based on primitive type
+        let (index_buffer, n_indices) = match primitive_type {
+            PrimitiveType::TriangleList => {
+                let count = self.primitives.iter()
+                    .filter(|p| p.primitive_type == PrimitiveType::TriangleList)
+                    .map(|p| p.indices.len())
+                    .sum::<usize>() as u32;
+                (&self.triangle_index_buffer, count)
+            }
+            PrimitiveType::LineList => {
+                let count = self.primitives.iter()
+                    .filter(|p| p.primitive_type == PrimitiveType::LineList)
+                    .map(|p| p.indices.len())
+                    .sum::<usize>() as u32;
+                (&self.line_index_buffer, count)
+            }
+            PrimitiveType::PointList => {
+                let count = self.primitives.iter()
+                    .filter(|p| p.primitive_type == PrimitiveType::PointList)
+                    .map(|p| p.indices.len())
+                    .sum::<usize>() as u32;
+                (&self.point_index_buffer, count)
+            }
+        };
+
+        // Skip drawing if there are no indices for this primitive type
+        if n_indices == 0 {
+            return;
+        }
+
         // Draw
-        let n_indices = self.indices.len() as u32;
         let n_instances = instance_transforms.len() as u32;
         pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         pass.set_vertex_buffer(1, instance_buffer.slice(..));
-        pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+        pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint16);
         pass.draw_indexed(0..n_indices, 0, 0..n_instances);
     }
     
@@ -293,9 +351,22 @@ impl Mesh {
         &self.vertices
     }
 
-    /// Returns a reference to the mesh's index data.
-    pub fn indices(&self) -> &[MeshIndex] {
-        &self.indices
+    /// Returns a reference to the mesh's primitives.
+    pub fn primitives(&self) -> &[MeshPrimitive] {
+        &self.primitives
+    }
+
+    /// Returns true if this mesh has any primitives of the specified type.
+    pub fn has_primitive_type(&self, primitive_type: PrimitiveType) -> bool {
+        self.primitives.iter().any(|p| p.primitive_type == primitive_type)
+    }
+
+    /// Gets the triangle indices (for backward compatibility and ray intersection).
+    fn triangle_indices(&self) -> Vec<MeshIndex> {
+        self.primitives.iter()
+            .filter(|p| p.primitive_type == PrimitiveType::TriangleList)
+            .flat_map(|p| p.indices.iter().copied())
+            .collect()
     }
 
     /// Tests a ray against all triangles in the mesh.
@@ -305,11 +376,14 @@ impl Mesh {
     pub fn intersect_ray(&self, ray: &Ray) -> Vec<MeshHit> {
         let mut hits = Vec::new();
 
+        // Get all triangle indices
+        let triangle_indices = self.triangle_indices();
+
         // Iterate through triangles (indices come in groups of 3)
-        for triangle_index in 0..(self.indices.len() / 3) {
-            let i0 = self.indices[triangle_index * 3] as usize;
-            let i1 = self.indices[triangle_index * 3 + 1] as usize;
-            let i2 = self.indices[triangle_index * 3 + 2] as usize;
+        for triangle_index in 0..(triangle_indices.len() / 3) {
+            let i0 = triangle_indices[triangle_index * 3] as usize;
+            let i1 = triangle_indices[triangle_index * 3 + 1] as usize;
+            let i2 = triangle_indices[triangle_index * 3 + 2] as usize;
 
             let v0 = Point3::from(self.vertices[i0].position);
             let v1 = Point3::from(self.vertices[i1].position);

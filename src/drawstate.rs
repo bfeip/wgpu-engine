@@ -20,6 +20,14 @@ use crate::{
     texture
 };
 
+/// Primitive types for mesh rendering
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum PrimitiveType {
+    TriangleList,
+    LineList,
+    PointList,
+}
+
 pub struct DrawState<'a> {
     pub surface: wgpu::Surface<'a>,
     pub device: wgpu::Device,
@@ -380,7 +388,7 @@ impl<'a> DrawState<'a> {
                 material.bind(&mut render_pass)?;
 
                 // Draw all instances in this batch
-                mesh.draw_instances(&self.device, &mut render_pass, &batch.instances);
+                mesh.draw_instances(&self.device, &mut render_pass, batch.primitive_type, &batch.instances);
             }
         }
 

@@ -1,21 +1,23 @@
 use super::{tree::InstanceTransform, MeshId};
-use crate::material::MaterialId;
+use crate::{material::MaterialId, drawstate::PrimitiveType};
 
-/// Represents a batch of instances that share the same mesh and material.
+/// Represents a batch of instances that share the same mesh, material, and primitive type.
 ///
 /// Batching allows us to minimize draw calls and state changes by grouping
 /// instances that can be rendered together.
 pub struct DrawBatch {
     pub mesh_id: MeshId,
     pub material_id: MaterialId,
+    pub primitive_type: PrimitiveType,
     pub instances: Vec<InstanceTransform>,
 }
 
 impl DrawBatch {
-    pub fn new(mesh_id: MeshId, material_id: MaterialId) -> Self {
+    pub fn new(mesh_id: MeshId, material_id: MaterialId, primitive_type: PrimitiveType) -> Self {
         Self {
             mesh_id,
             material_id,
+            primitive_type,
             instances: Vec::new(),
         }
     }
@@ -44,17 +46,18 @@ mod tests {
 
     #[test]
     fn test_draw_batch_new() {
-        let batch = DrawBatch::new(10, 5);
+        let batch = DrawBatch::new(10, 5, PrimitiveType::TriangleList);
 
         assert_eq!(batch.mesh_id, 10);
         assert_eq!(batch.material_id, 5);
+        assert_eq!(batch.primitive_type, PrimitiveType::TriangleList);
         assert!(batch.is_empty());
         assert_eq!(batch.len(), 0);
     }
 
     #[test]
     fn test_draw_batch_add_instance() {
-        let mut batch = DrawBatch::new(10, 5);
+        let mut batch = DrawBatch::new(10, 5, PrimitiveType::TriangleList);
 
         let instance_transform = InstanceTransform::new(1, Matrix4::identity());
         batch.add_instance(instance_transform);
@@ -66,7 +69,7 @@ mod tests {
 
     #[test]
     fn test_draw_batch_add_multiple_instances() {
-        let mut batch = DrawBatch::new(10, 5);
+        let mut batch = DrawBatch::new(10, 5, PrimitiveType::TriangleList);
 
         // Add 5 instances
         for i in 0..5 {
@@ -85,19 +88,21 @@ mod tests {
 
     #[test]
     fn test_draw_batch_mesh_material_ids() {
-        let batch1 = DrawBatch::new(10, 5);
-        let batch2 = DrawBatch::new(20, 7);
+        let batch1 = DrawBatch::new(10, 5, PrimitiveType::TriangleList);
+        let batch2 = DrawBatch::new(20, 7, PrimitiveType::LineList);
 
         assert_eq!(batch1.mesh_id, 10);
         assert_eq!(batch1.material_id, 5);
+        assert_eq!(batch1.primitive_type, PrimitiveType::TriangleList);
 
         assert_eq!(batch2.mesh_id, 20);
         assert_eq!(batch2.material_id, 7);
+        assert_eq!(batch2.primitive_type, PrimitiveType::LineList);
     }
 
     #[test]
     fn test_draw_batch_instance_count() {
-        let mut batch = DrawBatch::new(1, 1);
+        let mut batch = DrawBatch::new(1, 1, PrimitiveType::TriangleList);
 
         assert_eq!(batch.len(), 0);
 
@@ -113,7 +118,7 @@ mod tests {
 
     #[test]
     fn test_draw_batch_instances_with_different_transforms() {
-        let mut batch = DrawBatch::new(10, 5);
+        let mut batch = DrawBatch::new(10, 5, PrimitiveType::TriangleList);
 
         let transform1 = Matrix4::from_scale(1.0);
         let transform2 = Matrix4::from_scale(2.0);
@@ -133,7 +138,7 @@ mod tests {
 
     #[test]
     fn test_draw_batch_large_number_of_instances() {
-        let mut batch = DrawBatch::new(1, 1);
+        let mut batch = DrawBatch::new(1, 1, PrimitiveType::TriangleList);
 
         // Add 1000 instances
         for i in 0..1000_u32 {

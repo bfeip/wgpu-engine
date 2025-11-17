@@ -18,6 +18,7 @@ pub trait TreeVisitor {
 }
 
 /// Represents an instance with its computed world transform.
+#[derive(Clone)]
 pub struct InstanceTransform {
     pub instance_id: InstanceId,
     pub world_transform: Matrix4<f32>,

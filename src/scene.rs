@@ -5,7 +5,7 @@ mod tree;
 mod batch;
 
 use cgmath::{Matrix4, SquareMatrix};
-pub use mesh::{Mesh, MeshDescriptor, MeshId, Vertex};
+pub use mesh::{Mesh, MeshDescriptor, MeshId, MeshPrimitive, Vertex};
 pub use instance::{Instance, InstanceId, InstanceRaw};
 pub use node::{Node, NodeId};
 pub use tree::{collect_instance_transforms};
@@ -63,44 +63,43 @@ impl Scene {
         &self.root_nodes
     }
 
-    /// Collects all instances grouped into batches by mesh and material.
+    /// Collects all instances grouped into batches by mesh, material, and primitive type.
     ///
     /// This walks the scene tree, computes world transforms, and groups
-    /// instances that share the same mesh and material into batches.
+    /// instances that share the same mesh, material, and primitive type into batches.
+    /// Each mesh can have multiple primitive types (triangles, lines, points), so
+    /// a single instance may generate multiple batches.
     /// Batches are sorted to minimize state changes during rendering:
     /// 1. By material ID (to minimize bind group changes)
-    /// 2. By mesh ID (for GPU cache locality)
+    /// 2. By primitive type (to minimize pipeline changes)
+    /// 3. By mesh ID (for GPU cache locality)
     pub fn collect_draw_batches(&self) -> Vec<DrawBatch> {
         use std::collections::HashMap;
+        use crate::drawstate::PrimitiveType;
 
-        // Walk the tree to get all instance transforms
         let instance_transforms = collect_instance_transforms(self);
-
-        // Group instances by (mesh_id, material_id)
-        let mut batch_map: HashMap<(MeshId, MaterialId), DrawBatch> = HashMap::new();
+        let mut batch_map: HashMap<(MeshId, MaterialId, PrimitiveType), DrawBatch> = HashMap::new();
 
         for inst_transform in instance_transforms {
-            // Look up the instance to get its mesh and material
-            if let Some(instance) = self.instances.get(&inst_transform.instance_id) {
-                let key = (instance.mesh, instance.material);
+            let Some(instance) = self.instances.get(&inst_transform.instance_id) else { continue };
+            let Some(mesh) = self.meshes.get(&instance.mesh) else { continue };
 
-                // Get or create batch for this (mesh, material) combination
-                let batch = batch_map.entry(key).or_insert_with(|| {
-                    DrawBatch::new(instance.mesh, instance.material)
-                });
+            // Create a separate batch for each primitive type the mesh supports
+            for primitive_type in [PrimitiveType::TriangleList, PrimitiveType::LineList, PrimitiveType::PointList] {
+                if !mesh.has_primitive_type(primitive_type) {
+                    continue;
+                }
 
-                // Add this instance to the batch
-                batch.add_instance(inst_transform);
+                let key = (instance.mesh, instance.material, primitive_type);
+                batch_map.entry(key)
+                    .or_insert_with(|| DrawBatch::new(instance.mesh, instance.material, primitive_type))
+                    .add_instance(inst_transform.clone());
             }
         }
 
         // Convert to Vec and sort for optimal rendering
         let mut batches: Vec<DrawBatch> = batch_map.into_values().collect();
-
-        // Sort by material ID first (minimize bind group changes),
-        // then by mesh ID (GPU cache locality)
-        batches.sort_by_key(|b| (b.material_id, b.mesh_id));
-
+        batches.sort_by_key(|b| (b.material_id, b.primitive_type as u8, b.mesh_id));
         batches
     }
 
