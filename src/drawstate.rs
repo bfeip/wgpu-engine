@@ -20,14 +20,6 @@ use crate::{
     texture
 };
 
-/// Primitive types for mesh rendering
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub enum PrimitiveType {
-    TriangleList,
-    LineList,
-    PointList,
-}
-
 pub struct DrawState<'a> {
     pub surface: wgpu::Surface<'a>,
     pub device: wgpu::Device,

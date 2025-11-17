@@ -5,7 +5,7 @@ mod tree;
 mod batch;
 
 use cgmath::{Matrix4, SquareMatrix};
-pub use mesh::{Mesh, MeshDescriptor, MeshId, MeshPrimitive, Vertex};
+pub use mesh::{Mesh, MeshDescriptor, MeshId, MeshPrimitive, PrimitiveType, Vertex};
 pub use instance::{Instance, InstanceId, InstanceRaw};
 pub use node::{Node, NodeId};
 pub use tree::{collect_instance_transforms};
@@ -75,7 +75,6 @@ impl Scene {
     /// 3. By mesh ID (for GPU cache locality)
     pub fn collect_draw_batches(&self) -> Vec<DrawBatch> {
         use std::collections::HashMap;
-        use crate::drawstate::PrimitiveType;
 
         let instance_transforms = collect_instance_transforms(self);
         let mut batch_map: HashMap<(MeshId, MaterialId, PrimitiveType), DrawBatch> = HashMap::new();

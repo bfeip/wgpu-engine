@@ -1,6 +1,5 @@
 use std::path::Path;
-use crate::scene::{Vertex, MeshPrimitive};
-use crate::drawstate::PrimitiveType;
+use crate::scene::{Vertex, MeshPrimitive, PrimitiveType};
 
 /// Loads vertex data from a glTF primitive.
 ///

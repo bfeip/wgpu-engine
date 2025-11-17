@@ -5,11 +5,18 @@ use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use crate::{
     VertexShaderLocations,
     common::{Aabb, Ray},
-    drawstate::PrimitiveType,
 };
 
 pub type MeshId = u32;
 type MeshIndex = u16;
+
+/// Primitive types for mesh rendering
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum PrimitiveType {
+    TriangleList,
+    LineList,
+    PointList,
+}
 
 /// A collection of indices representing a single primitive type in a mesh
 #[derive(Debug, Clone)]
