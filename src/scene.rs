@@ -102,10 +102,10 @@ impl Scene {
         batches
     }
 
-    pub fn add_mesh<P: AsRef<std::path::Path>>(
+    pub fn add_mesh(
         &mut self,
         device: &wgpu::Device,
-        desc: MeshDescriptor<P>,
+        desc: MeshDescriptor,
         label: Option<&str>
     ) -> anyhow::Result<MeshId> {
         let id = self.next_mesh_id;

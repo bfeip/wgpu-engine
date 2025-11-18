@@ -1,4 +1,4 @@
-use std::{cell::Cell, fs::File, io::BufReader, path::Path};
+use std::{cell::Cell, fs::File, io::BufReader, path::{Path, PathBuf}};
 use cgmath::Point3;
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
@@ -73,16 +73,14 @@ impl Vertex {
 }
 
 
-// TODO: I don't like having these generic parameters
-// They have to be specified for every branch of this enum, even when irrelevant
-pub enum ObjMesh<'a, P: AsRef<Path>> {
+pub enum ObjMesh<'a> {
     Bytes(&'a [u8]),
-    Path(P)
+    Path(PathBuf)
 }
 
-pub enum MeshDescriptor<'a, P: AsRef<Path>> {
+pub enum MeshDescriptor<'a> {
     Empty,
-    Obj(ObjMesh<'a, P>),
+    Obj(ObjMesh<'a>),
     Raw {
         vertices: Vec<Vertex>,
         primitives: Vec<MeshPrimitive>,
@@ -104,10 +102,10 @@ pub struct Mesh {
 }
 
 impl Mesh {
-    pub fn new<P: AsRef<Path>>(
+    pub fn new(
         id: MeshId,
         device: &wgpu::Device,
-        descriptor: MeshDescriptor<P>,
+        descriptor: MeshDescriptor,
         label: Option<&str>
     ) -> anyhow::Result<Self> {
         match descriptor {

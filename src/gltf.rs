@@ -272,7 +272,7 @@ pub fn load_gltf_scene<P: AsRef<Path>>(
                 indices,
             }];
 
-            let mesh_descriptor: MeshDescriptor<&str> = MeshDescriptor::Raw { vertices, primitives };
+            let mesh_descriptor = MeshDescriptor::Raw { vertices, primitives };
             let mesh_id = scene.add_mesh(device, mesh_descriptor, Some(&mesh_label))?;
 
             // Create appropriate material for this primitive type
