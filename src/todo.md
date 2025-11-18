@@ -14,7 +14,6 @@
 - API and docs review
 
 - Drag and drop GLTF loading operator
-- Line and point rendering
 - NURBS
 - WESL
 - Markup
@@ -80,27 +79,3 @@ behavior.
 ### Step 5
 I want to finish off with bounding computations. We will compute boundings with a tree
 walker and by examining the geometry, probably.
-
-## Lines and points
-I'd like to add line and point rendering. Currently meshes are only composed of faces.
-However lines and points could be added. The way this will likely work is that a mesh
-will, in addition to having face indices, also have line indices, where each two points
-constitute a line, and point indices where each index represents a point to be rendered.
-
-### Step one
-Meshs are currently only composed of triangle lists. I'd like to make it so that meshes
-are composed of primitives that inform the rendering pipeline of how the indices are
-read and what they represent. In addition to `Primitive::TriangleList` I'd like to
-add `Primitive::PointList` and `Primitive::LineList`. These won't be renderable at
-the end of this step, since we'd need to create render pipelines for them. But I'd like
-to have lines and points specifiable in a mesh.
-
-### Step two
-Since rendering different primitives requires a different rendering pipeline, specifying
-a different `wgpu::PrimitiveTopology` at pipeline creation. And since pipelines are
-currently created by material type it might make sense to have materials for points
-and lines. This will allow us to color them or do more advance patterning later on.
-
-### Step three
-Step three would be actually hooking this all together and getting it hooked into the
-rendering pipeline
