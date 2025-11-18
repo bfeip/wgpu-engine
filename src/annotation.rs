@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use cgmath::{Point3, Vector3, Quaternion};
 use crate::{
     common::RgbaColor,
-    material::{MaterialManager, MaterialId, DefaultMaterial},
+    material::{MaterialManager},
     scene::{Scene, NodeId, MeshDescriptor, MeshPrimitive, PrimitiveType, Vertex},
 };
 
@@ -168,40 +168,115 @@ impl AnnotationManager {
         let parent_node_id = scene.add_default_node(Some(self.root_node_id));
 
         // Create X axis (red)
-        let x_mat = material_manager.create_line_color_material(device, RgbaColor { r: 1.0, g: 0.0, b: 0.0, a: 1.0 });
+        let x_mat = material_manager.create_line_color_material(
+            device,
+            RgbaColor { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }
+        );
         let x_start = origin;
         let x_end = origin + Vector3::new(size, 0.0, 0.0);
         let x_vertices = vec![
-            Vertex { position: x_start.into(), tex_coords: [0.0; 3], normal: [1.0, 0.0, 0.0] },
-            Vertex { position: x_end.into(), tex_coords: [0.0; 3], normal: [1.0, 0.0, 0.0] },
+            Vertex {
+                position: x_start.into(),
+                tex_coords: [0.0; 3],
+                normal: [1.0, 0.0, 0.0]
+            },
+            Vertex {
+                position: x_end.into(),
+                tex_coords: [0.0; 3],
+                normal: [1.0, 0.0, 0.0]
+            },
         ];
-        let x_primitives = vec![MeshPrimitive { primitive_type: PrimitiveType::LineList, indices: vec![0, 1] }];
-        let x_mesh = scene.add_mesh(device, MeshDescriptor::Raw { vertices: x_vertices, primitives: x_primitives }, Some("x_axis"))?;
-        scene.add_instance_node(Some(parent_node_id), x_mesh, x_mat, Point3::new(0.0, 0.0, 0.0), Quaternion::new(1.0, 0.0, 0.0, 0.0), Vector3::new(1.0, 1.0, 1.0));
+        let x_primitives = vec![MeshPrimitive {
+            primitive_type: PrimitiveType::LineList,
+            indices: vec![0, 1]
+        }];
+        let x_mesh = scene.add_mesh(
+            device,
+            MeshDescriptor::Raw { vertices: x_vertices, primitives: x_primitives },
+            Some("x_axis")
+        )?;
+        scene.add_instance_node(
+            Some(parent_node_id),
+            x_mesh,
+            x_mat,
+            Point3::new(0.0, 0.0, 0.0),
+            Quaternion::new(1.0, 0.0, 0.0, 0.0),
+            Vector3::new(1.0, 1.0, 1.0)
+        );
 
         // Create Y axis (green)
-        let y_mat = material_manager.create_line_color_material(device, RgbaColor { r: 0.0, g: 1.0, b: 0.0, a: 1.0 });
+        let y_mat = material_manager.create_line_color_material(
+            device,
+            RgbaColor { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }
+        );
         let y_start = origin;
         let y_end = origin + Vector3::new(0.0, size, 0.0);
         let y_vertices = vec![
-            Vertex { position: y_start.into(), tex_coords: [0.0; 3], normal: [0.0, 1.0, 0.0] },
-            Vertex { position: y_end.into(), tex_coords: [0.0; 3], normal: [0.0, 1.0, 0.0] },
+            Vertex {
+                position: y_start.into(),
+                tex_coords: [0.0; 3],
+                normal: [0.0, 1.0, 0.0]
+            },
+            Vertex {
+                position: y_end.into(),
+                tex_coords: [0.0; 3],
+                normal: [0.0, 1.0, 0.0]
+            },
         ];
-        let y_primitives = vec![MeshPrimitive { primitive_type: PrimitiveType::LineList, indices: vec![0, 1] }];
-        let y_mesh = scene.add_mesh(device, MeshDescriptor::Raw { vertices: y_vertices, primitives: y_primitives }, Some("y_axis"))?;
-        scene.add_instance_node(Some(parent_node_id), y_mesh, y_mat, Point3::new(0.0, 0.0, 0.0), Quaternion::new(1.0, 0.0, 0.0, 0.0), Vector3::new(1.0, 1.0, 1.0));
+        let y_primitives = vec![MeshPrimitive {
+            primitive_type: PrimitiveType::LineList,
+            indices: vec![0, 1]
+        }];
+        let y_mesh = scene.add_mesh(
+            device,
+            MeshDescriptor::Raw { vertices: y_vertices, primitives: y_primitives },
+            Some("y_axis")
+        )?;
+        scene.add_instance_node(
+            Some(parent_node_id),
+            y_mesh,
+            y_mat,
+            Point3::new(0.0, 0.0, 0.0),
+            Quaternion::new(1.0, 0.0, 0.0, 0.0),
+            Vector3::new(1.0, 1.0, 1.0)
+        );
 
         // Create Z axis (blue)
-        let z_mat = material_manager.create_line_color_material(device, RgbaColor { r: 0.0, g: 0.0, b: 1.0, a: 1.0 });
+        let z_mat = material_manager.create_line_color_material(
+            device,
+            RgbaColor { r: 0.0, g: 0.0, b: 1.0, a: 1.0 }
+        );
         let z_start = origin;
         let z_end = origin + Vector3::new(0.0, 0.0, size);
         let z_vertices = vec![
-            Vertex { position: z_start.into(), tex_coords: [0.0; 3], normal: [0.0, 0.0, 1.0] },
-            Vertex { position: z_end.into(), tex_coords: [0.0; 3], normal: [0.0, 0.0, 1.0] },
+            Vertex {
+                position: z_start.into(),
+                tex_coords: [0.0; 3],
+                normal: [0.0, 0.0, 1.0]
+            },
+            Vertex {
+                position: z_end.into(),
+                tex_coords: [0.0; 3],
+                normal: [0.0, 0.0, 1.0]
+            },
         ];
-        let z_primitives = vec![MeshPrimitive { primitive_type: PrimitiveType::LineList, indices: vec![0, 1] }];
-        let z_mesh = scene.add_mesh(device, MeshDescriptor::Raw { vertices: z_vertices, primitives: z_primitives }, Some("z_axis"))?;
-        scene.add_instance_node(Some(parent_node_id), z_mesh, z_mat, Point3::new(0.0, 0.0, 0.0), Quaternion::new(1.0, 0.0, 0.0, 0.0), Vector3::new(1.0, 1.0, 1.0));
+        let z_primitives = vec![MeshPrimitive {
+            primitive_type: PrimitiveType::LineList,
+            indices: vec![0, 1]
+        }];
+        let z_mesh = scene.add_mesh(
+            device,
+            MeshDescriptor::Raw { vertices: z_vertices, primitives: z_primitives },
+            Some("z_axis")
+        )?;
+        scene.add_instance_node(
+            Some(parent_node_id),
+            z_mesh,
+            z_mat,
+            Point3::new(0.0, 0.0, 0.0),
+            Quaternion::new(1.0, 0.0, 0.0, 0.0),
+            Vector3::new(1.0, 1.0, 1.0)
+        );
 
         // Track annotation
         let annotation_id = self.next_annotation_id;
