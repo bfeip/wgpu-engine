@@ -201,10 +201,26 @@ impl Scene {
     /// Removes a node and all its children from the scene tree.
     ///
     /// This recursively removes all descendant nodes and cleans up
-    /// parent-child relationships.
-    ///
-    /// TODO: This should invalidate cached bounds in parent nodes
+    /// parent-child relationships. Cached bounds in all ancestor nodes
+    /// are invalidated since the removed subtree affects their bounds.
     pub fn remove_node(&mut self, node_id: NodeId) {
+        // Store the parent before removal so we can invalidate ancestors
+        let parent = self.nodes.get(&node_id).and_then(|node| node.parent());
+
+        // Perform the recursive removal
+        self.remove_node_recursive(node_id);
+
+        // Invalidate cached bounds for all ancestors
+        if let Some(parent_id) = parent {
+            self.invalidate_ancestor_bounds(parent_id);
+        }
+    }
+
+    /// Recursive helper for removing a node and all its children.
+    ///
+    /// This does NOT invalidate ancestor bounds. The caller is responsible
+    /// for invalidating bounds after the entire removal is complete.
+    fn remove_node_recursive(&mut self, node_id: NodeId) {
         // Get the node to find its parent and children
         let Some(node) = self.nodes.get(&node_id) else {
             return; // Node doesn't exist
@@ -215,7 +231,7 @@ impl Scene {
 
         // Recursively remove all children first
         for child_id in children {
-            self.remove_node(child_id);
+            self.remove_node_recursive(child_id);
         }
 
         // Remove this node from its parent's children list
@@ -230,6 +246,27 @@ impl Scene {
 
         // Finally, remove the node itself
         self.nodes.remove(&node_id);
+    }
+
+    /// Invalidates cached bounds for a node and all its ancestors.
+    ///
+    /// Walks up the parent chain from the given node to the root,
+    /// clearing cached bounds on each node. This should be called
+    /// when a subtree's bounds change (e.g., after removing nodes).
+    fn invalidate_ancestor_bounds(&self, node_id: NodeId) {
+        let mut current_id = Some(node_id);
+
+        while let Some(id) = current_id {
+            let Some(node) = self.get_node(id) else {
+                break;
+            };
+
+            // Mark node as dirty to clear cached values
+            node.mark_dirty();
+
+            // Move to parent
+            current_id = node.parent();
+        }
     }
 
     /// Gets the world transform of a node.
