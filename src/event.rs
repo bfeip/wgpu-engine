@@ -2,11 +2,12 @@ use std::collections::HashMap;
 
 use crate::drawstate::DrawState;
 use crate::scene::Scene;
+use crate::annotation::AnnotationManager;
 
 /// Context passed to event callbacks, providing mutable access to application state.
 ///
 /// This struct bundles all the mutable state that event callbacks need to access,
-/// including the rendering state, scene, and event loop control flow.
+/// including the rendering state, scene, annotation manager, and event loop control flow.
 ///
 /// ## Lifetime Parameters
 /// - `'w`: The window lifetime - DrawState holds a reference to the Window with this lifetime
@@ -16,6 +17,8 @@ pub struct EventContext<'w, 'c> {
     pub state: &'c mut DrawState<'w>,
     /// Mutable reference to the scene
     pub scene: &'c mut Scene,
+    /// Mutable reference to the annotation manager
+    pub annotation_manager: &'c mut AnnotationManager,
     /// Reference to the event loop control flow (for exiting the application, etc.)
     pub control_flow: &'c winit::event_loop::EventLoopWindowTarget<()>,
 }
@@ -285,6 +288,7 @@ mod tests {
         EventContext {
             state: unsafe { &mut *(dangling.as_ptr() as *mut DrawState) },
             scene: unsafe { &mut *(dangling.as_ptr() as *mut Scene) },
+            annotation_manager: unsafe { &mut *(dangling.as_ptr() as *mut AnnotationManager) },
             control_flow: unsafe { &*(dangling.as_ptr() as *const winit::event_loop::EventLoopWindowTarget<()>) },
         }
     }

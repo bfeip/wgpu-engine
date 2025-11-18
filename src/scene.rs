@@ -198,6 +198,40 @@ impl Scene {
         )
     }
 
+    /// Removes a node and all its children from the scene tree.
+    ///
+    /// This recursively removes all descendant nodes and cleans up
+    /// parent-child relationships.
+    ///
+    /// TODO: This should invalidate cached bounds in parent nodes
+    pub fn remove_node(&mut self, node_id: NodeId) {
+        // Get the node to find its parent and children
+        let Some(node) = self.nodes.get(&node_id) else {
+            return; // Node doesn't exist
+        };
+
+        let parent = node.parent();
+        let children: Vec<NodeId> = node.children().to_vec();
+
+        // Recursively remove all children first
+        for child_id in children {
+            self.remove_node(child_id);
+        }
+
+        // Remove this node from its parent's children list
+        if let Some(parent_id) = parent {
+            if let Some(parent_node) = self.nodes.get_mut(&parent_id) {
+                parent_node.remove_child(node_id);
+            }
+        } else {
+            // This is a root node, remove from root_nodes list
+            self.root_nodes.retain(|&id| id != node_id);
+        }
+
+        // Finally, remove the node itself
+        self.nodes.remove(&node_id);
+    }
+
     /// Gets the world transform of a node.
     ///
     /// This returns the cached transform if valid, otherwise computes it by

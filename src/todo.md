@@ -84,6 +84,6 @@ walker and by examining the geometry, probably.
 I want to write a module for the scene that will handle 3D annotation. This will allow
 us to insert simple geometry for debugging or annotating in 3D. The module will have
 functions to add things like lines to the scene easily. These elements will be owned
-by the scene in their own root node. a `MarkupManager` owned by the scene will maintain
-node IDs associated with each piece of markup so they can easily be removed via the
-`MarkupManager`
+by the scene in their own root node. a `AnnotationManager` owned by the scene will maintain
+node IDs associated with each annotation so they can easily be removed via the
+`AnnotationManager`

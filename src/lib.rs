@@ -12,6 +12,7 @@ mod shaders;
 mod gltf;
 mod event;
 mod operator;
+mod annotation;
 
 use winit::{
     event_loop::EventLoop,
@@ -94,6 +95,9 @@ pub async fn run() {
             )
         ];
 
+    // Create annotation manager
+    let mut annotation_manager = annotation::AnnotationManager::new(&mut scene);
+
     // Set up event dispatcher
     let mut dispatcher = EventDispatcher::new();
 
@@ -174,6 +178,7 @@ pub async fn run() {
                 let mut ctx = EventContext {
                     state: &mut state,
                     scene: &mut scene,
+                    annotation_manager: &mut annotation_manager,
                     control_flow,
                 };
                 dispatcher.dispatch(&app_event, &mut ctx);
