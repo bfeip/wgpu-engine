@@ -9,10 +9,6 @@ use crate::operator::{Operator, OperatorId};
 
 /// Internal state for the navigation operator.
 struct NavState {
-    /// Whether the user is currently orbit-dragging.
-    is_orbit_dragging: bool,
-    /// Whether the user is currently pan-dragging.
-    is_pan_dragging: bool,
     /// Azimuth angle in radians (horizontal rotation around target).
     azimuth: f32,
     /// Elevation angle in radians (vertical rotation).
@@ -29,8 +25,6 @@ const MAX_RADIUS: f32 = 50.0; // Maximum camera distance
 impl NavState {
     fn new() -> Self {
         Self {
-            is_orbit_dragging: false,
-            is_pan_dragging: false,
             azimuth: 0.0,
             elevation: 0.0,
             radius: 5.0,
@@ -157,55 +151,46 @@ impl NavigationOperator {
 
 impl Operator for NavigationOperator {
     fn activate(&mut self, dispatcher: &mut EventDispatcher) {
-        // Register MouseInput handler to track dragging state
+        // Register MouseDragStart handler to initialize orbit/pan parameters
         let operator_state = self.state.clone();
-        let mouse_input_callback = dispatcher.register(EventKind::MouseInput, move |event, ctx| {
-            if let Event::MouseInput {
-                state: button_state,
-                button,
-            } = event
-            {
-                use winit::event::{ElementState, MouseButton};
+        let drag_start_callback = dispatcher.register(EventKind::MouseDragStart, move |event, ctx| {
+            if let Event::MouseDragStart { button, .. } = event {
+                use winit::event::MouseButton;
 
-                let mut s = operator_state.borrow_mut();
-                match (button, button_state) {
-                    (MouseButton::Left, ElementState::Pressed) => {
-                        // Initialize orbit parameters from current camera state
+                match button {
+                    MouseButton::Left | MouseButton::Right => {
+                        // Initialize orbit/pan parameters from current camera state
+                        let mut s = operator_state.borrow_mut();
                         s.init_from_camera(&ctx.state.camera);
-                        s.is_orbit_dragging = true;
+                        true
                     }
-                    (MouseButton::Left, ElementState::Released) => {
-                        s.is_orbit_dragging = false;
-                    }
-                    (MouseButton::Right, ElementState::Pressed) => {
-                        // Start panning
-                        s.is_pan_dragging = true;
-                    }
-                    (MouseButton::Right, ElementState::Released) => {
-                        s.is_pan_dragging = false;
-                    }
-                    _ => return false,
+                    _ => false,
                 }
-                true
             } else {
                 false
             }
         });
 
-        // Register MouseMotion handler to update camera during drag
+        // Register MouseDrag handler to update camera during drag
         let operator_state = self.state.clone();
-        let mouse_motion_callback = dispatcher.register(EventKind::MouseMotion, move |event, ctx| {
-            if let Event::MouseMotion { delta } = event {
+        let drag_callback = dispatcher.register(EventKind::MouseDrag, move |event, ctx| {
+            if let Event::MouseDrag { button, delta, .. } = event {
+                use winit::event::MouseButton;
+
                 let mut s = operator_state.borrow_mut();
 
-                if s.is_orbit_dragging {
-                    s.handle_orbit(delta.0, delta.1, &mut ctx.state.camera);
-                    true
-                } else if s.is_pan_dragging {
-                    s.handle_pan(delta.0, delta.1, &mut ctx.state.camera);
-                    true
-                } else {
-                    false
+                match button {
+                    MouseButton::Left => {
+                        // Orbit camera
+                        s.handle_orbit(delta.0 as f64, delta.1 as f64, &mut ctx.state.camera);
+                        true
+                    }
+                    MouseButton::Right => {
+                        // Pan camera
+                        s.handle_pan(delta.0 as f64, delta.1 as f64, &mut ctx.state.camera);
+                        true
+                    }
+                    _ => false,
                 }
             } else {
                 false
@@ -235,7 +220,7 @@ impl Operator for NavigationOperator {
             }
         });
 
-        self.callback_ids = vec![mouse_input_callback, mouse_motion_callback, mouse_wheel_callback];
+        self.callback_ids = vec![drag_start_callback, drag_callback, mouse_wheel_callback];
     }
 
     fn deactivate(&mut self, dispatcher: &mut EventDispatcher) {

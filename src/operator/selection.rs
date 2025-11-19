@@ -20,13 +20,8 @@ impl SelectionOperator {
         }
     }
 
-    /// Performs selection at the current cursor position and prints results to console.
-    fn perform_selection(ctx: &mut EventContext) {
-        // Get cursor position from DrawState
-        let Some((cursor_x, cursor_y)) = ctx.state.cursor_position else {
-            println!("Selection: Cursor position not available");
-            return;
-        };
+    /// Performs selection at the given position and prints results to console.
+    fn perform_selection(cursor_x: f32, cursor_y: f32, ctx: &mut EventContext) {
 
         // Debug output
         println!("\n=== Selection Debug ===");
@@ -88,24 +83,24 @@ impl SelectionOperator {
 
 impl Operator for SelectionOperator {
     fn activate(&mut self, dispatcher: &mut EventDispatcher) {
-        // Register MouseInput handler for selection
-        let mouse_input_callback = dispatcher.register(EventKind::MouseInput, move |event, ctx| {
-            let Event::MouseInput { state: button_state, button } = event else {
+        // Register MouseClick handler for selection
+        let mouse_click_callback = dispatcher.register(EventKind::MouseClick, move |event, ctx| {
+            let Event::MouseClick { button, position, .. } = event else {
                 return false;
             };
 
-            use winit::event::{ElementState, MouseButton};
+            use winit::event::MouseButton;
 
-            // Only handle left-click press events
-            if matches!((button, button_state), (MouseButton::Left, ElementState::Pressed)) {
-                SelectionOperator::perform_selection(ctx);
+            // Only handle left-click events
+            if matches!(button, MouseButton::Left) {
+                SelectionOperator::perform_selection(position.0, position.1, ctx);
                 true // Stop event propagation (we handled the click)
             } else {
                 false
             }
         });
 
-        self.callback_ids = vec![mouse_input_callback];
+        self.callback_ids = vec![mouse_click_callback];
     }
 
     fn deactivate(&mut self, dispatcher: &mut EventDispatcher) {

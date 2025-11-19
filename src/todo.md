@@ -81,3 +81,12 @@ behavior.
 I want to finish off with bounding computations. We will compute boundings with a tree
 walker and by examining the geometry, probably.
 
+## Event re-work
+I think I want to implement especially for mouse dragging. The reasoning is that with
+the navigation operator needing a left click to start the dragging and the selection
+operator needing a left click to do the selection, only one of them can really be
+active at a time. So there should be a `MouseDrag` event that happens when the mouse is moved
+while a button is held down. There should also be a `MouseClick` event, when a mouse
+down event and mouse up event occur in quick succession. This might involve substantial
+changes to the `EventDispatcher` or entire new structures, since we now need to track some
+state.

@@ -1,8 +1,15 @@
 use std::collections::HashMap;
+use std::time::Instant;
 
 use crate::drawstate::DrawState;
 use crate::scene::Scene;
 use crate::annotation::AnnotationManager;
+
+/// Movement threshold in pixels before a mouse button hold becomes a drag.
+const DRAG_THRESHOLD_PIXELS: f32 = 4.0;
+
+/// Maximum time in milliseconds for a button press/release to be considered a click.
+const CLICK_TIME_THRESHOLD_MS: u64 = 300;
 
 /// Context passed to event callbacks, providing mutable access to application state.
 ///
@@ -52,6 +59,14 @@ pub enum EventKind {
     MouseInput,
     /// Mouse wheel was scrolled
     MouseWheel,
+    /// Mouse drag started (button held and moved beyond threshold)
+    MouseDragStart,
+    /// Mouse drag in progress (button held and moving)
+    MouseDrag,
+    /// Mouse drag ended (button released after dragging)
+    MouseDragEnd,
+    /// Mouse click (button pressed and released quickly without dragging)
+    MouseClick,
 }
 
 /// Application events with associated data, converted from winit events.
@@ -91,6 +106,44 @@ pub enum Event {
         /// Scroll delta (line, pixel, or page units)
         delta: winit::event::MouseScrollDelta,
     },
+    /// Mouse drag started (button held and moved beyond threshold)
+    MouseDragStart {
+        /// Which mouse button is being dragged
+        button: winit::event::MouseButton,
+        /// Position where the button was initially pressed (in physical pixels)
+        start_pos: (f32, f32),
+        /// Current cursor position (in physical pixels)
+        current_pos: (f32, f32),
+    },
+    /// Mouse drag in progress (button held and moving)
+    MouseDrag {
+        /// Which mouse button is being dragged
+        button: winit::event::MouseButton,
+        /// Position where the button was initially pressed (in physical pixels)
+        start_pos: (f32, f32),
+        /// Current cursor position (in physical pixels)
+        current_pos: (f32, f32),
+        /// Delta from last cursor position (in physical pixels)
+        delta: (f32, f32),
+    },
+    /// Mouse drag ended (button released after dragging)
+    MouseDragEnd {
+        /// Which mouse button was being dragged
+        button: winit::event::MouseButton,
+        /// Position where the button was initially pressed (in physical pixels)
+        start_pos: (f32, f32),
+        /// Position where the button was released (in physical pixels)
+        end_pos: (f32, f32),
+    },
+    /// Mouse click (button pressed and released quickly without dragging)
+    MouseClick {
+        /// Which mouse button was clicked
+        button: winit::event::MouseButton,
+        /// Position where the click occurred (in physical pixels)
+        position: (f32, f32),
+        /// Duration of the button press in milliseconds
+        duration_ms: u64,
+    },
 }
 
 impl Event {
@@ -105,6 +158,10 @@ impl Event {
             Self::CursorMoved { .. } => EventKind::CursorMoved,
             Self::MouseInput { .. } => EventKind::MouseInput,
             Self::MouseWheel { .. } => EventKind::MouseWheel,
+            Self::MouseDragStart { .. } => EventKind::MouseDragStart,
+            Self::MouseDrag { .. } => EventKind::MouseDrag,
+            Self::MouseDragEnd { .. } => EventKind::MouseDragEnd,
+            Self::MouseClick { .. } => EventKind::MouseClick,
         }
     }
 
@@ -155,6 +212,19 @@ impl Event {
     }
 }
 
+/// State tracking for a mouse button that is currently pressed.
+#[derive(Debug, Clone)]
+struct ButtonState {
+    /// Position where the button was initially pressed (in physical pixels)
+    down_position: (f32, f32),
+    /// Time when the button was pressed
+    down_time: Instant,
+    /// Whether this button press has transitioned into a drag
+    is_dragging: bool,
+    /// Total distance dragged since button down (in pixels)
+    distance_dragged: f32,
+}
+
 /// Event dispatcher that manages callbacks for different event types.
 ///
 /// Callbacks are registered by [`EventKind`] and invoked when matching events
@@ -162,9 +232,17 @@ impl Event {
 /// and they are called until one returns `true`.
 ///
 /// Each callback is assigned a unique [`CallbackId`] when registered.
+///
+/// The dispatcher also tracks mouse button state to synthesize high-level events
+/// like [`EventKind::MouseDragStart`], [`EventKind::MouseDrag`], [`EventKind::MouseDragEnd`],
+/// and [`EventKind::MouseClick`].
 pub struct EventDispatcher {
     callback_map: HashMap<EventKind, Vec<(CallbackId, EventCallback)>>,
     next_id: u32,
+    /// State for each currently-pressed mouse button
+    button_states: HashMap<winit::event::MouseButton, ButtonState>,
+    /// Current cursor position in physical pixels (from CursorMoved events)
+    current_cursor_position: Option<(f32, f32)>,
 }
 
 impl EventDispatcher {
@@ -173,6 +251,8 @@ impl EventDispatcher {
         Self {
             callback_map: HashMap::new(),
             next_id: 0,
+            button_states: HashMap::new(),
+            current_cursor_position: None,
         }
     }
 
@@ -253,9 +333,22 @@ impl EventDispatcher {
 
     /// Dispatches an event to all registered callbacks for its kind.
     ///
+    /// This method also handles stateful tracking of mouse interactions to synthesize
+    /// high-level events like MouseDragStart, MouseDrag, MouseDragEnd, and MouseClick.
+    /// These synthesized events are dispatched before the original event.
+    ///
     /// Callbacks are invoked in registration order. If a callback returns `true`,
     /// no further callbacks are invoked (propagation is stopped).
-    pub fn dispatch<'w, 'c>(&self, event: &Event, ctx: &mut EventContext<'w, 'c>) -> bool {
+    pub fn dispatch<'w, 'c>(&mut self, event: &Event, ctx: &mut EventContext<'w, 'c>) -> bool {
+        // First, update state and synthesize high-level events based on the incoming event
+        self.process_event(event, ctx);
+
+        // Then dispatch the original event
+        self.dispatch_to_callbacks(event, ctx)
+    }
+
+    /// Internal method to dispatch an event to callbacks without state processing.
+    fn dispatch_to_callbacks<'w, 'c>(&self, event: &Event, ctx: &mut EventContext<'w, 'c>) -> bool {
         if let Some(callbacks) = self.callback_map.get(&event.kind()) {
             for (_id, callback) in callbacks {
                 if callback(event, ctx) {
@@ -264,6 +357,144 @@ impl EventDispatcher {
             }
         }
         false
+    }
+
+    /// Processes an event to update internal state and synthesize high-level events.
+    fn process_event<'w, 'c>(&mut self, event: &Event, ctx: &mut EventContext<'w, 'c>) {
+        match event {
+            Event::CursorMoved { position } => {
+                self.process_cursor_moved(*position);
+            }
+            Event::MouseInput { state, button } => {
+                self.process_mouse_input(*state, *button, ctx);
+            }
+            Event::MouseMotion { delta } => {
+                self.process_mouse_motion(*delta, ctx);
+            }
+            _ => {
+                // No state processing needed for other events
+            }
+        }
+    }
+
+    /// Processes CursorMoved events to update cursor position tracking.
+    fn process_cursor_moved(&mut self, position: winit::dpi::PhysicalPosition<f64>) {
+        self.current_cursor_position = Some((position.x as f32, position.y as f32));
+    }
+
+    /// Processes MouseInput events to track button press/release and synthesize click events.
+    fn process_mouse_input<'w, 'c>(
+        &mut self,
+        state: winit::event::ElementState,
+        button: winit::event::MouseButton,
+        ctx: &mut EventContext<'w, 'c>,
+    ) {
+        use winit::event::ElementState;
+
+        match state {
+            ElementState::Pressed => {
+                // Button pressed - start tracking
+                if let Some(pos) = self.current_cursor_position {
+                    self.button_states.insert(
+                        button,
+                        ButtonState {
+                            down_position: pos,
+                            down_time: Instant::now(),
+                            is_dragging: false,
+                            distance_dragged: 0.0,
+                        },
+                    );
+                }
+            }
+            ElementState::Released => {
+                // Button released - check if it was a click or drag
+                if let Some(button_state) = self.button_states.remove(&button) {
+                    if button_state.is_dragging {
+                        self.synthesize_drag_end(button, button_state, ctx);
+                    } else {
+                        self.synthesize_click_if_quick(button, button_state, ctx);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Synthesizes a MouseDragEnd event when a dragged button is released.
+    fn synthesize_drag_end<'w, 'c>(
+        &self,
+        button: winit::event::MouseButton,
+        button_state: ButtonState,
+        ctx: &mut EventContext<'w, 'c>,
+    ) {
+        if let Some(end_pos) = self.current_cursor_position {
+            let drag_end = Event::MouseDragEnd {
+                button,
+                start_pos: button_state.down_position,
+                end_pos,
+            };
+            self.dispatch_to_callbacks(&drag_end, ctx);
+        }
+    }
+
+    /// Synthesizes a MouseClick event if the button was released quickly.
+    fn synthesize_click_if_quick<'w, 'c>(
+        &self,
+        button: winit::event::MouseButton,
+        button_state: ButtonState,
+        ctx: &mut EventContext<'w, 'c>,
+    ) {
+        let duration = button_state.down_time.elapsed();
+        if duration.as_millis() as u64 <= CLICK_TIME_THRESHOLD_MS {
+            let click = Event::MouseClick {
+                button,
+                position: button_state.down_position,
+                duration_ms: duration.as_millis() as u64,
+            };
+            self.dispatch_to_callbacks(&click, ctx);
+        }
+    }
+
+    /// Processes MouseMotion events to track drag distance and synthesize drag events.
+    fn process_mouse_motion<'w, 'c>(
+        &mut self,
+        delta: (f64, f64),
+        ctx: &mut EventContext<'w, 'c>,
+    ) {
+        let delta_magnitude = ((delta.0 * delta.0 + delta.1 * delta.1) as f32).sqrt();
+
+        // Collect buttons that need drag events (to avoid borrow issues)
+        let mut drag_events = Vec::new();
+
+        for (button, button_state) in &mut self.button_states {
+            button_state.distance_dragged += delta_magnitude;
+
+            if !button_state.is_dragging && button_state.distance_dragged > DRAG_THRESHOLD_PIXELS {
+                // Transition to dragging state
+                button_state.is_dragging = true;
+                if let Some(current_pos) = self.current_cursor_position {
+                    drag_events.push(Event::MouseDragStart {
+                        button: *button,
+                        start_pos: button_state.down_position,
+                        current_pos,
+                    });
+                }
+            } else if button_state.is_dragging {
+                // Already dragging - queue MouseDrag event
+                if let Some(current_pos) = self.current_cursor_position {
+                    drag_events.push(Event::MouseDrag {
+                        button: *button,
+                        start_pos: button_state.down_position,
+                        current_pos,
+                        delta: (delta.0 as f32, delta.1 as f32),
+                    });
+                }
+            }
+        }
+
+        // Dispatch all queued drag events
+        for drag_event in drag_events {
+            self.dispatch_to_callbacks(&drag_event, ctx);
+        }
     }
 }
 
@@ -378,7 +609,7 @@ mod tests {
 
     #[test]
     fn test_dispatcher_dispatch_no_callbacks() {
-        let dispatcher = EventDispatcher::new();
+        let mut dispatcher = EventDispatcher::new();
         let event = Event::CloseRequested;
 
         // SAFETY: We're creating a mock context that won't be used
