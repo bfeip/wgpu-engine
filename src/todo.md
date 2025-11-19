@@ -11,6 +11,7 @@
 - Fix navigation operator to use bounding for sensitivity
 - Add fit camera to bounding
 
+- Top level object (`Viewer` or something)
 - API and docs review
 
 - Drag and drop GLTF loading operator
@@ -80,10 +81,3 @@ behavior.
 I want to finish off with bounding computations. We will compute boundings with a tree
 walker and by examining the geometry, probably.
 
-## 3D Annotation
-I want to write a module for the scene that will handle 3D annotation. This will allow
-us to insert simple geometry for debugging or annotating in 3D. The module will have
-functions to add things like lines to the scene easily. These elements will be owned
-by the scene in their own root node. a `AnnotationManager` owned by the scene will maintain
-node IDs associated with each annotation so they can easily be removed via the
-`AnnotationManager`

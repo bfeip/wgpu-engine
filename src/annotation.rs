@@ -44,6 +44,7 @@ impl AnnotationManager {
     }
 
     /// Shows or hides all annotations by scaling the root node.
+    // TODO: Fix when proper visibility is implemented
     pub fn set_visible(&mut self, scene: &mut Scene, visible: bool) {
         if let Some(root) = scene.get_node_mut(self.root_node_id) {
             if visible {
@@ -69,8 +70,6 @@ impl AnnotationManager {
     }
 
     /// Adds a line segment between two points.
-    ///
-    /// This is a convenience wrapper around `add_polyline`.
     pub fn add_line(
         &mut self,
         scene: &mut Scene,
