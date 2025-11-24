@@ -82,7 +82,7 @@ pub async fn run() {
 
     // Load BoomBox glTF scene
     let mut scene = crate::gltf::load_gltf_scene(
-        "/home/zachary/src/glTF-Sample-Models/2.0/BoomBox/glTF/BoomBox.gltf",
+        "/home/zachary/src/glTF-Sample-Models/2.0/FlightHelmet/glTF/FlightHelmet.gltf",
         &state.device,
         &state.queue,
         &mut state.material_manager,
