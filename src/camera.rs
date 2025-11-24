@@ -78,25 +78,12 @@ impl Camera {
     pub fn unproject_point_ndc(&self, ndc_point: cgmath::Point3<f32>) -> Option<cgmath::Point3<f32>> {
         use cgmath::SquareMatrix;
 
-        // For unprojection, we need to use the view-projection matrix WITHOUT the
-        // OPENGL_TO_WGPU correction, because we're already in WGPU's [0,1] depth range.
-        // The correction matrix converts FROM OpenGL [-1,1] TO WGPU [0,1], but we're
-        // starting with WGPU coordinates, so we don't need (and shouldn't use) that conversion.
-        let view = cgmath::Matrix4::look_at_rh(self.eye, self.target, self.up);
-        let proj = cgmath::perspective(cgmath::Deg(self.fovy), self.aspect, self.znear, self.zfar);
+        let viewproj = self.build_view_projection_matrix();
 
-        // Convert WGPU depth [0,1] to OpenGL depth [-1,1] for unprojection
-        let ndc_opengl = cgmath::Point3::new(
-            ndc_point.x,
-            ndc_point.y,
-            ndc_point.z * 2.0 - 1.0  // [0,1] → [-1,1]
-        );
-
-        let vp = proj * view;
-        let inv_vp = vp.invert()?;
+        let inv_vp = viewproj.invert()?;
 
         // Convert NDC point to homogeneous coordinates
-        let homogeneous = inv_vp * ndc_opengl.to_homogeneous();
+        let homogeneous = inv_vp * ndc_point.to_homogeneous();
 
         // Perform perspective division
         Some(cgmath::Point3::from_homogeneous(homogeneous))

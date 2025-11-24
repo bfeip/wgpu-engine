@@ -1,7 +1,8 @@
-use crate::common::Ray;
+use crate::common::{Ray, RgbaColor};
 use crate::event::{CallbackId, Event, EventContext, EventDispatcher, EventKind};
 use crate::geom_query::pick_all_from_ray;
 use crate::operator::{Operator, OperatorId};
+use cgmath::{InnerSpace, Point3};
 
 /// Operator for selecting objects in the scene via mouse click.
 ///
@@ -40,27 +41,73 @@ impl SelectionOperator {
 
         println!("Ray: origin={:?}, direction={:?}", ray.origin, ray.direction);
 
+        // Calculate camera distance for miss visualization
+        let camera_distance = (ctx.state.camera.eye - ctx.state.camera.target).magnitude();
+
         // Perform picking
         let results = pick_all_from_ray(&ray, ctx.scene);
+
+        // Convert ray origin Vector3 to Point3
+        let ray_origin = Point3::new(ray.origin.x, ray.origin.y, ray.origin.z);
 
         // Print results to console
         if results.is_empty() {
             println!("Selection: No objects hit");
 
-            // Debug: Check scene bounds
+            // Debug: Check scene bounds (excluding annotations)
             println!("\nScene info:");
             println!("  Root nodes: {}", ctx.scene.root_nodes().len());
+
+            let annotation_root = ctx.annotation_manager.root_node();
+            let mut closest_bbox_hit: Option<f32> = None;
+
             for &root_id in ctx.scene.root_nodes() {
+                // Skip the annotation root node to avoid hitting our debug rays
+                if root_id == annotation_root {
+                    continue;
+                }
+
                 if let Some(bounds) = ctx.scene.nodes_bounding(root_id) {
                     println!("  Root node {} bounds: min={:?}, max={:?}", root_id, bounds.min, bounds.max);
 
                     // Test if ray hits the bounding box
                     if let Some(t) = bounds.intersects_ray(&ray) {
                         println!("    Ray HITS bounds at t={:.3}", t);
+                        closest_bbox_hit = Some(match closest_bbox_hit {
+                            Some(existing) => existing.min(t),
+                            None => t,
+                        });
                     } else {
                         println!("    Ray MISSES bounds");
                     }
                 }
+            }
+
+            // Draw debug ray based on what was hit
+            if let Some(bbox_t) = closest_bbox_hit {
+                // Yellow ray: hit bounding box but not geometry
+                let hit_point = ray_origin + ray.direction * bbox_t;
+                let _ = ctx.annotation_manager.add_line(
+                    ctx.scene,
+                    &ctx.state.device,
+                    &mut ctx.state.material_manager,
+                    ray_origin,
+                    hit_point,
+                    RgbaColor { r: 1.0, g: 1.0, b: 0.0, a: 1.0 }, // Yellow
+                );
+                println!("Drew YELLOW debug ray (bbox hit, no geometry)");
+            } else {
+                // Red ray: complete miss
+                let end_point = ray_origin + ray.direction * camera_distance;
+                let _ = ctx.annotation_manager.add_line(
+                    ctx.scene,
+                    &ctx.state.device,
+                    &mut ctx.state.material_manager,
+                    ray_origin,
+                    end_point,
+                    RgbaColor { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }, // Red
+                );
+                println!("Drew RED debug ray (complete miss)");
             }
         } else {
             println!("Selection: Found {} hit(s)", results.len());
@@ -75,6 +122,24 @@ impl SelectionOperator {
                     result.hit_point.y,
                     result.hit_point.z
                 );
+            }
+
+            // Draw green ray to the closest hit point
+            if let Some(closest_hit) = results.first() {
+                let hit_point = Point3::new(
+                    closest_hit.hit_point.x,
+                    closest_hit.hit_point.y,
+                    closest_hit.hit_point.z,
+                );
+                let _ = ctx.annotation_manager.add_line(
+                    ctx.scene,
+                    &ctx.state.device,
+                    &mut ctx.state.material_manager,
+                    ray_origin,
+                    hit_point,
+                    RgbaColor { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }, // Green
+                );
+                println!("Drew GREEN debug ray (geometry hit)");
             }
         }
         println!("======================\n");

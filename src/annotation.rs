@@ -43,6 +43,13 @@ impl AnnotationManager {
         self.annotation_nodes.len()
     }
 
+    /// Returns the root node ID for all annotations.
+    ///
+    /// This can be used to exclude annotations from scene queries.
+    pub fn root_node(&self) -> NodeId {
+        self.root_node_id
+    }
+
     /// Shows or hides all annotations by scaling the root node.
     // TODO: Fix when proper visibility is implemented
     pub fn set_visible(&mut self, scene: &mut Scene, visible: bool) {
