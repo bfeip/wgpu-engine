@@ -2,8 +2,8 @@
 pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
     1.0, 0.0, 0.0, 0.0,
     0.0, 1.0, 0.0, 0.0,
-    0.0, 0.0, 0.5, 0.5,
-    0.0, 0.0, 0.0, 1.0,
+    0.0, 0.0, 0.5, 0.0,
+    0.0, 0.0, 0.5, 1.0,
 );
 
 pub struct Camera {
@@ -394,37 +394,44 @@ mod tests {
         let m = OPENGL_TO_WGPU_MATRIX;
 
         // The matrix transforms clip-space coordinates (homogeneous, before perspective division)
-        // Matrix applies: z' = 0.5*z, w' = 0.5*z + w
-        // After perspective division: z_ndc = z'/w'
+        // Matrix correctly applies: z' = 0.5*z + 0.5*w, w' = w
+        // This remaps OpenGL NDC [-1, 1] to WGPU NDC [0, 1]
+        // After perspective division: z_ndc = z'/w' = (0.5*z + 0.5*w)/w = 0.5*(z/w) + 0.5
 
         // Test with W=1 (orthographic-like case)
         // Z=-1 in OpenGL clip space -> should map to Z=0 in WGPU NDC after division
         let near_clip = Vector4::new(0.0, 0.0, -1.0, 1.0);
         let near_result = m * near_clip;
 
-        // In homogeneous coords: z' = 0.5*(-1) = -0.5, w' = 0.5*(-1) + 1 = 0.5
-        assert!((near_result.z - -0.5).abs() < EPSILON);
-        assert!((near_result.w - 0.5).abs() < EPSILON);
+        // In homogeneous coords: z' = 0.5*(-1) + 0.5*1 = 0.0, w' = 1.0
+        assert!((near_result.z - 0.0).abs() < EPSILON);
+        assert!((near_result.w - 1.0).abs() < EPSILON);
 
-        // After perspective division: z_ndc = -0.5 / 0.5 = -1.0
-        // This suggests the matrix as defined may not be correct for the intended purpose
-        // But we'll test what it actually does
+        // After perspective division: z_ndc = 0.0 / 1.0 = 0.0 (WGPU near plane)
         let z_ndc = near_result.z / near_result.w;
-        assert!((z_ndc - -1.0).abs() < EPSILON);
+        assert!((z_ndc - 0.0).abs() < EPSILON);
 
-        // Test with Z=1
+        // Test with Z=1 (OpenGL far plane)
         let far_clip = Vector4::new(0.0, 0.0, 1.0, 1.0);
         let far_result = m * far_clip;
-        // z' = 0.5*1 = 0.5, w' = 0.5*1 + 1 = 1.5
-        assert!((far_result.z - 0.5).abs() < EPSILON);
-        assert!((far_result.w - 1.5).abs() < EPSILON);
+        // z' = 0.5*1 + 0.5*1 = 1.0, w' = 1.0
+        assert!((far_result.z - 1.0).abs() < EPSILON);
+        assert!((far_result.w - 1.0).abs() < EPSILON);
 
-        // Test with Z=0
+        // After perspective division: z_ndc = 1.0 / 1.0 = 1.0 (WGPU far plane)
+        let z_ndc_far = far_result.z / far_result.w;
+        assert!((z_ndc_far - 1.0).abs() < EPSILON);
+
+        // Test with Z=0 (OpenGL mid plane)
         let mid_clip = Vector4::new(0.0, 0.0, 0.0, 1.0);
         let mid_result = m * mid_clip;
-        // z' = 0.5*0 = 0.0, w' = 0.5*0 + 1 = 1.0
-        assert!((mid_result.z - 0.0).abs() < EPSILON);
+        // z' = 0.5*0 + 0.5*1 = 0.5, w' = 1.0
+        assert!((mid_result.z - 0.5).abs() < EPSILON);
         assert!((mid_result.w - 1.0).abs() < EPSILON);
+
+        // After perspective division: z_ndc = 0.5 / 1.0 = 0.5 (WGPU mid plane)
+        let z_ndc_mid = mid_result.z / mid_result.w;
+        assert!((z_ndc_mid - 0.5).abs() < EPSILON);
 
         // Verify X and Y are unchanged
         let test_point = Vector4::new(3.5, -2.7, 0.0, 1.0);
