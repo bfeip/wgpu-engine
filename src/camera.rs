@@ -439,4 +439,361 @@ mod tests {
         assert!((transformed.x - 3.5).abs() < EPSILON);
         assert!((transformed.y - -2.7).abs() < EPSILON);
     }
+
+    // ===== Projection/Unprojection Tests =====
+
+    #[test]
+    fn test_project_unproject_ndc_roundtrip() {
+        let camera = create_test_camera();
+
+        // Test various world points
+        let test_points = vec![
+            Point3::new(0.0, 0.0, 0.0),    // Origin (camera target)
+            Point3::new(1.0, 0.0, 0.0),    // Right
+            Point3::new(0.0, 1.0, 0.0),    // Up
+            Point3::new(0.0, 0.0, -1.0),   // Forward from target
+            Point3::new(2.5, 1.5, -3.0),   // Arbitrary point
+        ];
+
+        for original_point in test_points {
+            // Project to NDC
+            let ndc = camera.project_point_ndc(original_point);
+
+            // Unproject back to world space
+            let unprojected = camera.unproject_point_ndc(ndc)
+                .expect("Failed to unproject point");
+
+            // Should get back the original point (within floating point precision)
+            assert!(
+                (unprojected.x - original_point.x).abs() < 1e-4,
+                "X mismatch: original={}, unprojected={}", original_point.x, unprojected.x
+            );
+            assert!(
+                (unprojected.y - original_point.y).abs() < 1e-4,
+                "Y mismatch: original={}, unprojected={}", original_point.y, unprojected.y
+            );
+            assert!(
+                (unprojected.z - original_point.z).abs() < 1e-4,
+                "Z mismatch: original={}, unprojected={}", original_point.z, unprojected.z
+            );
+        }
+    }
+
+    #[test]
+    fn test_project_camera_target_to_ndc_center() {
+        let camera = create_test_camera();
+
+        // The camera target should project to the center of NDC (0, 0)
+        let ndc = camera.project_point_ndc(camera.target);
+
+        // X and Y should be at center (0, 0)
+        assert!(
+            ndc.x.abs() < 1e-4,
+            "Target should project to NDC center X, got {}", ndc.x
+        );
+        assert!(
+            ndc.y.abs() < 1e-4,
+            "Target should project to NDC center Y, got {}", ndc.y
+        );
+
+        // Z should be somewhere between 0 and 1 (in front of camera)
+        assert!(ndc.z >= 0.0 && ndc.z <= 1.0, "NDC Z should be in [0, 1], got {}", ndc.z);
+    }
+
+    #[test]
+    fn test_project_ndc_bounds() {
+        let camera = create_test_camera();
+
+        // Points in front of the camera should have NDC Z between 0 and 1
+        let point_in_front = Point3::new(0.0, 0.0, 2.0);
+        let ndc = camera.project_point_ndc(point_in_front);
+
+        assert!(ndc.z >= 0.0 && ndc.z <= 1.0, "Point in frustum should have NDC Z in [0, 1]");
+    }
+
+    #[test]
+    fn test_project_ndc_depth_ordering() {
+        let camera = create_test_camera();
+
+        // Points closer to camera should have smaller NDC Z values
+        let point_near = Point3::new(0.0, 0.0, 1.0);   // Closer
+        let point_far = Point3::new(0.0, 0.0, -2.0);   // Farther
+
+        let ndc_near = camera.project_point_ndc(point_near);
+        let ndc_far = camera.project_point_ndc(point_far);
+
+        // Closer point should have smaller Z (closer to 0)
+        assert!(
+            ndc_near.z < ndc_far.z,
+            "Closer point should have smaller NDC Z: near={}, far={}",
+            ndc_near.z, ndc_far.z
+        );
+    }
+
+    #[test]
+    fn test_unproject_ndc_center() {
+        let camera = create_test_camera();
+
+        // NDC center (0, 0) at mid-depth should unproject to a point on camera's forward ray
+        let ndc_center = Point3::new(0.0, 0.0, 0.5);
+        let world_point = camera.unproject_point_ndc(ndc_center)
+            .expect("Failed to unproject NDC center");
+
+        // The unprojected point should lie on the line from camera eye towards target
+        let to_point = (world_point - camera.eye).normalize();
+        let forward = camera.forward();
+
+        // Vectors should be parallel (dot product close to 1 or -1)
+        let dot = to_point.dot(forward);
+        assert!(
+            (dot.abs() - 1.0).abs() < 1e-4,
+            "Unprojected center should lie on camera forward ray, dot={}",
+            dot
+        );
+    }
+
+    #[test]
+    fn test_unproject_ndc_corners() {
+        let camera = create_test_camera();
+
+        // Test all four corners of NDC at mid-depth
+        let corners = vec![
+            Point3::new(-1.0, -1.0, 0.5), // Bottom-left
+            Point3::new(1.0, -1.0, 0.5),  // Bottom-right
+            Point3::new(-1.0, 1.0, 0.5),  // Top-left
+            Point3::new(1.0, 1.0, 0.5),   // Top-right
+        ];
+
+        for ndc_corner in corners {
+            let world_point = camera.unproject_point_ndc(ndc_corner)
+                .expect("Failed to unproject corner");
+
+            // All unprojected points should be valid (finite)
+            assert!(world_point.x.is_finite());
+            assert!(world_point.y.is_finite());
+            assert!(world_point.z.is_finite());
+
+            // Round-trip should work
+            let reprojected = camera.project_point_ndc(world_point);
+            assert!((reprojected.x - ndc_corner.x).abs() < 1e-4);
+            assert!((reprojected.y - ndc_corner.y).abs() < 1e-4);
+            assert!((reprojected.z - ndc_corner.z).abs() < 1e-4);
+        }
+    }
+
+    #[test]
+    fn test_project_screen_coordinates() {
+        let camera = create_test_camera();
+        let screen_width = 1920;
+        let screen_height = 1080;
+
+        // Camera target should project to screen center
+        let screen_point = camera.project_point_screen(
+            camera.target,
+            screen_width,
+            screen_height
+        );
+
+        // Should be at center of screen
+        let center_x = screen_width as f32 / 2.0;
+        let center_y = screen_height as f32 / 2.0;
+
+        assert!(
+            (screen_point.x - center_x).abs() < 1.0,
+            "Target should project to screen center X: expected {}, got {}",
+            center_x, screen_point.x
+        );
+        assert!(
+            (screen_point.y - center_y).abs() < 1.0,
+            "Target should project to screen center Y: expected {}, got {}",
+            center_y, screen_point.y
+        );
+
+        // Depth should be in valid range
+        assert!(screen_point.z >= 0.0 && screen_point.z <= 1.0);
+    }
+
+    #[test]
+    fn test_project_unproject_screen_roundtrip() {
+        let camera = create_test_camera();
+        let screen_width = 1920;
+        let screen_height = 1080;
+
+        let test_points = vec![
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(1.0, 1.0, 1.0),
+            Point3::new(-0.5, 2.0, -1.0),
+        ];
+
+        for original_point in test_points {
+            // Project to screen
+            let screen = camera.project_point_screen(
+                original_point,
+                screen_width,
+                screen_height
+            );
+
+            // Unproject back to world
+            let unprojected = camera.unproject_point_screen(
+                screen.x,
+                screen.y,
+                screen.z,
+                screen_width,
+                screen_height
+            ).expect("Failed to unproject screen point");
+
+            // Should match original
+            assert!(
+                (unprojected.x - original_point.x).abs() < 1e-3,
+                "Screen roundtrip X mismatch: original={}, unprojected={}",
+                original_point.x, unprojected.x
+            );
+            assert!(
+                (unprojected.y - original_point.y).abs() < 1e-3,
+                "Screen roundtrip Y mismatch: original={}, unprojected={}",
+                original_point.y, unprojected.y
+            );
+            assert!(
+                (unprojected.z - original_point.z).abs() < 1e-3,
+                "Screen roundtrip Z mismatch: original={}, unprojected={}",
+                original_point.z, unprojected.z
+            );
+        }
+    }
+
+    #[test]
+    fn test_screen_coordinate_bounds() {
+        let camera = create_test_camera();
+        let screen_width = 1920;
+        let screen_height = 1080;
+
+        // Test screen corners map to NDC corners
+        let test_cases = vec![
+            // (screen_x, screen_y, expected_ndc_x, expected_ndc_y)
+            (0.0, 0.0, -1.0, 1.0),                                    // Top-left
+            (screen_width as f32, 0.0, 1.0, 1.0),                     // Top-right
+            (0.0, screen_height as f32, -1.0, -1.0),                  // Bottom-left
+            (screen_width as f32, screen_height as f32, 1.0, -1.0),   // Bottom-right
+            (screen_width as f32 / 2.0, screen_height as f32 / 2.0, 0.0, 0.0), // Center
+        ];
+
+        for (screen_x, screen_y, expected_ndc_x, expected_ndc_y) in test_cases {
+            let world_point = camera.unproject_point_screen(
+                screen_x,
+                screen_y,
+                0.5, // Mid-depth
+                screen_width,
+                screen_height
+            ).expect("Failed to unproject screen corner");
+
+            // Project back to NDC to verify
+            let ndc = camera.project_point_ndc(world_point);
+
+            assert!(
+                (ndc.x - expected_ndc_x).abs() < 1e-4,
+                "Screen ({}, {}) should map to NDC X {}, got {}",
+                screen_x, screen_y, expected_ndc_x, ndc.x
+            );
+            assert!(
+                (ndc.y - expected_ndc_y).abs() < 1e-4,
+                "Screen ({}, {}) should map to NDC Y {}, got {}",
+                screen_x, screen_y, expected_ndc_y, ndc.y
+            );
+        }
+    }
+
+    #[test]
+    fn test_screen_y_flip() {
+        let camera = create_test_camera();
+        let screen_width = 800;
+        let screen_height = 600;
+
+        // Top of screen (Y=0) should correspond to positive NDC Y
+        let top_screen = camera.unproject_point_screen(
+            400.0, 0.0, 0.5,
+            screen_width, screen_height
+        ).expect("Failed to unproject top");
+
+        // Bottom of screen (Y=height) should correspond to negative NDC Y
+        let bottom_screen = camera.unproject_point_screen(
+            400.0, screen_height as f32, 0.5,
+            screen_width, screen_height
+        ).expect("Failed to unproject bottom");
+
+        let top_ndc = camera.project_point_ndc(top_screen);
+        let bottom_ndc = camera.project_point_ndc(bottom_screen);
+
+        // Top screen Y should have positive NDC Y
+        assert!(top_ndc.y > 0.5, "Top of screen should have positive NDC Y");
+
+        // Bottom screen Y should have negative NDC Y
+        assert!(bottom_ndc.y < -0.5, "Bottom of screen should have negative NDC Y");
+    }
+
+    #[test]
+    fn test_depth_range_screen() {
+        let camera = create_test_camera();
+        let screen_width = 1920;
+        let screen_height = 1080;
+
+        // Test different depth values
+        let center_x = screen_width as f32 / 2.0;
+        let center_y = screen_height as f32 / 2.0;
+
+        let near_point = camera.unproject_point_screen(
+            center_x, center_y, 0.0,
+            screen_width, screen_height
+        ).expect("Failed to unproject near");
+
+        let mid_point = camera.unproject_point_screen(
+            center_x, center_y, 0.5,
+            screen_width, screen_height
+        ).expect("Failed to unproject mid");
+
+        let far_point = camera.unproject_point_screen(
+            center_x, center_y, 1.0,
+            screen_width, screen_height
+        ).expect("Failed to unproject far");
+
+        // Near point should be closer to camera than far point
+        let dist_near = (near_point - camera.eye).magnitude();
+        let dist_mid = (mid_point - camera.eye).magnitude();
+        let dist_far = (far_point - camera.eye).magnitude();
+
+        assert!(dist_near < dist_mid, "Near point should be closer than mid");
+        assert!(dist_mid < dist_far, "Mid point should be closer than far");
+    }
+
+    #[test]
+    fn test_projection_consistency_across_methods() {
+        let camera = create_test_camera();
+        let screen_width = 1920;
+        let screen_height = 1080;
+
+        let world_point = Point3::new(1.5, -0.5, 1.0);
+
+        // Project using both methods
+        let ndc = camera.project_point_ndc(world_point);
+        let screen = camera.project_point_screen(world_point, screen_width, screen_height);
+
+        // Manual conversion from screen to NDC
+        let ndc_from_screen_x = (screen.x / screen_width as f32) * 2.0 - 1.0;
+        let ndc_from_screen_y = 1.0 - (screen.y / screen_height as f32) * 2.0;
+
+        // Should match
+        assert!(
+            (ndc.x - ndc_from_screen_x).abs() < 1e-4,
+            "NDC X should match: direct={}, from_screen={}",
+            ndc.x, ndc_from_screen_x
+        );
+        assert!(
+            (ndc.y - ndc_from_screen_y).abs() < 1e-4,
+            "NDC Y should match: direct={}, from_screen={}",
+            ndc.y, ndc_from_screen_y
+        );
+        assert!(
+            (ndc.z - screen.z).abs() < EPSILON,
+            "Depth should match"
+        );
+    }
 }
