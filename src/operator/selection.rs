@@ -23,13 +23,6 @@ impl SelectionOperator {
 
     /// Performs selection at the given position and prints results to console.
     fn perform_selection(cursor_x: f32, cursor_y: f32, ctx: &mut EventContext) {
-
-        // Debug output
-        println!("\n=== Selection Debug ===");
-        println!("Screen: {}x{}", ctx.state.size.width, ctx.state.size.height);
-        println!("Cursor: ({:.1}, {:.1})", cursor_x, cursor_y);
-        println!("Camera: eye={:?}, target={:?}", ctx.state.camera.eye, ctx.state.camera.target);
-
         // Create ray from screen point
         let ray = Ray::from_screen_point(
             cursor_x,
@@ -38,8 +31,6 @@ impl SelectionOperator {
             ctx.state.size.height,
             &ctx.state.camera,
         );
-
-        println!("Ray: origin={:?}, direction={:?}", ray.origin, ray.direction);
 
         // Calculate camera distance for miss visualization
         let camera_distance = (ctx.state.camera.eye - ctx.state.camera.target).magnitude();
@@ -50,14 +41,8 @@ impl SelectionOperator {
         // Convert ray origin Vector3 to Point3
         let ray_origin = Point3::new(ray.origin.x, ray.origin.y, ray.origin.z);
 
-        // Print results to console
+        // Draw debug lines
         if results.is_empty() {
-            println!("Selection: No objects hit");
-
-            // Debug: Check scene bounds (excluding annotations)
-            println!("\nScene info:");
-            println!("  Root nodes: {}", ctx.scene.root_nodes().len());
-
             let annotation_root = ctx.annotation_manager.root_node();
             let mut closest_bbox_hit: Option<f32> = None;
 
@@ -68,17 +53,12 @@ impl SelectionOperator {
                 }
 
                 if let Some(bounds) = ctx.scene.nodes_bounding(root_id) {
-                    println!("  Root node {} bounds: min={:?}, max={:?}", root_id, bounds.min, bounds.max);
-
                     // Test if ray hits the bounding box
                     if let Some(t) = bounds.intersects_ray(&ray) {
-                        println!("    Ray HITS bounds at t={:.3}", t);
                         closest_bbox_hit = Some(match closest_bbox_hit {
                             Some(existing) => existing.min(t),
                             None => t,
                         });
-                    } else {
-                        println!("    Ray MISSES bounds");
                     }
                 }
             }
@@ -95,7 +75,6 @@ impl SelectionOperator {
                     hit_point,
                     RgbaColor { r: 1.0, g: 1.0, b: 0.0, a: 1.0 }, // Yellow
                 );
-                println!("Drew YELLOW debug ray (bbox hit, no geometry)");
             } else {
                 // Red ray: complete miss
                 let end_point = ray_origin + ray.direction * camera_distance;
@@ -107,23 +86,8 @@ impl SelectionOperator {
                     end_point,
                     RgbaColor { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }, // Red
                 );
-                println!("Drew RED debug ray (complete miss)");
             }
         } else {
-            println!("Selection: Found {} hit(s)", results.len());
-            for (i, result) in results.iter().enumerate() {
-                println!(
-                    "  [{}] Node ID: {}, Instance ID: {}, Distance: {}, Hit point: ({}, {}, {})",
-                    i,
-                    result.node_id,
-                    result.instance_id,
-                    result.distance,
-                    result.hit_point.x,
-                    result.hit_point.y,
-                    result.hit_point.z
-                );
-            }
-
             // Draw green ray to the closest hit point
             if let Some(closest_hit) = results.first() {
                 let hit_point = Point3::new(
@@ -139,10 +103,8 @@ impl SelectionOperator {
                     hit_point,
                     RgbaColor { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }, // Green
                 );
-                println!("Drew GREEN debug ray (geometry hit)");
             }
         }
-        println!("======================\n");
     }
 }
 
