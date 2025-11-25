@@ -14,6 +14,7 @@ mod event;
 mod operator;
 mod annotation;
 
+use std::sync::Arc;
 use winit::{
     event_loop::EventLoop,
     keyboard::KeyCode,
@@ -53,10 +54,10 @@ pub async fn run() {
     }
 
     let event_loop = EventLoop::new().unwrap();
-    let window = WindowBuilder::new()
+    let window = Arc::new(WindowBuilder::new()
     .with_title("WGPU")
     .with_visible(false)
-    .build(&event_loop).unwrap();
+    .build(&event_loop).unwrap());
 
     #[cfg(target_arch = "wasm32")]
     {
@@ -78,7 +79,10 @@ pub async fn run() {
     }
 
     // Initialize rendering state
-    let mut state = DrawState::new(&window).await;
+    let size = window.inner_size();
+    // Clone the Arc for the surface - the event loop will own the other reference
+    let surface_window = Arc::clone(&window);
+    let mut state = DrawState::new(surface_window, size.width, size.height).await;
 
     // Load BoomBox glTF scene
     let mut scene = crate::gltf::load_gltf_scene(
@@ -128,12 +132,6 @@ pub async fn run() {
 
     // Register RedrawRequested handler
     dispatcher.register(EventKind::RedrawRequested, |_event, ctx| {
-        if !ctx.state.window.is_visible().unwrap() {
-            ctx.state.window.set_visible(true);
-        }
-        // This tells winit that we want another frame after this one
-        ctx.state.window.request_redraw();
-
         match ctx.state.render(ctx.scene) {
             Ok(_) => {}
             Err(err) => {
@@ -186,8 +184,21 @@ pub async fn run() {
         false // Don't stop propagation - other handlers may need cursor position too
     });
 
+    // Make window visible and trigger initial render
+    window.set_visible(true);
+    window.request_redraw();
+
     event_loop
         .run(move |event, control_flow| {
+            // TODO: Temporary - request next frame after each redraw
+            // Will be refactored to support more sophisticated rendering strategies
+            if matches!(&event, winit::event::Event::WindowEvent {
+                event: winit::event::WindowEvent::RedrawRequested,
+                ..
+            }) {
+                window.request_redraw();
+            }
+
             if let Some(app_event) = crate::event::Event::from_winit_event(event) {
                 let mut ctx = EventContext {
                     state: &mut state,

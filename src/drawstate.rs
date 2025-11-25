@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use wgpu::{util::DeviceExt};
-use winit::window::Window;
 
 use crate::{
     camera::{
@@ -28,7 +27,6 @@ pub struct DrawState<'a> {
     pub queue: wgpu::Queue,
     pub config: wgpu::SurfaceConfiguration,
     pub size: winit::dpi::PhysicalSize<u32>,
-    pub window: &'a Window,
     pub camera: Camera,
     /// Current cursor position in screen coordinates (x, y), or None if cursor is not over the window
     pub cursor_position: Option<(f32, f32)>,
@@ -50,8 +48,12 @@ pub struct DrawState<'a> {
 
 impl<'a> DrawState<'a> {
     // Creating some of the wgpu types requires async code
-    pub async fn new(window: &'a Window) -> DrawState<'a> {
-        let size = window.inner_size();
+    // The target parameter can be a Window, Canvas, or any type implementing the necessary traits
+    pub async fn new<T>(target: T, width: u32, height: u32) -> DrawState<'a>
+    where
+        T: Into<wgpu::SurfaceTarget<'a>>,
+    {
+        let size = winit::dpi::PhysicalSize::new(width, height);
 
         // The instance is a handle to our GPU
         // Backends::all => Vulkan + Metal + DX12 + Browser WebGPU
@@ -63,7 +65,7 @@ impl<'a> DrawState<'a> {
             ..Default::default()
         });
 
-        let surface = instance.create_surface(window).unwrap();
+        let surface = instance.create_surface(target).unwrap();
 
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -224,7 +226,6 @@ impl<'a> DrawState<'a> {
             queue,
             config,
             size,
-            window,
             camera,
             cursor_position: None,
             material_manager,
