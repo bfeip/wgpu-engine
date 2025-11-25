@@ -15,6 +15,8 @@
 - API and docs review
 
 - Drag and drop GLTF loading operator
+- Walk operator
+- Instance flags
 - NURBS
 - WESL
 - Markup
