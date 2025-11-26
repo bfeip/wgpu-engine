@@ -28,8 +28,6 @@ pub struct EventContext<'w, 'c> {
     pub scene: &'c mut Scene,
     /// Mutable reference to the annotation manager
     pub annotation_manager: &'c mut AnnotationManager,
-    /// Set this to true to signal that the application should exit
-    pub exit_requested: &'c mut bool,
 }
 
 /// Unique identifier for a registered callback.
@@ -45,8 +43,6 @@ type EventCallback = Box<dyn for<'w, 'c> Fn(&Event, &mut EventContext<'w, 'c>) -
 /// enum representing event types.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub enum EventKind {
-    /// Window close was requested
-    CloseRequested,
     /// Window was resized
     Resized,
     /// Window needs to be redrawn
@@ -73,8 +69,6 @@ pub enum EventKind {
 
 /// Application events with associated data.
 pub enum Event {
-    /// Window close was requested
-    CloseRequested,
     /// Window was resized to the given physical size
     Resized(PhysicalSize<u32>),
     /// Window needs to be redrawn
@@ -152,7 +146,6 @@ impl Event {
     /// Returns the [`EventKind`] discriminant for this event.
     pub fn kind(&self) -> EventKind {
         match self {
-            Self::CloseRequested => EventKind::CloseRequested,
             Self::Resized(_) => EventKind::Resized,
             Self::RedrawRequested => EventKind::RedrawRequested,
             Self::KeyboardInput { .. } => EventKind::KeyboardInput,
@@ -478,7 +471,6 @@ mod tests {
             state: unsafe { &mut *(dangling.as_ptr() as *mut DrawState) },
             scene: unsafe { &mut *(dangling.as_ptr() as *mut Scene) },
             annotation_manager: unsafe { &mut *(dangling.as_ptr() as *mut AnnotationManager) },
-            exit_requested: unsafe { &mut *(dangling.as_ptr() as *mut bool) },
         }
     }
 
@@ -495,11 +487,11 @@ mod tests {
     fn test_dispatcher_register() {
         let mut dispatcher = EventDispatcher::new();
 
-        let id = dispatcher.register(EventKind::CloseRequested, |_event, _ctx| false);
+        let id = dispatcher.register(EventKind::RedrawRequested, |_event, _ctx| false);
 
         assert_eq!(id, 0);
-        assert!(dispatcher.callback_map.contains_key(&EventKind::CloseRequested));
-        assert_eq!(dispatcher.callback_map[&EventKind::CloseRequested].len(), 1);
+        assert!(dispatcher.callback_map.contains_key(&EventKind::RedrawRequested));
+        assert_eq!(dispatcher.callback_map[&EventKind::RedrawRequested].len(), 1);
     }
 
     #[test]
@@ -525,7 +517,7 @@ mod tests {
 
         let id1 = dispatcher.register(EventKind::KeyboardInput, |_event, _ctx| false);
         let id2 = dispatcher.register(EventKind::MouseInput, |_event, _ctx| false);
-        let id3 = dispatcher.register(EventKind::CloseRequested, |_event, _ctx| false);
+        let id3 = dispatcher.register(EventKind::RedrawRequested, |_event, _ctx| false);
 
         // All IDs should be unique
         assert_eq!(id1, 0);
@@ -536,7 +528,7 @@ mod tests {
         assert_eq!(dispatcher.callback_map.len(), 3);
         assert_eq!(dispatcher.callback_map[&EventKind::KeyboardInput].len(), 1);
         assert_eq!(dispatcher.callback_map[&EventKind::MouseInput].len(), 1);
-        assert_eq!(dispatcher.callback_map[&EventKind::CloseRequested].len(), 1);
+        assert_eq!(dispatcher.callback_map[&EventKind::RedrawRequested].len(), 1);
     }
 
     #[test]
@@ -568,7 +560,7 @@ mod tests {
     #[test]
     fn test_dispatcher_dispatch_no_callbacks() {
         let mut dispatcher = EventDispatcher::new();
-        let event = Event::CloseRequested;
+        let event = Event::RedrawRequested;
 
         // SAFETY: We're creating a mock context that won't be used
         let mut ctx = unsafe { create_mock_context() };
@@ -584,12 +576,12 @@ mod tests {
         let counter = Rc::new(Cell::new(0));
         let counter_clone = Rc::clone(&counter);
 
-        dispatcher.register(EventKind::CloseRequested, move |_event, _ctx| {
+        dispatcher.register(EventKind::RedrawRequested, move |_event, _ctx| {
             counter_clone.set(counter_clone.get() + 1);
             false
         });
 
-        let event = Event::CloseRequested;
+        let event = Event::RedrawRequested;
         let mut ctx = unsafe { create_mock_context() };
 
         dispatcher.dispatch(&event, &mut ctx);

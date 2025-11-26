@@ -32,6 +32,18 @@ async fn run() {
     // Run the event loop
     event_loop
         .run(move |event, control_flow| {
+            // Handle window close directly
+            if matches!(
+                &event,
+                winit::event::Event::WindowEvent {
+                    event: winit::event::WindowEvent::CloseRequested,
+                    ..
+                }
+            ) {
+                control_flow.exit();
+                return;
+            }
+
             // Request next frame after each redraw
             if matches!(
                 &event,
@@ -48,9 +60,14 @@ async fn run() {
                 // Handle the event through the viewer
                 viewer.handle_event(&app_event);
 
-                // Check if exit was requested
-                if viewer.should_exit() {
-                    control_flow.exit();
+                // Check for exit on Escape key
+                if let wgpu_engine::Event::KeyboardInput { event: key_event, .. } = &app_event {
+                    if matches!(
+                        key_event.logical_key,
+                        wgpu_engine::Key::Named(wgpu_engine::NamedKey::Escape)
+                    ) {
+                        control_flow.exit();
+                    }
                 }
             }
         })

@@ -13,7 +13,6 @@ pub struct Viewer<'a> {
     pub dispatcher: EventDispatcher,
     pub operator_manager: OperatorManager,
     pub annotation_manager: AnnotationManager,
-    exit_requested: bool,
 }
 
 impl<'a> Viewer<'a> {
@@ -71,7 +70,6 @@ impl<'a> Viewer<'a> {
             dispatcher,
             operator_manager,
             annotation_manager,
-            exit_requested: false,
         };
 
         // Register default event handlers
@@ -82,13 +80,6 @@ impl<'a> Viewer<'a> {
 
     /// Register default event handlers for common viewer operations
     fn register_default_handlers(&mut self) {
-        // Register CloseRequested handler
-        self.dispatcher
-            .register(EventKind::CloseRequested, |_event, ctx| {
-                *ctx.exit_requested = true;
-                true
-            });
-
         // Register Resized handler
         self.dispatcher.register(EventKind::Resized, |event, ctx| {
             if let crate::event::Event::Resized(physical_size) = event {
@@ -110,8 +101,7 @@ impl<'a> Viewer<'a> {
                                     ctx.state.resize(ctx.state.size);
                                 }
                                 wgpu::SurfaceError::OutOfMemory | wgpu::SurfaceError::Other => {
-                                    log::error!("OutOfMemory: {}", surface_err);
-                                    *ctx.exit_requested = true;
+                                    log::error!("Fatal surface error: {}", surface_err);
                                 }
                                 wgpu::SurfaceError::Timeout => {
                                     log::warn!("Surface timeout: {}", surface_err);
@@ -120,28 +110,10 @@ impl<'a> Viewer<'a> {
                         } else {
                             // Handle other types of errors
                             log::error!("Render error: {}", err);
-                            *ctx.exit_requested = true;
                         }
                     }
                 }
                 true
-            });
-
-        // Register KeyboardInput handler for Escape key
-        self.dispatcher
-            .register(EventKind::KeyboardInput, |event, ctx| {
-                if let Event::KeyboardInput { event: key_event, .. } = event {
-                    use crate::input::{Key, NamedKey};
-
-                    if matches!(key_event.logical_key, Key::Named(NamedKey::Escape)) {
-                        *ctx.exit_requested = true;
-                        true
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                }
             });
 
         // Register CursorMoved handler to track cursor position
@@ -160,13 +132,7 @@ impl<'a> Viewer<'a> {
             state: &mut self.state,
             scene: &mut self.scene,
             annotation_manager: &mut self.annotation_manager,
-            exit_requested: &mut self.exit_requested,
         };
         self.dispatcher.dispatch(event, &mut ctx);
-    }
-
-    /// Check if exit has been requested (e.g., by Escape key or CloseRequested event)
-    pub fn should_exit(&self) -> bool {
-        self.exit_requested
     }
 }

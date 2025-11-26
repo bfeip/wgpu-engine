@@ -130,7 +130,6 @@ pub fn convert_window_event(wevent: winit::event::WindowEvent) -> Option<Event> 
     use winit::event::WindowEvent as WEvent;
 
     match wevent {
-        WEvent::CloseRequested => Some(Event::CloseRequested),
         WEvent::Resized(size) => Some(Event::Resized(convert_physical_size(size))),
         WEvent::RedrawRequested => Some(Event::RedrawRequested),
         WEvent::KeyboardInput { event, is_synthetic, .. } => Some(Event::KeyboardInput {
