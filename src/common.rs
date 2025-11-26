@@ -11,6 +11,19 @@ pub mod aabb;
 pub use ray::Ray;
 pub use aabb::Aabb;
 
+/// A simple physical size struct representing width and height
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct PhysicalSize<T> {
+    pub width: T,
+    pub height: T,
+}
+
+impl<T> PhysicalSize<T> {
+    pub fn new(width: T, height: T) -> Self {
+        Self { width, height }
+    }
+}
+
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct RgbaColor {

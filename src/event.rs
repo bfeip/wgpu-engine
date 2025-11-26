@@ -4,6 +4,8 @@ use std::time::Instant;
 use crate::drawstate::DrawState;
 use crate::scene::Scene;
 use crate::annotation::AnnotationManager;
+use crate::common::PhysicalSize;
+use crate::input::{PhysicalPosition, ElementState, MouseButton, MouseScrollDelta, KeyEvent};
 
 /// Movement threshold in pixels before a mouse button hold becomes a drag.
 const DRAG_THRESHOLD_PIXELS: f32 = 4.0;
@@ -14,10 +16,10 @@ const CLICK_TIME_THRESHOLD_MS: u64 = 300;
 /// Context passed to event callbacks, providing mutable access to application state.
 ///
 /// This struct bundles all the mutable state that event callbacks need to access,
-/// including the rendering state, scene, annotation manager, and event loop control flow.
+/// including the rendering state, scene, and annotation manager.
 ///
 /// ## Lifetime Parameters
-/// - `'w`: The window lifetime - DrawState holds a reference to the Window with this lifetime
+/// - `'w`: The surface lifetime - DrawState holds a reference to a rendering surface with this lifetime
 /// - `'c`: The callback lifetime - represents the duration of a single event callback invocation
 pub struct EventContext<'w, 'c> {
     /// Mutable reference to the rendering state
@@ -26,8 +28,8 @@ pub struct EventContext<'w, 'c> {
     pub scene: &'c mut Scene,
     /// Mutable reference to the annotation manager
     pub annotation_manager: &'c mut AnnotationManager,
-    /// Reference to the event loop control flow (for exiting the application, etc.)
-    pub control_flow: &'c winit::event_loop::EventLoopWindowTarget<()>,
+    /// Set this to true to signal that the application should exit
+    pub exit_requested: &'c mut bool,
 }
 
 /// Unique identifier for a registered callback.
@@ -69,19 +71,19 @@ pub enum EventKind {
     MouseClick,
 }
 
-/// Application events with associated data, converted from winit events.
+/// Application events with associated data.
 pub enum Event {
     /// Window close was requested
     CloseRequested,
     /// Window was resized to the given physical size
-    Resized(winit::dpi::PhysicalSize<u32>),
+    Resized(PhysicalSize<u32>),
     /// Window needs to be redrawn
     RedrawRequested,
     /// Keyboard input occurred
     KeyboardInput {
         /// The keyboard event details
-        event: winit::event::KeyEvent,
-        /// If `true`, the event was generated synthetically by winit (see their docs)
+        event: KeyEvent,
+        /// If `true`, the event was generated synthetically
         is_synthetic: bool,
     },
     /// Mouse was moved (relative motion)
@@ -92,24 +94,24 @@ pub enum Event {
     /// Cursor position changed (absolute position)
     CursorMoved {
         /// New cursor position in physical pixels
-        position: winit::dpi::PhysicalPosition<f64>,
+        position: PhysicalPosition<f64>,
     },
     /// Mouse button was pressed or released
     MouseInput {
         /// Whether the button was pressed or released
-        state: winit::event::ElementState,
+        state: ElementState,
         /// Which mouse button
-        button: winit::event::MouseButton,
+        button: MouseButton,
     },
     /// Mouse wheel was scrolled
     MouseWheel {
         /// Scroll delta (line, pixel, or page units)
-        delta: winit::event::MouseScrollDelta,
+        delta: MouseScrollDelta,
     },
     /// Mouse drag started (button held and moved beyond threshold)
     MouseDragStart {
         /// Which mouse button is being dragged
-        button: winit::event::MouseButton,
+        button: MouseButton,
         /// Position where the button was initially pressed (in physical pixels)
         start_pos: (f32, f32),
         /// Current cursor position (in physical pixels)
@@ -118,7 +120,7 @@ pub enum Event {
     /// Mouse drag in progress (button held and moving)
     MouseDrag {
         /// Which mouse button is being dragged
-        button: winit::event::MouseButton,
+        button: MouseButton,
         /// Position where the button was initially pressed (in physical pixels)
         start_pos: (f32, f32),
         /// Current cursor position (in physical pixels)
@@ -129,7 +131,7 @@ pub enum Event {
     /// Mouse drag ended (button released after dragging)
     MouseDragEnd {
         /// Which mouse button was being dragged
-        button: winit::event::MouseButton,
+        button: MouseButton,
         /// Position where the button was initially pressed (in physical pixels)
         start_pos: (f32, f32),
         /// Position where the button was released (in physical pixels)
@@ -138,7 +140,7 @@ pub enum Event {
     /// Mouse click (button pressed and released quickly without dragging)
     MouseClick {
         /// Which mouse button was clicked
-        button: winit::event::MouseButton,
+        button: MouseButton,
         /// Position where the click occurred (in physical pixels)
         position: (f32, f32),
         /// Duration of the button press in milliseconds
@@ -165,51 +167,9 @@ impl Event {
         }
     }
 
-    /// Converts a winit event to an application event.
-    ///
-    /// Returns `None` if the event is not supported or should be ignored.
-    pub fn from_winit_event(wevent: winit::event::Event<()>) -> Option<Self> {
-        use winit::event::Event as WEvent;
-
-        match wevent {
-            WEvent::WindowEvent { event, .. } => Self::from_winit_window_event(event),
-            WEvent::DeviceEvent { event, .. } => Self::from_winit_device_event(event),
-            _ => None,
-        }
-    }
-
-    /// Converts a winit window event to an application event.
-    ///
-    /// Returns `None` if the event is not supported or should be ignored.
-    pub fn from_winit_window_event(wevent: winit::event::WindowEvent) -> Option<Self> {
-        use winit::event::WindowEvent as WEvent;
-
-        match wevent {
-            WEvent::CloseRequested => Some(Self::CloseRequested),
-            WEvent::Resized(size) => Some(Self::Resized(size)),
-            WEvent::RedrawRequested => Some(Self::RedrawRequested),
-            WEvent::KeyboardInput { event, is_synthetic, .. } => Some(Self::KeyboardInput {
-                event,
-                is_synthetic,
-            }),
-            WEvent::CursorMoved { position, .. } => Some(Self::CursorMoved { position }),
-            WEvent::MouseInput { state, button, .. } => Some(Self::MouseInput { state, button }),
-            WEvent::MouseWheel { delta, .. } => Some(Self::MouseWheel { delta }),
-            _ => None,
-        }
-    }
-
-    /// Converts a winit device event to an application event.
-    ///
-    /// Returns `None` if the event is not supported or should be ignored.
-    pub fn from_winit_device_event(wevent: winit::event::DeviceEvent) -> Option<Self> {
-        use winit::event::DeviceEvent as DEvent;
-
-        match wevent {
-            DEvent::MouseMotion { delta } => Some(Self::MouseMotion { delta }),
-            _ => None,
-        }
-    }
+    // NOTE: Winit conversion functions have been removed to make the core library
+    // implementation-agnostic. If you're using winit, you can create a winit_support
+    // module that provides conversion functions from winit types to our input types.
 }
 
 /// State tracking for a mouse button that is currently pressed.
@@ -240,7 +200,7 @@ pub struct EventDispatcher {
     callback_map: HashMap<EventKind, Vec<(CallbackId, EventCallback)>>,
     next_id: u32,
     /// State for each currently-pressed mouse button
-    button_states: HashMap<winit::event::MouseButton, ButtonState>,
+    button_states: HashMap<MouseButton, ButtonState>,
     /// Current cursor position in physical pixels (from CursorMoved events)
     current_cursor_position: Option<(f32, f32)>,
 }
@@ -378,19 +338,17 @@ impl EventDispatcher {
     }
 
     /// Processes CursorMoved events to update cursor position tracking.
-    fn process_cursor_moved(&mut self, position: winit::dpi::PhysicalPosition<f64>) {
+    fn process_cursor_moved(&mut self, position: PhysicalPosition<f64>) {
         self.current_cursor_position = Some((position.x as f32, position.y as f32));
     }
 
     /// Processes MouseInput events to track button press/release and synthesize click events.
     fn process_mouse_input<'w, 'c>(
         &mut self,
-        state: winit::event::ElementState,
-        button: winit::event::MouseButton,
+        state: ElementState,
+        button: MouseButton,
         ctx: &mut EventContext<'w, 'c>,
     ) {
-        use winit::event::ElementState;
-
         match state {
             ElementState::Pressed => {
                 // Button pressed - start tracking
@@ -422,7 +380,7 @@ impl EventDispatcher {
     /// Synthesizes a MouseDragEnd event when a dragged button is released.
     fn synthesize_drag_end<'w, 'c>(
         &self,
-        button: winit::event::MouseButton,
+        button: MouseButton,
         button_state: ButtonState,
         ctx: &mut EventContext<'w, 'c>,
     ) {
@@ -439,7 +397,7 @@ impl EventDispatcher {
     /// Synthesizes a MouseClick event if the button was released quickly.
     fn synthesize_click_if_quick<'w, 'c>(
         &self,
-        button: winit::event::MouseButton,
+        button: MouseButton,
         button_state: ButtonState,
         ctx: &mut EventContext<'w, 'c>,
     ) {
@@ -501,8 +459,8 @@ impl EventDispatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use winit::dpi::{PhysicalPosition, PhysicalSize};
-    use winit::event::{ElementState, MouseButton, MouseScrollDelta};
+    use crate::input::{PhysicalPosition, ElementState, MouseButton, MouseScrollDelta};
+    use crate::common::PhysicalSize;
     use std::rc::Rc;
     use std::cell::Cell;
 
@@ -520,7 +478,7 @@ mod tests {
             state: unsafe { &mut *(dangling.as_ptr() as *mut DrawState) },
             scene: unsafe { &mut *(dangling.as_ptr() as *mut Scene) },
             annotation_manager: unsafe { &mut *(dangling.as_ptr() as *mut AnnotationManager) },
-            control_flow: unsafe { &*(dangling.as_ptr() as *const winit::event_loop::EventLoopWindowTarget<()>) },
+            exit_requested: unsafe { &mut *(dangling.as_ptr() as *mut bool) },
         }
     }
 

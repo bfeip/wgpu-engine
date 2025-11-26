@@ -18,15 +18,30 @@ use crate::{
     },
     scene::Scene,
     shaders::ShaderBuilder,
-    texture
+    texture,
+    common::PhysicalSize
 };
+
+// Vertex shader attribute locations
+pub(crate) enum VertexShaderLocations {
+    VertexPosition = 0,
+    TextureCoords,
+    VertexNormal,
+    InstanceTransformRow0,
+    InstanceTransformRow1,
+    InstanceTransformRow2,
+    InstanceTransformRow3,
+    InstanceNormalRow0,
+    InstanceNormalRow1,
+    InstanceNormalRow2,
+}
 
 pub struct DrawState<'a> {
     pub surface: wgpu::Surface<'a>,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub config: wgpu::SurfaceConfiguration,
-    pub size: winit::dpi::PhysicalSize<u32>,
+    pub size: PhysicalSize<u32>,
     pub camera: Camera,
     /// Current cursor position in screen coordinates (x, y), or None if cursor is not over the window
     pub cursor_position: Option<(f32, f32)>,
@@ -53,7 +68,7 @@ impl<'a> DrawState<'a> {
     where
         T: Into<wgpu::SurfaceTarget<'a>>,
     {
-        let size = winit::dpi::PhysicalSize::new(width, height);
+        let size = PhysicalSize::new(width, height);
 
         // The instance is a handle to our GPU
         // Backends::all => Vulkan + Metal + DX12 + Browser WebGPU
@@ -323,7 +338,7 @@ impl<'a> DrawState<'a> {
         })
     }
 
-    pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
+    pub fn resize(&mut self, new_size: PhysicalSize<u32>) {
         if new_size.width > 0 && new_size.height > 0 {
             self.size = new_size;
             self.config.width = new_size.width;

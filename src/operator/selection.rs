@@ -116,7 +116,7 @@ impl Operator for SelectionOperator {
                 return false;
             };
 
-            use winit::event::MouseButton;
+            use crate::input::MouseButton;
 
             // Only handle left-click events
             if matches!(button, MouseButton::Left) {

@@ -33,44 +33,46 @@ pub struct InstanceRaw {
 
 impl InstanceRaw {
     pub fn desc() -> wgpu::VertexBufferLayout<'static> {
+        use crate::drawstate::VertexShaderLocations as VSL;
+
         wgpu::VertexBufferLayout {
             array_stride: size_of::<Self>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Instance,
             attributes: &[
                 wgpu::VertexAttribute {
                     offset: 0,
-                    shader_location: crate::VertexShaderLocations::InstanceTransformRow0 as u32,
+                    shader_location: VSL::InstanceTransformRow0 as u32,
                     format: wgpu::VertexFormat::Float32x4
                 },
                 wgpu::VertexAttribute {
                     offset: size_of::<[f32; 4*1]>() as wgpu::BufferAddress,
-                    shader_location: crate::VertexShaderLocations::InstanceTransformRow1 as u32,
+                    shader_location: VSL::InstanceTransformRow1 as u32,
                     format: wgpu::VertexFormat::Float32x4
                 },
                 wgpu::VertexAttribute {
                     offset: size_of::<[f32; 4*2]>() as wgpu::BufferAddress,
-                    shader_location: crate::VertexShaderLocations::InstanceTransformRow2 as u32,
+                    shader_location: VSL::InstanceTransformRow2 as u32,
                     format: wgpu::VertexFormat::Float32x4
                 },
                 wgpu::VertexAttribute {
                     offset: size_of::<[f32; 4*3]>() as wgpu::BufferAddress,
-                    shader_location: crate::VertexShaderLocations::InstanceTransformRow3 as u32,
+                    shader_location: VSL::InstanceTransformRow3 as u32,
                     format: wgpu::VertexFormat::Float32x4
                 },
 
                 wgpu::VertexAttribute {
                     offset: size_of::<[f32; 4*4]>() as wgpu::BufferAddress,
-                    shader_location: crate::VertexShaderLocations::InstanceNormalRow0 as u32,
+                    shader_location: VSL::InstanceNormalRow0 as u32,
                     format: wgpu::VertexFormat::Float32x3
                 },
                 wgpu::VertexAttribute {
                     offset: size_of::<[f32; (4*4) + (3*1)]>() as wgpu::BufferAddress,
-                    shader_location: crate::VertexShaderLocations::InstanceNormalRow1 as u32,
+                    shader_location: VSL::InstanceNormalRow1 as u32,
                     format: wgpu::VertexFormat::Float32x3
                 },
                 wgpu::VertexAttribute {
                     offset: size_of::<[f32; (4*4) + (3*2)]>() as wgpu::BufferAddress,
-                    shader_location: crate::VertexShaderLocations::InstanceNormalRow2 as u32,
+                    shader_location: VSL::InstanceNormalRow2 as u32,
                     format: wgpu::VertexFormat::Float32x3
                 },
             ]

@@ -3,7 +3,7 @@ use cgmath::Point3;
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
 use crate::{
-    VertexShaderLocations,
+    drawstate::VertexShaderLocations,
     common::{Aabb, Ray},
 };
 

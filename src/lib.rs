@@ -4,6 +4,7 @@ mod texture;
 mod camera;
 mod light;
 mod common;
+mod input;
 mod scene;
 mod geom_query;
 mod drawstate;
@@ -14,200 +15,17 @@ mod event;
 mod operator;
 mod annotation;
 
-use std::sync::Arc;
-use winit::{
-    event_loop::EventLoop,
-    keyboard::KeyCode,
-    window::WindowBuilder,
-};
+// Winit support - only available when winit is a dependency
+#[cfg(feature = "winit-support")]
+pub mod winit_support;
 
-#[cfg(target_arch = "wasm32")]
-use wasm_bindgen::prelude::*;
+// Viewer - the main application viewer
+pub mod viewer;
 
-use crate::drawstate::DrawState;
-use crate::event::{EventDispatcher, EventKind, EventContext};
-use crate::operator::{OperatorManager, NavigationOperator, SelectionOperator, BuiltinOperatorId};
-
-
-enum VertexShaderLocations {
-    VertexPosition = 0,
-    TextureCoords,
-    VertexNormal,
-    InstanceTransformRow0,
-    InstanceTransformRow1,
-    InstanceTransformRow2,
-    InstanceTransformRow3,
-    InstanceNormalRow0,
-    InstanceNormalRow1,
-    InstanceNormalRow2,
-}
-
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen(start))]
-pub async fn run() {
-    cfg_if::cfg_if! {
-        if #[cfg(target_arch = "wasm32")] {
-            std::panic::set_hook(Box::new(console_error_panic_hook::hook));
-            console_log::init_with_level(log::Level::Warn).expect("Couldn't initialize logger");
-        } else {
-            env_logger::init();
-        }
-    }
-
-    let event_loop = EventLoop::new().unwrap();
-    let window = Arc::new(WindowBuilder::new()
-    .with_title("WGPU")
-    .with_visible(false)
-    .build(&event_loop).unwrap());
-
-    #[cfg(target_arch = "wasm32")]
-    {
-        // Winit prevents sizing with CSS, so we have to set
-        // the size manually when on web.
-        use winit::dpi::PhysicalSize;
-        let _ = window.request_inner_size(PhysicalSize::new(450, 400));
-
-        use winit::platform::web::WindowExtWebSys;
-        web_sys::window()
-            .and_then(|win| win.document())
-            .and_then(|doc| {
-                let dst = doc.get_element_by_id("wasm-example")?;
-                let canvas = web_sys::Element::from(window.canvas()?);
-                dst.append_child(&canvas).ok()?;
-                Some(())
-            })
-            .expect("Couldn't append canvas to document body.");
-    }
-
-    // Initialize rendering state
-    let size = window.inner_size();
-    // Clone the Arc for the surface - the event loop will own the other reference
-    let surface_window = Arc::clone(&window);
-    let mut state = DrawState::new(surface_window, size.width, size.height).await;
-
-    // Load BoomBox glTF scene
-    let mut scene = crate::gltf::load_gltf_scene(
-        "/home/zachary/src/glTF-Sample-Models/2.0/FlightHelmet/glTF/FlightHelmet.gltf",
-        &state.device,
-        &state.queue,
-        &mut state.material_manager,
-    ).unwrap();
-
-    scene.lights = vec![
-            light::Light::new(
-                cgmath::Vector3 { x: 3., y: 3., z: 3. },
-                common::RgbaColor { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
-            )
-        ];
-
-    // Create annotation manager
-    let mut annotation_manager = annotation::AnnotationManager::new(&mut scene);
-
-    // Set up event dispatcher
-    let mut dispatcher = EventDispatcher::new();
-
-    // Set up operator manager and add operators
-    let mut operator_manager = OperatorManager::new();
-
-    // Add selection operator with priority 0 (highest priority)
-    let selection_operator = Box::new(SelectionOperator::new(BuiltinOperatorId::Selection.into()));
-    operator_manager.add_operator(selection_operator, 0, &mut dispatcher);
-
-    // Add navigation operator with priority 1
-    let nav_operator = Box::new(NavigationOperator::new(BuiltinOperatorId::Navigation.into()));
-    operator_manager.add_operator(nav_operator, 1, &mut dispatcher);
-
-    // Register CloseRequested handler
-    dispatcher.register(EventKind::CloseRequested, |_event, ctx| {
-        ctx.control_flow.exit();
-        true
-    });
-
-    // Register Resized handler
-    dispatcher.register(EventKind::Resized, |event, ctx| {
-        if let crate::event::Event::Resized(physical_size) = event {
-            ctx.state.resize(*physical_size);
-        }
-        true
-    });
-
-    // Register RedrawRequested handler
-    dispatcher.register(EventKind::RedrawRequested, |_event, ctx| {
-        match ctx.state.render(ctx.scene) {
-            Ok(_) => {}
-            Err(err) => {
-                // Check if the error is a surface error that we can handle
-                if let Some(surface_err) = err.downcast_ref::<wgpu::SurfaceError>() {
-                    match surface_err {
-                        wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated => {
-                            ctx.state.resize(ctx.state.size);
-                        }
-                        wgpu::SurfaceError::OutOfMemory | wgpu::SurfaceError::Other => {
-                            log::error!("OutOfMemory: {}", surface_err);
-                            ctx.control_flow.exit();
-                        }
-                        wgpu::SurfaceError::Timeout => {
-                            log::warn!("Surface timeout: {}", surface_err);
-                        }
-                    }
-                } else {
-                    // Handle other types of errors
-                    log::error!("Render error: {}", err);
-                    ctx.control_flow.exit();
-                }
-            }
-        }
-        true
-    });
-
-    // Register KeyboardInput handler
-    dispatcher.register(EventKind::KeyboardInput, |event, ctx| {
-        if let crate::event::Event::KeyboardInput { event: key_event, .. } = event {
-            use winit::keyboard::PhysicalKey;
-
-            match key_event.physical_key {
-                PhysicalKey::Code(KeyCode::Escape) => {
-                    ctx.control_flow.exit();
-                },
-                _ => return false,
-            }
-            true
-        } else {
-            false
-        }
-    });
-
-    // Register CursorMoved handler to track cursor position
-    dispatcher.register(EventKind::CursorMoved, |event, ctx| {
-        if let crate::event::Event::CursorMoved { position } = event {
-            ctx.state.cursor_position = Some((position.x as f32, position.y as f32));
-        }
-        false // Don't stop propagation - other handlers may need cursor position too
-    });
-
-    // Make window visible and trigger initial render
-    window.set_visible(true);
-    window.request_redraw();
-
-    event_loop
-        .run(move |event, control_flow| {
-            // TODO: Temporary - request next frame after each redraw
-            // Will be refactored to support more sophisticated rendering strategies
-            if matches!(&event, winit::event::Event::WindowEvent {
-                event: winit::event::WindowEvent::RedrawRequested,
-                ..
-            }) {
-                window.request_redraw();
-            }
-
-            if let Some(app_event) = crate::event::Event::from_winit_event(event) {
-                let mut ctx = EventContext {
-                    state: &mut state,
-                    scene: &mut scene,
-                    annotation_manager: &mut annotation_manager,
-                    control_flow,
-                };
-                dispatcher.dispatch(&app_event, &mut ctx);
-            }
-        })
-        .unwrap();
-}
+// Re-export commonly used types from the library
+pub use common::{PhysicalSize, RgbaColor};
+pub use input::*;
+pub use event::{Event, EventKind, EventDispatcher, EventContext};
+pub use drawstate::DrawState;
+pub use scene::Scene;
+pub use viewer::Viewer;

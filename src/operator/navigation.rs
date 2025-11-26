@@ -155,7 +155,7 @@ impl Operator for NavigationOperator {
         let operator_state = self.state.clone();
         let drag_start_callback = dispatcher.register(EventKind::MouseDragStart, move |event, ctx| {
             if let Event::MouseDragStart { button, .. } = event {
-                use winit::event::MouseButton;
+                use crate::input::MouseButton;
 
                 match button {
                     MouseButton::Left | MouseButton::Right => {
@@ -175,7 +175,7 @@ impl Operator for NavigationOperator {
         let operator_state = self.state.clone();
         let drag_callback = dispatcher.register(EventKind::MouseDrag, move |event, ctx| {
             if let Event::MouseDrag { button, delta, .. } = event {
-                use winit::event::MouseButton;
+                use crate::input::MouseButton;
 
                 let mut s = operator_state.borrow_mut();
 
@@ -201,14 +201,14 @@ impl Operator for NavigationOperator {
         let operator_state = self.state.clone();
         let mouse_wheel_callback = dispatcher.register(EventKind::MouseWheel, move |event, ctx| {
             if let Event::MouseWheel { delta } = event {
-                use winit::event::MouseScrollDelta;
+                use crate::input::MouseScrollDelta;
 
                 let mut s = operator_state.borrow_mut();
 
                 // Extract the scroll amount (positive = zoom in, negative = zoom out)
                 let scroll_amount = match delta {
                     MouseScrollDelta::LineDelta(_, y) => *y,
-                    MouseScrollDelta::PixelDelta(pos) => (pos.y / 10.0) as f32, // Scale pixel delta
+                    MouseScrollDelta::PixelDelta(_x, y) => (*y / 10.0) as f32, // Scale pixel delta
                 };
 
                 s.init_from_camera(&ctx.state.camera);
