@@ -186,7 +186,7 @@ pub struct FaceTextureMaterial {
     /// Unique identifier for this material
     pub id: MaterialId,
     /// Diffuse texture
-    pub diffuse: Texture,
+    pub(crate) diffuse: Texture,
 
     bind_group: wgpu::BindGroup
 }
@@ -363,9 +363,9 @@ pub struct MaterialManager {
     next_id: MaterialId,
 
     /// Bind group layout for color-based materials (binding 0: uniform buffer)
-    pub color_bind_group_layout: wgpu::BindGroupLayout,
+    pub(crate) color_bind_group_layout: wgpu::BindGroupLayout,
     /// Bind group layout for texture materials (binding 0: texture, binding 1: sampler)
-    pub texture_bind_group_layout: wgpu::BindGroupLayout,
+    pub(crate) texture_bind_group_layout: wgpu::BindGroupLayout,
 }
 
 impl MaterialManager {
@@ -373,7 +373,7 @@ impl MaterialManager {
     ///
     /// This initializes the material registry with three default materials (Face, Line, Point)
     /// and creates the required bind group layouts for color and texture materials.
-    pub fn new(device: &wgpu::Device) -> Self {
+    pub(crate) fn new(device: &wgpu::Device) -> Self {
         let mut materials = HashMap::new();
         let next_id = 3; // 0-2 are default materials
 
@@ -447,7 +447,7 @@ impl MaterialManager {
     ///
     /// # Returns
     /// The unique MaterialId for the created material
-    pub fn create_face_color_material(&mut self, device: &wgpu::Device, color: RgbaColor) -> MaterialId {
+    pub(crate) fn create_face_color_material(&mut self, device: &wgpu::Device, color: RgbaColor) -> MaterialId {
         let id = self.next_id;
         self.next_id += 1;
         let material = FaceColorMaterial::new(id, device, &self.color_bind_group_layout, color);
@@ -463,7 +463,7 @@ impl MaterialManager {
     ///
     /// # Returns
     /// The unique MaterialId for the created material
-    pub fn create_line_color_material(&mut self, device: &wgpu::Device, color: RgbaColor) -> MaterialId {
+    pub(crate) fn create_line_color_material(&mut self, device: &wgpu::Device, color: RgbaColor) -> MaterialId {
         let id = self.next_id;
         self.next_id += 1;
         let material = LineColorMaterial::new(id, device, &self.color_bind_group_layout, color);
@@ -479,7 +479,7 @@ impl MaterialManager {
     ///
     /// # Returns
     /// The unique MaterialId for the created material
-    pub fn create_point_color_material(&mut self, device: &wgpu::Device, color: RgbaColor) -> MaterialId {
+    pub(crate) fn create_point_color_material(&mut self, device: &wgpu::Device, color: RgbaColor) -> MaterialId {
         let id = self.next_id;
         self.next_id += 1;
         let material = PointColorMaterial::new(id, device, &self.color_bind_group_layout, color);
@@ -499,7 +499,7 @@ impl MaterialManager {
     ///
     /// # Returns
     /// The unique MaterialId for the created material, or an error if loading fails
-    pub fn create_face_texture_material_from_path<P: AsRef<Path>>(
+    pub(crate) fn create_face_texture_material_from_path<P: AsRef<Path>>(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -529,7 +529,7 @@ impl MaterialManager {
     ///
     /// # Returns
     /// The unique MaterialId for the created material, or an error if creation fails
-    pub fn create_face_texture_material(
+    pub(crate) fn create_face_texture_material(
         &mut self,
         device: &wgpu::Device,
         texture: crate::texture::Texture,
@@ -571,7 +571,7 @@ impl MaterialManager {
     ///
     /// # Returns
     /// Ok(()) on success, or an error if the material doesn't exist
-    pub fn bind(&self, id: MaterialId, pass: &mut wgpu::RenderPass) -> anyhow::Result<()> {
+    pub(crate) fn bind(&self, id: MaterialId, pass: &mut wgpu::RenderPass) -> anyhow::Result<()> {
         let material = self.materials
             .get(&id)
             .ok_or_else(|| anyhow::anyhow!("Attempt to bind non-existent material"))?;

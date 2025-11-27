@@ -3,9 +3,8 @@ use cgmath::{InnerSpace, Matrix, Matrix3, Matrix4, Point3, Quaternion, SquareMat
 /// Epsilon value for floating-point comparisons
 pub const EPSILON: f32 = 1e-6;
 
-// Submodules
-pub mod ray;
-pub mod aabb;
+mod ray;
+mod aabb;
 
 // Re-export common types
 pub use ray::Ray;

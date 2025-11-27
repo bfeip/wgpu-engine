@@ -8,7 +8,7 @@ use crate::{
 
 /// Main viewer that encapsulates the rendering state, scene, and event handling
 pub struct Viewer<'a> {
-    pub state: DrawState<'a>,
+    state: DrawState<'a>,
     pub scene: Scene,
     pub dispatcher: EventDispatcher,
     pub operator_manager: OperatorManager,

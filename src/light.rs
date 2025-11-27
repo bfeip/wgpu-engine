@@ -13,7 +13,7 @@ impl Light {
         }
     }
 
-    pub fn to_uniform(&self) -> LightUniform {
+    pub(crate) fn to_uniform(&self) -> LightUniform {
         LightUniform {
             position: self.position.into(),
             _padding: 0,
@@ -24,7 +24,7 @@ impl Light {
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct LightUniform {
+pub(crate) struct LightUniform {
     position: [f32; 3],
     _padding: u32, // 16 byte spacing required
     color: [f32; 4],

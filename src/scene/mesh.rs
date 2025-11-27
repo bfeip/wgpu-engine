@@ -7,8 +7,11 @@ use crate::{
     common::{Aabb, Ray},
 };
 
+/// Unique identifier for a mesh in the scene.
 pub type MeshId = u32;
-type MeshIndex = u16;
+
+/// Index type used for mesh index buffers (u16 supports up to 65,536 vertices per mesh).
+pub type MeshIndex = u16;
 
 /// Primitive types for mesh rendering
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
@@ -38,16 +41,31 @@ pub struct MeshHit {
     pub barycentric: (f32, f32, f32),
 }
 
+/// GPU-compatible vertex structure containing position, texture coordinates, and normal.
+///
+/// This struct is laid out in memory to match the vertex shader's expectations.
+/// Each vertex is 36 bytes: 12 bytes position + 12 bytes tex_coords + 12 bytes normal.
+///
+/// # Memory Layout
+/// - Uses `#[repr(C)]` for predictable layout
+/// - Implements `Pod` and `Zeroable` for zero-copy GPU buffer uploads
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vertex {
+    /// Vertex position in local mesh space [x, y, z]
     pub position: [f32; 3],
+    /// Texture coordinates [u, v, w] (w unused, reserved for 3D textures)
     pub tex_coords: [f32; 3],
+    /// Vertex normal vector [x, y, z]
     pub normal: [f32; 3]
 }
 
 impl Vertex {
-    pub fn desc() -> wgpu::VertexBufferLayout<'static> {
+    /// Returns the vertex buffer layout descriptor for the rendering pipeline.
+    ///
+    /// This describes how vertex data is laid out in GPU memory and maps to shader locations
+    /// defined in `VertexShaderLocations`.
+    pub(crate) fn desc() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
@@ -72,37 +90,83 @@ impl Vertex {
     }
 }
 
-
+/// Source data for loading a Wavefront OBJ mesh.
+///
+/// OBJ meshes can be loaded from either in-memory bytes or a file path.
 pub enum ObjMesh<'a> {
+    /// OBJ data from an in-memory byte slice
     Bytes(&'a [u8]),
+    /// OBJ data from a file path
     Path(PathBuf)
 }
 
+/// Descriptor for creating a mesh from various sources.
+///
+/// Meshes can be created as empty containers, loaded from OBJ files,
+/// or constructed from raw vertex and primitive data.
 pub enum MeshDescriptor<'a> {
+    /// Creates an empty mesh with no vertices or primitives
     Empty,
+    /// Loads mesh data from a Wavefront OBJ file
     Obj(ObjMesh<'a>),
+    /// Creates mesh from raw vertex and primitive data
     Raw {
+        /// Vertex data for the mesh
         vertices: Vec<Vertex>,
+        /// Primitives (triangle lists, line lists, etc.) referencing the vertices
         primitives: Vec<MeshPrimitive>,
     },
 }
 
+/// A renderable mesh containing geometry data and GPU buffers.
+///
+/// Meshes store vertex data (positions, normals, texture coordinates) and primitives
+/// (triangle lists, line lists, point lists) along with their corresponding GPU buffers.
+///
+/// # Features
+/// - Multiple primitive types per mesh (triangles, lines, points)
+/// - GPU buffer management for vertices and indices
+/// - Local-space bounding box computation with caching
+/// - Ray-mesh intersection testing for picking
+/// - Instance rendering support
+///
+/// # Memory Management
+/// - Vertex and index buffers are created at mesh construction time
+/// - Separate index buffers maintained for each primitive type
+/// - Bounding boxes computed lazily and cached
 pub struct Mesh {
+    /// Unique identifier for this mesh
     pub id: MeshId,
+    /// CPU-side vertex data
     vertices: Vec<Vertex>,
+    /// CPU-side primitive data (index lists grouped by type)
     primitives: Vec<MeshPrimitive>,
 
+    /// GPU vertex buffer
     vertex_buffer: wgpu::Buffer,
-    // Index buffers for each primitive type (created on-demand)
+    /// GPU index buffer for triangle primitives
     triangle_index_buffer: wgpu::Buffer,
+    /// GPU index buffer for line primitives
     line_index_buffer: wgpu::Buffer,
+    /// GPU index buffer for point primitives
     point_index_buffer: wgpu::Buffer,
 
+    /// Cached local-space axis-aligned bounding box
     cached_bounding: Cell<Option<Aabb>>
 }
 
 impl Mesh {
-    pub fn new(
+    /// Creates a new mesh from a descriptor.
+    ///
+    /// # Arguments
+    /// * `id` - Unique identifier for this mesh
+    /// * `device` - WGPU device for creating GPU buffers
+    /// * `descriptor` - Source data for the mesh (empty, OBJ file, or raw data)
+    /// * `label` - Optional label for debugging GPU resources
+    ///
+    /// # Returns
+    /// The created mesh or an error if loading fails (e.g., invalid OBJ file)
+    pub(crate) fn new(
         id: MeshId,
         device: &wgpu::Device,
         descriptor: MeshDescriptor,
@@ -122,6 +186,17 @@ impl Mesh {
         }
     }
 
+    /// Creates a mesh from raw vertex and primitive data.
+    ///
+    /// This method creates GPU buffers for all vertex data and separates primitives
+    /// into type-specific index buffers (triangles, lines, points).
+    ///
+    /// # Arguments
+    /// * `id` - Unique identifier for this mesh
+    /// * `device` - WGPU device for creating GPU buffers
+    /// * `vertices` - Vertex data (positions, normals, texture coordinates)
+    /// * `primitives` - Primitive data (index lists grouped by type)
+    /// * `label` - Optional label for debugging GPU resources
     fn from_raw(
         id: MeshId,
         device: &wgpu::Device,
@@ -177,6 +252,15 @@ impl Mesh {
         }
     }
 
+    /// Creates an empty mesh with no vertices or primitives.
+    ///
+    /// All GPU buffers are created with zero size. This is useful for placeholder
+    /// meshes or meshes that will be populated later.
+    ///
+    /// # Arguments
+    /// * `id` - Unique identifier for this mesh
+    /// * `device` - WGPU device for creating GPU buffers
+    /// * `label` - Optional label for debugging GPU resources
     fn new_empty(id: MeshId, device: &wgpu::Device, label: Option<&str>) -> Self {
         let vertices = Vec::new();
         let primitives = Vec::new();
@@ -225,6 +309,16 @@ impl Mesh {
         }
     }
 
+    /// Creates a mesh from a parsed OBJ object.
+    ///
+    /// Converts OBJ vertex data to the engine's vertex format and creates a single
+    /// triangle list primitive. OBJ files always contain triangle geometry.
+    ///
+    /// # Arguments
+    /// * `id` - Unique identifier for this mesh
+    /// * `device` - WGPU device for creating GPU buffers
+    /// * `obj` - Parsed OBJ object containing vertices and indices
+    /// * `label` - Optional label for debugging GPU resources
     fn from_obj(
         id: MeshId,
         device: &wgpu::Device,
@@ -248,11 +342,31 @@ impl Mesh {
         Ok(Self::from_raw(id, device, vertices, primitives, label))
     }
 
+    /// Loads a mesh from OBJ data in a byte slice.
+    ///
+    /// # Arguments
+    /// * `id` - Unique identifier for this mesh
+    /// * `device` - WGPU device for creating GPU buffers
+    /// * `obj_bytes` - OBJ file data as bytes
+    /// * `label` - Optional label for debugging GPU resources
+    ///
+    /// # Errors
+    /// Returns an error if the OBJ data is malformed or cannot be parsed
     fn from_obj_bytes(id: MeshId, device: &wgpu::Device, obj_bytes: &[u8], label: Option<&str>) -> anyhow::Result<Self> {
         let obj: obj::Obj<obj::TexturedVertex> = obj::load_obj(obj_bytes)?;
         Self::from_obj(id, device, obj, label)
     }
 
+    /// Loads a mesh from an OBJ file on disk.
+    ///
+    /// # Arguments
+    /// * `id` - Unique identifier for this mesh
+    /// * `device` - WGPU device for creating GPU buffers
+    /// * `obj_path` - File path to the OBJ file
+    /// * `label` - Optional label for debugging GPU resources
+    ///
+    /// # Errors
+    /// Returns an error if the file cannot be read or the OBJ data is malformed
     fn from_obj_path<P: AsRef<Path>>(id: MeshId, device: &wgpu::Device, obj_path: P, label: Option<&str>) -> anyhow::Result<Self> {
         let obj_file = File::open(obj_path)?;
         let obj_reader = BufReader::new(obj_file);
@@ -264,7 +378,18 @@ impl Mesh {
     ///
     /// Transforms are provided by the scene tree traversal and batch collection.
     /// This method creates an instance buffer from the transforms and issues a draw call.
-    pub fn draw_instances(
+    ///
+    /// # Arguments
+    /// * `device` - WGPU device for creating the instance buffer
+    /// * `pass` - Render pass to record draw commands into
+    /// * `primitive_type` - Type of primitives to draw (triangles, lines, or points)
+    /// * `instance_transforms` - Pre-computed world transforms and normal matrices for each instance
+    ///
+    /// # Notes
+    /// - Creates a new instance buffer each call (not cached)
+    /// - Skips drawing if no primitives of the requested type exist
+    /// - Uses indexed drawing with instancing for efficiency
+    pub(crate) fn draw_instances(
         &self,
         device: &wgpu::Device,
         pass: &mut wgpu::RenderPass,
@@ -366,8 +491,14 @@ impl Mesh {
         self.primitives.iter().any(|p| p.primitive_type == primitive_type)
     }
 
-    /// Gets the triangle indices (for backward compatibility and ray intersection).
-    fn triangle_indices(&self) -> Vec<MeshIndex> {
+    /// Extracts all triangle indices from the mesh.
+    ///
+    /// Collects indices from all triangle list primitives in the mesh into a single vector.
+    /// Each group of 3 indices defines one triangle.
+    ///
+    /// # Returns
+    /// A vector of indices for all triangles. Empty if the mesh contains no triangle primitives.
+    pub fn triangle_indices(&self) -> Vec<MeshIndex> {
         self.primitives.iter()
             .filter(|p| p.primitive_type == PrimitiveType::TriangleList)
             .flat_map(|p| p.indices.iter().copied())

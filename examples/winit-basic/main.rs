@@ -61,10 +61,10 @@ async fn run() {
                 viewer.handle_event(&app_event);
 
                 // Check for exit on Escape key
-                if let wgpu_engine::Event::KeyboardInput { event: key_event, .. } = &app_event {
+                if let wgpu_engine::event::Event::KeyboardInput { event: key_event, .. } = &app_event {
                     if matches!(
                         key_event.logical_key,
-                        wgpu_engine::Key::Named(wgpu_engine::NamedKey::Escape)
+                        wgpu_engine::input::Key::Named(wgpu_engine::input::NamedKey::Escape)
                     ) {
                         control_flow.exit();
                     }

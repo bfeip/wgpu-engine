@@ -1,7 +1,7 @@
 use image::GenericImageView;
 use anyhow::*;
 
-pub struct Texture {
+pub(crate) struct Texture {
     #[allow(unused)]
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,

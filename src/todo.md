@@ -10,20 +10,19 @@
     - Ray selection uses transform and bounding walks. Combine.
 - Fix navigation operator to use bounding for sensitivity
 - Add fit camera to bounding
+- Camera from glTF
 
-- Top level object (`Viewer` or something)
 - API and docs review
+- Split mesh into DrawMesh and Mesh for API reasons
+- Split materials into DrawMaterials and Materials for API reasons
 
 - Drag and drop GLTF loading operator
 - Walk operator
-- Instance flags
+- Instance flags and visibility
 - NURBS
 - WESL
-- Markup
-- Selection
 - Multiple lights
 - Optimize drawing
-- Proper API
 - Normal maps
 - Antialiasing
 

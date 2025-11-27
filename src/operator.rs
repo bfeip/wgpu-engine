@@ -67,7 +67,7 @@ pub struct OperatorManager {
 
 impl OperatorManager {
     /// Creates a new empty operator manager.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             operators: Vec::new(),
         }

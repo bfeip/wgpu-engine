@@ -1,5 +1,5 @@
 #[rustfmt::skip]
-pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
+const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
     1.0, 0.0, 0.0, 0.0,
     0.0, 1.0, 0.0, 0.0,
     0.0, 0.0, 0.5, 0.0,
@@ -43,7 +43,7 @@ impl Camera {
         self.eye.distance(self.target)
     }
 
-    pub fn to_uniform(&self) -> CameraUniform {
+    pub(crate) fn to_uniform(&self) -> CameraUniform {
         let mut ret = CameraUniform::new();
         ret.update_view_proj(&self);
         return ret;
@@ -153,7 +153,7 @@ impl Camera {
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct CameraUniform {
+pub(crate) struct CameraUniform {
     view_proj: [[f32; 4]; 4],
 }
 

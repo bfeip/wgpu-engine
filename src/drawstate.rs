@@ -36,7 +36,7 @@ pub(crate) enum VertexShaderLocations {
     InstanceNormalRow2,
 }
 
-pub struct DrawState<'a> {
+pub(crate) struct DrawState<'a> {
     pub surface: wgpu::Surface<'a>,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,

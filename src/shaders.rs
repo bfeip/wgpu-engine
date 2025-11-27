@@ -14,7 +14,7 @@ enum ShaderFragment {
     PointColorFragment,
 }
 
-pub struct ShaderBuilder {
+pub(crate) struct ShaderBuilder {
     fragments: HashMap<ShaderFragment, &'static str>
 }
 

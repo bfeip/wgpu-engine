@@ -23,7 +23,7 @@ const CLICK_TIME_THRESHOLD_MS: u64 = 300;
 /// - `'c`: The callback lifetime - represents the duration of a single event callback invocation
 pub struct EventContext<'w, 'c> {
     /// Mutable reference to the rendering state
-    pub state: &'c mut DrawState<'w>,
+    pub(crate) state: &'c mut DrawState<'w>,
     /// Mutable reference to the scene
     pub scene: &'c mut Scene,
     /// Mutable reference to the annotation manager
@@ -200,7 +200,7 @@ pub struct EventDispatcher {
 
 impl EventDispatcher {
     /// Creates a new empty event dispatcher.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             callback_map: HashMap::new(),
             next_id: 0,

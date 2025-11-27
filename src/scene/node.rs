@@ -101,28 +101,34 @@ impl Node {
 
     // Hierarchy management
 
+    /// Gets the parent node ID.
     pub fn parent(&self) -> Option<NodeId> {
         self.parent
     }
 
-    pub fn set_parent(&mut self, parent: Option<NodeId>) {
+    /// Sets the parent node ID (internal use only - use Scene methods to maintain consistency).
+    pub(super) fn set_parent(&mut self, parent: Option<NodeId>) {
         self.parent = parent;
         self.mark_dirty();
     }
 
+    /// Gets the list of child node IDs.
     pub fn children(&self) -> &[NodeId] {
         &self.children
     }
 
-    pub fn add_child(&mut self, child: NodeId) {
+    /// Adds a child node ID to this node's children list (internal use only - use Scene methods to maintain consistency).
+    pub(super) fn add_child(&mut self, child: NodeId) {
         if !self.children.contains(&child) {
             self.children.push(child);
             self.mark_dirty();
         }
     }
 
-    pub fn remove_child(&mut self, child: NodeId) {
+    /// Removes a child node ID from this node's children list (internal use only - use Scene methods to maintain consistency).
+    pub(super) fn remove_child(&mut self, child: NodeId) {
         self.children.retain(|&id| id != child);
+        self.mark_dirty();
     }
 
     // Instance reference
@@ -140,6 +146,7 @@ impl Node {
     /// Marks this node's computed values as dirty (needs recomputation).
     /// Note: This only marks this node, not descendants. The Scene is responsible
     /// for propagating dirty flags to children.
+    // TODO: There should be a way to set only bounds or only transform as dirty.
     pub fn mark_dirty(&self) {
         self.cached_world_transform.set(None);
         self.cached_bounds.set(None);

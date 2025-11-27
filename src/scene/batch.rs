@@ -5,7 +5,7 @@ use crate::material::MaterialId;
 ///
 /// Batching allows us to minimize draw calls and state changes by grouping
 /// instances that can be rendered together.
-pub struct DrawBatch {
+pub(crate) struct DrawBatch {
     pub mesh_id: MeshId,
     pub material_id: MaterialId,
     pub primitive_type: PrimitiveType,

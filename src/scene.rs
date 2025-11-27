@@ -6,10 +6,12 @@ mod batch;
 
 use cgmath::{Matrix4, SquareMatrix};
 pub use mesh::{Mesh, MeshDescriptor, MeshId, MeshPrimitive, PrimitiveType, Vertex};
-pub use instance::{Instance, InstanceId, InstanceRaw};
+pub use instance::{Instance, InstanceId};
 pub use node::{Node, NodeId};
-pub use tree::{collect_instance_transforms};
-pub use batch::DrawBatch;
+pub use tree::TreeVisitor;
+pub(crate) use batch::DrawBatch;
+pub(crate) use instance::InstanceRaw;
+use tree::{collect_instance_transforms};
 
 use crate::{
     common::{Aabb},
@@ -73,7 +75,7 @@ impl Scene {
     /// 1. By material ID (to minimize bind group changes)
     /// 2. By primitive type (to minimize pipeline changes)
     /// 3. By mesh ID (for GPU cache locality)
-    pub fn collect_draw_batches(&self) -> Vec<DrawBatch> {
+    pub(crate) fn collect_draw_batches(&self) -> Vec<DrawBatch> {
         use std::collections::HashMap;
 
         let instance_transforms = collect_instance_transforms(self);
@@ -102,7 +104,7 @@ impl Scene {
         batches
     }
 
-    pub fn add_mesh(
+    pub(crate) fn add_mesh(
         &mut self,
         device: &wgpu::Device,
         desc: MeshDescriptor,
