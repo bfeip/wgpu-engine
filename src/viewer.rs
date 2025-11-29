@@ -78,6 +78,23 @@ impl<'a> Viewer<'a> {
         viewer
     }
 
+    /// Create a new Viewer from a winit Window (native platforms)
+    /// The viewer size is automatically determined from the window's inner size
+    #[cfg(feature = "winit-support")]
+    pub async fn from_window(window: std::sync::Arc<winit::window::Window>) -> Self {
+        let size = window.inner_size();
+        Self::new(window, size.width, size.height).await
+    }
+
+    /// Create a new Viewer from an HTML canvas element (WebAssembly)
+    /// The viewer size is automatically determined from the canvas dimensions
+    #[cfg(target_arch = "wasm32")]
+    pub async fn from_canvas(canvas: web_sys::HtmlCanvasElement) -> Self {
+        let width = canvas.width();
+        let height = canvas.height();
+        Self::new(canvas, width, height).await
+    }
+
     /// Register default event handlers for common viewer operations
     fn register_default_handlers(&mut self) {
         // Register Resized handler
