@@ -1,79 +1,111 @@
 use std::sync::Arc;
 use winit::{
-    event_loop::EventLoop,
-    window::WindowBuilder,
+    application::ApplicationHandler,
+    event::{DeviceEvent, DeviceId, WindowEvent},
+    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    window::{Window, WindowId},
 };
 
 use wgpu_engine::{Viewer, winit_support};
 
-async fn run() {
-    // Initialize logging
-    env_logger::init();
+/// Application state for the winit event loop
+struct App<'a> {
+    window: Option<Arc<Window>>,
+    viewer: Option<Viewer<'a>>,
+}
 
-    // Create event loop and window
-    let event_loop = EventLoop::new().unwrap();
-    let window = Arc::new(
-        WindowBuilder::new()
-            .with_title("WGPU Engine - Winit Basic Example")
-            .with_visible(false)
-            .build(&event_loop)
-            .unwrap(),
-    );
+impl<'a> App<'a> {
+    /// Initialize the window and viewer
+    fn initialize(&mut self, event_loop: &ActiveEventLoop) {
+        let window_attrs = Window::default_attributes()
+            .with_title("WGPU Engine - Winit Basic Example");
 
-    let size = window.inner_size();
+        let window = Arc::new(event_loop.create_window(window_attrs).unwrap());
 
-    // Create viewer with the window as surface target
-    let mut viewer = Viewer::new(Arc::clone(&window), size.width, size.height).await;
+        // Create viewer with the window
+        let size = window.inner_size();
+        let viewer = pollster::block_on(Viewer::new(
+            Arc::clone(&window),
+            size.width,
+            size.height,
+        ));
 
-    // Make window visible and trigger initial render
-    window.set_visible(true);
-    window.request_redraw();
+        window.request_redraw();
 
-    // Run the event loop
-    event_loop
-        .run(move |event, control_flow| {
-            // Handle window close directly
-            if matches!(
-                &event,
-                winit::event::Event::WindowEvent {
-                    event: winit::event::WindowEvent::CloseRequested,
-                    ..
-                }
-            ) {
-                control_flow.exit();
-                return;
+        self.window = Some(window);
+        self.viewer = Some(viewer);
+    }
+}
+
+impl<'a> ApplicationHandler for App<'a> {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        // Initialize on first resume
+        if self.window.is_none() {
+            self.initialize(event_loop);
+        }
+    }
+
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        _window_id: WindowId,
+        event: WindowEvent,
+    ) {
+        match event {
+            WindowEvent::CloseRequested => {
+                event_loop.exit();
             }
-
-            // Request next frame after each redraw
-            if matches!(
-                &event,
-                winit::event::Event::WindowEvent {
-                    event: winit::event::WindowEvent::RedrawRequested,
-                    ..
-                }
-            ) {
-                window.request_redraw();
+            WindowEvent::RedrawRequested => {
+                // Request next frame for continuous rendering
+                self.window.as_ref().unwrap().request_redraw();
             }
+            _ => {}
+        }
 
-            // Convert winit event to our event type
-            if let Some(app_event) = winit_support::convert_event(event) {
-                // Handle the event through the viewer
-                viewer.handle_event(&app_event);
+        // Convert and handle all window events
+        if let Some(app_event) = winit_support::convert_window_event(event) {
+            let viewer = self.viewer.as_mut().unwrap();
+            viewer.handle_event(&app_event);
 
-                // Check for exit on Escape key
-                if let wgpu_engine::event::Event::KeyboardInput { event: key_event, .. } = &app_event {
-                    if matches!(
-                        key_event.logical_key,
-                        wgpu_engine::input::Key::Named(wgpu_engine::input::NamedKey::Escape)
-                    ) {
-                        control_flow.exit();
-                    }
+            // Check for exit on Escape key
+            if let wgpu_engine::event::Event::KeyboardInput { event: key_event, .. } = &app_event {
+                if matches!(
+                    key_event.logical_key,
+                    wgpu_engine::input::Key::Named(wgpu_engine::input::NamedKey::Escape)
+                ) {
+                    event_loop.exit();
                 }
             }
-        })
-        .unwrap();
+        }
+    }
+
+    fn device_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        _device_id: DeviceId,
+        event: DeviceEvent,
+    ) {
+        // Convert and handle device events (e.g., mouse motion)
+        if let Some(app_event) = winit_support::convert_device_event(event) {
+            self.viewer.as_mut().unwrap().handle_event(&app_event);
+        }
+    }
 }
 
 fn main() {
-    pollster::block_on(run());
+    // Initialize logging
+    env_logger::init();
+
+    // Create event loop
+    let event_loop = EventLoop::new().unwrap();
+    event_loop.set_control_flow(ControlFlow::Poll);
+
+    // Create application state
+    let mut app = App {
+        window: None,
+        viewer: None,
+    };
+
+    // Run the event loop
+    event_loop.run_app(&mut app).unwrap();
 }

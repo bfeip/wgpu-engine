@@ -60,6 +60,25 @@
             },
             "args": [],
             "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug example 'winit'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--example=winit",
+                    "--features=winit-support",
+                    "--package=wgpu-engine"
+                ],
+                "filter": {
+                    "name": "winit",
+                    "kind": "example"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
         }
     ]
 }

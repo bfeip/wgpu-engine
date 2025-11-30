@@ -152,4 +152,34 @@ impl<'a> Viewer<'a> {
         };
         self.dispatcher.dispatch(event, &mut ctx);
     }
+
+    /// Get a reference to the current camera
+    pub fn camera(&self) -> &crate::camera::Camera {
+        &self.state.camera
+    }
+
+    /// Get the current viewport size
+    pub fn size(&self) -> crate::common::PhysicalSize<u32> {
+        self.state.size
+    }
+
+    /// Get the surface texture format
+    /// Useful for creating render pipelines that need to match the surface format
+    pub fn surface_format(&self) -> wgpu::TextureFormat {
+        self.state.config.format
+    }
+
+    /// Get references to the wgpu device and queue for creating GPU resources
+    ///
+    /// # Returns
+    /// A tuple of (&Device, &Queue) for creating buffers, pipelines, etc.
+    pub fn wgpu_resources(&self) -> (&wgpu::Device, &wgpu::Queue) {
+        (&self.state.device, &self.state.queue)
+    }
+
+    /// Render the scene using the default rendering path
+    /// This is equivalent to what the RedrawRequested event handler does
+    pub fn render(&mut self) -> Result<(), anyhow::Error> {
+        self.state.render(&mut self.scene)
+    }
 }

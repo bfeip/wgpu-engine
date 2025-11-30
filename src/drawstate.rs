@@ -104,6 +104,7 @@ impl<'a> DrawState<'a> {
                 label: None,
                 memory_hints: Default::default(),
                 trace: wgpu::Trace::Off,
+                experimental_features: Default::default(),
             })
             .await
             .unwrap();
@@ -349,30 +350,31 @@ impl<'a> DrawState<'a> {
         }
     }
 
-    pub fn render(&mut self, scene: &mut Scene) -> anyhow::Result<()> {
-        let output = self.surface.get_current_texture()?;
-        let view = output
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Render Encoder"),
-            });
-
+    /// Render the scene to a specific view, updating uniforms and drawing all batches
+    /// The encoder is not submitted - the caller is responsible for that
+    pub(crate) fn render_scene_to_view(
+        &mut self,
+        view: &wgpu::TextureView,
+        encoder: &mut wgpu::CommandEncoder,
+        scene: &Scene,
+    ) -> anyhow::Result<()> {
+        // Update camera uniform
         let camera_uniform_slice = &[self.camera.to_uniform()];
         let camera_buffer_contents: &[u8] = bytemuck::cast_slice(camera_uniform_slice);
-        self.queue.write_buffer(&self.camera_buffer, 0, camera_buffer_contents);
+        self.queue
+            .write_buffer(&self.camera_buffer, 0, camera_buffer_contents);
 
+        // Update light uniform
         let light_uniform_slice = &[scene.lights[0].to_uniform()];
         let light_buffer_contents: &[u8] = bytemuck::cast_slice(light_uniform_slice);
-        self.queue.write_buffer(&self.lights_buffer, 0, light_buffer_contents);
+        self.queue
+            .write_buffer(&self.lights_buffer, 0, light_buffer_contents);
 
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Render Pass"),
+                label: Some("3D Scene Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
+                    view,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
@@ -383,12 +385,13 @@ impl<'a> DrawState<'a> {
                         }),
                         store: wgpu::StoreOp::Store,
                     },
+                    depth_slice: None,
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: &self.depth_texture.view,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store
+                        store: wgpu::StoreOp::Store,
                     }),
                     stencil_ops: None,
                 }),
@@ -423,9 +426,30 @@ impl<'a> DrawState<'a> {
                 }
 
                 // Draw all instances in this batch
-                mesh.draw_instances(&self.device, &mut render_pass, batch.primitive_type, &batch.instances);
+                mesh.draw_instances(
+                    &self.device,
+                    &mut render_pass,
+                    batch.primitive_type,
+                    &batch.instances,
+                );
             }
         }
+
+        Ok(())
+    }
+
+    pub fn render(&mut self, scene: &mut Scene) -> anyhow::Result<()> {
+        let output = self.surface.get_current_texture()?;
+        let view = output
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Render Encoder"),
+            });
+
+        self.render_scene_to_view(&view, &mut encoder, scene)?;
 
         // submit will accept anything that implements IntoIter
         self.queue.submit(std::iter::once(encoder.finish()));
