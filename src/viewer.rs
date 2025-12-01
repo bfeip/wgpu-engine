@@ -182,4 +182,104 @@ impl<'a> Viewer<'a> {
     pub fn render(&mut self) -> Result<(), anyhow::Error> {
         self.state.render(&mut self.scene)
     }
+
+    /// Render the 3D scene with an egui overlay
+    ///
+    /// This is the recommended way to integrate egui with wgpu-engine. It handles
+    /// all the render pass sequencing and command submission automatically.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use wgpu_engine::{Viewer, egui_support::{EguiRenderer, screen_descriptor_from_size}};
+    /// # fn example(viewer: &mut Viewer, egui_renderer: &mut EguiRenderer,
+    /// #            egui_ctx: &egui::Context, full_output: egui::FullOutput) {
+    /// viewer.render_with_egui(
+    ///     egui_renderer,
+    ///     egui_ctx,
+    ///     1.0,  // scale_factor
+    ///     full_output,
+    /// ).unwrap();
+    /// # }
+    /// ```
+    #[cfg(feature = "egui-support")]
+    pub fn render_with_egui(
+        &mut self,
+        egui_renderer: &mut crate::egui_support::EguiRenderer,
+        egui_context: &egui::Context,
+        scale_factor: f32,
+        full_output: egui::FullOutput,
+    ) -> Result<(), anyhow::Error> {
+        // Get surface texture
+        let output = self.state.surface.get_current_texture()?;
+        let view = output
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+
+        // Create command encoder
+        let mut encoder = self.state.device.create_command_encoder(
+            &wgpu::CommandEncoderDescriptor {
+                label: Some("Render Encoder with egui"),
+            },
+        );
+
+        // Render 3D scene first
+        self.state
+            .render_scene_to_view(&view, &mut encoder, &mut self.scene)?;
+
+        // Render egui overlay on top
+        let screen_descriptor =
+            crate::egui_support::screen_descriptor_from_size(self.state.size, scale_factor);
+        egui_renderer.render(
+            &self.state.device,
+            &self.state.queue,
+            &mut encoder,
+            &view,
+            screen_descriptor,
+            full_output,
+            egui_context,
+        );
+
+        // Submit and present
+        self.state
+            .queue
+            .submit(std::iter::once(encoder.finish()));
+        output.present();
+
+        Ok(())
+    }
+
+    /// Render the 3D scene to a specific view using a specific encoder
+    ///
+    /// This is a low-level API for advanced rendering scenarios where you need
+    /// manual control over the render pipeline (e.g., multiple UIs, post-processing).
+    ///
+    /// For most use cases, prefer `render_with_egui()` which handles everything.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use wgpu_engine::Viewer;
+    /// # fn example(viewer: &mut Viewer) -> Result<(), anyhow::Error> {
+    /// # let output = unimplemented!();
+    /// # let view = unimplemented!();
+    /// # let mut encoder = unimplemented!();
+    /// // Render 3D scene
+    /// viewer.render_scene_to_view(&view, &mut encoder)?;
+    ///
+    /// // Render custom overlays here...
+    ///
+    /// # let queue = unimplemented!();
+    /// # queue.submit(std::iter::once(encoder.finish()));
+    /// # output.present();
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "egui-support")]
+    pub fn render_scene_to_view(
+        &mut self,
+        view: &wgpu::TextureView,
+        encoder: &mut wgpu::CommandEncoder,
+    ) -> Result<(), anyhow::Error> {
+        self.state
+            .render_scene_to_view(view, encoder, &mut self.scene)
+    }
 }
