@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use egui_wgpu::RendererOptions;
 use winit::{
     application::ApplicationHandler,
     event::{DeviceEvent, DeviceId, WindowEvent},
@@ -6,7 +7,7 @@ use winit::{
     window::{Window, WindowId},
 };
 
-use wgpu_engine::{egui_support::EguiRenderer, winit_support, Viewer};
+use wgpu_engine::{winit_support, Viewer};
 
 /// Application state for the winit event loop with egui integration
 struct App<'a> {
@@ -14,7 +15,7 @@ struct App<'a> {
     viewer: Option<Viewer<'a>>,
     egui_ctx: Option<egui::Context>,
     egui_winit: Option<egui_winit::State>,
-    egui_renderer: Option<EguiRenderer>,
+    egui_renderer: Option<egui_wgpu::Renderer>,
 }
 
 impl<'a> App<'a> {
@@ -45,7 +46,11 @@ impl<'a> App<'a> {
         );
 
         let (device, _queue) = viewer.wgpu_resources();
-        let egui_renderer = EguiRenderer::new(device, viewer.surface_format());
+        let egui_renderer = egui_wgpu::Renderer::new(
+            device,
+            viewer.surface_format(),
+            RendererOptions::default()
+        );
 
         window.request_redraw();
 
@@ -99,13 +104,64 @@ impl<'a> ApplicationHandler for App<'a> {
                     full_output.platform_output.clone(),
                 );
 
-                // Render 3D scene + egui overlay in one call
-                if let Err(e) = viewer.render_with_egui(
-                    egui_renderer,
-                    egui_ctx,
-                    window.scale_factor() as f32,
-                    full_output,
-                ) {
+                // Capture viewer size and scale factor before the closure
+                let viewer_size = viewer.size();
+                let scale_factor = window.scale_factor() as f32;
+
+                // Render 3D scene + egui overlay using the generic API
+                if let Err(e) = viewer.render_with_overlay(|device, queue, encoder, view| {
+                    // Update egui textures
+                    for (id, image_delta) in &full_output.textures_delta.set {
+                        egui_renderer.update_texture(device, queue, *id, image_delta);
+                    }
+
+                    // Tessellate and update buffers
+                    let clipped_primitives = egui_ctx.tessellate(
+                        full_output.shapes.clone(),
+                        full_output.pixels_per_point,
+                    );
+                    let screen_descriptor = egui_wgpu::ScreenDescriptor {
+                        size_in_pixels: [viewer_size.width, viewer_size.height],
+                        pixels_per_point: scale_factor,
+                    };
+                    egui_renderer.update_buffers(
+                        device,
+                        queue,
+                        encoder,
+                        &clipped_primitives,
+                        &screen_descriptor,
+                    );
+
+                    // Create render pass for egui
+                    {
+                        let render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                            label: Some("egui Render Pass"),
+                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                view,
+                                resolve_target: None,
+                                ops: wgpu::Operations {
+                                    load: wgpu::LoadOp::Load, // Load 3D scene content
+                                    store: wgpu::StoreOp::Store,
+                                },
+                                depth_slice: None,
+                            })],
+                            depth_stencil_attachment: None,
+                            occlusion_query_set: None,
+                            timestamp_writes: None,
+                        });
+
+                        egui_renderer.render(
+                            &mut render_pass.forget_lifetime(),
+                            &clipped_primitives,
+                            &screen_descriptor,
+                        );
+                    }
+
+                    // Free textures marked for deletion
+                    for id in &full_output.textures_delta.free {
+                        egui_renderer.free_texture(id);
+                    }
+                }) {
                     log::error!("Render error: {}", e);
                 }
 

@@ -183,32 +183,42 @@ impl<'a> Viewer<'a> {
         self.state.render(&mut self.scene)
     }
 
-    /// Render the 3D scene with an egui overlay
+    /// Render the 3D scene with a custom overlay
     ///
-    /// This is the recommended way to integrate egui with wgpu-engine. It handles
-    /// all the render pass sequencing and command submission automatically.
+    /// This method provides a generic way to render any overlay on top of the 3D scene.
+    /// The callback receives references to the device, queue, encoder, and texture view,
+    /// allowing you to create additional render passes for UI, post-processing, etc.
     ///
     /// # Example
     /// ```no_run
-    /// # use wgpu_engine::{Viewer, egui_support::{EguiRenderer, screen_descriptor_from_size}};
-    /// # fn example(viewer: &mut Viewer, egui_renderer: &mut EguiRenderer,
-    /// #            egui_ctx: &egui::Context, full_output: egui::FullOutput) {
-    /// viewer.render_with_egui(
-    ///     egui_renderer,
-    ///     egui_ctx,
-    ///     1.0,  // scale_factor
-    ///     full_output,
-    /// ).unwrap();
+    /// # use wgpu_engine::Viewer;
+    /// # fn example(viewer: &mut Viewer) {
+    /// viewer.render_with_overlay(|device, queue, encoder, view| {
+    ///     // Create your custom render pass here
+    ///     // For example, render egui, ImGui, debug overlays, etc.
+    ///     let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+    ///         label: Some("Custom Overlay"),
+    ///         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+    ///             view,
+    ///             resolve_target: None,
+    ///             ops: wgpu::Operations {
+    ///                 load: wgpu::LoadOp::Load,  // Load existing 3D content
+    ///                 store: wgpu::StoreOp::Store,
+    ///             },
+    ///             depth_slice: None,
+    ///         })],
+    ///         depth_stencil_attachment: None,
+    ///         occlusion_query_set: None,
+    ///         timestamp_writes: None,
+    ///     });
+    ///     // ... render your overlay ...
+    /// }).unwrap();
     /// # }
     /// ```
-    #[cfg(feature = "egui-support")]
-    pub fn render_with_egui(
-        &mut self,
-        egui_renderer: &mut crate::egui_support::EguiRenderer,
-        egui_context: &egui::Context,
-        scale_factor: f32,
-        full_output: egui::FullOutput,
-    ) -> Result<(), anyhow::Error> {
+    pub fn render_with_overlay<F>(&mut self, overlay_fn: F) -> Result<(), anyhow::Error>
+    where
+        F: FnOnce(&wgpu::Device, &wgpu::Queue, &mut wgpu::CommandEncoder, &wgpu::TextureView),
+    {
         // Get surface texture
         let output = self.state.surface.get_current_texture()?;
         let view = output
@@ -218,7 +228,7 @@ impl<'a> Viewer<'a> {
         // Create command encoder
         let mut encoder = self.state.device.create_command_encoder(
             &wgpu::CommandEncoderDescriptor {
-                label: Some("Render Encoder with egui"),
+                label: Some("Render Encoder with Overlay"),
             },
         );
 
@@ -226,17 +236,12 @@ impl<'a> Viewer<'a> {
         self.state
             .render_scene_to_view(&view, &mut encoder, &mut self.scene)?;
 
-        // Render egui overlay on top
-        let screen_descriptor =
-            crate::egui_support::screen_descriptor_from_size(self.state.size, scale_factor);
-        egui_renderer.render(
+        // Call user's overlay function
+        overlay_fn(
             &self.state.device,
             &self.state.queue,
             &mut encoder,
             &view,
-            screen_descriptor,
-            full_output,
-            egui_context,
         );
 
         // Submit and present
@@ -251,29 +256,20 @@ impl<'a> Viewer<'a> {
     /// Render the 3D scene to a specific view using a specific encoder
     ///
     /// This is a low-level API for advanced rendering scenarios where you need
-    /// manual control over the render pipeline (e.g., multiple UIs, post-processing).
+    /// full manual control over the render pipeline (e.g., multiple render targets,
+    /// custom command buffer management, deferred rendering).
     ///
-    /// For most use cases, prefer `render_with_egui()` which handles everything.
+    /// For most overlay use cases, prefer `render_with_overlay()` which handles
+    /// surface management and command submission automatically.
     ///
     /// # Example
     /// ```no_run
     /// # use wgpu_engine::Viewer;
     /// # fn example(viewer: &mut Viewer) -> Result<(), anyhow::Error> {
-    /// # let output = unimplemented!();
-    /// # let view = unimplemented!();
-    /// # let mut encoder = unimplemented!();
-    /// // Render 3D scene
-    /// viewer.render_scene_to_view(&view, &mut encoder)?;
-    ///
-    /// // Render custom overlays here...
-    ///
-    /// # let queue = unimplemented!();
-    /// # queue.submit(std::iter::once(encoder.finish()));
-    /// # output.present();
+    /// // This example shows manual control - not recommended for most use cases
     /// # Ok(())
     /// # }
     /// ```
-    #[cfg(feature = "egui-support")]
     pub fn render_scene_to_view(
         &mut self,
         view: &wgpu::TextureView,

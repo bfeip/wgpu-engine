@@ -20,10 +20,6 @@ mod viewer;
 #[cfg(feature = "winit-support")]
 pub mod winit_support;
 
-// egui support - only available when egui is a dependency
-#[cfg(feature = "egui-support")]
-pub mod egui_support;
-
 pub use scene::Scene;
 pub use viewer::Viewer;
 pub use camera::Camera;
