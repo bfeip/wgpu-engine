@@ -60,6 +60,138 @@ impl<'a> App<'a> {
         self.egui_winit = Some(egui_winit);
         self.egui_renderer = Some(egui_renderer);
     }
+
+    /// Handle the RedrawRequested event - build UI and render the frame
+    fn handle_redraw_requested(&mut self) {
+        let window = self.window.as_ref().unwrap();
+        let viewer = self.viewer.as_mut().unwrap();
+        let egui_ctx = self.egui_ctx.as_ref().unwrap();
+        let egui_winit = self.egui_winit.as_mut().unwrap();
+        let egui_renderer = self.egui_renderer.as_mut().unwrap();
+
+        // Build egui UI
+        let raw_input = egui_winit.take_egui_input(window.as_ref());
+        let full_output = egui_ctx.run(raw_input, |ctx| {
+            build_ui(ctx, viewer);
+        });
+
+        // Process egui platform output (clipboard, cursor, etc.)
+        egui_winit.handle_platform_output(
+            window.as_ref(),
+            full_output.platform_output.clone(),
+        );
+
+        // Capture viewer size and scale factor before the closure
+        let viewer_size = viewer.size();
+        let scale_factor = window.scale_factor() as f32;
+
+        // Render 3D scene + egui overlay using the generic API
+        log::debug!("Rendering frame");
+        if let Err(e) = viewer.render_with_overlay(|device, queue, encoder, view| {
+            render_egui_to_overlay(
+                egui_renderer,
+                egui_ctx,
+                &full_output,
+                viewer_size,
+                scale_factor,
+                device,
+                queue,
+                encoder,
+                view,
+            );
+        }) {
+            log::error!("Render error: {}", e);
+        }
+
+        // Request next frame
+        window.request_redraw();
+    }
+
+    /// Handle events that egui didn't consume
+    fn handle_non_egui_event(&mut self, event: WindowEvent, event_loop: &ActiveEventLoop) {
+        let viewer = self.viewer.as_mut().unwrap();
+
+        if let Some(app_event) = winit_support::convert_window_event(event) {
+            viewer.handle_event(&app_event);
+
+            // Check for exit on Escape key
+            if let wgpu_engine::event::Event::KeyboardInput { event: key_event, .. } = &app_event {
+                if matches!(
+                    key_event.logical_key,
+                    wgpu_engine::input::Key::Named(wgpu_engine::input::NamedKey::Escape)
+                ) {
+                    event_loop.exit();
+                }
+            }
+        }
+    }
+}
+
+/// Render egui overlay on top of the 3D scene
+fn render_egui_to_overlay(
+    egui_renderer: &mut egui_wgpu::Renderer,
+    egui_ctx: &egui::Context,
+    full_output: &egui::FullOutput,
+    viewer_size: wgpu_engine::common::PhysicalSize<u32>,
+    scale_factor: f32,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    encoder: &mut wgpu::CommandEncoder,
+    view: &wgpu::TextureView,
+) {
+    log::debug!("In overlay closure");
+
+    // Update egui textures
+    for (id, image_delta) in &full_output.textures_delta.set {
+        egui_renderer.update_texture(device, queue, *id, image_delta);
+    }
+
+    // Tessellate and update buffers
+    let clipped_primitives = egui_ctx.tessellate(
+        full_output.shapes.clone(),
+        full_output.pixels_per_point,
+    );
+    let screen_descriptor = egui_wgpu::ScreenDescriptor {
+        size_in_pixels: [viewer_size.width, viewer_size.height],
+        pixels_per_point: scale_factor,
+    };
+    egui_renderer.update_buffers(
+        device,
+        queue,
+        encoder,
+        &clipped_primitives,
+        &screen_descriptor,
+    );
+
+    // Create render pass for egui
+    {
+        let render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("egui Render Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load, // Load 3D scene content
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
+
+        egui_renderer.render(
+            &mut render_pass.forget_lifetime(),
+            &clipped_primitives,
+            &screen_descriptor,
+        );
+    }
+
+    // Free textures marked for deletion
+    for id in &full_output.textures_delta.free {
+        egui_renderer.free_texture(id);
+    }
 }
 
 impl<'a> ApplicationHandler for App<'a> {
@@ -77,8 +209,6 @@ impl<'a> ApplicationHandler for App<'a> {
         event: WindowEvent,
     ) {
         let window = self.window.as_ref().unwrap();
-        let viewer = self.viewer.as_mut().unwrap();
-        let egui_ctx = self.egui_ctx.as_ref().unwrap();
         let egui_winit = self.egui_winit.as_mut().unwrap();
 
         // Give egui a chance to handle window events first
@@ -90,102 +220,14 @@ impl<'a> ApplicationHandler for App<'a> {
                 event_loop.exit();
             }
             WindowEvent::RedrawRequested => {
-                let egui_renderer = self.egui_renderer.as_mut().unwrap();
-
-                // Build egui UI
-                let raw_input = egui_winit.take_egui_input(window.as_ref());
-                let full_output = egui_ctx.run(raw_input, |ctx| {
-                    build_ui(ctx, viewer);
-                });
-
-                // Process egui platform output (clipboard, cursor, etc.)
-                egui_winit.handle_platform_output(
-                    window.as_ref(),
-                    full_output.platform_output.clone(),
-                );
-
-                // Capture viewer size and scale factor before the closure
-                let viewer_size = viewer.size();
-                let scale_factor = window.scale_factor() as f32;
-
-                // Render 3D scene + egui overlay using the generic API
-                if let Err(e) = viewer.render_with_overlay(|device, queue, encoder, view| {
-                    // Update egui textures
-                    for (id, image_delta) in &full_output.textures_delta.set {
-                        egui_renderer.update_texture(device, queue, *id, image_delta);
-                    }
-
-                    // Tessellate and update buffers
-                    let clipped_primitives = egui_ctx.tessellate(
-                        full_output.shapes.clone(),
-                        full_output.pixels_per_point,
-                    );
-                    let screen_descriptor = egui_wgpu::ScreenDescriptor {
-                        size_in_pixels: [viewer_size.width, viewer_size.height],
-                        pixels_per_point: scale_factor,
-                    };
-                    egui_renderer.update_buffers(
-                        device,
-                        queue,
-                        encoder,
-                        &clipped_primitives,
-                        &screen_descriptor,
-                    );
-
-                    // Create render pass for egui
-                    {
-                        let render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                            label: Some("egui Render Pass"),
-                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                                view,
-                                resolve_target: None,
-                                ops: wgpu::Operations {
-                                    load: wgpu::LoadOp::Load, // Load 3D scene content
-                                    store: wgpu::StoreOp::Store,
-                                },
-                                depth_slice: None,
-                            })],
-                            depth_stencil_attachment: None,
-                            occlusion_query_set: None,
-                            timestamp_writes: None,
-                        });
-
-                        egui_renderer.render(
-                            &mut render_pass.forget_lifetime(),
-                            &clipped_primitives,
-                            &screen_descriptor,
-                        );
-                    }
-
-                    // Free textures marked for deletion
-                    for id in &full_output.textures_delta.free {
-                        egui_renderer.free_texture(id);
-                    }
-                }) {
-                    log::error!("Render error: {}", e);
-                }
-
-                // Request next frame
-                window.request_redraw();
+                self.handle_redraw_requested();
             }
             _ => {}
         }
 
         // Convert and handle all window events (only if egui didn't consume them)
         if !egui_consumed {
-            if let Some(app_event) = winit_support::convert_window_event(event) {
-                viewer.handle_event(&app_event);
-
-                // Check for exit on Escape key
-                if let wgpu_engine::event::Event::KeyboardInput { event: key_event, .. } = &app_event {
-                    if matches!(
-                        key_event.logical_key,
-                        wgpu_engine::input::Key::Named(wgpu_engine::input::NamedKey::Escape)
-                    ) {
-                        event_loop.exit();
-                    }
-                }
-            }
+            self.handle_non_egui_event(event, event_loop);
         }
     }
 
