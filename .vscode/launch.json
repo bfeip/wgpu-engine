@@ -79,6 +79,25 @@
             },
             "args": [],
             "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug example 'egui'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--example=egui",
+                    "--features=winit-support",
+                    "--package=wgpu-engine"
+                ],
+                "filter": {
+                    "name": "egui",
+                    "kind": "example"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
         }
     ]
 }

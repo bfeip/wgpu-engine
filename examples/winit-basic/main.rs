@@ -56,6 +56,12 @@ impl<'a> ApplicationHandler for App<'a> {
                 event_loop.exit();
             }
             WindowEvent::RedrawRequested => {
+                // Render the scene
+                let viewer = self.viewer.as_mut().unwrap();
+                if let Err(e) = viewer.render() {
+                    log::error!("Render error: {}", e);
+                }
+
                 // Request next frame for continuous rendering
                 self.window.as_ref().unwrap().request_redraw();
             }

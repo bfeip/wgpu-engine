@@ -355,6 +355,8 @@ impl<'a> DrawState<'a> {
             self.config.height = new_size.height;
             self.surface.configure(&self.device, &self.config);
 
+            self.camera.aspect = new_size.width as f32 / new_size.height as f32;
+
             self.depth_texture = texture::Texture::create_depth_texture(&self.device, &self.config, "depth_texture");
         }
     }

@@ -105,34 +105,6 @@ impl<'a> Viewer<'a> {
             true
         });
 
-        // Register RedrawRequested handler
-        self.dispatcher
-            .register(EventKind::RedrawRequested, |_event, ctx| {
-                match ctx.state.render(ctx.scene) {
-                    Ok(_) => {}
-                    Err(err) => {
-                        // Check if the error is a surface error that we can handle
-                        if let Some(surface_err) = err.downcast_ref::<wgpu::SurfaceError>() {
-                            match surface_err {
-                                wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated => {
-                                    ctx.state.resize(ctx.state.size);
-                                }
-                                wgpu::SurfaceError::OutOfMemory | wgpu::SurfaceError::Other => {
-                                    log::error!("Fatal surface error: {}", surface_err);
-                                }
-                                wgpu::SurfaceError::Timeout => {
-                                    log::warn!("Surface timeout: {}", surface_err);
-                                }
-                            }
-                        } else {
-                            // Handle other types of errors
-                            log::error!("Render error: {}", err);
-                        }
-                    }
-                }
-                true
-            });
-
         // Register CursorMoved handler to track cursor position
         self.dispatcher
             .register(EventKind::CursorMoved, |event, ctx| {
