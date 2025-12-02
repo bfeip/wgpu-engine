@@ -3,7 +3,7 @@ use egui_wgpu::RendererOptions;
 use winit::{
     application::ApplicationHandler,
     event::{DeviceEvent, DeviceId, WindowEvent},
-    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    event_loop::{ActiveEventLoop, EventLoop},
     window::{Window, WindowId},
 };
 
@@ -86,7 +86,6 @@ impl<'a> App<'a> {
         let scale_factor = window.scale_factor() as f32;
 
         // Render 3D scene + egui overlay using the generic API
-        log::debug!("Rendering frame");
         if let Err(e) = viewer.render_with_overlay(|device, queue, encoder, view| {
             render_egui_to_overlay(
                 egui_renderer,
@@ -139,8 +138,6 @@ fn render_egui_to_overlay(
     encoder: &mut wgpu::CommandEncoder,
     view: &wgpu::TextureView,
 ) {
-    log::debug!("In overlay closure");
-
     // Update egui textures
     for (id, image_delta) in &full_output.textures_delta.set {
         egui_renderer.update_texture(device, queue, *id, image_delta);
@@ -295,7 +292,6 @@ fn main() {
 
     // Create event loop
     let event_loop = EventLoop::new().unwrap();
-    event_loop.set_control_flow(ControlFlow::Poll);
 
     // Create application state
     let mut app = App {
