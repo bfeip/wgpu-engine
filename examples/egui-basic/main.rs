@@ -247,9 +247,17 @@ impl<'a> ApplicationHandler for App<'a> {
 
 /// Build the egui UI
 fn build_ui(ctx: &egui::Context, viewer: &Viewer) {
+    // Performance overlay
+    egui::TopBottomPanel::new(egui::panel::TopBottomSide::Top, "Performance")
+        .show(ctx, |ui| {
+            ui.label(format!(
+                "FPS: {:.1}",
+                ctx.input(|i| i.stable_dt).recip()
+            ));
+        });
+
     // Main control panel
-    egui::Window::new("Viewer Controls")
-        .default_pos([10.0, 10.0])
+    egui::SidePanel::new(egui::panel::Side::Left, "Viewer Controls")
         .show(ctx, |ui| {
             ui.heading("Camera");
 
@@ -278,16 +286,6 @@ fn build_ui(ctx: &egui::Context, viewer: &Viewer) {
             ui.label(format!("Instances: {}", viewer.scene.instances.len()));
             ui.label(format!("Nodes: {}", viewer.scene.nodes.len()));
             ui.label(format!("Lights: {}", viewer.scene.lights.len()));
-        });
-
-    // Performance overlay
-    egui::Window::new("Performance")
-        .default_pos([10.0, 300.0])
-        .show(ctx, |ui| {
-            ui.label(format!(
-                "FPS: {:.1}",
-                ctx.input(|i| i.stable_dt).recip()
-            ));
         });
 }
 
