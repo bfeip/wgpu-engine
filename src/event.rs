@@ -43,10 +43,11 @@ type EventCallback = Box<dyn for<'w, 'c> Fn(&Event, &mut EventContext<'w, 'c>) -
 /// enum representing event types.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub enum EventKind {
+    #[cfg(test)]
+    /// Event kind used for testing
+    Test,
     /// Window was resized
     Resized,
-    /// Window needs to be redrawn
-    RedrawRequested,
     /// Keyboard input occurred
     KeyboardInput,
     /// Mouse was moved
@@ -69,10 +70,11 @@ pub enum EventKind {
 
 /// Application events with associated data.
 pub enum Event {
+    #[cfg(test)]
+    /// Event used for testing
+    Test,
     /// Window was resized to the given physical size
     Resized(PhysicalSize<u32>),
-    /// Window needs to be redrawn
-    RedrawRequested,
     /// Keyboard input occurred
     KeyboardInput {
         /// The keyboard event details
@@ -147,7 +149,6 @@ impl Event {
     pub fn kind(&self) -> EventKind {
         match self {
             Self::Resized(_) => EventKind::Resized,
-            Self::RedrawRequested => EventKind::RedrawRequested,
             Self::KeyboardInput { .. } => EventKind::KeyboardInput,
             Self::MouseMotion { .. } => EventKind::MouseMotion,
             Self::CursorMoved { .. } => EventKind::CursorMoved,
@@ -157,6 +158,8 @@ impl Event {
             Self::MouseDrag { .. } => EventKind::MouseDrag,
             Self::MouseDragEnd { .. } => EventKind::MouseDragEnd,
             Self::MouseClick { .. } => EventKind::MouseClick,
+            #[cfg(test)]
+            Self::Test => EventKind::Test,
         }
     }
 
@@ -453,7 +456,6 @@ impl EventDispatcher {
 mod tests {
     use super::*;
     use crate::input::{PhysicalPosition, ElementState, MouseButton, MouseScrollDelta};
-    use crate::common::PhysicalSize;
     use std::rc::Rc;
     use std::cell::Cell;
 
@@ -487,11 +489,11 @@ mod tests {
     fn test_dispatcher_register() {
         let mut dispatcher = EventDispatcher::new();
 
-        let id = dispatcher.register(EventKind::RedrawRequested, |_event, _ctx| false);
+        let id = dispatcher.register(EventKind::Test, |_event, _ctx| false);
 
         assert_eq!(id, 0);
-        assert!(dispatcher.callback_map.contains_key(&EventKind::RedrawRequested));
-        assert_eq!(dispatcher.callback_map[&EventKind::RedrawRequested].len(), 1);
+        assert!(dispatcher.callback_map.contains_key(&EventKind::Test));
+        assert_eq!(dispatcher.callback_map[&EventKind::Test].len(), 1);
     }
 
     #[test]
@@ -517,7 +519,7 @@ mod tests {
 
         let id1 = dispatcher.register(EventKind::KeyboardInput, |_event, _ctx| false);
         let id2 = dispatcher.register(EventKind::MouseInput, |_event, _ctx| false);
-        let id3 = dispatcher.register(EventKind::RedrawRequested, |_event, _ctx| false);
+        let id3 = dispatcher.register(EventKind::Test, |_event, _ctx| false);
 
         // All IDs should be unique
         assert_eq!(id1, 0);
@@ -528,7 +530,7 @@ mod tests {
         assert_eq!(dispatcher.callback_map.len(), 3);
         assert_eq!(dispatcher.callback_map[&EventKind::KeyboardInput].len(), 1);
         assert_eq!(dispatcher.callback_map[&EventKind::MouseInput].len(), 1);
-        assert_eq!(dispatcher.callback_map[&EventKind::RedrawRequested].len(), 1);
+        assert_eq!(dispatcher.callback_map[&EventKind::Test].len(), 1);
     }
 
     #[test]
@@ -560,7 +562,7 @@ mod tests {
     #[test]
     fn test_dispatcher_dispatch_no_callbacks() {
         let mut dispatcher = EventDispatcher::new();
-        let event = Event::RedrawRequested;
+        let event = Event::Test;
 
         // SAFETY: We're creating a mock context that won't be used
         let mut ctx = unsafe { create_mock_context() };
@@ -576,12 +578,12 @@ mod tests {
         let counter = Rc::new(Cell::new(0));
         let counter_clone = Rc::clone(&counter);
 
-        dispatcher.register(EventKind::RedrawRequested, move |_event, _ctx| {
+        dispatcher.register(EventKind::Test, move |_event, _ctx| {
             counter_clone.set(counter_clone.get() + 1);
             false
         });
 
-        let event = Event::RedrawRequested;
+        let event = Event::Test;
         let mut ctx = unsafe { create_mock_context() };
 
         dispatcher.dispatch(&event, &mut ctx);
@@ -759,15 +761,15 @@ mod tests {
     fn test_dispatcher_reorder_nonexistent_ids() {
         let mut dispatcher = EventDispatcher::new();
 
-        let id1 = dispatcher.register(EventKind::RedrawRequested, |_event, _ctx| false);
-        let id2 = dispatcher.register(EventKind::RedrawRequested, |_event, _ctx| false);
+        let id1 = dispatcher.register(EventKind::Test, |_event, _ctx| false);
+        let id2 = dispatcher.register(EventKind::Test, |_event, _ctx| false);
 
         // Try to reorder with some nonexistent IDs
-        let result = dispatcher.reorder_kind(EventKind::RedrawRequested, &[999, id2, 888, id1, 777]);
+        let result = dispatcher.reorder_kind(EventKind::Test, &[999, id2, 888, id1, 777]);
         assert!(result);
 
         // Only the valid IDs should be reordered
-        let callbacks = &dispatcher.callback_map[&EventKind::RedrawRequested];
+        let callbacks = &dispatcher.callback_map[&EventKind::Test];
         assert_eq!(callbacks[0].0, id2);
         assert_eq!(callbacks[1].0, id1);
     }
