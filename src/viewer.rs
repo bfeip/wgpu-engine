@@ -150,7 +150,6 @@ impl<'a> Viewer<'a> {
     }
 
     /// Render the scene using the default rendering path
-    /// This is equivalent to what the RedrawRequested event handler does
     pub fn render(&mut self) -> Result<(), anyhow::Error> {
         self.state.render(&mut self.scene)
     }

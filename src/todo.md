@@ -12,7 +12,6 @@
 - Add fit camera to bounding
 - Camera from glTF
 
-- API and docs review
 - Split mesh into DrawMesh and Mesh for API reasons
 - Split materials into DrawMaterials and Materials for API reasons
 
@@ -81,21 +80,3 @@ behavior.
 ### Step 5
 I want to finish off with bounding computations. We will compute boundings with a tree
 walker and by examining the geometry, probably.
-
-## Top level API
-Currently, the library is very static. It simply exposes a `run` function which runs
-the application. I'd like to make this much more practical, and especially focus on
-the web aspect. I'd like to expose an API with which the user can create a viewer
-on their HTML canvas object or other surface-able object. After creating their viewer
-they can interact with the scene using the operators. We should also look into what
-other functionality, other than the operators, we want to expose and how best to do that.
-
-### Step 1
-Creation of a top level Viewer object that owns all the high level components
-
-### Step 2
-Remove reliance on winit from the library. It can still be used in the binary version
-of the app but the library should be agnostic
-
-### Step 3
-Being Dioxus integration?

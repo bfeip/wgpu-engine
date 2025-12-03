@@ -2,12 +2,12 @@ use std::sync::Arc;
 use egui_wgpu::RendererOptions;
 use winit::{
     application::ApplicationHandler,
-    event::{DeviceEvent, DeviceId, WindowEvent},
+    event,
     event_loop::{ActiveEventLoop, EventLoop},
     window::{Window, WindowId},
 };
 
-use wgpu_engine::{winit_support, Viewer};
+use wgpu_engine::{Viewer, winit_support};
 
 /// Application state for the winit event loop with egui integration
 struct App<'a> {
@@ -85,7 +85,7 @@ impl<'a> App<'a> {
         let viewer_size = viewer.size();
         let scale_factor = window.scale_factor() as f32;
 
-        // Render 3D scene + egui overlay using the generic API
+        // Render 3D scene + egui overlay
         if let Err(e) = viewer.render_with_overlay(|device, queue, encoder, view| {
             render_egui_to_overlay(
                 egui_renderer,
@@ -107,10 +107,10 @@ impl<'a> App<'a> {
     }
 
     /// Handle events that egui didn't consume
-    fn handle_non_egui_event(&mut self, event: WindowEvent, event_loop: &ActiveEventLoop) {
+    fn handle_non_egui_event(&mut self, event: event::Event<()>, event_loop: &ActiveEventLoop) {
         let viewer = self.viewer.as_mut().unwrap();
 
-        if let Some(app_event) = winit_support::convert_window_event(event) {
+        if let Some(app_event) = winit_support::convert_event(event) {
             viewer.handle_event(&app_event);
 
             // Check for exit on Escape key
@@ -202,8 +202,8 @@ impl<'a> ApplicationHandler for App<'a> {
     fn window_event(
         &mut self,
         event_loop: &ActiveEventLoop,
-        _window_id: WindowId,
-        event: WindowEvent,
+        window_id: WindowId,
+        event: event::WindowEvent,
     ) {
         let window = self.window.as_ref().unwrap();
         let egui_winit = self.egui_winit.as_mut().unwrap();
@@ -213,10 +213,10 @@ impl<'a> ApplicationHandler for App<'a> {
         let egui_consumed = response.consumed;
 
         match event {
-            WindowEvent::CloseRequested => {
+            event::WindowEvent::CloseRequested => {
                 event_loop.exit();
             }
-            WindowEvent::RedrawRequested => {
+            event::WindowEvent::RedrawRequested => {
                 self.handle_redraw_requested();
             }
             _ => {}
@@ -224,21 +224,19 @@ impl<'a> ApplicationHandler for App<'a> {
 
         // Convert and handle all window events (only if egui didn't consume them)
         if !egui_consumed {
+            let event = event::Event::WindowEvent { window_id, event };
             self.handle_non_egui_event(event, event_loop);
         }
     }
 
     fn device_event(
         &mut self,
-        _event_loop: &ActiveEventLoop,
-        _device_id: DeviceId,
-        event: DeviceEvent,
+        event_loop: &ActiveEventLoop,
+        device_id: event::DeviceId,
+        event: event::DeviceEvent,
     ) {
-        // Convert and handle device events (e.g., mouse motion)
-        // Only handle if egui didn't consume the last window event
-        if let Some(app_event) = winit_support::convert_device_event(event) {
-            self.viewer.as_mut().unwrap().handle_event(&app_event);
-        }
+        let event = winit::event::Event::DeviceEvent { device_id, event };
+        self.handle_non_egui_event(event, event_loop);
     }
 }
 
