@@ -1,10 +1,10 @@
 // fragment_color_unlit.wesl
 // Fragment shader for unlit color materials (lines, points - no lighting)
 
-use package::common::VertexOutput;
-use package::material_color::material_color;
+import package::common::VertexOutput;
+import package::material_color::material_color;
 
-@fragment
-pub fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+// Fragment shader with color, no lighting (not an entry point)
+fn fragment_color_unlit(in: VertexOutput) -> vec4<f32> {
     return material_color;
 }

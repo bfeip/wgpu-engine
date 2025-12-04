@@ -105,26 +105,20 @@ impl ShaderGenerator {
             return Ok(cached.clone());
         }
 
-        // Determine which WESL modules to compile together
-        let vertex_module = "package::vertex";
-        let fragment_module = properties.get_fragment_module();
+        // Build feature map for WESL conditional compilation
+        let features = [
+            ("has_texture", properties.has_texture),
+            ("has_lighting", properties.has_lighting),
+        ];
 
-        // Compile vertex and fragment shaders
-        let vertex_wgsl = self.compile_module(vertex_module)?;
-        let fragment_wgsl = self.compile_module(fragment_module)?;
-
-        // Combine them into a single WGSL string
-        let combined = format!("{}\n\n{}", vertex_wgsl, fragment_wgsl);
+        // Set features and compile the main module
+        let path: ModulePath = "package::main".parse()?;
+        self.compiler.set_features(features);
+        let result = self.compiler.compile(&path)?;
+        let wgsl = result.to_string();
 
         // Cache and return
-        self.shader_cache.insert(properties.clone(), combined.clone());
-        Ok(combined)
-    }
-
-    /// Compile a single WESL module to WGSL
-    fn compile_module(&self, module_path: &str) -> anyhow::Result<String> {
-        let path: ModulePath = module_path.parse()?;
-        let result = self.compiler.compile(&path)?;
-        Ok(result.to_string())
+        self.shader_cache.insert(properties.clone(), wgsl.clone());
+        Ok(wgsl)
     }
 }

@@ -1,14 +1,14 @@
 // lighting.wesl
 // Lighting uniform binding at group 1
 
-use package::constants::{GROUP_LIGHTS, BINDING_LIGHTS_UNIFORM};
-use package::common::LightsUniform;
+import package::constants::{GROUP_LIGHTS, BINDING_LIGHTS_UNIFORM};
+import package::common::LightsUniform;
 
 @group(GROUP_LIGHTS) @binding(BINDING_LIGHTS_UNIFORM)
-pub var<uniform> lights: LightsUniform;
+var<uniform> lights: LightsUniform;
 
 // Calculate diffuse lighting
-pub fn calculate_diffuse_lighting(
+fn calculate_diffuse_lighting(
     world_position: vec3<f32>,
     world_normal: vec3<f32>
 ) -> vec3<f32> {

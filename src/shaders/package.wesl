@@ -12,3 +12,4 @@ pub mod material_texture;
 pub mod fragment_color_lit;
 pub mod fragment_color_unlit;
 pub mod fragment_texture_lit;
+pub mod main;

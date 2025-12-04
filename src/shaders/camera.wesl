@@ -1,8 +1,8 @@
 // camera.wesl
 // Camera uniform binding at group 0
 
-use package::constants::{GROUP_CAMERA, BINDING_CAMERA_UNIFORM};
-use package::common::CameraUniform;
+import package::constants::{GROUP_CAMERA, BINDING_CAMERA_UNIFORM};
+import package::common::CameraUniform;
 
 @group(GROUP_CAMERA) @binding(BINDING_CAMERA_UNIFORM)
-pub var<uniform> camera: CameraUniform;
+var<uniform> camera: CameraUniform;

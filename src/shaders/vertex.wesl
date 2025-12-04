@@ -1,12 +1,12 @@
 // vertex.wesl
 // Standard vertex shader with instancing support
 
-use package::common::{VertexInput, InstanceInput, VertexOutput};
-use package::camera::camera;
-use package::lighting::lights;
+import package::common::{VertexInput, InstanceInput, VertexOutput};
+import package::camera::camera;
+import package::lighting::lights;
 
-@vertex
-pub fn vs_main(
+// Standard vertex transformation (not an entry point)
+fn vertex_standard(
     model: VertexInput,
     instance: InstanceInput
 ) -> VertexOutput {
