@@ -1,6 +1,7 @@
 use std::{collections::HashMap, path::Path};
 
 use anyhow::Ok;
+use bitflags::bitflags;
 use bytemuck::bytes_of;
 use wgpu::{
     util::{
@@ -10,7 +11,8 @@ use wgpu::{
 };
 
 use crate::{
-    common::RgbaColor, texture::Texture
+    common::RgbaColor,
+    texture::Texture
 };
 
 /// Default magenta color for face materials
@@ -36,6 +38,85 @@ const DEFAULT_POINT_COLOR: RgbaColor = RgbaColor {
     b: 0.0,
     a: 1.0
 };
+
+bitflags! {
+    /// Additional material rendering flags for extensibility
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct MaterialFlags: u32 {
+        /// No special flags
+        const NONE = 0b0000;
+        /// Enable alpha blending (future)
+        const ALPHA_BLEND = 0b0001;
+        /// Disable back-face culling (future)
+        const DOUBLE_SIDED = 0b0010;
+    }
+}
+
+/// Material properties that determine shader generation and rendering behavior
+///
+/// This is the single source of truth that drives:
+/// - Shader generation (ShaderGenerator uses these for conditional compilation)
+/// - Bind group layout generation (BindGroupGenerator creates layouts from these)
+/// - Pipeline creation (different properties = different pipelines)
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct MaterialProperties {
+    /// Whether this material uses a texture (vs solid color)
+    pub has_texture: bool,
+    /// Whether lighting calculations should be applied
+    pub has_lighting: bool,
+    /// Additional rendering flags
+    pub flags: MaterialFlags,
+}
+
+impl MaterialProperties {
+    /// Convert from legacy MaterialType (temporary for Phase 2 compatibility)
+    pub(crate) fn from_material_type(material_type: MaterialType) -> Self {
+        match material_type {
+            MaterialType::FaceColor => Self {
+                has_texture: false,
+                has_lighting: true,
+                flags: MaterialFlags::NONE,
+            },
+            MaterialType::FaceTexture => Self {
+                has_texture: true,
+                has_lighting: true,
+                flags: MaterialFlags::NONE,
+            },
+            MaterialType::LineColor | MaterialType::PointColor => Self {
+                has_texture: false,
+                has_lighting: false,
+                flags: MaterialFlags::NONE,
+            },
+        }
+    }
+
+    /// Create properties for a lit color material (faces)
+    pub fn face_color() -> Self {
+        Self {
+            has_texture: false,
+            has_lighting: true,
+            flags: MaterialFlags::NONE,
+        }
+    }
+
+    /// Create properties for a lit texture material (faces)
+    pub fn face_texture() -> Self {
+        Self {
+            has_texture: true,
+            has_lighting: true,
+            flags: MaterialFlags::NONE,
+        }
+    }
+
+    /// Create properties for an unlit color material (lines/points)
+    pub fn unlit_color() -> Self {
+        Self {
+            has_texture: false,
+            has_lighting: false,
+            flags: MaterialFlags::NONE,
+        }
+    }
+}
 
 /// Default materials created automatically by the MaterialManager.
 ///

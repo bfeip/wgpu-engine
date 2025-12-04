@@ -46,6 +46,7 @@ cgmath = "0.18"
 obj-rs = "0.7"
 gltf = { version = "1.4", features = [ "utils" ]}
 wesl = "0.2.0"
+bitflags = "2.0"
 
 
 [dependencies.image]

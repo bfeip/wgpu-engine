@@ -1,62 +1,17 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::hash::Hash;
 
 use wgpu::ShaderModuleDescriptor;
 use wesl::{Wesl, ModulePath, StandardResolver};
 
-use crate::material::MaterialType;
-
-/// Material shader properties that determine how the shader is generated
-/// This will eventually replace MaterialType entirely
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct ShaderProperties {
-    /// Whether this material uses a texture (vs solid color)
-    has_texture: bool,
-    /// Whether lighting calculations should be applied
-    has_lighting: bool,
-}
-
-impl ShaderProperties {
-    /// Convert from legacy MaterialType (temporary for Phase 1)
-    fn from_material_type(material_type: MaterialType) -> Self {
-        match material_type {
-            MaterialType::FaceColor => ShaderProperties {
-                has_texture: false,
-                has_lighting: true,
-            },
-            MaterialType::FaceTexture => ShaderProperties {
-                has_texture: true,
-                has_lighting: true,
-            },
-            MaterialType::LineColor | MaterialType::PointColor => ShaderProperties {
-                has_texture: false,
-                has_lighting: false,
-            },
-        }
-    }
-
-    /// Determine which WESL fragment module to use
-    fn get_fragment_module(&self) -> &'static str {
-        match (self.has_texture, self.has_lighting) {
-            (false, true) => "package::fragment_color_lit",
-            (false, false) => "package::fragment_color_unlit",
-            (true, true) => "package::fragment_texture_lit",
-            (true, false) => {
-                // Unlit texture materials not currently supported, but could be added
-                // For now, fall back to lit version
-                "package::fragment_texture_lit"
-            }
-        }
-    }
-}
+use crate::material::{MaterialType, MaterialProperties};
 
 /// Shader generator using WESL compiler to create modular shaders
 pub(crate) struct ShaderGenerator {
     /// WESL compiler instance
     compiler: Wesl<StandardResolver>,
-    /// Cache of compiled WGSL strings (ShaderProperties → WGSL)
-    shader_cache: HashMap<ShaderProperties, String>,
+    /// Cache of compiled WGSL strings (MaterialProperties → WGSL)
+    shader_cache: HashMap<MaterialProperties, String>,
 }
 
 impl ShaderGenerator {
@@ -81,7 +36,7 @@ impl ShaderGenerator {
     /// In Phase 2+, this will be replaced with a method that takes MaterialProperties directly
     pub fn generate_shader(&mut self, device: &wgpu::Device, material_type: MaterialType) -> anyhow::Result<wgpu::ShaderModule> {
         // Convert MaterialType to properties (this translation layer will be removed in Phase 2)
-        let properties = ShaderProperties::from_material_type(material_type);
+        let properties = MaterialProperties::from_material_type(material_type);
 
         let wgsl = self.get_or_compile_wgsl(&properties)?;
 
@@ -99,7 +54,7 @@ impl ShaderGenerator {
     }
 
     /// Get or compile WGSL for shader properties (with caching)
-    fn get_or_compile_wgsl(&mut self, properties: &ShaderProperties) -> anyhow::Result<String> {
+    fn get_or_compile_wgsl(&mut self, properties: &MaterialProperties) -> anyhow::Result<String> {
         // Check cache first
         if let Some(cached) = self.shader_cache.get(properties) {
             return Ok(cached.clone());
@@ -120,5 +75,89 @@ impl ShaderGenerator {
         // Cache and return
         self.shader_cache.insert(properties.clone(), wgsl.clone());
         Ok(wgsl)
+    }
+}
+
+/// Generates bind group layouts based on material properties
+///
+/// This ensures that Rust bind group layouts stay synchronized with WESL shader expectations.
+/// Both are derived from the same MaterialProperties, guaranteeing consistency.
+pub(crate) struct BindGroupGenerator {
+    /// Cache of bind group layouts (MaterialProperties → BindGroupLayout)
+    layout_cache: HashMap<MaterialProperties, wgpu::BindGroupLayout>,
+}
+
+impl BindGroupGenerator {
+    /// Create a new BindGroupGenerator
+    pub fn new() -> Self {
+        Self {
+            layout_cache: HashMap::new(),
+        }
+    }
+
+    /// Get or generate a bind group layout for the given material properties
+    ///
+    /// The layout generation follows the same rules as the WESL shader bindings:
+    /// - Color materials: binding 0 = uniform buffer (vec4<f32>)
+    /// - Texture materials: binding 0 = texture, binding 1 = sampler
+    pub fn get_or_generate_layout(
+        &mut self,
+        device: &wgpu::Device,
+        properties: &MaterialProperties,
+    ) -> &wgpu::BindGroupLayout {
+        // Check if we need to generate
+        if !self.layout_cache.contains_key(properties) {
+            let layout = Self::generate_layout(device, properties);
+            self.layout_cache.insert(properties.clone(), layout);
+        }
+
+        self.layout_cache.get(properties).unwrap()
+    }
+
+    /// Generate a bind group layout from material properties
+    fn generate_layout(
+        device: &wgpu::Device,
+        properties: &MaterialProperties,
+    ) -> wgpu::BindGroupLayout {
+        let mut entries = Vec::new();
+
+        if !properties.has_texture {
+            // Color uniform at binding 0 (matches material_color.wesl)
+            entries.push(wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            });
+        } else {
+            // Texture at binding 0 (matches material_texture.wesl)
+            entries.push(wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    multisampled: false,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                },
+                count: None,
+            });
+
+            // Sampler at binding 1 (matches material_texture.wesl)
+            entries.push(wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            });
+        }
+
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Material Bind Group Layout"),
+            entries: &entries,
+        })
     }
 }
