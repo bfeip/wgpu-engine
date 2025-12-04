@@ -1,6 +1,5 @@
-use std::{collections::HashMap, path::Path};
+use std::collections::HashMap;
 
-use anyhow::Ok;
 use bitflags::bitflags;
 use bytemuck::bytes_of;
 use wgpu::{
@@ -12,7 +11,8 @@ use wgpu::{
 
 use crate::{
     common::RgbaColor,
-    texture::Texture
+    texture::Texture,
+    scene::PrimitiveType
 };
 
 /// Default magenta color for face materials
@@ -159,279 +159,306 @@ pub enum MaterialType {
     PointColor,
 }
 
-/// A material variant that encapsulates all supported material types.
+/// Unified material that can be rendered as faces, lines, or points
 ///
-/// This enum provides a unified interface for working with different material types.
-pub enum Material {
-    /// Solid color material for face primitives
-    FaceColor(FaceColorMaterial),
-    /// Textured material for face primitives
-    FaceTexture(FaceTextureMaterial),
-    /// Solid color material for line primitives
-    LineColor(LineColorMaterial),
-    /// Solid color material for point primitives
-    PointColor(PointColorMaterial),
+/// A single Material instance contains rendering data for all primitive types:
+/// - Faces: Can use either a color or texture (with lighting)
+/// - Lines: Uses a solid color (no lighting)
+/// - Points: Uses a solid color (no lighting)
+///
+/// At draw time, the appropriate data is bound based on the mesh's primitive type.
+pub struct Material {
+    /// Unique identifier for this material
+    pub id: MaterialId,
+
+    // Face rendering data (triangles with lighting)
+    /// Face color (if not using texture)
+    pub face_color: Option<RgbaColor>,
+    /// Face texture (if not using solid color)
+    pub face_texture: Option<Texture>,
+
+    // Line rendering data (no lighting)
+    /// Line color
+    pub line_color: Option<RgbaColor>,
+
+    // Point rendering data (no lighting)
+    /// Point color
+    pub point_color: Option<RgbaColor>,
+
+    // GPU resources per primitive type
+    face_bind_group: Option<wgpu::BindGroup>,
+    line_bind_group: Option<wgpu::BindGroup>,
+    point_bind_group: Option<wgpu::BindGroup>,
+
+    // Uniform buffers for colors
+    face_buffer: Option<wgpu::Buffer>,
+    line_buffer: Option<wgpu::Buffer>,
+    point_buffer: Option<wgpu::Buffer>,
 }
 
 impl Material {
-    /// Returns the unique identifier for this material.
-    pub fn id(&self) -> MaterialId {
-        match self {
-            Self::FaceColor(material) => material.id,
-            Self::FaceTexture(material) => material.id,
-            Self::LineColor(material) => material.id,
-            Self::PointColor(material) => material.id,
+    /// Get the material properties for a given primitive type
+    ///
+    /// This is used by ShaderGenerator and PipelineManager to determine
+    /// which shader variant to use.
+    pub fn get_properties(&self, primitive_type: PrimitiveType) -> MaterialProperties {
+        match primitive_type {
+            PrimitiveType::TriangleList => {
+                if self.face_texture.is_some() {
+                    MaterialProperties::face_texture()
+                } else {
+                    MaterialProperties::face_color()
+                }
+            },
+            PrimitiveType::LineList | PrimitiveType::PointList => {
+                MaterialProperties::unlit_color()
+            },
         }
     }
 
-    /// Binds this material's resources to the render pass at bind group 2.
-    pub fn bind(&self, pass: &mut wgpu::RenderPass) -> anyhow::Result<()> {
-        match self {
-            Self::FaceColor(material) => material.bind(pass),
-            Self::FaceTexture(material) => material.bind(pass),
-            Self::LineColor(material) => material.bind(pass),
-            Self::PointColor(material) => material.bind(pass),
-        }
+    /// Bind this material's resources for the given primitive type
+    pub fn bind(&self, pass: &mut wgpu::RenderPass, primitive_type: PrimitiveType) {
+        let bind_group = match primitive_type {
+            PrimitiveType::TriangleList => self.face_bind_group.as_ref()
+                .expect("Material missing face bind group"),
+            PrimitiveType::LineList => self.line_bind_group.as_ref()
+                .expect("Material missing line bind group"),
+            PrimitiveType::PointList => self.point_bind_group.as_ref()
+                .expect("Material missing point bind group"),
+        };
+
+        pass.set_bind_group(2, bind_group, &[]);
     }
 
-    /// Returns the type category of this material.
+    /// Returns the legacy MaterialType for backwards compatibility during migration
     pub fn material_type(&self) -> MaterialType {
-        match self {
-            Self::FaceColor(_) => MaterialType::FaceColor,
-            Self::FaceTexture(_) => MaterialType::FaceTexture,
-            Self::LineColor(_) => MaterialType::LineColor,
-            Self::PointColor(_) => MaterialType::PointColor,
+        // For backwards compatibility, report the face material type
+        if self.face_texture.is_some() {
+            MaterialType::FaceTexture
+        } else {
+            MaterialType::FaceColor
         }
+    }
+
+    /// Create a builder for constructing a unified Material
+    ///
+    /// Note: Use MaterialManager::create_material() instead to properly
+    /// register the material and assign it a unique ID.
+    pub fn builder() -> MaterialBuilder {
+        MaterialBuilder::new()
     }
 }
 
-
-/// Solid color material for rendering face primitives.
+/// Builder for creating unified Material instances
 ///
-/// Uses a uniform buffer to store the diffuse color and applies
-/// simple diffuse lighting in the fragment shader.
-pub struct FaceColorMaterial {
-    /// Unique identifier for this material
-    pub id: MaterialId,
-    /// Diffuse color (RGBA)
-    pub diffuse: RgbaColor,
-
-    buffer: wgpu::Buffer,
-    bind_group: wgpu::BindGroup
+/// Allows flexible construction of materials with optional rendering data
+/// for faces, lines, and points. GPU resources (buffers and bind groups)
+/// are created automatically based on which data is provided.
+///
+/// # Usage
+///
+/// Use MaterialManager::create_material() to create and register a material:
+/// ```ignore
+/// let id = material_manager.create_material(
+///     &device,
+///     Material::builder()
+///         .with_face_color(color)
+///         .with_line_color(line_color)
+/// );
+/// ```
+pub struct MaterialBuilder {
+    face_color: Option<RgbaColor>,
+    face_texture: Option<Texture>,
+    line_color: Option<RgbaColor>,
+    point_color: Option<RgbaColor>,
 }
 
-impl FaceColorMaterial {
-    fn new(
-        id: MaterialId,
-        device: &wgpu::Device,
-        bind_group_layout: &wgpu::BindGroupLayout,
-        diffuse: RgbaColor
-    ) -> Self {
-        let buffer = device.create_buffer_init(&BufferInitDescriptor {
-            label: Some("Face Color Material Buffer"),
-            contents: bytes_of(&diffuse),
-            usage: wgpu::BufferUsages::UNIFORM
-        });
-
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Face Color Material Bind Group"),
-            layout: bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: buffer.as_entire_binding()
-                }
-            ]
-        });
-
+impl MaterialBuilder {
+    /// Create a new MaterialBuilder
+    pub fn new() -> Self {
         Self {
-            id,
-            diffuse,
-            buffer,
-            bind_group
+            face_color: None,
+            face_texture: None,
+            line_color: None,
+            point_color: None,
         }
     }
 
-    fn bind(&self, pass: &mut wgpu::RenderPass) -> anyhow::Result<()> {
-        pass.set_bind_group(2, &self.bind_group, &[]);
-        Ok(())
-    }
-}
-
-
-/// Textured material for rendering face primitives.
-///
-/// Uses a 2D texture and sampler for the diffuse channel. The texture is sampled
-/// using the mesh's UV coordinates and modulated by diffuse lighting.
-pub struct FaceTextureMaterial {
-    /// Unique identifier for this material
-    pub id: MaterialId,
-    /// Diffuse texture
-    pub(crate) diffuse: Texture,
-
-    bind_group: wgpu::BindGroup
-}
-
-impl FaceTextureMaterial {
-    fn new_from_path(
-        id: MaterialId,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        bind_group_layout: &wgpu::BindGroupLayout,
-        path: &Path
-    ) -> anyhow::Result<Self> {
-        let image_bytes = std::fs::read(path)?;
-        let diffuse = Texture::from_bytes(device, queue, &image_bytes, "Face Texture Material Diffuse Texture")?;
-
-        Self::new_from_texture(id, device, bind_group_layout, diffuse)
+    /// Set the face color (for solid color face rendering)
+    ///
+    /// Note: face_color and face_texture are mutually exclusive.
+    /// If both are set, face_texture takes precedence.
+    pub fn with_face_color(mut self, color: RgbaColor) -> Self {
+        self.face_color = Some(color);
+        self
     }
 
-    fn new_from_texture(
+    /// Set the face texture (for textured face rendering)
+    ///
+    /// Note: face_color and face_texture are mutually exclusive.
+    /// If both are set, face_texture takes precedence.
+    pub fn with_face_texture(mut self, texture: Texture) -> Self {
+        self.face_texture = Some(texture);
+        self
+    }
+
+    /// Set the line color
+    pub fn with_line_color(mut self, color: RgbaColor) -> Self {
+        self.line_color = Some(color);
+        self
+    }
+
+    /// Set the point color
+    pub fn with_point_color(mut self, color: RgbaColor) -> Self {
+        self.point_color = Some(color);
+        self
+    }
+
+    /// Build the Material with the given ID, creating all necessary GPU resources
+    ///
+    /// This is an internal method. Use MaterialManager::create_material() instead.
+    ///
+    /// This creates uniform buffers and bind groups for each primitive type
+    /// that has data. It uses the BindGroupGenerator to ensure bind group
+    /// layouts match the shader expectations.
+    pub(crate) fn build(
+        self,
         id: MaterialId,
         device: &wgpu::Device,
-        bind_group_layout: &wgpu::BindGroupLayout,
-        texture: Texture,
-    ) -> anyhow::Result<Self> {
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Face Texture Material Bind Group"),
-            layout: bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
+        bind_group_generator: &mut crate::shaders::BindGroupGenerator,
+    ) -> Material {
+        let mut face_buffer = None;
+        let mut face_bind_group = None;
+        let mut line_buffer = None;
+        let mut line_bind_group = None;
+        let mut point_buffer = None;
+        let mut point_bind_group = None;
+
+        // Create face resources (either color or texture)
+        if self.face_texture.is_some() || self.face_color.is_some() {
+            if let Some(ref texture) = self.face_texture {
+                // Texture-based face rendering
+                let layout = bind_group_generator.get_or_generate_layout(
+                    device,
+                    &MaterialProperties::face_texture(),
+                );
+
+                face_bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Material Face Texture Bind Group"),
+                    layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&texture.view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(&texture.sampler),
+                        },
+                    ],
+                }));
+            } else if let Some(color) = self.face_color {
+                // Color-based face rendering
+                let buffer = device.create_buffer_init(&BufferInitDescriptor {
+                    label: Some("Material Face Color Buffer"),
+                    contents: bytes_of(&color),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+
+                let layout = bind_group_generator.get_or_generate_layout(
+                    device,
+                    &MaterialProperties::face_color(),
+                );
+
+                face_bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Material Face Color Bind Group"),
+                    layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: buffer.as_entire_binding(),
+                    }],
+                }));
+
+                face_buffer = Some(buffer);
+            }
+        }
+
+        // Create line resources
+        if let Some(color) = self.line_color {
+            let buffer = device.create_buffer_init(&BufferInitDescriptor {
+                label: Some("Material Line Color Buffer"),
+                contents: bytes_of(&color),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+
+            let layout = bind_group_generator.get_or_generate_layout(
+                device,
+                &MaterialProperties::unlit_color(),
+            );
+
+            line_bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Material Line Color Bind Group"),
+                layout,
+                entries: &[wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&texture.view)
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&texture.sampler)
-                }
-            ]
-        });
+                    resource: buffer.as_entire_binding(),
+                }],
+            }));
 
-        Ok(Self {
-            id,
-            diffuse: texture,
-            bind_group
-        })
-    }
+            line_buffer = Some(buffer);
+        }
 
-    fn bind(&self, pass: &mut wgpu::RenderPass) -> anyhow::Result<()> {
-        pass.set_bind_group(2, &self.bind_group, &[]);
-        Ok(())
-    }
-}
+        // Create point resources
+        if let Some(color) = self.point_color {
+            let buffer = device.create_buffer_init(&BufferInitDescriptor {
+                label: Some("Material Point Color Buffer"),
+                contents: bytes_of(&color),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
 
+            let layout = bind_group_generator.get_or_generate_layout(
+                device,
+                &MaterialProperties::unlit_color(),
+            );
 
-/// Solid color material for rendering line primitives.
-///
-/// Uses a uniform buffer to store the line color. Lines are rendered
-/// without lighting calculations.
-pub struct LineColorMaterial {
-    /// Unique identifier for this material
-    pub id: MaterialId,
-    /// Line color (RGBA)
-    pub color: RgbaColor,
-
-    buffer: wgpu::Buffer,
-    bind_group: wgpu::BindGroup
-}
-
-impl LineColorMaterial {
-    fn new(
-        id: MaterialId,
-        device: &wgpu::Device,
-        bind_group_layout: &wgpu::BindGroupLayout,
-        color: RgbaColor
-    ) -> Self {
-        let buffer = device.create_buffer_init(&BufferInitDescriptor {
-            label: Some("Line Color Material Buffer"),
-            contents: bytes_of(&color),
-            usage: wgpu::BufferUsages::UNIFORM
-        });
-
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Line Color Material Bind Group"),
-            layout: bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
+            point_bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Material Point Color Bind Group"),
+                layout,
+                entries: &[wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: buffer.as_entire_binding()
-                }
-            ]
-        });
+                    resource: buffer.as_entire_binding(),
+                }],
+            }));
 
-        Self {
+            point_buffer = Some(buffer);
+        }
+
+        Material {
             id,
-            color,
-            buffer,
-            bind_group
+            face_color: self.face_color,
+            face_texture: self.face_texture,
+            line_color: self.line_color,
+            point_color: self.point_color,
+            face_bind_group,
+            line_bind_group,
+            point_bind_group,
+            face_buffer,
+            line_buffer,
+            point_buffer,
         }
     }
-
-    fn bind(&self, pass: &mut wgpu::RenderPass) -> anyhow::Result<()> {
-        pass.set_bind_group(2, &self.bind_group, &[]);
-        Ok(())
-    }
 }
 
-
-/// Solid color material for rendering point primitives.
-///
-/// Uses a uniform buffer to store the point color. Points are rendered
-/// without lighting calculations.
-pub struct PointColorMaterial {
-    /// Unique identifier for this material
-    pub id: MaterialId,
-    /// Point color (RGBA)
-    pub color: RgbaColor,
-
-    buffer: wgpu::Buffer,
-    bind_group: wgpu::BindGroup
-}
-
-impl PointColorMaterial {
-    fn new(
-        id: MaterialId,
-        device: &wgpu::Device,
-        bind_group_layout: &wgpu::BindGroupLayout,
-        color: RgbaColor
-    ) -> Self {
-        let buffer = device.create_buffer_init(&BufferInitDescriptor {
-            label: Some("Point Color Material Buffer"),
-            contents: bytes_of(&color),
-            usage: wgpu::BufferUsages::UNIFORM
-        });
-
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Point Color Material Bind Group"),
-            layout: bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: buffer.as_entire_binding()
-                }
-            ]
-        });
-
-        Self {
-            id,
-            color,
-            buffer,
-            bind_group
-        }
-    }
-
-    fn bind(&self, pass: &mut wgpu::RenderPass) -> anyhow::Result<()> {
-        pass.set_bind_group(2, &self.bind_group, &[]);
-        Ok(())
+impl Default for MaterialBuilder {
+    fn default() -> Self {
+        Self::new()
     }
 }
-
-
 /// Manages material creation, storage, and GPU resource allocation.
 ///
 /// The MaterialManager maintains a registry of all materials and their associated
-/// GPU resources (buffers, textures, bind groups). It provides bind group layouts
-/// for both color and texture materials and ensures all materials have unique IDs.
+/// GPU resources (buffers, textures, bind groups). It uses a BindGroupGenerator
+/// to ensure bind group layouts stay synchronized with shader expectations.
 ///
 /// # Default Materials
 ///
@@ -443,191 +470,93 @@ pub struct MaterialManager {
     materials: HashMap<MaterialId, Material>,
     next_id: MaterialId,
 
-    /// Bind group layout for color-based materials (binding 0: uniform buffer)
-    pub(crate) color_bind_group_layout: wgpu::BindGroupLayout,
-    /// Bind group layout for texture materials (binding 0: texture, binding 1: sampler)
-    pub(crate) texture_bind_group_layout: wgpu::BindGroupLayout,
+    /// Bind group generator (derives layouts from MaterialProperties)
+    bind_group_generator: crate::shaders::BindGroupGenerator,
 }
 
 impl MaterialManager {
-    /// Creates a new MaterialManager with default materials and bind group layouts.
+    /// Creates a new MaterialManager with default materials.
     ///
-    /// This initializes the material registry with three default materials (Face, Line, Point)
-    /// and creates the required bind group layouts for color and texture materials.
+    /// This initializes the material registry with three default materials (IDs 0-2):
+    /// - Face (ID 0): Magenta color material for faces
+    /// - Line (ID 1): Black color material for lines
+    /// - Point (ID 2): Black color material for points
     pub(crate) fn new(device: &wgpu::Device) -> Self {
-        let mut materials = HashMap::new();
-        let next_id = 3; // 0-2 are default materials
+        let mut manager = Self {
+            materials: HashMap::new(),
+            next_id: 0,
+            bind_group_generator: crate::shaders::BindGroupGenerator::new(),
+        };
 
-        let color_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Color Layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None
-                    },
-                    count: None
-                }
-            ]
-        });
-
-        let texture_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            multisampled: false,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        // This should match the filterable field of the
-                        // corresponding Texture entry above.
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-                label: Some("texture_bind_group_layout"),
-            });
-
-        let default_face_color_material = FaceColorMaterial::new(
-            DefaultMaterial::Face as u32, device, &color_bind_group_layout, DEFAULT_FACE_COLOR
+        // Create default materials with fixed IDs (0, 1, 2)
+        // Default face material (ID 0, magenta for debugging)
+        let face_id = manager.create_material(
+            device,
+            Material::builder().with_face_color(DEFAULT_FACE_COLOR),
         );
-        let default_line_color_material = LineColorMaterial::new(
-            DefaultMaterial::Line as u32, device, &color_bind_group_layout, DEFAULT_LINE_COLOR
-        );
-        let default_point_color_material = PointColorMaterial::new(
-            DefaultMaterial::Point as u32, device, &color_bind_group_layout, DEFAULT_POINT_COLOR
-        );
-        materials.insert(DefaultMaterial::Face as u32, Material::FaceColor(default_face_color_material));
-        materials.insert(DefaultMaterial::Line as u32, Material::LineColor(default_line_color_material));
-        materials.insert(DefaultMaterial::Point as u32, Material::PointColor(default_point_color_material));
+        assert_eq!(face_id, DefaultMaterial::Face as u32);
 
-        Self {
-            materials,
-            next_id,
-            color_bind_group_layout,
-            texture_bind_group_layout,
-        }
+        // Default line material (ID 1, black)
+        let line_id = manager.create_material(
+            device,
+            Material::builder().with_line_color(DEFAULT_LINE_COLOR),
+        );
+        assert_eq!(line_id, DefaultMaterial::Line as u32);
+
+        // Default point material (ID 2, black)
+        let point_id = manager.create_material(
+            device,
+            Material::builder().with_point_color(DEFAULT_POINT_COLOR),
+        );
+        assert_eq!(point_id, DefaultMaterial::Point as u32);
+
+        manager
     }
 
-    /// Creates a new solid color material for face primitives.
+    /// Creates and registers a new material from a MaterialBuilder
+    ///
+    /// This is the primary way to create materials. It handles ID generation,
+    /// GPU resource creation, and material registration automatically.
     ///
     /// # Arguments
     /// * `device` - The WGPU device for creating GPU resources
-    /// * `color` - The diffuse color for the material
+    /// * `builder` - A MaterialBuilder configured with the desired material properties
     ///
     /// # Returns
     /// The unique MaterialId for the created material
-    pub(crate) fn create_face_color_material(&mut self, device: &wgpu::Device, color: RgbaColor) -> MaterialId {
-        let id = self.next_id;
-        self.next_id += 1;
-        let material = FaceColorMaterial::new(id, device, &self.color_bind_group_layout, color);
-        self.materials.insert(id, Material::FaceColor(material));
-        id
-    }
-
-    /// Creates a new solid color material for line primitives.
     ///
-    /// # Arguments
-    /// * `device` - The WGPU device for creating GPU resources
-    /// * `color` - The line color
-    ///
-    /// # Returns
-    /// The unique MaterialId for the created material
-    pub(crate) fn create_line_color_material(&mut self, device: &wgpu::Device, color: RgbaColor) -> MaterialId {
-        let id = self.next_id;
-        self.next_id += 1;
-        let material = LineColorMaterial::new(id, device, &self.color_bind_group_layout, color);
-        self.materials.insert(id, Material::LineColor(material));
-        id
-    }
-
-    /// Creates a new solid color material for point primitives.
-    ///
-    /// # Arguments
-    /// * `device` - The WGPU device for creating GPU resources
-    /// * `color` - The point color
-    ///
-    /// # Returns
-    /// The unique MaterialId for the created material
-    pub(crate) fn create_point_color_material(&mut self, device: &wgpu::Device, color: RgbaColor) -> MaterialId {
-        let id = self.next_id;
-        self.next_id += 1;
-        let material = PointColorMaterial::new(id, device, &self.color_bind_group_layout, color);
-        self.materials.insert(id, Material::PointColor(material));
-        id
-    }
-
-    /// Creates a new textured material for face primitives from an image file.
-    ///
-    /// Loads an image from the filesystem and creates a texture material. Supports
-    /// common image formats (PNG, JPEG, etc.) through the `image` crate.
-    ///
-    /// # Arguments
-    /// * `device` - The WGPU device for creating GPU resources
-    /// * `queue` - The WGPU queue for uploading texture data
-    /// * `diffuse_path` - Path to the diffuse texture image file
-    ///
-    /// # Returns
-    /// The unique MaterialId for the created material, or an error if loading fails
-    pub(crate) fn create_face_texture_material_from_path<P: AsRef<Path>>(
+    /// # Example
+    /// ```ignore
+    /// let id = material_manager.create_material(
+    ///     &device,
+    ///     Material::builder()
+    ///         .with_face_color(RgbaColor::RED)
+    ///         .with_line_color(RgbaColor::BLACK)
+    /// );
+    /// ```
+    pub(crate) fn create_material(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        diffuse_path: P
-    ) -> anyhow::Result<MaterialId> {
+        builder: MaterialBuilder,
+    ) -> MaterialId {
         let id = self.next_id;
         self.next_id += 1;
 
-        let material = FaceTextureMaterial::new_from_path(
-            id,
-            device,
-            queue,
-            &self.texture_bind_group_layout,
-            diffuse_path.as_ref()
-        )?;
-
-        self.materials.insert(id, Material::FaceTexture(material));
-
-        Ok(id)
+        let material = builder.build(id, device, &mut self.bind_group_generator);
+        self.materials.insert(id, material);
+        id
     }
 
-    /// Creates a new textured material for face primitives from an existing texture.
+    /// Gets a bind group layout for the given material properties
     ///
-    /// # Arguments
-    /// * `device` - The WGPU device for creating GPU resources
-    /// * `texture` - Pre-loaded texture to use as the diffuse map
-    ///
-    /// # Returns
-    /// The unique MaterialId for the created material, or an error if creation fails
-    pub(crate) fn create_face_texture_material(
+    /// This is useful for creating pipelines with the correct bind group layouts.
+    /// The layout is cached internally by the BindGroupGenerator.
+    pub(crate) fn get_bind_group_layout(
         &mut self,
         device: &wgpu::Device,
-        texture: crate::texture::Texture,
-    ) -> anyhow::Result<MaterialId> {
-        let id = self.next_id;
-        self.next_id += 1;
-
-        let material = FaceTextureMaterial::new_from_texture(
-            id,
-            device,
-            &self.texture_bind_group_layout,
-            texture,
-        )?;
-
-        self.materials.insert(id, Material::FaceTexture(material));
-
-        Ok(id)
+        properties: &MaterialProperties,
+    ) -> &wgpu::BindGroupLayout {
+        self.bind_group_generator.get_or_generate_layout(device, properties)
     }
 
     /// Retrieves a material by its ID.
@@ -641,7 +570,7 @@ impl MaterialManager {
         self.materials.get(&id)
     }
 
-    /// Binds a material's resources to a render pass.
+    /// Binds a material's resources to a render pass for a specific primitive type.
     ///
     /// This sets the material's bind group at slot 2 in the render pass,
     /// making the material's uniforms and textures available to the shaders.
@@ -649,14 +578,11 @@ impl MaterialManager {
     /// # Arguments
     /// * `id` - The MaterialId to bind
     /// * `pass` - The render pass to bind to
-    ///
-    /// # Returns
-    /// Ok(()) on success, or an error if the material doesn't exist
-    pub(crate) fn bind(&self, id: MaterialId, pass: &mut wgpu::RenderPass) -> anyhow::Result<()> {
+    /// * `primitive_type` - The primitive type being rendered (TriangleList, LineList, or PointList)
+    pub(crate) fn bind(&self, id: MaterialId, pass: &mut wgpu::RenderPass, primitive_type: PrimitiveType) {
         let material = self.materials
             .get(&id)
-            .ok_or_else(|| anyhow::anyhow!("Attempt to bind non-existent material"))?;
-        material.bind(pass)?;
-        Ok(())
+            .expect("Attempt to bind non-existent material");
+        material.bind(pass, primitive_type);
     }
 }

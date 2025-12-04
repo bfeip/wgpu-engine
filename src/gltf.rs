@@ -172,8 +172,11 @@ fn load_material(
         // Create texture from image data
         let texture = Texture::from_image(device, queue, &dynamic_image, Some("gltf_texture"))?;
 
-        // Create TextureMaterial
-        let mat_id = material_manager.create_face_texture_material(device, texture)?;
+        // Create unified Material with face texture
+        let mat_id = material_manager.create_material(
+            device,
+            crate::material::Material::builder().with_face_texture(texture),
+        );
         Ok(mat_id)
     } else {
         // No texture, use base color factor as ColorMaterial
@@ -185,7 +188,12 @@ fn load_material(
             a: base_color[3],
         };
 
-        Ok(material_manager.create_face_color_material(device, color))
+        // Create unified Material with face color
+        let mat_id = material_manager.create_material(
+            device,
+            crate::material::Material::builder().with_face_color(color),
+        );
+        Ok(mat_id)
     }
 }
 

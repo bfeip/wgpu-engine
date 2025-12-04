@@ -14,6 +14,7 @@ use crate::{
     light::LightUniform,
     material::{
         MaterialManager,
+        MaterialProperties,
         MaterialType
     },
     scene::Scene,
@@ -138,7 +139,7 @@ impl<'a> DrawState<'a> {
 
         surface.configure(&device, &config);
 
-        let material_manager = MaterialManager::new(&device);
+        let mut material_manager = MaterialManager::new(&device);
         let shader_generator = ShaderGenerator::new();
 
         let camera = Camera {
@@ -223,25 +224,39 @@ impl<'a> DrawState<'a> {
             label: Some("Light bind group")
         });
 
-        let color_material_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Color Material Pipeline Layout"),
-            bind_group_layouts: &[
-                &camera_bind_group_layout,
-                &light_bind_group_layout,
-                &material_manager.color_bind_group_layout
-            ],
-            push_constant_ranges: &[],
-        });
+        // Get bind group layout for color materials and create pipeline layout
+        let color_material_pipeline_layout = {
+            let color_bind_group_layout = material_manager.get_bind_group_layout(
+                &device,
+                &MaterialProperties::face_color()
+            );
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Color Material Pipeline Layout"),
+                bind_group_layouts: &[
+                    &camera_bind_group_layout,
+                    &light_bind_group_layout,
+                    color_bind_group_layout
+                ],
+                push_constant_ranges: &[],
+            })
+        };
 
-        let texture_material_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Texture Material Pipeline Layout"),
-            bind_group_layouts: &[
-                &camera_bind_group_layout,
-                &light_bind_group_layout,
-                &material_manager.texture_bind_group_layout
-            ],
-            push_constant_ranges: &[]
-        });
+        // Get bind group layout for texture materials and create pipeline layout
+        let texture_material_pipeline_layout = {
+            let texture_bind_group_layout = material_manager.get_bind_group_layout(
+                &device,
+                &MaterialProperties::face_texture()
+            );
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Texture Material Pipeline Layout"),
+                bind_group_layouts: &[
+                    &camera_bind_group_layout,
+                    &light_bind_group_layout,
+                    texture_bind_group_layout
+                ],
+                push_constant_ranges: &[]
+            })
+        };
 
         let depth_texture = texture::Texture::create_depth_texture(&device, &config, "depth_texture");
 
@@ -428,8 +443,8 @@ impl<'a> DrawState<'a> {
                 let mesh = scene.meshes.get(&batch.mesh_id).unwrap();
                 let batch_material_type = {
                     let material = self.material_manager.get(batch.material_id).unwrap();
-                    // Bind material for this batch
-                    material.bind(&mut render_pass)?;
+                    // Bind material for this batch with the appropriate primitive type
+                    material.bind(&mut render_pass, batch.primitive_type);
                     material.material_type()
                 };
 
