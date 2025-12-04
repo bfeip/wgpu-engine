@@ -80,3 +80,19 @@ behavior.
 ### Step 5
 I want to finish off with bounding computations. We will compute boundings with a tree
 walker and by examining the geometry, probably.
+
+## Material and shaders re-work
+I want to change how shaders work, and by extension, materials. Previously shaders were
+composed of a set of pre-written fragments. This was done to add configurability and
+re-useable code to WGSL. By default WGSL does not have the features required for
+conditional compilation, and importing other shader code. I'd like to switch to WESL
+(Community Extended WGSL) which has the features that WGSL lacks. This will allow
+us to use imports and conditional compilation to write more dynamic shaders at runtime.
+
+### Impl details
+- We'll probably remove the various material types in favor of one material type to
+cover all use cases, including faces, lines, and points.
+- Shaders can be generated for the material: one for faces, lines, and points probably
+- Bind groups and layouts can be generated for each type of material
+- Since the generative possibilities will expand rapidly, we may want to cache
+as much as possible
