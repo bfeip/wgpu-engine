@@ -4,6 +4,14 @@ version = "0.1.0"
 edition = "2024"
 
 
+[profile.small]
+inherits = "release"
+opt-level = "s"
+strip = true
+lto = true
+codegen-units = 1
+
+
 [lib]
 name = "wgpu_engine"
 crate-type = ["cdylib", "rlib"]

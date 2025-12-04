@@ -17,7 +17,7 @@ use crate::{
         MaterialType
     },
     scene::Scene,
-    shaders::ShaderBuilder,
+    shaders::ShaderGenerator,
     texture,
     common::PhysicalSize
 };
@@ -47,7 +47,7 @@ pub(crate) struct DrawState<'a> {
     pub cursor_position: Option<(f32, f32)>,
 
     pub material_manager: MaterialManager,
-    shader_builder: ShaderBuilder,
+    shader_generator: ShaderGenerator,
 
     color_material_pipeline_layout: wgpu::PipelineLayout,
     texture_material_pipeline_layout: wgpu::PipelineLayout,
@@ -139,7 +139,7 @@ impl<'a> DrawState<'a> {
         surface.configure(&device, &config);
 
         let material_manager = MaterialManager::new(&device);
-        let shader_builder = ShaderBuilder::new();
+        let shader_generator = ShaderGenerator::new();
 
         let camera = Camera {
             eye: (0.0, 0.1, 0.2).into(),
@@ -254,7 +254,7 @@ impl<'a> DrawState<'a> {
             camera,
             cursor_position: None,
             material_manager,
-            shader_builder,
+            shader_generator,
             color_material_pipeline_layout,
             texture_material_pipeline_layout,
             camera_buffer,
@@ -271,22 +271,26 @@ impl<'a> DrawState<'a> {
             let (pipeline_layout, shader, topology) = match material_type {
                 MaterialType::FaceColor => {
                     let layout = &self.color_material_pipeline_layout;
-                    let shader = self.shader_builder.generate_shader(&self.device, material_type);
+                    let shader = self.shader_generator.generate_shader(&self.device, material_type)
+                        .expect("Failed to generate shader for FaceColor material");
                     (layout, shader, wgpu::PrimitiveTopology::TriangleList)
                 },
                 MaterialType::FaceTexture => {
                     let layout = &self.texture_material_pipeline_layout;
-                    let shader = self.shader_builder.generate_shader(&self.device, material_type);
+                    let shader = self.shader_generator.generate_shader(&self.device, material_type)
+                        .expect("Failed to generate shader for FaceTexture material");
                     (layout, shader, wgpu::PrimitiveTopology::TriangleList)
                 },
                 MaterialType::LineColor => {
                     let layout = &self.color_material_pipeline_layout;
-                    let shader = self.shader_builder.generate_shader(&self.device, material_type);
+                    let shader = self.shader_generator.generate_shader(&self.device, material_type)
+                        .expect("Failed to generate shader for LineColor material");
                     (layout, shader, wgpu::PrimitiveTopology::LineList)
                 },
                 MaterialType::PointColor => {
                     let layout = &self.color_material_pipeline_layout;
-                    let shader = self.shader_builder.generate_shader(&self.device, material_type);
+                    let shader = self.shader_generator.generate_shader(&self.device, material_type)
+                        .expect("Failed to generate shader for PointColor material");
                     (layout, shader, wgpu::PrimitiveTopology::PointList)
                 },
             };
