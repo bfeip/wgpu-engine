@@ -54,9 +54,8 @@ bitflags! {
 
 /// Material properties that determine shader generation and rendering behavior
 ///
-/// This is the single source of truth that drives:
+/// This drives:
 /// - Shader generation (ShaderGenerator uses these for conditional compilation)
-/// - Bind group layout generation (BindGroupGenerator creates layouts from these)
 /// - Pipeline creation (different properties = different pipelines)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MaterialProperties {
@@ -98,13 +97,8 @@ pub type MaterialId = u32;
 
 /// Unified material that can be rendered as faces, lines, or points
 ///
-/// A single Material instance contains rendering data for all primitive types:
-/// - Faces: Can use either a color or texture (with lighting)
-/// - Lines: Uses a solid color (no lighting)
-/// - Points: Uses a solid color (no lighting)
-///
 /// At draw time, the appropriate data is bound based on the mesh's primitive type.
-pub struct Material {
+pub(crate) struct Material {
     /// Unique identifier for this material
     pub id: MaterialId,
 
@@ -193,7 +187,7 @@ impl Material {
 ///         .with_line_color(line_color)
 /// );
 /// ```
-pub struct MaterialBuilder {
+pub(crate) struct MaterialBuilder {
     face_color: Option<RgbaColor>,
     face_texture: Option<Texture>,
     line_color: Option<RgbaColor>,
@@ -248,7 +242,7 @@ impl MaterialBuilder {
     /// This creates uniform buffers and bind groups for each primitive type
     /// that has data. The returned Material has id=0; the MaterialManager
     /// assigns the actual ID after building.
-    pub(crate) fn build(
+    pub fn build(
         self,
         device: &wgpu::Device,
         color_bind_group_layout: &wgpu::BindGroupLayout,
@@ -389,7 +383,7 @@ impl MaterialManager {
     /// - Face (ID 0): Magenta color material for faces
     /// - Line (ID 1): Black color material for lines
     /// - Point (ID 2): Black color material for points
-    pub(crate) fn new(device: &wgpu::Device) -> Self {
+    pub fn new(device: &wgpu::Device) -> Self {
         // Create bind group layout for color materials (uniform buffer)
         let color_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Color Material Bind Group Layout"),
@@ -506,7 +500,7 @@ impl MaterialManager {
     ///
     /// # Returns
     /// A reference to the Material if found, None otherwise
-    pub fn get(&self, id: MaterialId) -> Option<&Material> {
+    pub(crate) fn get(&self, id: MaterialId) -> Option<&Material> {
         self.materials.get(&id)
     }
 
