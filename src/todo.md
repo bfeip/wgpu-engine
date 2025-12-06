@@ -9,8 +9,6 @@
 - Ensure scene walkers are optimal
     - Ray selection uses transform and bounding walks. Combine.
 - Fix navigation operator to use bounding for sensitivity
-- Add fit camera to bounding
-- Camera from glTF
 
 - Split mesh into DrawMesh and Mesh for API reasons
 - Split materials into DrawMaterials and Materials for API reasons
