@@ -325,6 +325,25 @@ impl Scene {
         world_transform
     }
 
+    /// Gets the world-space bounding box of the entire scene.
+    ///
+    /// Computes bounds by merging the bounds of all root nodes and their subtrees.
+    /// Returns None if the scene has no geometry.
+    pub fn bounding(&self) -> Option<Aabb> {
+        let mut merged_bounds: Option<Aabb> = None;
+
+        for &root_id in &self.root_nodes {
+            if let Some(root_bounds) = self.nodes_bounding(root_id) {
+                merged_bounds = match merged_bounds {
+                    Some(existing) => Some(existing.merge(&root_bounds)),
+                    None => Some(root_bounds),
+                };
+            }
+        }
+
+        merged_bounds
+    }
+
     /// Gets the world-space bounding box of a node and its subtree.
     ///
     /// This returns the cached bounds if valid, otherwise recursively computes

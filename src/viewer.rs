@@ -24,13 +24,24 @@ impl<'a> Viewer<'a> {
         let mut state = DrawState::new(surface_target, width, height).await;
 
         // Load default scene (TODO: make this configurable)
-        let mut scene = crate::gltf::load_gltf_scene(
+        let aspect = width as f32 / height as f32;
+        let load_result = crate::gltf::load_gltf_scene(
             "/home/zachary/src/glTF-Sample-Models/2.0/FlightHelmet/glTF/FlightHelmet.gltf",
             &state.device,
             &state.queue,
             &mut state.material_manager,
+            aspect,
         )
         .unwrap();
+
+        let mut scene = load_result.scene;
+
+        // Use camera from glTF if available, otherwise fit camera to scene bounds
+        if let Some(camera) = load_result.camera {
+            state.camera = camera;
+        } else if let Some(bounds) = scene.bounding() {
+            state.camera.fit_to_bounds(&bounds);
+        }
 
         // Set up default lighting
         scene.lights = vec![crate::light::Light::new(

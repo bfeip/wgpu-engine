@@ -49,6 +49,55 @@ impl Camera {
         return ret;
     }
 
+    /// Adjusts the camera to fit a bounding box in view.
+    ///
+    /// Positions the camera so the entire bounding box is visible while maintaining
+    /// the current view direction (from eye towards target). The camera is moved
+    /// along this direction to ensure the bounds fit within the field of view.
+    ///
+    /// # Arguments
+    /// * `bounds` - The axis-aligned bounding box to fit in view
+    pub fn fit_to_bounds(&mut self, bounds: &crate::common::Aabb) {
+        use cgmath::{InnerSpace, MetricSpace};
+
+        let center = bounds.center();
+        let (size_x, size_y, size_z) = bounds.size();
+
+        // Compute the bounding sphere radius (half the diagonal of the AABB)
+        let bounding_radius = (size_x * size_x + size_y * size_y + size_z * size_z).sqrt() / 2.0;
+
+        // Calculate the distance needed to fit the bounding sphere in view
+        // Using the vertical field of view and accounting for aspect ratio
+        let half_fov_rad = (self.fovy / 2.0).to_radians();
+
+        // Calculate distance for vertical fit
+        let vertical_distance = bounding_radius / half_fov_rad.sin();
+
+        // Calculate distance for horizontal fit (accounting for aspect ratio)
+        let half_hfov_rad = (half_fov_rad.tan() * self.aspect).atan();
+        let horizontal_distance = bounding_radius / half_hfov_rad.sin();
+
+        // Use the larger distance to ensure the object fits in both dimensions
+        let distance = vertical_distance.max(horizontal_distance);
+
+        // Get current view direction (or default to -Z if eye == target)
+        let view_dir = if self.eye.distance(self.target) < 1e-6 {
+            cgmath::Vector3::new(0.0, 0.0, -1.0)
+        } else {
+            (self.target - self.eye).normalize()
+        };
+
+        // Position camera at the calculated distance from the center
+        self.target = center;
+        self.eye = center - view_dir * distance;
+
+        // Adjust near/far planes to encompass the scene
+        // Near plane: at least 1/1000th of the distance, but not less than 0.001
+        // Far plane: at least twice the distance plus the bounding radius
+        self.znear = (distance * 0.001).max(0.001);
+        self.zfar = (distance + bounding_radius) * 2.0;
+    }
+
     /// Projects a 3D world-space point to normalized device coordinates (NDC).
     ///
     /// # Arguments

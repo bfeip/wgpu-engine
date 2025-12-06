@@ -1,5 +1,13 @@
 use std::path::Path;
-use crate::{material::DefaultMaterial, scene::{MeshPrimitive, PrimitiveType, Vertex}};
+use crate::{camera::Camera, material::DefaultMaterial, scene::{MeshPrimitive, PrimitiveType, Vertex}};
+
+/// Result of loading a glTF scene, containing the scene and optional camera.
+pub struct GltfLoadResult {
+    /// The loaded scene with meshes, materials, and scene tree
+    pub scene: crate::scene::Scene,
+    /// Camera from the glTF file, if one was defined
+    pub camera: Option<Camera>,
+}
 
 /// Loads vertex data from a glTF primitive.
 ///
@@ -197,41 +205,140 @@ fn load_material(
     }
 }
 
+/// Converts a glTF transform to a 4x4 matrix.
+fn transform_to_matrix(transform: &gltf::scene::Transform) -> cgmath::Matrix4<f32> {
+    cgmath::Matrix4::from(transform.clone().matrix())
+}
+
 /// Decomposes a glTF transform into position, rotation, and scale.
 fn decompose_transform(transform: &gltf::scene::Transform) -> (cgmath::Point3<f32>, cgmath::Quaternion<f32>, cgmath::Vector3<f32>) {
-    use cgmath::{Matrix4, Point3, Quaternion, Vector3};
+    crate::common::decompose_matrix(&transform_to_matrix(transform))
+}
 
-    match transform {
-        gltf::scene::Transform::Matrix { matrix } => {
-            // glTF uses column-major order, same as cgmath
-            let cgmath_matrix = Matrix4::from(*matrix);
-            // Use the decompose_matrix function from common.rs
-            crate::common::decompose_matrix(&cgmath_matrix)
+/// Extracts camera data from a glTF camera node.
+///
+/// Returns a Camera with the appropriate parameters if the node contains a camera.
+fn extract_camera_from_node(
+    gltf_node: &gltf::Node,
+    world_transform: cgmath::Matrix4<f32>,
+    aspect: f32,
+) -> Option<Camera> {
+    use cgmath::{InnerSpace, Point3, Vector3};
+
+    let gltf_camera = gltf_node.camera()?;
+
+    // Extract camera position from world transform (translation column)
+    let eye = Point3::new(
+        world_transform[3][0],
+        world_transform[3][1],
+        world_transform[3][2],
+    );
+
+    // Extract forward direction from world transform
+    // In glTF, cameras look down -Z in their local space
+    // The third column of the rotation matrix gives us the local Z axis
+    let local_z = Vector3::new(
+        world_transform[2][0],
+        world_transform[2][1],
+        world_transform[2][2],
+    ).normalize();
+
+    // Camera looks down -Z, so forward is -local_z
+    let forward = -local_z;
+
+    // Extract up direction from world transform (Y axis)
+    let up = Vector3::new(
+        world_transform[1][0],
+        world_transform[1][1],
+        world_transform[1][2],
+    ).normalize();
+
+    // Target is some distance in front of the camera
+    let target = eye + forward;
+
+    match gltf_camera.projection() {
+        gltf::camera::Projection::Perspective(persp) => {
+            // glTF perspective uses yfov in radians
+            let fovy = persp.yfov().to_degrees();
+            let znear = persp.znear();
+            // glTF may not specify zfar (infinite projection)
+            let zfar = persp.zfar().unwrap_or(1000.0);
+
+            Some(Camera {
+                eye,
+                target,
+                up,
+                aspect,
+                fovy,
+                znear,
+                zfar,
+            })
         }
-        gltf::scene::Transform::Decomposed {
-            translation,
-            rotation,
-            scale,
-        } => {
-            let pos = Point3::from(*translation);
-            let rot = Quaternion::new(rotation[3], rotation[0], rotation[1], rotation[2]); // glTF: [x,y,z,w], cgmath: w,x,y,z
-            let scl = Vector3::from(*scale);
-            (pos, rot, scl)
+        gltf::camera::Projection::Orthographic(_ortho) => {
+            // We don't support orthographic cameras yet, but we can still create
+            // a perspective camera at the same position as a fallback
+            log::warn!("Orthographic camera found but not supported, using perspective fallback");
+            Some(Camera {
+                eye,
+                target,
+                up,
+                aspect,
+                fovy: 45.0,
+                znear: 0.1,
+                zfar: 1000.0,
+            })
         }
     }
+}
+
+/// Recursively searches for a camera in the glTF scene tree.
+///
+/// Returns the first camera found along with its world transform.
+fn find_camera_recursive(
+    gltf_node: &gltf::Node,
+    parent_transform: cgmath::Matrix4<f32>,
+    aspect: f32,
+) -> Option<Camera> {
+    let local_transform = transform_to_matrix(&gltf_node.transform());
+    let world_transform = parent_transform * local_transform;
+
+    // Check if this node has a camera
+    if let Some(camera) = extract_camera_from_node(gltf_node, world_transform, aspect) {
+        return Some(camera);
+    }
+
+    // Recurse into children
+    for child in gltf_node.children() {
+        if let Some(camera) = find_camera_recursive(&child, world_transform, aspect) {
+            return Some(camera);
+        }
+    }
+
+    None
 }
 
 /// Loads a glTF scene from a file.
 ///
 /// This is the main entry point for loading glTF files into the engine.
+/// Returns a `GltfLoadResult` containing the scene and an optional camera
+/// if one was defined in the glTF file.
+///
+/// # Arguments
+/// * `path` - Path to the glTF file
+/// * `device` - WGPU device for creating GPU resources
+/// * `queue` - WGPU queue for uploading data
+/// * `material_manager` - Material manager for creating materials
+/// * `aspect` - Aspect ratio to use for the camera (if found)
 pub fn load_gltf_scene<P: AsRef<Path>>(
     path: P,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     material_manager: &mut crate::material::MaterialManager,
-) -> anyhow::Result<crate::scene::Scene> {
+    aspect: f32,
+) -> anyhow::Result<GltfLoadResult> {
     use crate::scene::{MeshDescriptor, Scene};
     use std::collections::HashMap;
+    use cgmath::SquareMatrix;
 
     let (document, buffers, images) = gltf::import(path)?;
 
@@ -296,6 +403,9 @@ pub fn load_gltf_scene<P: AsRef<Path>>(
         mesh_map.push(primitives_data);
     }
 
+    // Search for a camera in the scene
+    let mut camera: Option<Camera> = None;
+
     // Load the scene hierarchy
     if let Some(gltf_scene) = document.default_scene().or_else(|| document.scenes().next()) {
         // Map from glTF node index to our NodeId
@@ -304,10 +414,19 @@ pub fn load_gltf_scene<P: AsRef<Path>>(
         // Process all root nodes
         for gltf_node in gltf_scene.nodes() {
             load_node_recursive(&gltf_node, None, &mut scene, &mesh_map, &mut node_map);
+
+            // Search for camera if we haven't found one yet
+            if camera.is_none() {
+                camera = find_camera_recursive(
+                    &gltf_node,
+                    cgmath::Matrix4::identity(),
+                    aspect,
+                );
+            }
         }
     }
 
-    Ok(scene)
+    Ok(GltfLoadResult { scene, camera })
 }
 
 /// Recursively loads a glTF node and its children.
