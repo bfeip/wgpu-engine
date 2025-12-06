@@ -368,12 +368,14 @@ impl<'a> DrawState<'a> {
         scene: &Scene,
     ) -> anyhow::Result<()> {
         // Update camera uniform
+        // TODO: only when needed
         let camera_uniform_slice = &[self.camera.to_uniform()];
         let camera_buffer_contents: &[u8] = bytemuck::cast_slice(camera_uniform_slice);
         self.queue
             .write_buffer(&self.camera_buffer, 0, camera_buffer_contents);
 
         // Update light uniform
+        // TODO: only when needed
         let light_uniform_slice = &[scene.lights[0].to_uniform()];
         let light_buffer_contents: &[u8] = bytemuck::cast_slice(light_uniform_slice);
         self.queue

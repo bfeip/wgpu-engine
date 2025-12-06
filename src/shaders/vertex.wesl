@@ -5,7 +5,7 @@ import package::common::{VertexInput, InstanceInput, VertexOutput};
 import package::camera::camera;
 import package::lighting::lights;
 
-// Standard vertex transformation (not an entry point)
+// Standard vertex transformation
 fn vertex_standard(
     model: VertexInput,
     instance: InstanceInput

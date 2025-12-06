@@ -7,7 +7,6 @@ import package::common::LightsUniform;
 @group(GROUP_LIGHTS) @binding(BINDING_LIGHTS_UNIFORM)
 var<uniform> lights: LightsUniform;
 
-// Calculate diffuse lighting
 fn calculate_diffuse_lighting(
     world_position: vec3<f32>,
     world_normal: vec3<f32>

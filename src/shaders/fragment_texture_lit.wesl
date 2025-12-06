@@ -5,7 +5,7 @@ import package::common::VertexOutput;
 import package::material_texture::{t_diffuse, s_diffuse};
 import package::lighting::{lights, calculate_diffuse_lighting};
 
-// Fragment shader with texture and lighting (not an entry point)
+// Fragment shader with texture and lighting
 fn fragment_texture_lit(in: VertexOutput) -> vec4<f32> {
     let object_color = textureSample(t_diffuse, s_diffuse, in.tex_coords);
     let diffuse_color = calculate_diffuse_lighting(in.world_position, in.world_normal);
