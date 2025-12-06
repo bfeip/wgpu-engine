@@ -1,75 +1,69 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use wgpu::ShaderModuleDescriptor;
+use wesl::{Wesl, ModulePath, StandardResolver};
 
-use crate::material::MaterialType;
+use crate::material::MaterialProperties;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-enum ShaderFragment {
-    Common,
-    Vertex,
-    FaceColorFragment,
-    FaceTextureFragment,
-    LineColorFragment,
-    PointColorFragment,
+/// Shader generator using WESL compiler to create modular shaders
+pub(crate) struct ShaderGenerator {
+    /// WESL compiler instance
+    compiler: Wesl<StandardResolver>,
+    /// Cache of compiled shader modules (MaterialProperties → ShaderModule)
+    module_cache: HashMap<MaterialProperties, wgpu::ShaderModule>,
 }
 
-pub(crate) struct ShaderBuilder {
-    fragments: HashMap<ShaderFragment, &'static str>
-}
-
-impl ShaderBuilder {
+impl ShaderGenerator {
+    /// Create a new ShaderGenerator
+    ///
+    /// This initializes the WESL compiler pointing to the shaders directory
     pub fn new() -> Self {
-        let mut fragments = HashMap::with_capacity(6);
-        fragments.insert(ShaderFragment::Common, include_str!("shaders/common.wgsl"));
-        fragments.insert(ShaderFragment::Vertex, include_str!("shaders/vertex.wgsl"));
-        fragments.insert(ShaderFragment::FaceColorFragment, include_str!("shaders/face_color_fragment.wgsl"));
-        fragments.insert(ShaderFragment::FaceTextureFragment, include_str!("shaders/face_texture_fragment.wgsl"));
-        fragments.insert(ShaderFragment::LineColorFragment, include_str!("shaders/line_color_fragment.wgsl"));
-        fragments.insert(ShaderFragment::PointColorFragment, include_str!("shaders/point_color_fragment.wgsl"));
+        // Get the shader directory path relative to the source root
+        let shader_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/shaders");
+
+        // Initialize WESL compiler with StandardResolver
+        let compiler = Wesl::new(&shader_dir);
+
         Self {
-            fragments
+            compiler,
+            module_cache: HashMap::new(),
         }
     }
 
-    pub fn generate_shader(&self, device: &wgpu::Device, material_type: MaterialType) -> wgpu::ShaderModule {
-        let shader_preamble = self.fragments[&ShaderFragment::Common].chars().chain(
-            self.fragments[&ShaderFragment::Vertex].chars()
-        );
+    /// Generate a shader module for the given material properties
+    pub fn generate_shader(&mut self, device: &wgpu::Device, properties: &MaterialProperties) -> anyhow::Result<wgpu::ShaderModule> {
+        // Check cache first
+        if let Some(cached) = self.module_cache.get(properties) {
+            return Ok(cached.clone());
+        }
 
-        let shader_source_string: String = match material_type {
-            MaterialType::FaceColor => {
-                shader_preamble.chain(
-                    self.fragments[&ShaderFragment::FaceColorFragment].chars()
-                ).collect()
-            },
-            MaterialType::FaceTexture => {
-                shader_preamble.chain(
-                    self.fragments[&ShaderFragment::FaceTextureFragment].chars()
-                ).collect()
-            },
-            MaterialType::LineColor => {
-                shader_preamble.chain(
-                    self.fragments[&ShaderFragment::LineColorFragment].chars()
-                ).collect()
-            },
-            MaterialType::PointColor => {
-                shader_preamble.chain(
-                    self.fragments[&ShaderFragment::PointColorFragment].chars()
-                ).collect()
-            },
+        // Build feature map for WESL conditional compilation
+        let features = [
+            ("has_texture", properties.has_texture),
+            ("has_lighting", properties.has_lighting),
+        ];
+
+        // Set features and compile the main module
+        let path: ModulePath = "package::main".parse()?;
+        self.compiler.set_features(features);
+        let result = self.compiler.compile(&path)?;
+        let wgsl = result.to_string();
+
+        let shader_label = match (properties.has_texture, properties.has_lighting) {
+            (true, true) => "Lit Texture Material Shader",
+            (true, false) => "Unlit Texture Material Shader",
+            (false, true) => "Lit Color Material Shader",
+            (false, false) => "Unlit Color Material Shader",
         };
 
-        let shader_label: &str = match material_type {
-            MaterialType::FaceColor => "Face Color Material Shader",
-            MaterialType::FaceTexture => "Face Texture Material Shader",
-            MaterialType::LineColor => "Line Color Material Shader",
-            MaterialType::PointColor => "Point Color Material Shader",
-        };
-
-        device.create_shader_module(ShaderModuleDescriptor {
+        let module = device.create_shader_module(ShaderModuleDescriptor {
             label: Some(shader_label),
-            source: wgpu::ShaderSource::Wgsl(shader_source_string.into())
-        })
+            source: wgpu::ShaderSource::Wgsl(wgsl.into())
+        });
+
+        // Cache and return
+        self.module_cache.insert(properties.clone(), module.clone());
+        Ok(module)
     }
 }

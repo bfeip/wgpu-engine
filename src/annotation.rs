@@ -139,7 +139,10 @@ impl AnnotationManager {
         )?;
 
         // Create or get material
-        let material_id = material_manager.create_line_color_material(device, color);
+        let material_id = material_manager.create_material(
+            device,
+            crate::material::Material::builder().with_line_color(color),
+        );
 
         // Create node
         let node_id = scene.add_instance_node(
@@ -174,9 +177,11 @@ impl AnnotationManager {
         let parent_node_id = scene.add_default_node(Some(self.root_node_id));
 
         // Create X axis (red)
-        let x_mat = material_manager.create_line_color_material(
+        let x_mat = material_manager.create_material(
             device,
-            RgbaColor { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }
+            crate::material::Material::builder().with_line_color(
+                RgbaColor { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }
+            ),
         );
         let x_start = origin;
         let x_end = origin + Vector3::new(size, 0.0, 0.0);
@@ -211,9 +216,11 @@ impl AnnotationManager {
         );
 
         // Create Y axis (green)
-        let y_mat = material_manager.create_line_color_material(
+        let y_mat = material_manager.create_material(
             device,
-            RgbaColor { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }
+            crate::material::Material::builder().with_line_color(
+                RgbaColor { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }
+            ),
         );
         let y_start = origin;
         let y_end = origin + Vector3::new(0.0, size, 0.0);
@@ -248,9 +255,11 @@ impl AnnotationManager {
         );
 
         // Create Z axis (blue)
-        let z_mat = material_manager.create_line_color_material(
+        let z_mat = material_manager.create_material(
             device,
-            RgbaColor { r: 0.0, g: 0.0, b: 1.0, a: 1.0 }
+            crate::material::Material::builder().with_line_color(
+                RgbaColor { r: 0.0, g: 0.0, b: 1.0, a: 1.0 }
+            ),
         );
         let z_start = origin;
         let z_end = origin + Vector3::new(0.0, 0.0, size);
@@ -329,7 +338,10 @@ impl AnnotationManager {
         )?;
 
         // Create or get material
-        let material_id = material_manager.create_point_color_material(device, color);
+        let material_id = material_manager.create_material(
+            device,
+            crate::material::Material::builder().with_point_color(color),
+        );
 
         // Create node
         let node_id = scene.add_instance_node(
@@ -405,7 +417,10 @@ impl AnnotationManager {
         )?;
 
         // Create or get material
-        let material_id = material_manager.create_line_color_material(device, color);
+        let material_id = material_manager.create_material(
+            device,
+            crate::material::Material::builder().with_line_color(color),
+        );
 
         // Create node
         let node_id = scene.add_instance_node(
@@ -497,7 +512,10 @@ impl AnnotationManager {
         )?;
 
         // Create or get material
-        let material_id = material_manager.create_line_color_material(device, color);
+        let material_id = material_manager.create_material(
+            device,
+            crate::material::Material::builder().with_line_color(color),
+        );
 
         // Create node
         let node_id = scene.add_instance_node(

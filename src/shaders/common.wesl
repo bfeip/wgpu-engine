@@ -1,5 +1,5 @@
-// common.wgsl
-// Common defs used by most/all shaders
+// common.wesl
+// Common type definitions used by all shaders
 
 struct CameraUniform {
     view_proj: mat4x4<f32>,
@@ -25,7 +25,6 @@ struct InstanceInput {
     @location(8) normal_matrix_1: vec3<f32>,
     @location(9) normal_matrix_2: vec3<f32>,
 };
-
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,

@@ -9,15 +9,16 @@ use crate::{
     },
     scene::{
         InstanceRaw,
+        PrimitiveType,
         Vertex
     },
     light::LightUniform,
     material::{
         MaterialManager,
-        MaterialType
+        MaterialProperties,
     },
     scene::Scene,
-    shaders::ShaderBuilder,
+    shaders::ShaderGenerator,
     texture,
     common::PhysicalSize
 };
@@ -47,7 +48,7 @@ pub(crate) struct DrawState<'a> {
     pub cursor_position: Option<(f32, f32)>,
 
     pub material_manager: MaterialManager,
-    shader_builder: ShaderBuilder,
+    shader_generator: ShaderGenerator,
 
     color_material_pipeline_layout: wgpu::PipelineLayout,
     texture_material_pipeline_layout: wgpu::PipelineLayout,
@@ -58,7 +59,7 @@ pub(crate) struct DrawState<'a> {
     lights_bind_group: wgpu::BindGroup,
     depth_texture: texture::Texture,
 
-    pipeline_cache: HashMap<MaterialType, wgpu::RenderPipeline>,
+    pipeline_cache: HashMap<(MaterialProperties, PrimitiveType), wgpu::RenderPipeline>,
 }
 
 impl<'a> DrawState<'a> {
@@ -139,7 +140,7 @@ impl<'a> DrawState<'a> {
         surface.configure(&device, &config);
 
         let material_manager = MaterialManager::new(&device);
-        let shader_builder = ShaderBuilder::new();
+        let shader_generator = ShaderGenerator::new();
 
         let camera = Camera {
             eye: (0.0, 0.1, 0.2).into(),
@@ -254,7 +255,7 @@ impl<'a> DrawState<'a> {
             camera,
             cursor_position: None,
             material_manager,
-            shader_builder,
+            shader_generator,
             color_material_pipeline_layout,
             texture_material_pipeline_layout,
             camera_buffer,
@@ -266,29 +267,26 @@ impl<'a> DrawState<'a> {
         }
     }
 
-    fn get_or_create_pipeline(&mut self, material_type: MaterialType) -> &wgpu::RenderPipeline {
-        self.pipeline_cache.entry(material_type).or_insert_with(|| {
-            let (pipeline_layout, shader, topology) = match material_type {
-                MaterialType::FaceColor => {
-                    let layout = &self.color_material_pipeline_layout;
-                    let shader = self.shader_builder.generate_shader(&self.device, material_type);
-                    (layout, shader, wgpu::PrimitiveTopology::TriangleList)
-                },
-                MaterialType::FaceTexture => {
-                    let layout = &self.texture_material_pipeline_layout;
-                    let shader = self.shader_builder.generate_shader(&self.device, material_type);
-                    (layout, shader, wgpu::PrimitiveTopology::TriangleList)
-                },
-                MaterialType::LineColor => {
-                    let layout = &self.color_material_pipeline_layout;
-                    let shader = self.shader_builder.generate_shader(&self.device, material_type);
-                    (layout, shader, wgpu::PrimitiveTopology::LineList)
-                },
-                MaterialType::PointColor => {
-                    let layout = &self.color_material_pipeline_layout;
-                    let shader = self.shader_builder.generate_shader(&self.device, material_type);
-                    (layout, shader, wgpu::PrimitiveTopology::PointList)
-                },
+    fn get_or_create_pipeline(
+        &mut self,
+        properties: MaterialProperties,
+        primitive_type: PrimitiveType,
+    ) -> &wgpu::RenderPipeline {
+        let cache_key = (properties.clone(), primitive_type);
+        self.pipeline_cache.entry(cache_key).or_insert_with(|| {
+            let pipeline_layout = if properties.has_texture {
+                &self.texture_material_pipeline_layout
+            } else {
+                &self.color_material_pipeline_layout
+            };
+
+            let shader = self.shader_generator.generate_shader(&self.device, &properties)
+                .expect("Failed to generate shader");
+
+            let topology = match primitive_type {
+                PrimitiveType::TriangleList => wgpu::PrimitiveTopology::TriangleList,
+                PrimitiveType::LineList => wgpu::PrimitiveTopology::LineList,
+                PrimitiveType::PointList => wgpu::PrimitiveTopology::PointList,
             };
 
             self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -370,12 +368,14 @@ impl<'a> DrawState<'a> {
         scene: &Scene,
     ) -> anyhow::Result<()> {
         // Update camera uniform
+        // TODO: only when needed
         let camera_uniform_slice = &[self.camera.to_uniform()];
         let camera_buffer_contents: &[u8] = bytemuck::cast_slice(camera_uniform_slice);
         self.queue
             .write_buffer(&self.camera_buffer, 0, camera_buffer_contents);
 
         // Update light uniform
+        // TODO: only when needed
         let light_uniform_slice = &[scene.lights[0].to_uniform()];
         let light_buffer_contents: &[u8] = bytemuck::cast_slice(light_uniform_slice);
         self.queue
@@ -416,24 +416,24 @@ impl<'a> DrawState<'a> {
             // Collect all instances into batches grouped by mesh and material
             let batches = scene.collect_draw_batches();
 
-            // Track current material type to minimize pipeline changes
-            let mut current_material_type: Option<crate::material::MaterialType> = None;
+            // Track current pipeline key to minimize pipeline changes
+            let mut current_pipeline_key: Option<(MaterialProperties, PrimitiveType)> = None;
 
             // Render each batch
             for batch in batches {
                 let mesh = scene.meshes.get(&batch.mesh_id).unwrap();
-                let batch_material_type = {
-                    let material = self.material_manager.get(batch.material_id).unwrap();
-                    // Bind material for this batch
-                    material.bind(&mut render_pass)?;
-                    material.material_type()
-                };
+                let material = self.material_manager.get(batch.material_id).unwrap();
+                let properties = material.get_properties(batch.primitive_type);
 
-                // Only change pipeline if material type changes
-                if current_material_type != Some(batch_material_type) {
-                    let pipeline = self.get_or_create_pipeline(batch_material_type);
+                // Bind material for this batch
+                material.bind(&mut render_pass, batch.primitive_type);
+
+                // Only change pipeline if material properties or primitive type changes
+                let pipeline_key = (properties.clone(), batch.primitive_type);
+                if current_pipeline_key.as_ref() != Some(&pipeline_key) {
+                    let pipeline = self.get_or_create_pipeline(properties, batch.primitive_type);
                     render_pass.set_pipeline(pipeline);
-                    current_material_type = Some(batch_material_type);
+                    current_pipeline_key = Some(pipeline_key);
                 }
 
                 // Draw all instances in this batch
