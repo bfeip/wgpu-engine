@@ -67,22 +67,23 @@ impl<'a> Viewer<'a> {
         let mut dispatcher = EventDispatcher::new();
         let mut operator_manager = OperatorManager::new();
 
-        // Add selection operator with priority 0 (highest priority)
+        // Add operators in priority order (first added = highest priority)
+        // Selection operator handles picking and must be first
         let selection_operator =
             Box::new(SelectionOperator::new(BuiltinOperatorId::Selection.into()));
-        operator_manager.add_operator(selection_operator, 0, &mut dispatcher);
+        operator_manager.push_back(selection_operator, &mut dispatcher);
 
-        // Add navigation operator with priority 1
+        // Walk operator for WASD movement
+        let walk_operator = Box::new(WalkOperator::new(
+            BuiltinOperatorId::Walk.into(),
+        ));
+        operator_manager.push_back(walk_operator, &mut dispatcher);
+
+        // Navigation operator for orbit/pan/zoom
         let nav_operator = Box::new(NavigationOperator::new(
             BuiltinOperatorId::Navigation.into(),
         ));
-        operator_manager.add_operator(nav_operator, 2, &mut dispatcher);
-
-        // Add navigation operator with priority 1
-        let nav_operator = Box::new(WalkOperator::new(
-            BuiltinOperatorId::Walk.into(),
-        ));
-        operator_manager.add_operator(nav_operator, 1, &mut dispatcher);
+        operator_manager.push_back(nav_operator, &mut dispatcher);
 
         // Create viewer
         let mut viewer = Self {
