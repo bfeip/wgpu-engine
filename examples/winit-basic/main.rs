@@ -56,8 +56,12 @@ impl<'a> ApplicationHandler for App<'a> {
                 event_loop.exit();
             }
             WindowEvent::RedrawRequested => {
-                // Render the scene
                 let viewer = self.viewer.as_mut().unwrap();
+
+                // Dispatch Update event for continuous operations (WASD movement, etc.)
+                viewer.update();
+
+                // Render the scene
                 if let Err(e) = viewer.render() {
                     log::error!("Render error: {}", e);
                 }

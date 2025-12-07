@@ -1,8 +1,10 @@
+use std::time::Instant;
+
 use crate::{
     annotation::AnnotationManager,
     drawstate::DrawState,
     event::{Event, EventContext, EventDispatcher, EventKind},
-    operator::{BuiltinOperatorId, NavigationOperator, OperatorManager, SelectionOperator},
+    operator::{BuiltinOperatorId, NavigationOperator, OperatorManager, SelectionOperator, WalkOperator},
     scene::Scene,
 };
 
@@ -13,6 +15,8 @@ pub struct Viewer<'a> {
     pub dispatcher: EventDispatcher,
     pub operator_manager: OperatorManager,
     pub annotation_manager: AnnotationManager,
+    /// Last time update() was called, for delta_time calculation
+    last_update_time: Option<Instant>,
 }
 
 impl<'a> Viewer<'a> {
@@ -72,6 +76,12 @@ impl<'a> Viewer<'a> {
         let nav_operator = Box::new(NavigationOperator::new(
             BuiltinOperatorId::Navigation.into(),
         ));
+        operator_manager.add_operator(nav_operator, 2, &mut dispatcher);
+
+        // Add navigation operator with priority 1
+        let nav_operator = Box::new(WalkOperator::new(
+            BuiltinOperatorId::Walk.into(),
+        ));
         operator_manager.add_operator(nav_operator, 1, &mut dispatcher);
 
         // Create viewer
@@ -81,6 +91,7 @@ impl<'a> Viewer<'a> {
             dispatcher,
             operator_manager,
             annotation_manager,
+            last_update_time: None,
         };
 
         // Register default event handlers
@@ -134,6 +145,25 @@ impl<'a> Viewer<'a> {
             annotation_manager: &mut self.annotation_manager,
         };
         self.dispatcher.dispatch(event, &mut ctx);
+    }
+
+    /// Dispatch an Update event with delta_time since last update.
+    ///
+    /// Call this once per frame before rendering to enable smooth continuous
+    /// operations like WASD movement in the WalkOperator.
+    ///
+    /// The delta_time is automatically calculated from the time since the
+    /// last call to update(). On the first call, a small default delta is used.
+    pub fn update(&mut self) {
+        let now = Instant::now();
+        let delta_time = match self.last_update_time {
+            Some(last) => now.duration_since(last).as_secs_f32(),
+            None => 1.0 / 60.0, // Assume 60 FPS on first frame
+        };
+        self.last_update_time = Some(now);
+
+        let event = Event::Update { delta_time };
+        self.handle_event(&event);
     }
 
     /// Get a reference to the current camera

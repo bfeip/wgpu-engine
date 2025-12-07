@@ -46,6 +46,8 @@ pub enum EventKind {
     #[cfg(test)]
     /// Event kind used for testing
     Test,
+    /// Per-frame update tick for continuous operations (movement, animation, etc.)
+    Update,
     /// Window was resized
     Resized,
     /// Keyboard input occurred
@@ -73,6 +75,17 @@ pub enum Event {
     #[cfg(test)]
     /// Event used for testing
     Test,
+    /// Per-frame update tick for continuous operations.
+    ///
+    /// This event should be dispatched once per frame before rendering.
+    /// Operators can use this for smooth continuous movement, animations, etc.
+    ///
+    /// The delta_time field contains the time elapsed since the last update
+    /// in seconds, which can be used for frame-rate independent movement.
+    Update {
+        /// Time elapsed since last update in seconds
+        delta_time: f32,
+    },
     /// Window was resized to the given physical size
     Resized(PhysicalSize<u32>),
     /// Keyboard input occurred
@@ -148,6 +161,7 @@ impl Event {
     /// Returns the [`EventKind`] discriminant for this event.
     pub fn kind(&self) -> EventKind {
         match self {
+            Self::Update { .. } => EventKind::Update,
             Self::Resized(_) => EventKind::Resized,
             Self::KeyboardInput { .. } => EventKind::KeyboardInput,
             Self::MouseMotion { .. } => EventKind::MouseMotion,

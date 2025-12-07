@@ -1,8 +1,10 @@
 mod navigation;
 mod selection;
+mod walk;
 
 pub use navigation::NavigationOperator;
 pub use selection::SelectionOperator;
+pub use walk::WalkOperator;
 
 use crate::event::{CallbackId, EventDispatcher};
 
@@ -16,6 +18,7 @@ pub type OperatorPriority = u32;
 pub enum BuiltinOperatorId {
     Navigation = 0,
     Selection = 1,
+    Walk = 2,
 }
 
 impl Into<OperatorId> for BuiltinOperatorId {

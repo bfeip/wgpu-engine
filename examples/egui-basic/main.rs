@@ -69,6 +69,9 @@ impl<'a> App<'a> {
         let egui_winit = self.egui_winit.as_mut().unwrap();
         let egui_renderer = self.egui_renderer.as_mut().unwrap();
 
+        // Dispatch Update event for continuous operations (WASD movement, etc.)
+        viewer.update();
+
         // Build egui UI
         let raw_input = egui_winit.take_egui_input(window.as_ref());
         let full_output = egui_ctx.run(raw_input, |ctx| {
@@ -269,7 +272,8 @@ fn build_ui(ctx: &egui::Context, viewer: &Viewer) {
             ui.separator();
 
             ui.heading("Controls");
-            ui.label("Left Mouse: Orbit camera");
+            ui.label("WASD: Walk movement");
+            ui.label("Left Mouse Drag: Look around");
             ui.label("Right Mouse: Pan camera");
             ui.label("Mouse Wheel: Zoom in/out");
             ui.label("ESC: Exit application");
