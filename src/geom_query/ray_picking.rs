@@ -4,7 +4,7 @@ use cgmath::{InnerSpace, Point3, SquareMatrix};
 
 /// Result of a ray-instance intersection test.
 #[derive(Debug, Clone)]
-pub struct PickResult {
+pub struct RayPickResult {
     /// The node that was hit
     pub node_id: NodeId,
     /// The instance that was hit
@@ -24,7 +24,7 @@ fn pick_node_from_ray(
     ray: &Ray,
     node_id: NodeId,
     scene: &Scene,
-    results: &mut Vec<PickResult>,
+    results: &mut Vec<RayPickResult>,
 ) {
     let node = scene.get_node(node_id)
         .expect("Node ID not found in scene during picking");
@@ -66,7 +66,7 @@ fn pick_node_from_ray(
             // Compute distance in world space from ray origin
             let distance = (world_hit_point - ray.origin).magnitude();
 
-            results.push(PickResult {
+            results.push(RayPickResult {
                 node_id,
                 instance_id,
                 distance,
@@ -89,7 +89,7 @@ fn pick_node_from_ray(
 /// using cached bounding boxes to eliminate large portions of the scene efficiently.
 ///
 /// Returns a vector of PickResult sorted by distance (closest first).
-pub fn pick_all_from_ray(ray: &Ray, scene: &Scene) -> Vec<PickResult> {
+pub fn pick_all_from_ray(ray: &Ray, scene: &Scene) -> Vec<RayPickResult> {
     let mut results = Vec::new();
 
     // Walk the tree from each root node

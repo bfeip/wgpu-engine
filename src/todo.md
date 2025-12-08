@@ -1,8 +1,6 @@
 # TODO
 
 ## Jots
-- Geometry Query
-    - Volumes
 - Re-work ray picking walker to use TreeWalker trait
 - Ensure scene walkers are optimal
     - Ray selection uses transform and bounding walks. Combine.

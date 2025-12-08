@@ -4,7 +4,7 @@ use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
 use crate::{
     drawstate::VertexShaderLocations,
-    common::{Aabb, Ray},
+    common::{Aabb, ConvexPolyhedron, Ray},
 };
 
 /// Unique identifier for a mesh in the scene.
@@ -39,6 +39,15 @@ pub struct MeshHit {
     pub triangle_index: usize,
     /// Barycentric coordinates of the hit point on the triangle (u, v, w) where w = 1 - u - v
     pub barycentric: (f32, f32, f32),
+}
+
+/// Result of a volume-mesh intersection test in local mesh space.
+#[derive(Debug, Clone)]
+pub struct MeshVolumeHit {
+    /// Indices of triangles that intersect the volume
+    pub triangle_indices: Vec<usize>,
+    /// True if all triangles in the mesh are fully contained within the volume
+    pub fully_contained: bool,
 }
 
 /// GPU-compatible vertex structure containing position, texture coordinates, and normal.
@@ -538,5 +547,65 @@ impl Mesh {
         }
 
         hits
+    }
+
+    /// Tests a convex volume against all triangles in the mesh.
+    ///
+    /// The volume should be in local mesh space. Returns information about which
+    /// triangles intersect the volume and whether the entire mesh is contained.
+    ///
+    /// # Arguments
+    /// * `volume` - The convex polyhedron to test against (in local mesh space)
+    /// * `thorough` - If true, uses more accurate but slower edge-triangle intersection tests
+    ///
+    /// # Returns
+    /// `Some(MeshVolumeHit)` if any triangles intersect the volume, `None` otherwise.
+    pub fn intersect_volume(
+        &self,
+        volume: &ConvexPolyhedron,
+        thorough: bool,
+    ) -> Option<MeshVolumeHit> {
+        let triangle_indices_data = self.triangle_indices();
+        let num_triangles = triangle_indices_data.len() / 3;
+
+        if num_triangles == 0 {
+            return None;
+        }
+
+        let mut hit_indices = Vec::new();
+        let mut all_fully_contained = true;
+
+        for triangle_index in 0..num_triangles {
+            let i0 = triangle_indices_data[triangle_index * 3] as usize;
+            let i1 = triangle_indices_data[triangle_index * 3 + 1] as usize;
+            let i2 = triangle_indices_data[triangle_index * 3 + 2] as usize;
+
+            let v0 = Point3::from(self.vertices[i0].position);
+            let v1 = Point3::from(self.vertices[i1].position);
+            let v2 = Point3::from(self.vertices[i2].position);
+
+            // Check if triangle is fully contained
+            let fully_inside = volume.contains_triangle(v0, v1, v2);
+
+            if fully_inside {
+                hit_indices.push(triangle_index);
+            } else if volume.intersects_triangle(v0, v1, v2, thorough) {
+                // Triangle intersects but is not fully contained
+                hit_indices.push(triangle_index);
+                all_fully_contained = false;
+            } else {
+                // Triangle doesn't intersect at all - mesh is not fully contained
+                all_fully_contained = false;
+            }
+        }
+
+        if hit_indices.is_empty() {
+            None
+        } else {
+            Some(MeshVolumeHit {
+                triangle_indices: hit_indices,
+                fully_contained: all_fully_contained,
+            })
+        }
     }
 }

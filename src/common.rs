@@ -5,10 +5,14 @@ pub const EPSILON: f32 = 1e-6;
 
 mod ray;
 mod aabb;
+mod plane;
+mod convex_polyhedron;
 
 // Re-export common types
 pub use ray::Ray;
 pub use aabb::Aabb;
+pub use plane::Plane;
+pub use convex_polyhedron::ConvexPolyhedron;
 
 /// A simple physical size struct representing width and height
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
