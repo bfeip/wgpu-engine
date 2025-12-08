@@ -142,18 +142,14 @@ impl<'a> App<'a> {
         }
     }
 
-    /// Cycle between Walk and Navigation operators
+    /// Cycle between Walk and Navigation operators by swapping their positions
     fn cycle_operator_mode(&mut self) {
         let viewer = self.viewer.as_mut().unwrap();
         let walk_id: u32 = BuiltinOperatorId::Walk.into();
         let nav_id: u32 = BuiltinOperatorId::Navigation.into();
 
-        let Some(front_id) = viewer.operator_manager.front_id() else {
-            return;
-        };
-
-        let next_id = if front_id == walk_id { nav_id } else { walk_id };
-        viewer.operator_manager.move_to_front(next_id, &mut viewer.dispatcher);
+        // Swap Walk and Navigation operators, preserving Selection operator position
+        viewer.operator_manager.swap(walk_id, nav_id, &mut viewer.dispatcher);
     }
 }
 
@@ -279,12 +275,18 @@ impl<'a> ApplicationHandler for App<'a> {
 
 /// Build the egui UI
 fn build_ui(ctx: &egui::Context, viewer: &Viewer) {
-    // Determine which operator mode we're in
+    // Determine which operator mode we're in by comparing positions
+    // The one with lower position (closer to front) is the active navigation mode
     let walk_id: u32 = BuiltinOperatorId::Walk.into();
     let nav_id: u32 = BuiltinOperatorId::Navigation.into();
-    let front_id = viewer.operator_manager.front_id();
-    let is_walk_mode = front_id == Some(walk_id);
-    let is_nav_mode = front_id == Some(nav_id);
+    let walk_pos = viewer.operator_manager.position(walk_id);
+    let nav_pos = viewer.operator_manager.position(nav_id);
+    let is_walk_mode = match (walk_pos, nav_pos) {
+        (Some(w), Some(n)) => w < n,
+        (Some(_), None) => true,
+        _ => false,
+    };
+    let is_nav_mode = !is_walk_mode && nav_pos.is_some();
 
     // Performance overlay
     egui::TopBottomPanel::new(egui::panel::TopBottomSide::Top, "Performance")
@@ -348,8 +350,10 @@ fn build_ui(ctx: &egui::Context, viewer: &Viewer) {
             ui.separator();
 
             ui.heading("Operators");
+            // Mark the active navigation mode (Walk or Nav, whichever has higher priority)
+            let active_nav_id = if is_walk_mode { Some(walk_id) } else if is_nav_mode { Some(nav_id) } else { None };
             for op in viewer.operator_manager.iter() {
-                let prefix = if Some(op.id()) == front_id { "→ " } else { "  " };
+                let prefix = if Some(op.id()) == active_nav_id { "→ " } else { "  " };
                 ui.label(format!("{}{}", prefix, op.name()));
             }
 
