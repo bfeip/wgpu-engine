@@ -3,18 +3,17 @@
 ## Jots
 - Geometry Query
     - Volumes
-- Tree walker feature to skip subtrees on condition
 - Re-work ray picking walker to use TreeWalker trait
-- Ability to walk the scene with multiple walkers at once
 - Ensure scene walkers are optimal
     - Ray selection uses transform and bounding walks. Combine.
 - Fix navigation operator to use bounding for sensitivity
 
 - Split mesh into DrawMesh and Mesh for API reasons
 - Split materials into DrawMaterials and Materials for API reasons
+- Tree walker feature to skip subtrees on condition
+- Ability to walk the scene with multiple walkers at once
 
 - Drag and drop GLTF loading operator
-- Walk operator
 - Orthographic camera
 - Highlighting and proper selection
 - Instance flags and visibility

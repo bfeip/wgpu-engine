@@ -1,13 +1,12 @@
 use std::sync::Arc;
 use egui_wgpu::RendererOptions;
 use winit::{
-    application::ApplicationHandler,
-    event,
-    event_loop::{ActiveEventLoop, EventLoop},
-    window::{Window, WindowId},
+    application::ApplicationHandler, event, event_loop::{ActiveEventLoop, EventLoop}, window::{Window, WindowId}
 };
 
 use wgpu_engine::{Viewer, winit_support};
+use wgpu_engine::input::{ElementState, Key, NamedKey};
+use wgpu_engine::operator::BuiltinOperatorId;
 
 /// Application state for the winit event loop with egui integration
 struct App<'a> {
@@ -111,22 +110,57 @@ impl<'a> App<'a> {
 
     /// Handle events that egui didn't consume
     fn handle_non_egui_event(&mut self, event: event::Event<()>, event_loop: &ActiveEventLoop) {
-        let viewer = self.viewer.as_mut().unwrap();
+        let Some(app_event) = winit_support::convert_event(event) else {
+            return;
+        };
 
-        if let Some(app_event) = winit_support::convert_event(event) {
-            viewer.handle_event(&app_event);
-
-            // Check for exit on Escape key
-            if let wgpu_engine::event::Event::KeyboardInput { event: key_event, .. } = &app_event {
-                if matches!(
-                    key_event.logical_key,
-                    wgpu_engine::input::Key::Named(wgpu_engine::input::NamedKey::Escape)
-                ) {
-                    event_loop.exit();
-                }
+        // Handle debug keys before passing to viewer
+        if let Some(action) = Self::get_debug_key_action(&app_event) {
+            match action {
+                DebugAction::CycleOperator => self.cycle_operator_mode(),
+                DebugAction::Exit => event_loop.exit(),
             }
         }
+
+        self.viewer.as_mut().unwrap().handle_event(&app_event);
     }
+
+    /// Check if event is a debug key press and return the action
+    fn get_debug_key_action(event: &wgpu_engine::event::Event) -> Option<DebugAction> {
+        let wgpu_engine::event::Event::KeyboardInput { event: key_event, .. } = event else {
+            return None;
+        };
+
+        if key_event.state != ElementState::Pressed || key_event.repeat {
+            return None;
+        }
+
+        match &key_event.logical_key {
+            Key::Character('c') => Some(DebugAction::CycleOperator),
+            Key::Named(NamedKey::Escape) => Some(DebugAction::Exit),
+            _ => None,
+        }
+    }
+
+    /// Cycle between Walk and Navigation operators
+    fn cycle_operator_mode(&mut self) {
+        let viewer = self.viewer.as_mut().unwrap();
+        let walk_id: u32 = BuiltinOperatorId::Walk.into();
+        let nav_id: u32 = BuiltinOperatorId::Navigation.into();
+
+        let Some(front_id) = viewer.operator_manager.front_id() else {
+            return;
+        };
+
+        let next_id = if front_id == walk_id { nav_id } else { walk_id };
+        viewer.operator_manager.move_to_front(next_id, &mut viewer.dispatcher);
+    }
+}
+
+/// Debug actions triggered by key presses
+enum DebugAction {
+    CycleOperator,
+    Exit,
 }
 
 /// Render egui overlay on top of the 3D scene
@@ -245,13 +279,31 @@ impl<'a> ApplicationHandler for App<'a> {
 
 /// Build the egui UI
 fn build_ui(ctx: &egui::Context, viewer: &Viewer) {
+    // Determine which operator mode we're in
+    let walk_id: u32 = BuiltinOperatorId::Walk.into();
+    let nav_id: u32 = BuiltinOperatorId::Navigation.into();
+    let front_id = viewer.operator_manager.front_id();
+    let is_walk_mode = front_id == Some(walk_id);
+    let is_nav_mode = front_id == Some(nav_id);
+
     // Performance overlay
     egui::TopBottomPanel::new(egui::panel::TopBottomSide::Top, "Performance")
         .show(ctx, |ui| {
-            ui.label(format!(
-                "FPS: {:.1}",
-                ctx.input(|i| i.stable_dt).recip()
-            ));
+            ui.horizontal(|ui| {
+                ui.label(format!(
+                    "FPS: {:.1}",
+                    ctx.input(|i| i.stable_dt).recip()
+                ));
+                ui.separator();
+                // Show current mode
+                if is_walk_mode {
+                    ui.label("Mode: Walk");
+                } else if is_nav_mode {
+                    ui.label("Mode: Orbit");
+                } else if let Some(front) = viewer.operator_manager.front() {
+                    ui.label(format!("Mode: {}", front.name()));
+                }
+            });
         });
 
     // Main control panel
@@ -272,11 +324,34 @@ fn build_ui(ctx: &egui::Context, viewer: &Viewer) {
             ui.separator();
 
             ui.heading("Controls");
-            ui.label("WASD: Walk movement");
-            ui.label("Left Mouse Drag: Look around");
-            ui.label("Right Mouse: Pan camera");
-            ui.label("Mouse Wheel: Zoom in/out");
+
+            // Show mode-specific controls
+            if is_walk_mode {
+                ui.label("WASD: Move");
+                ui.label("Left Mouse Drag: Look around");
+            } else if is_nav_mode {
+                ui.label("Left Mouse Drag: Orbit camera");
+                ui.label("Right Mouse Drag: Pan camera");
+                ui.label("Mouse Wheel: Zoom in/out");
+            } else {
+                // Fallback: show both
+                ui.label("WASD: Walk movement");
+                ui.label("Left Mouse Drag: Look around / Orbit");
+                ui.label("Right Mouse Drag: Pan camera");
+                ui.label("Mouse Wheel: Zoom in/out");
+            }
+
+            ui.separator();
+            ui.label("C: Cycle mode");
             ui.label("ESC: Exit application");
+
+            ui.separator();
+
+            ui.heading("Operators");
+            for op in viewer.operator_manager.iter() {
+                let prefix = if Some(op.id()) == front_id { "→ " } else { "  " };
+                ui.label(format!("{}{}", prefix, op.name()));
+            }
 
             ui.separator();
 

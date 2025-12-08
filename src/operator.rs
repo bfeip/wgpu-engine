@@ -181,6 +181,16 @@ impl OperatorManager {
     pub fn iter(&self) -> impl Iterator<Item = &dyn Operator> {
         self.operators.iter().map(|op| op.as_ref())
     }
+
+    /// Returns the operator at the front of the stack (highest priority), if any.
+    pub fn front(&self) -> Option<&dyn Operator> {
+        self.operators.first().map(|op| op.as_ref())
+    }
+
+    /// Returns the ID of the operator at the front of the stack, if any.
+    pub fn front_id(&self) -> Option<OperatorId> {
+        self.operators.first().map(|op| op.id())
+    }
 }
 
 #[cfg(test)]
