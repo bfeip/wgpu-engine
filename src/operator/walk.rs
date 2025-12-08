@@ -72,6 +72,9 @@ impl WalkState {
 
     /// Update camera target based on current yaw and pitch.
     fn update_camera_target(&self, camera: &mut Camera) {
+        // Preserve the current eye-to-target distance
+        let distance = (camera.target - camera.eye).magnitude();
+
         // Calculate new forward direction from yaw and pitch
         let forward = Vector3::new(
             self.pitch.cos() * self.yaw.sin(),
@@ -79,8 +82,8 @@ impl WalkState {
             self.pitch.cos() * self.yaw.cos(),
         );
 
-        // Set target to be 1 unit in front of eye
-        camera.target = camera.eye + forward;
+        // Set target at the preserved distance in front of eye
+        camera.target = camera.eye + forward * distance;
 
         // Update up vector to maintain proper orientation
         let world_up = Vector3::new(0.0, 1.0, 0.0);
@@ -242,6 +245,11 @@ impl Operator for WalkOperator {
         let operator_state = self.state.clone();
         let update_callback = dispatcher.register(EventKind::Update, move |event, ctx| {
             if let Event::Update { delta_time } = event {
+                if *delta_time > 1.0 {
+                    // Do not apply movement is there's more than a second
+                    // between updates.
+                    return false;
+                }
                 let s = operator_state.borrow();
                 if s.is_moving() {
                     s.apply_movement(&mut ctx.state.camera, *delta_time);
