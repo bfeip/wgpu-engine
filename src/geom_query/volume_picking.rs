@@ -1,6 +1,9 @@
-use crate::common::ConvexPolyhedron;
-use crate::scene::{InstanceId, NodeId, Scene};
-use cgmath::SquareMatrix;
+use cgmath::Matrix4;
+
+use crate::common::{Aabb, ConvexPolyhedron};
+use crate::scene::{InstanceId, Mesh, NodeId, Scene};
+
+use super::pick_query::{pick_all, PickQuery};
 
 /// Result of a volume-instance intersection test.
 #[derive(Debug, Clone)]
@@ -15,48 +18,51 @@ pub struct VolumePickResult {
     pub fully_contained: bool,
 }
 
-/// Recursively tests a volume against a node and its descendants.
-fn pick_node_from_volume(
-    volume: &ConvexPolyhedron,
-    node_id: NodeId,
-    scene: &Scene,
+/// Volume picking query that implements the generic PickQuery trait.
+///
+/// Wraps a ConvexPolyhedron with a flag for thorough testing.
+pub struct VolumePickQuery {
+    /// The volume in current coordinate space (may be transformed to local space)
+    volume: ConvexPolyhedron,
+    /// Whether to use thorough (but slower) edge-triangle intersection tests
     thorough: bool,
-    results: &mut Vec<VolumePickResult>,
-) {
-    let node = scene
-        .get_node(node_id)
-        .expect("Node ID not found in scene during picking");
+}
 
-    // Broad phase: Test against this node's bounding box
-    let Some(bounds) = scene.nodes_bounding(node_id) else {
-        return; // Subtree has no geometry, skip
-    };
-    if !volume.intersects_aabb(&bounds) {
-        return; // Volume doesn't intersect bounds, skip entire subtree
+impl VolumePickQuery {
+    /// Creates a new volume pick query.
+    ///
+    /// # Arguments
+    /// * `volume` - The convex polyhedron to test against (in world space)
+    /// * `thorough` - If true, uses more accurate but slower edge-triangle tests
+    pub fn new(volume: ConvexPolyhedron, thorough: bool) -> Self {
+        Self { volume, thorough }
+    }
+}
+
+impl PickQuery for VolumePickQuery {
+    type Result = VolumePickResult;
+
+    fn might_intersect_bounds(&self, bounds: &Aabb) -> bool {
+        self.volume.intersects_aabb(bounds)
     }
 
-    // If this node has an instance, test it
-    if let Some(instance_id) = node.instance() {
-        let instance = scene
-            .instances
-            .get(&instance_id)
-            .expect("Instance referenced by node not found in scene");
-        let mesh = scene
-            .meshes
-            .get(&instance.mesh)
-            .expect("Mesh referenced by instance not found in scene");
+    fn transform(&self, matrix: &Matrix4<f32>) -> Self {
+        Self {
+            volume: self.volume.transform(matrix),
+            thorough: self.thorough,
+        }
+    }
 
-        // Get world transform for this node
-        let world_transform = scene.nodes_transform(node_id);
-        let world_to_local = world_transform
-            .invert()
-            .expect("Node world transform is not invertible");
-
-        // Transform volume to local mesh space
-        let local_volume = volume.transform(&world_to_local);
-
-        // Test against all triangles in the mesh
-        if let Some(mesh_hit) = mesh.intersect_volume(&local_volume, thorough) {
+    fn collect_mesh_hits(
+        &self,
+        mesh: &Mesh,
+        node_id: NodeId,
+        instance_id: InstanceId,
+        _world_transform: &Matrix4<f32>,
+        results: &mut Vec<Self::Result>,
+    ) {
+        // Test against mesh (volume is already in local space)
+        if let Some(mesh_hit) = mesh.intersect_volume(&self.volume, self.thorough) {
             results.push(VolumePickResult {
                 node_id,
                 instance_id,
@@ -64,11 +70,6 @@ fn pick_node_from_volume(
                 fully_contained: mesh_hit.fully_contained,
             });
         }
-    }
-
-    // Recurse to children
-    for &child_id in node.children() {
-        pick_node_from_volume(volume, child_id, scene, thorough, results);
     }
 }
 
@@ -92,12 +93,6 @@ pub fn pick_all_from_volume(
     scene: &Scene,
     thorough: bool,
 ) -> Vec<VolumePickResult> {
-    let mut results = Vec::new();
-
-    // Walk the tree from each root node
-    for &root_id in scene.root_nodes() {
-        pick_node_from_volume(volume, root_id, scene, thorough, &mut results);
-    }
-
-    results
+    let query = VolumePickQuery::new(volume.clone(), thorough);
+    pick_all(&query, scene)
 }

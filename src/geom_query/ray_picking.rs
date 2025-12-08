@@ -1,6 +1,9 @@
-use crate::common::Ray;
-use crate::scene::{NodeId, InstanceId, Scene};
-use cgmath::{InnerSpace, Point3, SquareMatrix};
+use cgmath::{InnerSpace, Matrix4, Point3};
+
+use crate::common::{Aabb, Ray};
+use crate::scene::{InstanceId, Mesh, NodeId, Scene};
+
+use super::pick_query::{pick_all, PickQuery};
 
 /// Result of a ray-instance intersection test.
 #[derive(Debug, Clone)]
@@ -19,41 +22,51 @@ pub struct RayPickResult {
     pub barycentric: (f32, f32, f32),
 }
 
-/// Recursively tests a ray against a node and its descendants.
-fn pick_node_from_ray(
-    ray: &Ray,
-    node_id: NodeId,
-    scene: &Scene,
-    results: &mut Vec<RayPickResult>,
-) {
-    let node = scene.get_node(node_id)
-        .expect("Node ID not found in scene during picking");
+/// Ray picking query that implements the generic PickQuery trait.
+///
+/// Wraps a Ray and the original world-space ray for distance calculations.
+pub struct RayPickQuery {
+    /// The ray in current coordinate space (may be transformed to local space)
+    ray: Ray,
+    /// The original ray in world space (for distance calculations)
+    world_ray: Ray,
+}
 
-    // Broad phase: Test against this node's bounding box
-    let Some(bounds) = scene.nodes_bounding(node_id) else {
-        return; // Subtree has no geometry, skip
-    };
-    if bounds.intersects_ray(ray).is_none() {
-        return; // Ray doesn't hit bounds, skip entire subtree
+impl RayPickQuery {
+    /// Creates a new ray pick query from a world-space ray.
+    pub fn new(ray: Ray) -> Self {
+        Self {
+            ray,
+            world_ray: ray,
+        }
+    }
+}
+
+impl PickQuery for RayPickQuery {
+    type Result = RayPickResult;
+
+    fn might_intersect_bounds(&self, bounds: &Aabb) -> bool {
+        bounds.intersects_ray(&self.ray).is_some()
     }
 
-    // If this node has an instance, test it
-    if let Some(instance_id) = node.instance() {
-        let instance = scene.instances.get(&instance_id)
-            .expect("Instance referenced by node not found in scene");
-        let mesh = scene.meshes.get(&instance.mesh)
-            .expect("Mesh referenced by instance not found in scene");
+    fn transform(&self, matrix: &Matrix4<f32>) -> Self {
+        Self {
+            ray: self.ray.transform(matrix),
+            // Keep world_ray unchanged for distance calculations
+            world_ray: self.world_ray,
+        }
+    }
 
-        // Get world transform for this node
-        let world_transform = scene.nodes_transform(node_id);
-        let world_to_local = world_transform.invert()
-            .expect("Node world transform is not invertible");
-
-        // Transform ray to local mesh space
-        let local_ray = ray.transform(&world_to_local);
-
-        // Test against all triangles in the mesh
-        let mesh_hits = mesh.intersect_ray(&local_ray);
+    fn collect_mesh_hits(
+        &self,
+        mesh: &Mesh,
+        node_id: NodeId,
+        instance_id: InstanceId,
+        world_transform: &Matrix4<f32>,
+        results: &mut Vec<Self::Result>,
+    ) {
+        // Test against all triangles in the mesh (ray is already in local space)
+        let mesh_hits = mesh.intersect_ray(&self.ray);
 
         // Transform hits to world space and add to results
         for mesh_hit in mesh_hits {
@@ -63,8 +76,8 @@ fn pick_node_from_ray(
                 Point3::from_homogeneous(homogeneous)
             };
 
-            // Compute distance in world space from ray origin
-            let distance = (world_hit_point - ray.origin).magnitude();
+            // Compute distance in world space from original ray origin
+            let distance = (world_hit_point - self.world_ray.origin).magnitude();
 
             results.push(RayPickResult {
                 node_id,
@@ -76,11 +89,6 @@ fn pick_node_from_ray(
             });
         }
     }
-
-    // Recurse to children
-    for &child_id in node.children() {
-        pick_node_from_ray(ray, child_id, scene, results);
-    }
 }
 
 /// Picks all instances intersected by a ray, sorted by distance from near to far.
@@ -88,17 +96,17 @@ fn pick_node_from_ray(
 /// The ray should be in world space. The function walks the scene tree from root nodes,
 /// using cached bounding boxes to eliminate large portions of the scene efficiently.
 ///
-/// Returns a vector of PickResult sorted by distance (closest first).
+/// Returns a vector of RayPickResult sorted by distance (closest first).
 pub fn pick_all_from_ray(ray: &Ray, scene: &Scene) -> Vec<RayPickResult> {
-    let mut results = Vec::new();
-
-    // Walk the tree from each root node
-    for &root_id in scene.root_nodes() {
-        pick_node_from_ray(ray, root_id, scene, &mut results);
-    }
+    let query = RayPickQuery::new(*ray);
+    let mut results = pick_all(&query, scene);
 
     // Sort by distance (closest first)
-    results.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap_or(std::cmp::Ordering::Equal));
+    results.sort_by(|a, b| {
+        a.distance
+            .partial_cmp(&b.distance)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     results
 }
