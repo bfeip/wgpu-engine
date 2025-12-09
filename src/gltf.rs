@@ -4,10 +4,20 @@ use crate::{
     scene::{
         material::Material,
         texture::Texture,
-        Mesh, MeshPrimitive, PrimitiveType, Scene, Vertex,
+        Mesh, MeshId, MeshPrimitive, PrimitiveType, Scene, Vertex,
         MaterialId, DEFAULT_MATERIAL_ID,
     },
 };
+
+/// A loaded primitive from a glTF mesh, containing the scene mesh ID and its material ID.
+type LoadedPrimitive = (MeshId, MaterialId);
+
+/// Maps glTF mesh indices to their loaded primitives.
+///
+/// Each glTF mesh can contain multiple primitives (e.g. different parts with different materials).
+/// Each primitive is loaded as a separate scene mesh, so a single glTF mesh index maps to
+/// potentially multiple (MeshId, MaterialId) pairs.
+type GltfMeshMap = Vec<Vec<LoadedPrimitive>>;
 
 /// Result of loading a glTF scene, containing the scene and optional camera.
 pub struct GltfLoadResult {
@@ -334,7 +344,6 @@ pub fn load_gltf_scene<P: AsRef<Path>>(
     path: P,
     aspect: f32,
 ) -> anyhow::Result<GltfLoadResult> {
-    use crate::scene::MeshId;
     use std::collections::HashMap;
     use cgmath::SquareMatrix;
 
@@ -352,7 +361,7 @@ pub fn load_gltf_scene<P: AsRef<Path>>(
     // Maps glTF mesh index -> list of (scene mesh, material) pairs
     // We need this structure because glTF nodes reference mesh indices, and each glTF mesh
     // can contain multiple primitives. We load each primitive as a separate scene mesh.
-    let mut mesh_map: Vec<Vec<(MeshId, MaterialId)>> = Vec::new();
+    let mut mesh_map: GltfMeshMap = Vec::new();
 
     for mesh in document.meshes() {
         let mut primitives_data = Vec::new();
@@ -424,7 +433,7 @@ fn load_node_recursive(
     gltf_node: &gltf::Node,
     parent: Option<crate::scene::NodeId>,
     scene: &mut crate::scene::Scene,
-    mesh_map: &[Vec<(crate::scene::MeshId, MaterialId)>],
+    mesh_map: &[Vec<LoadedPrimitive>],
     node_map: &mut std::collections::HashMap<usize, crate::scene::NodeId>,
 ) {
 
