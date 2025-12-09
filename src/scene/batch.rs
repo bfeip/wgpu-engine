@@ -1,5 +1,5 @@
 use super::{tree::InstanceTransform, MeshId, PrimitiveType};
-use crate::material::MaterialId;
+use super::material::MaterialId;
 
 /// Represents a batch of instances that share the same mesh, material, and primitive type.
 ///

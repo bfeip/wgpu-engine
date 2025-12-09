@@ -2,8 +2,7 @@ use std::collections::HashMap;
 use cgmath::{Point3, Vector3, Quaternion};
 use crate::{
     common::RgbaColor,
-    material::Material,
-    scene::{Scene, NodeId, Mesh, MeshPrimitive, PrimitiveType, Vertex},
+    scene::{material::Material, Scene, NodeId, Mesh, MeshPrimitive, PrimitiveType, Vertex},
 };
 
 /// Unique identifier for annotations

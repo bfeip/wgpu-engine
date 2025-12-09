@@ -7,11 +7,12 @@ use wgpu::util::DeviceExt;
 use crate::{
     camera::{Camera, CameraUniform},
     common::PhysicalSize,
-    light::LightUniform,
-    material::{MaterialGpuResources, MaterialProperties},
-    scene::{InstanceRaw, PrimitiveType, Scene, Vertex},
+    scene::{
+        material::{MaterialGpuResources, MaterialProperties},
+        texture::{self, GpuTexture, Texture},
+        InstanceRaw, LightUniform, PrimitiveType, Scene, Vertex,
+    },
     shaders::ShaderGenerator,
-    texture::{self, GpuTexture, Texture},
 };
 
 // Vertex shader attribute locations

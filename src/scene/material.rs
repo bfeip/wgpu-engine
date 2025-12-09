@@ -1,10 +1,9 @@
 use bitflags::bitflags;
 
-use crate::{
-    common::RgbaColor,
-    scene::PrimitiveType,
-    texture::TextureId,
-};
+use crate::common::RgbaColor;
+
+use super::mesh::PrimitiveType;
+use super::texture::TextureId;
 
 bitflags! {
     /// Additional material rendering flags for extensibility

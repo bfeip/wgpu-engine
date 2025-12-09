@@ -1,9 +1,12 @@
 use std::path::Path;
 use crate::{
     camera::Camera,
-    material::{MaterialId, DEFAULT_MATERIAL_ID},
-    scene::{Mesh, MeshPrimitive, PrimitiveType, Scene, Vertex},
-    texture::Texture,
+    scene::{
+        material::Material,
+        texture::Texture,
+        Mesh, MeshPrimitive, PrimitiveType, Scene, Vertex,
+        MaterialId, DEFAULT_MATERIAL_ID,
+    },
 };
 
 /// Result of loading a glTF scene, containing the scene and optional camera.
@@ -122,8 +125,8 @@ fn map_primitive_mode(mode: gltf::mesh::Mode) -> Option<PrimitiveType> {
 fn get_material_for_primitive(
     primitive: &gltf::Primitive,
     primitive_type: PrimitiveType,
-    material_map: &[crate::material::MaterialId],
-) -> crate::material::MaterialId {
+    material_map: &[MaterialId],
+) -> MaterialId {
     match primitive_type {
         PrimitiveType::TriangleList => {
             // For triangles, use the glTF material if available
@@ -146,8 +149,6 @@ fn load_material(
     images: &[gltf::image::Data],
     scene: &mut Scene,
 ) -> anyhow::Result<MaterialId> {
-    use crate::material::Material;
-
     let pbr = gltf_material.pbr_metallic_roughness();
 
     // Check if material has a base color texture
@@ -423,7 +424,7 @@ fn load_node_recursive(
     gltf_node: &gltf::Node,
     parent: Option<crate::scene::NodeId>,
     scene: &mut crate::scene::Scene,
-    mesh_map: &[Vec<(crate::scene::MeshId, crate::material::MaterialId)>],
+    mesh_map: &[Vec<(crate::scene::MeshId, MaterialId)>],
     node_map: &mut std::collections::HashMap<usize, crate::scene::NodeId>,
 ) {
 

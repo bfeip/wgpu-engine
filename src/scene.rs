@@ -1,7 +1,10 @@
 mod batch;
 mod instance;
+pub mod light;
+pub mod material;
 mod mesh;
 mod node;
+pub mod texture;
 mod tree;
 
 use cgmath::{Matrix4, SquareMatrix};
@@ -10,19 +13,18 @@ use std::collections::HashMap;
 use std::path::Path;
 
 pub use instance::{Instance, InstanceId};
+pub use light::Light;
+pub use material::{Material, MaterialId, DEFAULT_MATERIAL_ID};
 pub use mesh::{Mesh, MeshDescriptor, MeshId, MeshPrimitive, ObjMesh, PrimitiveType, Vertex};
 pub use node::{Node, NodeId};
+pub use texture::{Texture, TextureId};
 pub use tree::TreeVisitor;
 pub(crate) use batch::DrawBatch;
 pub(crate) use instance::InstanceRaw;
+pub(crate) use light::LightUniform;
 use tree::collect_instance_transforms;
 
-use crate::{
-    common::{Aabb, RgbaColor},
-    light::Light,
-    material::{Material, MaterialId},
-    texture::{Texture, TextureId},
-};
+use crate::common::{Aabb, RgbaColor};
 
 /// The scene container holding all meshes, materials, textures, instances, nodes, and lights.
 ///

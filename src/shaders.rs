@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use wgpu::ShaderModuleDescriptor;
 use wesl::{Wesl, ModulePath, StandardResolver};
 
-use crate::material::MaterialProperties;
+use crate::scene::material::MaterialProperties;
 
 /// Shader generator using WESL compiler to create modular shaders
 pub(crate) struct ShaderGenerator {

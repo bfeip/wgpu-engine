@@ -1,14 +1,11 @@
 #![allow(dead_code)]
 
-mod texture;
 mod camera;
-mod light;
 pub mod common;
 pub mod input;
 pub mod scene;
 pub mod geom_query;
 mod drawstate;
-mod material;
 mod shaders;
 mod gltf;
 pub mod event;
@@ -20,9 +17,8 @@ mod viewer;
 #[cfg(feature = "winit-support")]
 pub mod winit_support;
 
-pub use scene::Scene;
+pub use scene::{Scene, Light};
 pub use viewer::Viewer;
 pub use camera::Camera;
-pub use light::Light;
 pub use annotation::{AnnotationId, AnnotationManager};
 pub use gltf::{load_gltf_scene, GltfLoadResult};

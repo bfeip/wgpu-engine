@@ -1,6 +1,6 @@
 use std::mem::size_of;
 
-use crate::material::MaterialId;
+use super::material::MaterialId;
 use super::mesh::MeshId;
 
 pub type InstanceId = u32;

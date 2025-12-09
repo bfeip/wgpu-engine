@@ -45,7 +45,7 @@ impl<'a> Viewer<'a> {
         }
 
         // Set up default lighting
-        scene.lights = vec![crate::light::Light::new(
+        scene.lights = vec![crate::scene::Light::new(
             cgmath::Vector3 {
                 x: 3.,
                 y: 3.,
