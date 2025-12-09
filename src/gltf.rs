@@ -1,7 +1,7 @@
 use std::path::Path;
 use crate::{
     camera::Camera,
-    material::{DefaultMaterial, MaterialId},
+    material::{MaterialId, DEFAULT_MATERIAL_ID},
     scene::{Mesh, MeshPrimitive, PrimitiveType, Scene, Vertex},
     texture::Texture,
 };
@@ -131,10 +131,9 @@ fn get_material_for_primitive(
                 .material()
                 .index()
                 .and_then(|idx| material_map.get(idx).copied())
-                .unwrap_or(DefaultMaterial::Face.into())
+                .unwrap_or(DEFAULT_MATERIAL_ID)
         }
-        PrimitiveType::LineList => DefaultMaterial::Line.into(),
-        PrimitiveType::PointList => DefaultMaterial::Point.into(),
+        PrimitiveType::LineList | PrimitiveType::PointList => DEFAULT_MATERIAL_ID,
     }
 }
 
@@ -357,7 +356,7 @@ pub fn load_gltf_scene<P: AsRef<Path>>(
     for mesh in document.meshes() {
         let mut primitives_data = Vec::new();
 
-        for (prim_idx, primitive) in mesh.primitives().enumerate() {
+        for (_prim_idx, primitive) in mesh.primitives().enumerate() {
             // Map glTF primitive mode to our PrimitiveType
             let Some(primitive_type) = map_primitive_mode(primitive.mode()) else {
                 log::warn!(

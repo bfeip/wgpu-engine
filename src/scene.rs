@@ -18,9 +18,9 @@ pub(crate) use instance::InstanceRaw;
 use tree::collect_instance_transforms;
 
 use crate::{
-    common::Aabb,
+    common::{Aabb, RgbaColor},
     light::Light,
-    material::{create_default_materials, Material, MaterialId},
+    material::{Material, MaterialId},
     texture::{Texture, TextureId},
 };
 
@@ -66,12 +66,12 @@ pub struct Scene {
 }
 
 impl Scene {
-    /// Creates a new empty scene with default materials.
+    /// Creates a new empty scene with a default material.
     ///
-    /// The scene is initialized with three default materials:
-    /// - ID 0: Magenta face material (for debugging)
-    /// - ID 1: Black line material
-    /// - ID 2: Black point material
+    /// The scene is initialized with one default material (ID 0) that has:
+    /// - Face color: Magenta (for debugging unassigned faces)
+    /// - Line color: Black
+    /// - Point color: Black
     pub fn new() -> Self {
         let mut scene = Self {
             meshes: HashMap::new(),
@@ -91,11 +91,13 @@ impl Scene {
             next_texture_id: 0,
         };
 
-        // Create default materials (IDs 0, 1, 2)
-        let defaults = create_default_materials();
-        for mat in defaults {
-            scene.add_material(mat);
-        }
+        // Create default material (ID 0)
+        scene.add_material(
+            Material::new()
+                .with_face_color(RgbaColor { r: 1.0, g: 0.3, b: 1.0, a: 1.0 }) // Magenta
+                .with_line_color(RgbaColor { r: 0.0, g: 0.0, b: 0.0, a: 1.0 })
+                .with_point_color(RgbaColor { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }),
+        );
 
         scene
     }

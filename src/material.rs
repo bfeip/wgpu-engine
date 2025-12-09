@@ -10,30 +10,6 @@ use crate::{
     texture::{GpuTexture, TextureId},
 };
 
-/// Default magenta color for face materials
-const DEFAULT_FACE_COLOR: RgbaColor = RgbaColor {
-    r: 1.0,
-    g: 0.3,
-    b: 1.0,
-    a: 1.0,
-};
-
-/// Default black color for line materials
-const DEFAULT_LINE_COLOR: RgbaColor = RgbaColor {
-    r: 0.0,
-    g: 0.0,
-    b: 0.0,
-    a: 1.0,
-};
-
-/// Default black color for point materials
-const DEFAULT_POINT_COLOR: RgbaColor = RgbaColor {
-    r: 0.0,
-    g: 0.0,
-    b: 0.0,
-    a: 1.0,
-};
-
 bitflags! {
     /// Additional material rendering flags for extensibility
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -62,30 +38,16 @@ pub struct MaterialProperties {
     pub flags: MaterialFlags,
 }
 
-/// Default materials created automatically by the Scene.
+/// The ID of the default material created automatically by the Scene.
 ///
-/// These materials are always available with fixed IDs (0, 1, 2) and provide
-/// fallback rendering options when custom materials aren't specified.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DefaultMaterial {
-    /// Default magenta face material (ID = 0)
-    Face = 0,
-    /// Default black line material (ID = 1)
-    Line,
-    /// Default black point material (ID = 2)
-    Point,
-}
-
-impl From<DefaultMaterial> for MaterialId {
-    fn from(val: DefaultMaterial) -> Self {
-        val as MaterialId
-    }
-}
+/// This material is always available with ID 0 and provides fallback
+/// rendering for faces (magenta), lines (black), and points (black).
+pub const DEFAULT_MATERIAL_ID: MaterialId = 0;
 
 /// Unique identifier for materials.
 ///
-/// Material IDs are assigned sequentially by the Scene starting from 3
-/// (IDs 0-2 are reserved for default materials).
+/// Material IDs are assigned sequentially by the Scene starting from 1
+/// (ID 0 is reserved for the default material).
 pub type MaterialId = u32;
 
 /// GPU resources for a single primitive type (face, line, or point)
@@ -330,20 +292,6 @@ impl Default for Material {
     }
 }
 
-/// Creates default materials for use by Scene.
-///
-/// These materials are always available with fixed IDs (0, 1, 2).
-pub fn create_default_materials() -> [Material; 3] {
-    [
-        // Default face material (ID 0, magenta for debugging)
-        Material::new().with_face_color(DEFAULT_FACE_COLOR),
-        // Default line material (ID 1, black)
-        Material::new().with_line_color(DEFAULT_LINE_COLOR),
-        // Default point material (ID 2, black)
-        Material::new().with_point_color(DEFAULT_POINT_COLOR),
-    ]
-}
-
 // ============================================================================
 // MaterialManager - DEPRECATED, to be removed after Scene integration
 // ============================================================================
@@ -412,16 +360,15 @@ impl MaterialManager {
             texture_bind_group_layout,
         };
 
-        // Create default materials with fixed IDs (0, 1, 2)
-        let defaults = create_default_materials();
-        for mut mat in defaults {
-            let id = manager.next_id;
-            manager.next_id += 1;
-            mat.id = id;
-            // Create GPU resources for default materials immediately
-            manager.create_gpu_resources_for_material(&mut mat, device, None);
-            manager.materials.insert(id, mat);
-        }
+        // Create default material (ID 0) with face, line, and point colors
+        let mut default_mat = Material::new()
+            .with_face_color(RgbaColor { r: 1.0, g: 0.3, b: 1.0, a: 1.0 }) // Magenta
+            .with_line_color(RgbaColor { r: 0.0, g: 0.0, b: 0.0, a: 1.0 })
+            .with_point_color(RgbaColor { r: 0.0, g: 0.0, b: 0.0, a: 1.0 });
+        default_mat.id = 0;
+        manager.next_id = 1;
+        manager.create_gpu_resources_for_material(&mut default_mat, device, None);
+        manager.materials.insert(0, default_mat);
 
         manager
     }
