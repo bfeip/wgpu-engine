@@ -305,21 +305,11 @@ impl Mesh {
         self.dirty = true;
     }
 
-    /// Mark the mesh as dirty, requiring GPU resource update.
-    fn mark_dirty(&mut self) {
-        self.dirty = true;
-    }
-
     // ========== GPU resource management ==========
 
     /// Check if GPU resources need to be created or updated.
     pub(crate) fn needs_gpu_upload(&self) -> bool {
         self.gpu.is_none() || self.dirty
-    }
-
-    /// Check if this mesh has GPU resources initialized.
-    pub(crate) fn has_gpu_resources(&self) -> bool {
-        self.gpu.is_some()
     }
 
     /// Create or update GPU resources for this mesh.

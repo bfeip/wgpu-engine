@@ -243,6 +243,7 @@ impl<'a> Viewer<'a> {
         );
 
         // Render 3D scene first
+        self.state.prepare_scene(&mut self.scene).unwrap();
         self.state
             .render_scene_to_view(&view, &mut encoder, &mut self.scene)?;
 

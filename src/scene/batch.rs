@@ -25,14 +25,6 @@ impl DrawBatch {
     pub fn add_instance(&mut self, instance_transform: InstanceTransform) {
         self.instances.push(instance_transform);
     }
-
-    pub fn is_empty(&self) -> bool {
-        self.instances.is_empty()
-    }
-
-    pub fn len(&self) -> usize {
-        self.instances.len()
-    }
 }
 
 #[cfg(test)]

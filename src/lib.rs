@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 mod camera;
 pub mod common;
 pub mod input;

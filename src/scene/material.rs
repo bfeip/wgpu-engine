@@ -222,13 +222,6 @@ impl Material {
         }
     }
 
-    /// Check if any GPU resources need creation or update.
-    pub(crate) fn needs_any_gpu_resources(&self) -> bool {
-        self.needs_gpu_resources(PrimitiveType::TriangleList)
-            || self.needs_gpu_resources(PrimitiveType::LineList)
-            || self.needs_gpu_resources(PrimitiveType::PointList)
-    }
-
     /// Check if the material has data for a given primitive type.
     pub fn has_primitive_data(&self, primitive_type: PrimitiveType) -> bool {
         match primitive_type {

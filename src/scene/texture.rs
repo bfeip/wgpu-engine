@@ -166,11 +166,6 @@ impl Texture {
         self.gpu.is_none() || self.dirty
     }
 
-    /// Check if this texture has GPU resources initialized.
-    pub(crate) fn has_gpu_resources(&self) -> bool {
-        self.gpu.is_some()
-    }
-
     /// Create or update GPU resources for this texture.
     ///
     /// This method is called automatically by `DrawState::prepare_scene()` before rendering.
@@ -271,13 +266,6 @@ impl Texture {
             *image = None;
         }
         // Embedded textures cannot release their image data
-    }
-
-    /// Mark the texture as dirty, requiring GPU resource update.
-    ///
-    /// Call this after modifying the source image data.
-    pub(crate) fn mark_dirty(&mut self) {
-        self.dirty = true;
     }
 
     /// Replace the texture's image data.
