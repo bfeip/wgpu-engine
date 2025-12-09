@@ -38,7 +38,7 @@ pub(crate) struct DrawState<'a> {
     /// Current cursor position in screen coordinates (x, y), or None if cursor is not over the window
     pub cursor_position: Option<(f32, f32)>,
 
-    // Bind group layouts (moved from MaterialManager)
+    // Bind group layouts for materials
     pub(crate) color_bind_group_layout: wgpu::BindGroupLayout,
     pub(crate) texture_bind_group_layout: wgpu::BindGroupLayout,
 
@@ -133,7 +133,7 @@ impl<'a> DrawState<'a> {
 
         surface.configure(&device, &config);
 
-        // Create bind group layouts (formerly in MaterialManager)
+        // Create bind group layouts for materials
         let color_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Color Material Bind Group Layout"),
