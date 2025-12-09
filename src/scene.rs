@@ -1,25 +1,51 @@
-mod mesh;
+mod batch;
 mod instance;
+mod mesh;
 mod node;
 mod tree;
-mod batch;
 
 use cgmath::{Matrix4, SquareMatrix};
-pub use mesh::{Mesh, MeshDescriptor, MeshId, MeshPrimitive, PrimitiveType, Vertex};
+use image::DynamicImage;
+use std::collections::HashMap;
+use std::path::Path;
+
 pub use instance::{Instance, InstanceId};
+pub use mesh::{Mesh, MeshDescriptor, MeshId, MeshPrimitive, ObjMesh, PrimitiveType, Vertex};
 pub use node::{Node, NodeId};
 pub use tree::TreeVisitor;
 pub(crate) use batch::DrawBatch;
 pub(crate) use instance::InstanceRaw;
-use tree::{collect_instance_transforms};
+use tree::collect_instance_transforms;
 
 use crate::{
-    common::{Aabb},
+    common::Aabb,
     light::Light,
-    material::MaterialId,
+    material::{create_default_materials, Material, MaterialId},
+    texture::{Texture, TextureId},
 };
-use std::collections::HashMap;
 
+/// The scene container holding all meshes, materials, textures, instances, nodes, and lights.
+///
+/// Scene provides device-free APIs for creating and managing scene objects.
+///
+/// # Examples
+///
+/// ```ignore
+/// let mut scene = Scene::new();
+///
+/// // Add a mesh (no device needed)
+/// let mesh = Mesh::from_raw(vertices, primitives);
+/// let mesh_id = scene.add_mesh(mesh);
+///
+/// // Add a material (no device needed)
+/// let material = Material::new().with_face_color(RgbaColor::RED);
+/// let mat_id = scene.add_material(material);
+///
+/// // Create an instance node
+/// let node_id = scene.add_instance_node(None, mesh_id, mat_id, position, rotation, scale);
+///
+/// // GPU resources are created automatically when DrawState::render() is called
+/// ```
 pub struct Scene {
     pub meshes: HashMap<MeshId, Mesh>,
     pub instances: HashMap<InstanceId, Instance>,
@@ -29,14 +55,25 @@ pub struct Scene {
     pub nodes: HashMap<NodeId, Node>,
     pub root_nodes: Vec<NodeId>,
 
+    pub materials: HashMap<MaterialId, Material>,
+    pub textures: HashMap<TextureId, Texture>,
+
     next_mesh_id: MeshId,
     next_instance_id: InstanceId,
     next_node_id: NodeId,
+    next_material_id: MaterialId,
+    next_texture_id: TextureId,
 }
 
 impl Scene {
+    /// Creates a new empty scene with default materials.
+    ///
+    /// The scene is initialized with three default materials:
+    /// - ID 0: Magenta face material (for debugging)
+    /// - ID 1: Black line material
+    /// - ID 2: Black point material
     pub fn new() -> Self {
-        Self {
+        let mut scene = Self {
             meshes: HashMap::new(),
             instances: HashMap::new(),
             lights: Vec::new(),
@@ -44,11 +81,155 @@ impl Scene {
             nodes: HashMap::new(),
             root_nodes: Vec::new(),
 
+            materials: HashMap::new(),
+            textures: HashMap::new(),
+
             next_mesh_id: 0,
             next_instance_id: 0,
             next_node_id: 0,
+            next_material_id: 0,
+            next_texture_id: 0,
+        };
+
+        // Create default materials (IDs 0, 1, 2)
+        let defaults = create_default_materials();
+        for mat in defaults {
+            scene.add_material(mat);
         }
+
+        scene
     }
+
+    // ========== Mesh API ==========
+
+    /// Adds a mesh to the scene.
+    ///
+    /// No GPU resources are allocated. They will be created lazily during rendering.
+    ///
+    /// # Arguments
+    /// * `mesh` - The mesh to add
+    ///
+    /// # Returns
+    /// The unique ID assigned to this mesh
+    pub fn add_mesh(&mut self, mesh: Mesh) -> MeshId {
+        let id = self.next_mesh_id;
+        self.next_mesh_id += 1;
+
+        let mut mesh = mesh;
+        mesh.id = id;
+        self.meshes.insert(id, mesh);
+        id
+    }
+
+    /// Creates and adds a mesh from a descriptor.
+    ///
+    /// # Arguments
+    /// * `descriptor` - Source data for the mesh
+    ///
+    /// # Returns
+    /// The unique ID assigned to this mesh, or an error if loading fails
+    pub fn add_mesh_from_descriptor(&mut self, descriptor: MeshDescriptor) -> anyhow::Result<MeshId> {
+        let mesh = Mesh::from_descriptor(descriptor)?;
+        Ok(self.add_mesh(mesh))
+    }
+
+    /// Gets a reference to a mesh by ID.
+    pub fn get_mesh(&self, id: MeshId) -> Option<&Mesh> {
+        self.meshes.get(&id)
+    }
+
+    /// Gets a mutable reference to a mesh by ID.
+    pub fn get_mesh_mut(&mut self, id: MeshId) -> Option<&mut Mesh> {
+        self.meshes.get_mut(&id)
+    }
+
+    // ========== Material API (device-free) ==========
+
+    /// Adds a material to the scene.
+    ///
+    /// No GPU resources are allocated. They will be created lazily during rendering.
+    ///
+    /// # Arguments
+    /// * `material` - The material to add
+    ///
+    /// # Returns
+    /// The unique ID assigned to this material
+    pub fn add_material(&mut self, material: Material) -> MaterialId {
+        let id = self.next_material_id;
+        self.next_material_id += 1;
+
+        let mut material = material;
+        material.id = id;
+        self.materials.insert(id, material);
+        id
+    }
+
+    /// Gets a reference to a material by ID.
+    pub fn get_material(&self, id: MaterialId) -> Option<&Material> {
+        self.materials.get(&id)
+    }
+
+    /// Gets a mutable reference to a material by ID.
+    pub fn get_material_mut(&mut self, id: MaterialId) -> Option<&mut Material> {
+        self.materials.get_mut(&id)
+    }
+
+    // ========== Texture API (device-free) ==========
+
+    /// Adds a texture to the scene.
+    ///
+    /// No GPU resources are allocated. They will be created lazily during rendering.
+    ///
+    /// # Arguments
+    /// * `texture` - The texture to add
+    ///
+    /// # Returns
+    /// The unique ID assigned to this texture
+    pub fn add_texture(&mut self, texture: Texture) -> TextureId {
+        let id = self.next_texture_id;
+        self.next_texture_id += 1;
+
+        let mut texture = texture;
+        texture.id = id;
+        self.textures.insert(id, texture);
+        id
+    }
+
+    /// Creates and adds a texture from an image.
+    ///
+    /// # Arguments
+    /// * `image` - The image data
+    ///
+    /// # Returns
+    /// The unique ID assigned to this texture
+    pub fn add_texture_from_image(&mut self, image: DynamicImage) -> TextureId {
+        self.add_texture(Texture::from_image(image))
+    }
+
+    /// Creates and adds a texture from a file path.
+    ///
+    /// The image is not loaded immediately - it will be loaded lazily when first needed.
+    ///
+    /// # Arguments
+    /// * `path` - Path to the image file
+    ///
+    /// # Returns
+    /// The unique ID assigned to this texture
+    pub fn add_texture_from_path(&mut self, path: impl AsRef<Path>) -> TextureId {
+        self.add_texture(Texture::from_path(path.as_ref()))
+    }
+
+    /// Gets a reference to a texture by ID.
+    pub fn get_texture(&self, id: TextureId) -> Option<&Texture> {
+        self.textures.get(&id)
+    }
+
+    /// Gets a mutable reference to a texture by ID.
+    pub fn get_texture_mut(&mut self, id: TextureId) -> Option<&mut Texture> {
+        self.textures.get_mut(&id)
+    }
+
+    // ========== Instance API ==========
 
     /// Gets a reference to a node by ID.
     pub fn get_node(&self, id: NodeId) -> Option<&Node> {
@@ -102,20 +283,6 @@ impl Scene {
         let mut batches: Vec<DrawBatch> = batch_map.into_values().collect();
         batches.sort_by_key(|b| (b.material_id, b.primitive_type as u8, b.mesh_id));
         batches
-    }
-
-    pub(crate) fn add_mesh(
-        &mut self,
-        device: &wgpu::Device,
-        desc: MeshDescriptor,
-        label: Option<&str>
-    ) -> anyhow::Result<MeshId> {
-        let id = self.next_mesh_id;
-        self.next_mesh_id += 1;
-
-        let mesh = Mesh::new(id, device, desc, label)?;
-        self.meshes.insert(id, mesh);
-        Ok(id)
     }
 
     pub fn add_instance(

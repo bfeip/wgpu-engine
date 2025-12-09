@@ -1,10 +1,12 @@
-use std::{cell::Cell, fs::File, io::BufReader, path::{Path, PathBuf}};
+use std::{cell::Cell, fs::File, io::BufReader, path::Path};
+
+use anyhow::{Context, Result};
 use cgmath::Point3;
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
 use crate::{
-    drawstate::VertexShaderLocations,
     common::{Aabb, ConvexPolyhedron, Ray},
+    drawstate::VertexShaderLocations,
 };
 
 /// Unique identifier for a mesh in the scene.
@@ -66,7 +68,7 @@ pub struct Vertex {
     /// Texture coordinates [u, v, w] (w unused, reserved for 3D textures)
     pub tex_coords: [f32; 3],
     /// Vertex normal vector [x, y, z]
-    pub normal: [f32; 3]
+    pub normal: [f32; 3],
 }
 
 impl Vertex {
@@ -90,10 +92,10 @@ impl Vertex {
                     format: wgpu::VertexFormat::Float32x3,
                 },
                 wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 3*2]>() as wgpu::BufferAddress,
+                    offset: std::mem::size_of::<[f32; 3 * 2]>() as wgpu::BufferAddress,
                     shader_location: VertexShaderLocations::VertexNormal as u32,
-                    format: wgpu::VertexFormat::Float32x3
-                }
+                    format: wgpu::VertexFormat::Float32x3,
+                },
             ],
         }
     }
@@ -106,7 +108,7 @@ pub enum ObjMesh<'a> {
     /// OBJ data from an in-memory byte slice
     Bytes(&'a [u8]),
     /// OBJ data from a file path
-    Path(PathBuf)
+    Path(&'a Path),
 }
 
 /// Descriptor for creating a mesh from various sources.
@@ -127,220 +129,144 @@ pub enum MeshDescriptor<'a> {
     },
 }
 
-/// A renderable mesh containing geometry data and GPU buffers.
+/// GPU resources for a mesh (vertex and index buffers).
 ///
+/// These are created lazily when the mesh is first needed for rendering.
+pub(crate) struct MeshGpuResources {
+    /// GPU vertex buffer
+    pub vertex_buffer: wgpu::Buffer,
+    /// GPU index buffer for triangle primitives
+    pub triangle_index_buffer: wgpu::Buffer,
+    /// GPU index buffer for line primitives
+    pub line_index_buffer: wgpu::Buffer,
+    /// GPU index buffer for point primitives
+    pub point_index_buffer: wgpu::Buffer,
+}
+
 /// Meshes store vertex data (positions, normals, texture coordinates) and primitives
-/// (triangle lists, line lists, point lists) along with their corresponding GPU buffers.
+/// (triangle lists, line lists, point lists). GPU buffers are created lazily when
+/// the mesh is first rendered.
 ///
-/// # Features
-/// - Multiple primitive types per mesh (triangles, lines, points)
-/// - GPU buffer management for vertices and indices
-/// - Local-space bounding box computation with caching
-/// - Ray-mesh intersection testing for picking
-/// - Instance rendering support
+/// # Examples
 ///
-/// # Memory Management
-/// - Vertex and index buffers are created at mesh construction time
-/// - Separate index buffers maintained for each primitive type
-/// - Bounding boxes computed lazily and cached
+/// ```ignore
+/// // Create from raw data (no device needed)
+/// let mesh = Mesh::from_raw(vertices, primitives);
+///
+/// // Add to scene
+/// let mesh_id = scene.add_mesh(mesh);
+///
+/// // GPU resources are created automatically during rendering
+/// ```
 pub struct Mesh {
-    /// Unique identifier for this mesh
+    /// Unique identifier for this mesh (assigned by Scene)
     pub id: MeshId,
     /// CPU-side vertex data
     vertices: Vec<Vertex>,
     /// CPU-side primitive data (index lists grouped by type)
     primitives: Vec<MeshPrimitive>,
-
-    /// GPU vertex buffer
-    vertex_buffer: wgpu::Buffer,
-    /// GPU index buffer for triangle primitives
-    triangle_index_buffer: wgpu::Buffer,
-    /// GPU index buffer for line primitives
-    line_index_buffer: wgpu::Buffer,
-    /// GPU index buffer for point primitives
-    point_index_buffer: wgpu::Buffer,
-
+    /// GPU resources (created lazily)
+    gpu: Option<MeshGpuResources>,
+    /// True if vertex/primitive data changed since last GPU upload
+    dirty: bool,
     /// Cached local-space axis-aligned bounding box
-    cached_bounding: Cell<Option<Aabb>>
+    cached_bounding: Cell<Option<Aabb>>,
 }
 
 impl Mesh {
-    /// Creates a new mesh from a descriptor.
+    /// Creates a new empty mesh with no vertices or primitives.
     ///
-    /// # Arguments
-    /// * `id` - Unique identifier for this mesh
-    /// * `device` - WGPU device for creating GPU buffers
-    /// * `descriptor` - Source data for the mesh (empty, OBJ file, or raw data)
-    /// * `label` - Optional label for debugging GPU resources
-    ///
-    /// # Returns
-    /// The created mesh or an error if loading fails (e.g., invalid OBJ file)
-    pub(crate) fn new(
-        id: MeshId,
-        device: &wgpu::Device,
-        descriptor: MeshDescriptor,
-        label: Option<&str>
-    ) -> anyhow::Result<Self> {
-        match descriptor {
-            MeshDescriptor::Empty => Ok(Self::new_empty(id, device, label)),
-            MeshDescriptor::Obj(obj_desc) => {
-                match obj_desc {
-                    ObjMesh::Bytes(bytes) => Self::from_obj_bytes(id, device, &bytes, label),
-                    ObjMesh::Path(path) => Self::from_obj_path(id, device, path, label)
-                }
-            }
-            MeshDescriptor::Raw { vertices, primitives } => {
-                Ok(Self::from_raw(id, device, vertices, primitives, label))
-            }
+    /// No GPU resources are allocated until the mesh is rendered.
+    pub fn new() -> Self {
+        Self {
+            id: 0, // Assigned by Scene
+            vertices: Vec::new(),
+            primitives: Vec::new(),
+            gpu: None,
+            dirty: true,
+            cached_bounding: Cell::new(None),
         }
     }
 
     /// Creates a mesh from raw vertex and primitive data.
     ///
-    /// This method creates GPU buffers for all vertex data and separates primitives
-    /// into type-specific index buffers (triangles, lines, points).
+    /// No GPU resources are allocated until the mesh is rendered.
     ///
     /// # Arguments
-    /// * `id` - Unique identifier for this mesh
-    /// * `device` - WGPU device for creating GPU buffers
     /// * `vertices` - Vertex data (positions, normals, texture coordinates)
     /// * `primitives` - Primitive data (index lists grouped by type)
-    /// * `label` - Optional label for debugging GPU resources
-    fn from_raw(
-        id: MeshId,
-        device: &wgpu::Device,
-        vertices: Vec<Vertex>,
-        primitives: Vec<MeshPrimitive>,
-        label: Option<&str>
-    ) -> Self {
-        use wgpu::util::DeviceExt;
-
-        let vertex_buffer_label = label.map(|l| format!("{}_vertex_buffer", l));
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: vertex_buffer_label.as_deref(),
-            contents: bytemuck::cast_slice(&vertices),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-
-        // Helper function to create index buffer for a specific primitive type
-        let create_index_buffer = |prim_type: PrimitiveType, label_suffix: &str| -> wgpu::Buffer {
-            let indices: Vec<MeshIndex> = primitives.iter()
-                .filter(|p| p.primitive_type == prim_type)
-                .flat_map(|p| p.indices.iter().copied())
-                .collect();
-
-            if indices.is_empty() {
-                device.create_buffer(&wgpu::BufferDescriptor {
-                    label: label.map(|l| format!("{}_{}", l, label_suffix)).as_deref(),
-                    size: 0,
-                    usage: wgpu::BufferUsages::INDEX,
-                    mapped_at_creation: false,
-                })
-            } else {
-                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: label.map(|l| format!("{}_{}", l, label_suffix)).as_deref(),
-                    contents: bytemuck::cast_slice(&indices),
-                    usage: wgpu::BufferUsages::INDEX,
-                })
-            }
-        };
-
-        let triangle_index_buffer = create_index_buffer(PrimitiveType::TriangleList, "triangle_index_buffer");
-        let line_index_buffer = create_index_buffer(PrimitiveType::LineList, "line_index_buffer");
-        let point_index_buffer = create_index_buffer(PrimitiveType::PointList, "point_index_buffer");
-
+    pub fn from_raw(vertices: Vec<Vertex>, primitives: Vec<MeshPrimitive>) -> Self {
         Self {
-            id,
+            id: 0, // Assigned by Scene
             vertices,
             primitives,
-            vertex_buffer,
-            triangle_index_buffer,
-            line_index_buffer,
-            point_index_buffer,
-            cached_bounding: Cell::new(None)
+            gpu: None,
+            dirty: true,
+            cached_bounding: Cell::new(None),
         }
     }
 
-    /// Creates an empty mesh with no vertices or primitives.
+    /// Creates a mesh from a descriptor.
     ///
-    /// All GPU buffers are created with zero size. This is useful for placeholder
-    /// meshes or meshes that will be populated later.
+    /// No GPU resources are allocated until the mesh is rendered.
     ///
     /// # Arguments
-    /// * `id` - Unique identifier for this mesh
-    /// * `device` - WGPU device for creating GPU buffers
-    /// * `label` - Optional label for debugging GPU resources
-    fn new_empty(id: MeshId, device: &wgpu::Device, label: Option<&str>) -> Self {
-        let vertices = Vec::new();
-        let primitives = Vec::new();
-
-        let vertex_buffer_label = label.and_then(| mesh_label | {
-            Some(mesh_label.to_owned() + "_vertex_buffer")
-        });
-        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: vertex_buffer_label.as_deref(),
-            size: 0,
-            usage: wgpu::BufferUsages::VERTEX,
-            mapped_at_creation: false
-        });
-
-        // Create empty index buffers for all primitive types
-        let triangle_index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: label.map(|l| format!("{}_triangle_index_buffer", l)).as_deref(),
-            size: 0,
-            usage: wgpu::BufferUsages::INDEX,
-            mapped_at_creation: false
-        });
-
-        let line_index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: label.map(|l| format!("{}_line_index_buffer", l)).as_deref(),
-            size: 0,
-            usage: wgpu::BufferUsages::INDEX,
-            mapped_at_creation: false
-        });
-
-        let point_index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: label.map(|l| format!("{}_point_index_buffer", l)).as_deref(),
-            size: 0,
-            usage: wgpu::BufferUsages::INDEX,
-            mapped_at_creation: false
-        });
-
-        Self {
-            id,
-            vertices,
-            primitives,
-            vertex_buffer,
-            triangle_index_buffer,
-            line_index_buffer,
-            point_index_buffer,
-            cached_bounding: Cell::new(None)
+    /// * `descriptor` - Source data for the mesh (empty, OBJ file, or raw data)
+    ///
+    /// # Errors
+    /// Returns an error if loading from OBJ fails.
+    pub fn from_descriptor(descriptor: MeshDescriptor) -> Result<Self> {
+        match descriptor {
+            MeshDescriptor::Empty => Ok(Self::new()),
+            MeshDescriptor::Obj(obj_desc) => match obj_desc {
+                ObjMesh::Bytes(bytes) => Self::from_obj_bytes(bytes),
+                ObjMesh::Path(path) => Self::from_obj_path(path),
+            },
+            MeshDescriptor::Raw { vertices, primitives } => Ok(Self::from_raw(vertices, primitives)),
         }
+    }
+
+    /// Loads a mesh from OBJ data in a byte slice.
+    ///
+    /// # Arguments
+    /// * `obj_bytes` - OBJ file data as bytes
+    ///
+    /// # Errors
+    /// Returns an error if the OBJ data is malformed or cannot be parsed
+    pub fn from_obj_bytes(obj_bytes: &[u8]) -> Result<Self> {
+        let obj: obj::Obj<obj::TexturedVertex> =
+            obj::load_obj(obj_bytes).context("Failed to parse OBJ data")?;
+        Self::from_obj(obj)
+    }
+
+    /// Loads a mesh from an OBJ file on disk.
+    ///
+    /// # Arguments
+    /// * `obj_path` - File path to the OBJ file
+    ///
+    /// # Errors
+    /// Returns an error if the file cannot be read or the OBJ data is malformed
+    pub fn from_obj_path<P: AsRef<Path>>(obj_path: P) -> Result<Self> {
+        let path = obj_path.as_ref();
+        let obj_file =
+            File::open(path).with_context(|| format!("Failed to open OBJ file: {:?}", path))?;
+        let obj_reader = BufReader::new(obj_file);
+        let obj: obj::Obj<obj::TexturedVertex> =
+            obj::load_obj(obj_reader).with_context(|| format!("Failed to parse OBJ file: {:?}", path))?;
+        Self::from_obj(obj)
     }
 
     /// Creates a mesh from a parsed OBJ object.
-    ///
-    /// Converts OBJ vertex data to the engine's vertex format and creates a single
-    /// triangle list primitive. OBJ files always contain triangle geometry.
-    ///
-    /// # Arguments
-    /// * `id` - Unique identifier for this mesh
-    /// * `device` - WGPU device for creating GPU buffers
-    /// * `obj` - Parsed OBJ object containing vertices and indices
-    /// * `label` - Optional label for debugging GPU resources
-    fn from_obj(
-        id: MeshId,
-        device: &wgpu::Device,
-        obj: obj::Obj<obj::TexturedVertex>,
-        label: Option<&str>
-    )-> anyhow::Result<Self> {
-        let vertices: Vec<Vertex> = obj.vertices.iter().map(|v: &obj::TexturedVertex| {
-            Vertex {
+    fn from_obj(obj: obj::Obj<obj::TexturedVertex>) -> Result<Self> {
+        let vertices: Vec<Vertex> = obj
+            .vertices
+            .iter()
+            .map(|v: &obj::TexturedVertex| Vertex {
                 position: v.position,
                 tex_coords: v.texture,
-                normal: v.normal
-            }
-        }).collect();
+                normal: v.normal,
+            })
+            .collect();
 
         // OBJ files contain triangles, so create a triangle primitive
         let primitives = vec![MeshPrimitive {
@@ -348,142 +274,129 @@ impl Mesh {
             indices: obj.indices,
         }];
 
-        Ok(Self::from_raw(id, device, vertices, primitives, label))
+        Ok(Self::from_raw(vertices, primitives))
     }
 
-    /// Loads a mesh from OBJ data in a byte slice.
-    ///
-    /// # Arguments
-    /// * `id` - Unique identifier for this mesh
-    /// * `device` - WGPU device for creating GPU buffers
-    /// * `obj_bytes` - OBJ file data as bytes
-    /// * `label` - Optional label for debugging GPU resources
-    ///
-    /// # Errors
-    /// Returns an error if the OBJ data is malformed or cannot be parsed
-    fn from_obj_bytes(id: MeshId, device: &wgpu::Device, obj_bytes: &[u8], label: Option<&str>) -> anyhow::Result<Self> {
-        let obj: obj::Obj<obj::TexturedVertex> = obj::load_obj(obj_bytes)?;
-        Self::from_obj(id, device, obj, label)
+    // ========== Mutation methods (set dirty flag) ==========
+
+    /// Set the mesh's vertex data, marking it as dirty.
+    pub fn set_vertices(&mut self, vertices: Vec<Vertex>) {
+        self.vertices = vertices;
+        self.dirty = true;
+        self.cached_bounding.set(None);
     }
 
-    /// Loads a mesh from an OBJ file on disk.
-    ///
-    /// # Arguments
-    /// * `id` - Unique identifier for this mesh
-    /// * `device` - WGPU device for creating GPU buffers
-    /// * `obj_path` - File path to the OBJ file
-    /// * `label` - Optional label for debugging GPU resources
-    ///
-    /// # Errors
-    /// Returns an error if the file cannot be read or the OBJ data is malformed
-    fn from_obj_path<P: AsRef<Path>>(id: MeshId, device: &wgpu::Device, obj_path: P, label: Option<&str>) -> anyhow::Result<Self> {
-        let obj_file = File::open(obj_path)?;
-        let obj_reader = BufReader::new(obj_file);
-        let obj: obj::Obj<obj::TexturedVertex> = obj::load_obj(obj_reader)?;
-        Self::from_obj(id, device, obj, label)
+    /// Set the mesh's primitive data, marking it as dirty.
+    pub fn set_primitives(&mut self, primitives: Vec<MeshPrimitive>) {
+        self.primitives = primitives;
+        self.dirty = true;
     }
 
-    /// Draws instances of this mesh using pre-computed transforms.
+    /// Add vertices to the mesh, marking it as dirty.
+    pub fn add_vertices(&mut self, vertices: &[Vertex]) {
+        self.vertices.extend_from_slice(vertices);
+        self.dirty = true;
+        self.cached_bounding.set(None);
+    }
+
+    /// Add a primitive to the mesh, marking it as dirty.
+    pub fn add_primitive(&mut self, primitive: MeshPrimitive) {
+        self.primitives.push(primitive);
+        self.dirty = true;
+    }
+
+    /// Mark the mesh as dirty, requiring GPU resource update.
+    fn mark_dirty(&mut self) {
+        self.dirty = true;
+    }
+
+    // ========== GPU resource management ==========
+
+    /// Check if GPU resources need to be created or updated.
+    pub(crate) fn needs_gpu_upload(&self) -> bool {
+        self.gpu.is_none() || self.dirty
+    }
+
+    /// Check if this mesh has GPU resources initialized.
+    pub(crate) fn has_gpu_resources(&self) -> bool {
+        self.gpu.is_some()
+    }
+
+    /// Create or update GPU resources for this mesh.
     ///
-    /// Transforms are provided by the scene tree traversal and batch collection.
-    /// This method creates an instance buffer from the transforms and issues a draw call.
-    ///
-    /// # Arguments
-    /// * `device` - WGPU device for creating the instance buffer
-    /// * `pass` - Render pass to record draw commands into
-    /// * `primitive_type` - Type of primitives to draw (triangles, lines, or points)
-    /// * `instance_transforms` - Pre-computed world transforms and normal matrices for each instance
-    ///
-    /// # Notes
-    /// - Creates a new instance buffer each call (not cached)
-    /// - Skips drawing if no primitives of the requested type exist
-    /// - Uses indexed drawing with instancing for efficiency
-    pub(crate) fn draw_instances(
-        &self,
-        device: &wgpu::Device,
-        pass: &mut wgpu::RenderPass,
-        primitive_type: PrimitiveType,
-        instance_transforms: &[super::tree::InstanceTransform]
-    ) {
-        use super::InstanceRaw;
-
-        // Convert InstanceTransforms to InstanceRaw for the GPU
-        let instance_raws: Vec<InstanceRaw> = instance_transforms.iter().map(|inst_transform| {
-            InstanceRaw {
-                transform: inst_transform.world_transform.into(),
-                normal_mat: inst_transform.normal_matrix.into(),
-            }
-        }).collect();
-
-        // Create instance buffer
-        let instance_buffer = device.create_buffer_init(&BufferInitDescriptor {
-            label: Some("Instance Buffer"),
-            contents: bytemuck::cast_slice(&instance_raws),
-            usage: wgpu::BufferUsages::VERTEX
-        });
-
-        // Select the appropriate index buffer based on primitive type
-        let (index_buffer, n_indices) = match primitive_type {
-            PrimitiveType::TriangleList => {
-                let count = self.primitives.iter()
-                    .filter(|p| p.primitive_type == PrimitiveType::TriangleList)
-                    .map(|p| p.indices.len())
-                    .sum::<usize>() as u32;
-                (&self.triangle_index_buffer, count)
-            }
-            PrimitiveType::LineList => {
-                let count = self.primitives.iter()
-                    .filter(|p| p.primitive_type == PrimitiveType::LineList)
-                    .map(|p| p.indices.len())
-                    .sum::<usize>() as u32;
-                (&self.line_index_buffer, count)
-            }
-            PrimitiveType::PointList => {
-                let count = self.primitives.iter()
-                    .filter(|p| p.primitive_type == PrimitiveType::PointList)
-                    .map(|p| p.indices.len())
-                    .sum::<usize>() as u32;
-                (&self.point_index_buffer, count)
-            }
-        };
-
-        // Skip drawing if there are no indices for this primitive type
-        if n_indices == 0 {
+    /// This method is called automatically by `DrawState::prepare_scene()` before rendering.
+    /// After this call, `gpu()` can be used to access the GPU resources.
+    pub(crate) fn ensure_gpu_resources(&mut self, device: &wgpu::Device) {
+        if !self.needs_gpu_upload() {
             return;
         }
 
-        // Draw
-        let n_instances = instance_transforms.len() as u32;
-        pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-        pass.set_vertex_buffer(1, instance_buffer.slice(..));
-        pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-        pass.draw_indexed(0..n_indices, 0, 0..n_instances);
+        // Create vertex buffer
+        let vertex_buffer = if self.vertices.is_empty() {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Mesh Vertex Buffer"),
+                size: 0,
+                usage: wgpu::BufferUsages::VERTEX,
+                mapped_at_creation: false,
+            })
+        } else {
+            device.create_buffer_init(&BufferInitDescriptor {
+                label: Some("Mesh Vertex Buffer"),
+                contents: bytemuck::cast_slice(&self.vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            })
+        };
+
+        // Helper to create index buffer for a specific primitive type
+        let create_index_buffer = |prim_type: PrimitiveType, label: &str| -> wgpu::Buffer {
+            let indices: Vec<MeshIndex> = self
+                .primitives
+                .iter()
+                .filter(|p| p.primitive_type == prim_type)
+                .flat_map(|p| p.indices.iter().copied())
+                .collect();
+
+            if indices.is_empty() {
+                device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some(label),
+                    size: 0,
+                    usage: wgpu::BufferUsages::INDEX,
+                    mapped_at_creation: false,
+                })
+            } else {
+                device.create_buffer_init(&BufferInitDescriptor {
+                    label: Some(label),
+                    contents: bytemuck::cast_slice(&indices),
+                    usage: wgpu::BufferUsages::INDEX,
+                })
+            }
+        };
+
+        let triangle_index_buffer = create_index_buffer(PrimitiveType::TriangleList, "Triangle Index Buffer");
+        let line_index_buffer = create_index_buffer(PrimitiveType::LineList, "Line Index Buffer");
+        let point_index_buffer = create_index_buffer(PrimitiveType::PointList, "Point Index Buffer");
+
+        self.gpu = Some(MeshGpuResources {
+            vertex_buffer,
+            triangle_index_buffer,
+            line_index_buffer,
+            point_index_buffer,
+        });
+        self.dirty = false;
     }
-    
-    /// Computes the local-space axis-aligned bounding box for a mesh.
-    /// Returns None if the mesh has no vertices.
-    pub fn bounding(&self) -> Option<Aabb> {
-        let cached_bounding = self.cached_bounding.get();
-        if cached_bounding.is_some() {
-            // We only have to compute a bounding once per mesh unless we make
-            // meshes mutable somehow.
-            return cached_bounding
-        }
 
-        if self.vertices.is_empty() {
-            return None;
-        }
-
-        // Extract positions from vertices
-        let positions: Vec<Point3<f32>> = self.vertices
-            .iter()
-            .map(|v| Point3::new(v.position[0], v.position[1], v.position[2]))
-            .collect();
-
-        let bounding = Aabb::from_points(&positions);
-        self.cached_bounding.set(bounding);
-        bounding
+    /// Get the GPU resources for this mesh.
+    ///
+    /// # Panics
+    /// Panics if GPU resources haven't been initialized yet.
+    /// Call `ensure_gpu_resources()` first, or use `has_gpu_resources()` to check.
+    pub(crate) fn gpu(&self) -> &MeshGpuResources {
+        self.gpu
+            .as_ref()
+            .expect("Mesh GPU resources not initialized. Call ensure_gpu_resources() first.")
     }
+
+    // ========== Query methods ==========
 
     /// Returns a reference to the mesh's vertex data.
     pub fn vertices(&self) -> &[Vertex] {
@@ -497,7 +410,9 @@ impl Mesh {
 
     /// Returns true if this mesh has any primitives of the specified type.
     pub fn has_primitive_type(&self, primitive_type: PrimitiveType) -> bool {
-        self.primitives.iter().any(|p| p.primitive_type == primitive_type)
+        self.primitives
+            .iter()
+            .any(|p| p.primitive_type == primitive_type)
     }
 
     /// Extracts all triangle indices from the mesh.
@@ -508,11 +423,47 @@ impl Mesh {
     /// # Returns
     /// A vector of indices for all triangles. Empty if the mesh contains no triangle primitives.
     pub fn triangle_indices(&self) -> Vec<MeshIndex> {
-        self.primitives.iter()
+        self.primitives
+            .iter()
             .filter(|p| p.primitive_type == PrimitiveType::TriangleList)
             .flat_map(|p| p.indices.iter().copied())
             .collect()
     }
+
+    /// Get the count of indices for a primitive type.
+    pub fn index_count(&self, primitive_type: PrimitiveType) -> u32 {
+        self.primitives
+            .iter()
+            .filter(|p| p.primitive_type == primitive_type)
+            .map(|p| p.indices.len())
+            .sum::<usize>() as u32
+    }
+
+    /// Computes the local-space axis-aligned bounding box for a mesh.
+    /// Returns None if the mesh has no vertices.
+    pub fn bounding(&self) -> Option<Aabb> {
+        let cached_bounding = self.cached_bounding.get();
+        if cached_bounding.is_some() {
+            return cached_bounding;
+        }
+
+        if self.vertices.is_empty() {
+            return None;
+        }
+
+        // Extract positions from vertices
+        let positions: Vec<Point3<f32>> = self
+            .vertices
+            .iter()
+            .map(|v| Point3::new(v.position[0], v.position[1], v.position[2]))
+            .collect();
+
+        let bounding = Aabb::from_points(&positions);
+        self.cached_bounding.set(bounding);
+        bounding
+    }
+
+    // ========== Ray/Volume intersection ==========
 
     /// Tests a ray against all triangles in the mesh.
     ///
@@ -521,10 +472,8 @@ impl Mesh {
     pub fn intersect_ray(&self, ray: &Ray) -> Vec<MeshHit> {
         let mut hits = Vec::new();
 
-        // Get all triangle indices
         let triangle_indices = self.triangle_indices();
 
-        // Iterate through triangles (indices come in groups of 3)
         for triangle_index in 0..(triangle_indices.len() / 3) {
             let i0 = triangle_indices[triangle_index * 3] as usize;
             let i1 = triangle_indices[triangle_index * 3 + 1] as usize;
@@ -534,7 +483,6 @@ impl Mesh {
             let v1 = Point3::from(self.vertices[i1].position);
             let v2 = Point3::from(self.vertices[i2].position);
 
-            // Test ray-triangle intersection
             if let Some((t, u, v)) = ray.intersect_triangle(v0, v1, v2) {
                 let w = 1.0 - u - v;
                 hits.push(MeshHit {
@@ -584,17 +532,14 @@ impl Mesh {
             let v1 = Point3::from(self.vertices[i1].position);
             let v2 = Point3::from(self.vertices[i2].position);
 
-            // Check if triangle is fully contained
             let fully_inside = volume.contains_triangle(v0, v1, v2);
 
             if fully_inside {
                 hit_indices.push(triangle_index);
             } else if volume.intersects_triangle(v0, v1, v2, thorough) {
-                // Triangle intersects but is not fully contained
                 hit_indices.push(triangle_index);
                 all_fully_contained = false;
             } else {
-                // Triangle doesn't intersect at all - mesh is not fully contained
                 all_fully_contained = false;
             }
         }
@@ -607,5 +552,66 @@ impl Mesh {
                 fully_contained: all_fully_contained,
             })
         }
+    }
+
+    // ========== Drawing ==========
+
+    /// Draws instances of this mesh using pre-computed transforms.
+    ///
+    /// # Panics
+    /// Debug assert if GPU resources are out of date or uninitialized
+    pub(crate) fn draw_instances(
+        &self,
+        device: &wgpu::Device,
+        pass: &mut wgpu::RenderPass,
+        primitive_type: PrimitiveType,
+        instance_transforms: &[super::tree::InstanceTransform],
+    ) {
+        use super::InstanceRaw;
+
+        debug_assert!(!self.needs_gpu_upload(), "Mesh not up to date");
+        let gpu = self.gpu();
+
+        // Convert InstanceTransforms to InstanceRaw for the GPU
+        let instance_raws: Vec<InstanceRaw> = instance_transforms
+            .iter()
+            .map(|inst_transform| InstanceRaw {
+                transform: inst_transform.world_transform.into(),
+                normal_mat: inst_transform.normal_matrix.into(),
+            })
+            .collect();
+
+        // Create instance buffer
+        // TODO: Very wasteful to re-create this every time.
+        let instance_buffer = device.create_buffer_init(&BufferInitDescriptor {
+            label: Some("Instance Buffer"),
+            contents: bytemuck::cast_slice(&instance_raws),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
+        // Select the appropriate index buffer based on primitive type
+        let (index_buffer, n_indices) = match primitive_type {
+            PrimitiveType::TriangleList => (&gpu.triangle_index_buffer, self.index_count(PrimitiveType::TriangleList)),
+            PrimitiveType::LineList => (&gpu.line_index_buffer, self.index_count(PrimitiveType::LineList)),
+            PrimitiveType::PointList => (&gpu.point_index_buffer, self.index_count(PrimitiveType::PointList)),
+        };
+
+        // Skip drawing if there are no indices for this primitive type
+        if n_indices == 0 {
+            return;
+        }
+
+        // Draw
+        let n_instances = instance_transforms.len() as u32;
+        pass.set_vertex_buffer(0, gpu.vertex_buffer.slice(..));
+        pass.set_vertex_buffer(1, instance_buffer.slice(..));
+        pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+        pass.draw_indexed(0..n_indices, 0, 0..n_instances);
+    }
+}
+
+impl Default for Mesh {
+    fn default() -> Self {
+        Self::new()
     }
 }

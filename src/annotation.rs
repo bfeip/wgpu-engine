@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use cgmath::{Point3, Vector3, Quaternion};
 use crate::{
     common::RgbaColor,
-    material::{MaterialManager},
-    scene::{Scene, NodeId, MeshDescriptor, MeshPrimitive, PrimitiveType, Vertex},
+    material::Material,
+    scene::{Scene, NodeId, Mesh, MeshPrimitive, PrimitiveType, Vertex},
 };
 
 /// Unique identifier for annotations
@@ -80,29 +80,21 @@ impl AnnotationManager {
     pub fn add_line(
         &mut self,
         scene: &mut Scene,
-        device: &wgpu::Device,
-        material_manager: &mut MaterialManager,
         start: Point3<f32>,
         end: Point3<f32>,
         color: RgbaColor,
-    ) -> anyhow::Result<AnnotationId> {
-        self.add_polyline(scene, device, material_manager, &[start, end], color, false)
+    ) -> AnnotationId {
+        self.add_polyline(scene, &[start, end], color, false)
     }
 
     /// Adds a polyline (connected line segments).
     pub fn add_polyline(
         &mut self,
         scene: &mut Scene,
-        device: &wgpu::Device,
-        material_manager: &mut MaterialManager,
         points: &[Point3<f32>],
         color: RgbaColor,
         closed: bool,
-    ) -> anyhow::Result<AnnotationId> {
-        if points.len() < 2 {
-            return Err(anyhow::anyhow!("Polyline requires at least 2 points"));
-        }
-
+    ) -> AnnotationId {
         // Create vertices
         let vertices: Vec<Vertex> = points
             .iter()
@@ -115,7 +107,7 @@ impl AnnotationManager {
 
         // Create line indices
         let mut indices = Vec::new();
-        for i in 0..points.len() - 1 {
+        for i in 0..points.len().saturating_sub(1) {
             indices.push(i as u16);
             indices.push((i + 1) as u16);
         }
@@ -131,18 +123,13 @@ impl AnnotationManager {
             indices,
         }];
 
-        // Create mesh
-        let mesh_id = scene.add_mesh(
-            device,
-            MeshDescriptor::Raw { vertices, primitives },
-            Some("annotation_polyline"),
-        )?;
+        // Create mesh (no GPU resources yet - lazy initialization)
+        let mesh = Mesh::from_raw(vertices, primitives);
+        let mesh_id = scene.add_mesh(mesh);
 
-        // Create or get material
-        let material_id = material_manager.create_material(
-            device,
-            crate::material::Material::builder().with_line_color(color),
-        );
+        // Create material (no GPU resources yet - lazy initialization)
+        let material = Material::new().with_line_color(color);
+        let material_id = scene.add_material(material);
 
         // Create node
         let node_id = scene.add_instance_node(
@@ -159,7 +146,7 @@ impl AnnotationManager {
         self.next_annotation_id += 1;
         self.annotation_nodes.insert(annotation_id, node_id);
 
-        Ok(annotation_id)
+        annotation_id
     }
 
     /// Adds coordinate axes at the specified origin.
@@ -168,20 +155,15 @@ impl AnnotationManager {
     pub fn add_axes(
         &mut self,
         scene: &mut Scene,
-        device: &wgpu::Device,
-        material_manager: &mut MaterialManager,
         origin: Point3<f32>,
         size: f32,
-    ) -> anyhow::Result<AnnotationId> {
+    ) -> AnnotationId {
         // Create parent node for axes group
         let parent_node_id = scene.add_default_node(Some(self.root_node_id));
 
         // Create X axis (red)
-        let x_mat = material_manager.create_material(
-            device,
-            crate::material::Material::builder().with_line_color(
-                RgbaColor { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }
-            ),
+        let x_mat = scene.add_material(
+            Material::new().with_line_color(RgbaColor { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }),
         );
         let x_start = origin;
         let x_end = origin + Vector3::new(size, 0.0, 0.0);
@@ -201,11 +183,7 @@ impl AnnotationManager {
             primitive_type: PrimitiveType::LineList,
             indices: vec![0, 1]
         }];
-        let x_mesh = scene.add_mesh(
-            device,
-            MeshDescriptor::Raw { vertices: x_vertices, primitives: x_primitives },
-            Some("x_axis")
-        )?;
+        let x_mesh = scene.add_mesh(Mesh::from_raw(x_vertices, x_primitives));
         scene.add_instance_node(
             Some(parent_node_id),
             x_mesh,
@@ -216,11 +194,8 @@ impl AnnotationManager {
         );
 
         // Create Y axis (green)
-        let y_mat = material_manager.create_material(
-            device,
-            crate::material::Material::builder().with_line_color(
-                RgbaColor { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }
-            ),
+        let y_mat = scene.add_material(
+            Material::new().with_line_color(RgbaColor { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }),
         );
         let y_start = origin;
         let y_end = origin + Vector3::new(0.0, size, 0.0);
@@ -240,11 +215,7 @@ impl AnnotationManager {
             primitive_type: PrimitiveType::LineList,
             indices: vec![0, 1]
         }];
-        let y_mesh = scene.add_mesh(
-            device,
-            MeshDescriptor::Raw { vertices: y_vertices, primitives: y_primitives },
-            Some("y_axis")
-        )?;
+        let y_mesh = scene.add_mesh(Mesh::from_raw(y_vertices, y_primitives));
         scene.add_instance_node(
             Some(parent_node_id),
             y_mesh,
@@ -255,11 +226,8 @@ impl AnnotationManager {
         );
 
         // Create Z axis (blue)
-        let z_mat = material_manager.create_material(
-            device,
-            crate::material::Material::builder().with_line_color(
-                RgbaColor { r: 0.0, g: 0.0, b: 1.0, a: 1.0 }
-            ),
+        let z_mat = scene.add_material(
+            Material::new().with_line_color(RgbaColor { r: 0.0, g: 0.0, b: 1.0, a: 1.0 }),
         );
         let z_start = origin;
         let z_end = origin + Vector3::new(0.0, 0.0, size);
@@ -279,11 +247,7 @@ impl AnnotationManager {
             primitive_type: PrimitiveType::LineList,
             indices: vec![0, 1]
         }];
-        let z_mesh = scene.add_mesh(
-            device,
-            MeshDescriptor::Raw { vertices: z_vertices, primitives: z_primitives },
-            Some("z_axis")
-        )?;
+        let z_mesh = scene.add_mesh(Mesh::from_raw(z_vertices, z_primitives));
         scene.add_instance_node(
             Some(parent_node_id),
             z_mesh,
@@ -298,22 +262,16 @@ impl AnnotationManager {
         self.next_annotation_id += 1;
         self.annotation_nodes.insert(annotation_id, parent_node_id);
 
-        Ok(annotation_id)
+        annotation_id
     }
 
     /// Adds one or more points at the specified positions.
     pub fn add_points(
         &mut self,
         scene: &mut Scene,
-        device: &wgpu::Device,
-        material_manager: &mut MaterialManager,
         positions: &[Point3<f32>],
         color: RgbaColor,
-    ) -> anyhow::Result<AnnotationId> {
-        if positions.is_empty() {
-            return Err(anyhow::anyhow!("Must provide at least one point"));
-        }
-
+    ) -> AnnotationId {
         let vertices: Vec<Vertex> = positions
             .iter()
             .map(|&p| Vertex {
@@ -330,18 +288,13 @@ impl AnnotationManager {
             indices,
         }];
 
-        // Create mesh
-        let mesh_id = scene.add_mesh(
-            device,
-            MeshDescriptor::Raw { vertices, primitives },
-            Some("annotation_points"),
-        )?;
+        // Create mesh (no GPU resources yet - lazy initialization)
+        let mesh = Mesh::from_raw(vertices, primitives);
+        let mesh_id = scene.add_mesh(mesh);
 
-        // Create or get material
-        let material_id = material_manager.create_material(
-            device,
-            crate::material::Material::builder().with_point_color(color),
-        );
+        // Create material (no GPU resources yet - lazy initialization)
+        let material = Material::new().with_point_color(color);
+        let material_id = scene.add_material(material);
 
         // Create node
         let node_id = scene.add_instance_node(
@@ -358,19 +311,17 @@ impl AnnotationManager {
         self.next_annotation_id += 1;
         self.annotation_nodes.insert(annotation_id, node_id);
 
-        Ok(annotation_id)
+        annotation_id
     }
 
     /// Adds a wireframe box.
     pub fn add_box(
         &mut self,
         scene: &mut Scene,
-        device: &wgpu::Device,
-        material_manager: &mut MaterialManager,
         center: Point3<f32>,
         size: Vector3<f32>,
         color: RgbaColor,
-    ) -> anyhow::Result<AnnotationId> {
+    ) -> AnnotationId {
         let half = size / 2.0;
 
         // Create 8 corners of the box
@@ -409,18 +360,13 @@ impl AnnotationManager {
             indices,
         }];
 
-        // Create mesh
-        let mesh_id = scene.add_mesh(
-            device,
-            MeshDescriptor::Raw { vertices, primitives },
-            Some("annotation_box"),
-        )?;
+        // Create mesh (no GPU resources yet - lazy initialization)
+        let mesh = Mesh::from_raw(vertices, primitives);
+        let mesh_id = scene.add_mesh(mesh);
 
-        // Create or get material
-        let material_id = material_manager.create_material(
-            device,
-            crate::material::Material::builder().with_line_color(color),
-        );
+        // Create material (no GPU resources yet - lazy initialization)
+        let material = Material::new().with_line_color(color);
+        let material_id = scene.add_material(material);
 
         // Create node
         let node_id = scene.add_instance_node(
@@ -437,20 +383,18 @@ impl AnnotationManager {
         self.next_annotation_id += 1;
         self.annotation_nodes.insert(annotation_id, node_id);
 
-        Ok(annotation_id)
+        annotation_id
     }
 
     /// Adds a grid in the XZ plane.
     pub fn add_grid(
         &mut self,
         scene: &mut Scene,
-        device: &wgpu::Device,
-        material_manager: &mut MaterialManager,
         center: Point3<f32>,
         size: f32,
         divisions: u32,
         color: RgbaColor,
-    ) -> anyhow::Result<AnnotationId> {
+    ) -> AnnotationId {
         let half_size = size / 2.0;
         let step = size / divisions as f32;
 
@@ -504,18 +448,13 @@ impl AnnotationManager {
             indices,
         }];
 
-        // Create mesh
-        let mesh_id = scene.add_mesh(
-            device,
-            MeshDescriptor::Raw { vertices, primitives },
-            Some("annotation_grid"),
-        )?;
+        // Create mesh (no GPU resources yet - lazy initialization)
+        let mesh = Mesh::from_raw(vertices, primitives);
+        let mesh_id = scene.add_mesh(mesh);
 
-        // Create or get material
-        let material_id = material_manager.create_material(
-            device,
-            crate::material::Material::builder().with_line_color(color),
-        );
+        // Create material (no GPU resources yet - lazy initialization)
+        let material = Material::new().with_line_color(color);
+        let material_id = scene.add_material(material);
 
         // Create node
         let node_id = scene.add_instance_node(
@@ -532,6 +471,6 @@ impl AnnotationManager {
         self.next_annotation_id += 1;
         self.annotation_nodes.insert(annotation_id, node_id);
 
-        Ok(annotation_id)
+        annotation_id
     }
 }

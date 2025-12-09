@@ -1,9 +1,6 @@
 # TODO
 
 ## Jots
-- Re-work ray picking walker to use TreeWalker trait
-- Ensure scene walkers are optimal
-    - Ray selection uses transform and bounding walks. Combine.
 - Fix navigation operator to use bounding for sensitivity
 
 - Split mesh into DrawMesh and Mesh for API reasons
@@ -18,9 +15,10 @@
 - Mesh wireframe
 - Multiple lights
 - Optimize drawing
-- Normal maps
+- PBR rendering
 - Antialiasing
 - NURBS
+- 3D Overlays
 
 ## Impl notes:
 - Ensure that the dirty flag is handled properly. Children of nodes that are marked dirty

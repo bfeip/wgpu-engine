@@ -1,26 +1,17 @@
 use std::collections::HashMap;
 
-use wgpu::{util::DeviceExt};
+use anyhow::Result;
+use bytemuck::bytes_of;
+use wgpu::util::DeviceExt;
 
 use crate::{
-    camera::{
-        Camera,
-        CameraUniform
-    },
-    scene::{
-        InstanceRaw,
-        PrimitiveType,
-        Vertex
-    },
+    camera::{Camera, CameraUniform},
+    common::PhysicalSize,
     light::LightUniform,
-    material::{
-        MaterialManager,
-        MaterialProperties,
-    },
-    scene::Scene,
+    material::{MaterialGpuResources, MaterialProperties},
+    scene::{InstanceRaw, PrimitiveType, Scene, Vertex},
     shaders::ShaderGenerator,
-    texture,
-    common::PhysicalSize
+    texture::{self, GpuTexture, Texture},
 };
 
 // Vertex shader attribute locations
@@ -47,7 +38,10 @@ pub(crate) struct DrawState<'a> {
     /// Current cursor position in screen coordinates (x, y), or None if cursor is not over the window
     pub cursor_position: Option<(f32, f32)>,
 
-    pub material_manager: MaterialManager,
+    // Bind group layouts (moved from MaterialManager)
+    pub(crate) color_bind_group_layout: wgpu::BindGroupLayout,
+    pub(crate) texture_bind_group_layout: wgpu::BindGroupLayout,
+
     shader_generator: ShaderGenerator,
 
     color_material_pipeline_layout: wgpu::PipelineLayout,
@@ -57,7 +51,7 @@ pub(crate) struct DrawState<'a> {
     camera_bind_group: wgpu::BindGroup,
     lights_buffer: wgpu::Buffer,
     lights_bind_group: wgpu::BindGroup,
-    depth_texture: texture::Texture,
+    depth_texture: GpuTexture,
 
     pipeline_cache: HashMap<(MaterialProperties, PrimitiveType), wgpu::RenderPipeline>,
 }
@@ -139,7 +133,45 @@ impl<'a> DrawState<'a> {
 
         surface.configure(&device, &config);
 
-        let material_manager = MaterialManager::new(&device);
+        // Create bind group layouts (formerly in MaterialManager)
+        let color_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Color Material Bind Group Layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+
+        let texture_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Texture Material Bind Group Layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+
         let shader_generator = ShaderGenerator::new();
 
         let camera = Camera {
@@ -155,17 +187,15 @@ impl<'a> DrawState<'a> {
         let mut camera_uniform = CameraUniform::new();
         camera_uniform.update_view_proj(&camera);
 
-        let camera_buffer = device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("Camera Buffer"),
-                contents: bytemuck::cast_slice(&[camera_uniform]),
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            }
-        );
+        let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Camera Buffer"),
+            contents: bytemuck::cast_slice(&[camera_uniform]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
 
-        let camera_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
+        let camera_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::VERTEX,
                     ty: wgpu::BindingType::Buffer {
@@ -174,19 +204,16 @@ impl<'a> DrawState<'a> {
                         min_binding_size: None,
                     },
                     count: None,
-                }
-            ],
-            label: Some("camera_bind_group_layout"),
-        });
+                }],
+                label: Some("camera_bind_group_layout"),
+            });
 
         let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &camera_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: camera_buffer.as_entire_binding(),
-                }
-            ],
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: camera_buffer.as_entire_binding(),
+            }],
             label: Some("camera_bind_group"),
         });
 
@@ -194,57 +221,56 @@ impl<'a> DrawState<'a> {
             label: Some("Light buffer"),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             size: std::mem::size_of::<LightUniform>() as wgpu::BufferAddress,
-            mapped_at_creation: false
+            mapped_at_creation: false,
         });
 
-        let light_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            entries: &[
-                wgpu::BindGroupLayoutEntry{
+        let light_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
-                        min_binding_size: None
+                        min_binding_size: None,
                     },
-                    count: None
-                }
-            ],
-            label: Some("Light bind group layout")
-        });
+                    count: None,
+                }],
+                label: Some("Light bind group layout"),
+            });
 
         let lights_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &light_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: lights_buffer.as_entire_binding()
-                }
-            ],
-            label: Some("Light bind group")
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: lights_buffer.as_entire_binding(),
+            }],
+            label: Some("Light bind group"),
         });
 
-        let color_material_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Color Material Pipeline Layout"),
-            bind_group_layouts: &[
-                &camera_bind_group_layout,
-                &light_bind_group_layout,
-                &material_manager.color_bind_group_layout
-            ],
-            push_constant_ranges: &[],
-        });
+        let color_material_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Color Material Pipeline Layout"),
+                bind_group_layouts: &[
+                    &camera_bind_group_layout,
+                    &light_bind_group_layout,
+                    &color_bind_group_layout,
+                ],
+                push_constant_ranges: &[],
+            });
 
-        let texture_material_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Texture Material Pipeline Layout"),
-            bind_group_layouts: &[
-                &camera_bind_group_layout,
-                &light_bind_group_layout,
-                &material_manager.texture_bind_group_layout
-            ],
-            push_constant_ranges: &[]
-        });
+        let texture_material_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Texture Material Pipeline Layout"),
+                bind_group_layouts: &[
+                    &camera_bind_group_layout,
+                    &light_bind_group_layout,
+                    &texture_bind_group_layout,
+                ],
+                push_constant_ranges: &[],
+            });
 
-        let depth_texture = texture::Texture::create_depth_texture(&device, &config, "depth_texture");
+        let depth_texture = Texture::create_depth_texture(&device, &config, "depth_texture");
 
         Self {
             surface,
@@ -254,7 +280,8 @@ impl<'a> DrawState<'a> {
             size,
             camera,
             cursor_position: None,
-            material_manager,
+            color_bind_group_layout,
+            texture_bind_group_layout,
             shader_generator,
             color_material_pipeline_layout,
             texture_material_pipeline_layout,
@@ -265,6 +292,181 @@ impl<'a> DrawState<'a> {
             depth_texture,
             pipeline_cache: HashMap::new(),
         }
+    }
+
+    /// Prepare all GPU resources for a scene before rendering.
+    ///
+    /// This method ensures all textures, materials, and meshes have their GPU resources
+    /// created or updated as needed. It should be called before `render_scene_to_view()`.
+    pub fn prepare_scene(&mut self, scene: &mut Scene) -> Result<()> {
+        // 1. Prepare all textures first (materials depend on them)
+        for texture in scene.textures.values_mut() {
+            if texture.needs_gpu_upload() {
+                texture.ensure_gpu_resources(&self.device, &self.queue)?;
+            }
+        }
+
+        // 2. Prepare all materials
+        // We need to collect material IDs first to avoid borrow issues
+        let material_ids: Vec<_> = scene.materials.keys().copied().collect();
+        for mat_id in material_ids {
+            // Check each primitive type
+            for prim_type in [
+                PrimitiveType::TriangleList,
+                PrimitiveType::LineList,
+                PrimitiveType::PointList,
+            ] {
+                let needs_update = scene
+                    .materials
+                    .get(&mat_id)
+                    .map(|m| m.needs_gpu_resources(prim_type) && m.has_primitive_data(prim_type))
+                    .unwrap_or(false);
+
+                if needs_update {
+                    self.prepare_material_primitive(scene, mat_id, prim_type)?;
+                }
+            }
+        }
+
+        // 3. Prepare all meshes
+        for mesh in scene.meshes.values_mut() {
+            if mesh.needs_gpu_upload() {
+                mesh.ensure_gpu_resources(&self.device);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Prepare GPU resources for a specific material primitive type.
+    fn prepare_material_primitive(
+        &self,
+        scene: &mut Scene,
+        material_id: u32,
+        primitive_type: PrimitiveType,
+    ) -> Result<()> {
+        let material = scene.materials.get(&material_id).unwrap();
+
+        match primitive_type {
+            PrimitiveType::TriangleList => {
+                if let Some(texture_id) = material.face_texture {
+                    // Texture-based face rendering
+                    let texture = scene.textures.get(&texture_id).ok_or_else(|| {
+                        anyhow::anyhow!("Texture {} not found for material {}", texture_id, material_id)
+                    })?;
+                    let gpu_tex = texture.gpu();
+
+                    let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("Material Face Texture Bind Group"),
+                        layout: &self.texture_bind_group_layout,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: wgpu::BindingResource::TextureView(&gpu_tex.view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::Sampler(&gpu_tex.sampler),
+                            },
+                        ],
+                    });
+
+                    let material = scene.materials.get_mut(&material_id).unwrap();
+                    material.set_gpu(
+                        primitive_type,
+                        MaterialGpuResources {
+                            bind_group,
+                            buffer: None,
+                        },
+                    );
+                    material.mark_clean(primitive_type);
+                } else if let Some(color) = material.face_color {
+                    // Color-based face rendering
+                    let buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("Material Face Color Buffer"),
+                        contents: bytes_of(&color),
+                        usage: wgpu::BufferUsages::UNIFORM,
+                    });
+
+                    let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("Material Face Color Bind Group"),
+                        layout: &self.color_bind_group_layout,
+                        entries: &[wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: buffer.as_entire_binding(),
+                        }],
+                    });
+
+                    let material = scene.materials.get_mut(&material_id).unwrap();
+                    material.set_gpu(
+                        primitive_type,
+                        MaterialGpuResources {
+                            bind_group,
+                            buffer: Some(buffer),
+                        },
+                    );
+                    material.mark_clean(primitive_type);
+                }
+            }
+            PrimitiveType::LineList => {
+                if let Some(color) = material.line_color {
+                    let buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("Material Line Color Buffer"),
+                        contents: bytes_of(&color),
+                        usage: wgpu::BufferUsages::UNIFORM,
+                    });
+
+                    let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("Material Line Color Bind Group"),
+                        layout: &self.color_bind_group_layout,
+                        entries: &[wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: buffer.as_entire_binding(),
+                        }],
+                    });
+
+                    let material = scene.materials.get_mut(&material_id).unwrap();
+                    material.set_gpu(
+                        primitive_type,
+                        MaterialGpuResources {
+                            bind_group,
+                            buffer: Some(buffer),
+                        },
+                    );
+                    material.mark_clean(primitive_type);
+                }
+            }
+            PrimitiveType::PointList => {
+                if let Some(color) = material.point_color {
+                    let buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("Material Point Color Buffer"),
+                        contents: bytes_of(&color),
+                        usage: wgpu::BufferUsages::UNIFORM,
+                    });
+
+                    let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("Material Point Color Bind Group"),
+                        layout: &self.color_bind_group_layout,
+                        entries: &[wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: buffer.as_entire_binding(),
+                        }],
+                    });
+
+                    let material = scene.materials.get_mut(&material_id).unwrap();
+                    material.set_gpu(
+                        primitive_type,
+                        MaterialGpuResources {
+                            bind_group,
+                            buffer: Some(buffer),
+                        },
+                    );
+                    material.mark_clean(primitive_type);
+                }
+            }
+        }
+
+        Ok(())
     }
 
     fn get_or_create_pipeline(
@@ -280,7 +482,9 @@ impl<'a> DrawState<'a> {
                 &self.color_material_pipeline_layout
             };
 
-            let shader = self.shader_generator.generate_shader(&self.device, &properties)
+            let shader = self
+                .shader_generator
+                .generate_shader(&self.device, &properties)
                 .expect("Failed to generate shader");
 
             let topology = match primitive_type {
@@ -289,60 +493,58 @@ impl<'a> DrawState<'a> {
                 PrimitiveType::PointList => wgpu::PrimitiveTopology::PointList,
             };
 
-            self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("Render Pipeline"),
-                layout: Some(pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[
-                        Vertex::desc(),
-                        InstanceRaw::desc()
-                    ],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: self.config.format,
-                        blend: Some(wgpu::BlendState::REPLACE),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology,
-                    strip_index_format: None,
-                    front_face: wgpu::FrontFace::Ccw,
-                    // Only cull for triangles, not for lines or points
-                    cull_mode: if topology == wgpu::PrimitiveTopology::TriangleList {
-                        Some(wgpu::Face::Back)
-                    } else {
-                        None
+            self.device
+                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("Render Pipeline"),
+                    layout: Some(pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &shader,
+                        entry_point: Some("vs_main"),
+                        buffers: &[Vertex::desc(), InstanceRaw::desc()],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
                     },
-                    // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
-                    polygon_mode: wgpu::PolygonMode::Fill,
-                    // Requires Features::DEPTH_CLIP_CONTROL
-                    unclipped_depth: false,
-                    // Requires Features::CONSERVATIVE_RASTERIZATION
-                    conservative: false,
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: texture::Texture::DEPTH_FORMAT,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default()
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: 1,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                multiview: None,
-                cache: None,
-            })
+                    fragment: Some(wgpu::FragmentState {
+                        module: &shader,
+                        entry_point: Some("fs_main"),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: self.config.format,
+                            blend: Some(wgpu::BlendState::REPLACE),
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology,
+                        strip_index_format: None,
+                        front_face: wgpu::FrontFace::Ccw,
+                        // Only cull for triangles, not for lines or points
+                        cull_mode: if topology == wgpu::PrimitiveTopology::TriangleList {
+                            Some(wgpu::Face::Back)
+                        } else {
+                            None
+                        },
+                        // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
+                        polygon_mode: wgpu::PolygonMode::Fill,
+                        // Requires Features::DEPTH_CLIP_CONTROL
+                        unclipped_depth: false,
+                        // Requires Features::CONSERVATIVE_RASTERIZATION
+                        conservative: false,
+                    },
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: texture::Texture::DEPTH_FORMAT,
+                        depth_write_enabled: true,
+                        depth_compare: wgpu::CompareFunction::Less,
+                        stencil: wgpu::StencilState::default(),
+                        bias: wgpu::DepthBiasState::default(),
+                    }),
+                    multisample: wgpu::MultisampleState {
+                        count: 1,
+                        mask: !0,
+                        alpha_to_coverage_enabled: false,
+                    },
+                    multiview: None,
+                    cache: None,
+                })
         })
     }
 
@@ -355,7 +557,8 @@ impl<'a> DrawState<'a> {
 
             self.camera.aspect = new_size.width as f32 / new_size.height as f32;
 
-            self.depth_texture = texture::Texture::create_depth_texture(&self.device, &self.config, "depth_texture");
+            self.depth_texture =
+                Texture::create_depth_texture(&self.device, &self.config, "depth_texture");
         }
     }
 
@@ -366,7 +569,7 @@ impl<'a> DrawState<'a> {
         view: &wgpu::TextureView,
         encoder: &mut wgpu::CommandEncoder,
         scene: &Scene,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         // Update camera uniform
         // TODO: only when needed
         let camera_uniform_slice = &[self.camera.to_uniform()];
@@ -376,10 +579,12 @@ impl<'a> DrawState<'a> {
 
         // Update light uniform
         // TODO: only when needed
-        let light_uniform_slice = &[scene.lights[0].to_uniform()];
-        let light_buffer_contents: &[u8] = bytemuck::cast_slice(light_uniform_slice);
-        self.queue
-            .write_buffer(&self.lights_buffer, 0, light_buffer_contents);
+        if !scene.lights.is_empty() {
+            let light_uniform_slice = &[scene.lights[0].to_uniform()];
+            let light_buffer_contents: &[u8] = bytemuck::cast_slice(light_uniform_slice);
+            self.queue
+                .write_buffer(&self.lights_buffer, 0, light_buffer_contents);
+        }
 
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -422,7 +627,7 @@ impl<'a> DrawState<'a> {
             // Render each batch
             for batch in batches {
                 let mesh = scene.meshes.get(&batch.mesh_id).unwrap();
-                let material = self.material_manager.get(batch.material_id).unwrap();
+                let material = scene.materials.get(&batch.material_id).unwrap();
                 let properties = material.get_properties(batch.primitive_type);
 
                 // Bind material for this batch
@@ -449,7 +654,10 @@ impl<'a> DrawState<'a> {
         Ok(())
     }
 
-    pub fn render(&mut self, scene: &mut Scene) -> anyhow::Result<()> {
+    pub fn render(&mut self, scene: &mut Scene) -> Result<()> {
+        // Prepare all GPU resources before rendering
+        self.prepare_scene(scene)?;
+
         let output = self.surface.get_current_texture()?;
         let view = output
             .texture

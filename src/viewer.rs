@@ -31,9 +31,6 @@ impl<'a> Viewer<'a> {
         let aspect = width as f32 / height as f32;
         let load_result = crate::gltf::load_gltf_scene(
             "/home/zachary/src/glTF-Sample-Models/2.0/FlightHelmet/glTF/FlightHelmet.gltf",
-            &state.device,
-            &state.queue,
-            &mut state.material_manager,
             aspect,
         )
         .unwrap();

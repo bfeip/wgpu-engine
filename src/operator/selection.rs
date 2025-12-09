@@ -67,10 +67,8 @@ impl SelectionOperator {
             if let Some(bbox_t) = closest_bbox_hit {
                 // Yellow ray: hit bounding box but not geometry
                 let hit_point = ray_origin + ray.direction * bbox_t;
-                let _ = ctx.annotation_manager.add_line(
+                ctx.annotation_manager.add_line(
                     ctx.scene,
-                    &ctx.state.device,
-                    &mut ctx.state.material_manager,
                     ray_origin,
                     hit_point,
                     RgbaColor { r: 1.0, g: 1.0, b: 0.0, a: 1.0 }, // Yellow
@@ -78,10 +76,8 @@ impl SelectionOperator {
             } else {
                 // Red ray: complete miss
                 let end_point = ray_origin + ray.direction * camera_distance;
-                let _ = ctx.annotation_manager.add_line(
+                ctx.annotation_manager.add_line(
                     ctx.scene,
-                    &ctx.state.device,
-                    &mut ctx.state.material_manager,
                     ray_origin,
                     end_point,
                     RgbaColor { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }, // Red
@@ -95,10 +91,8 @@ impl SelectionOperator {
                     closest_hit.hit_point.y,
                     closest_hit.hit_point.z,
                 );
-                let _ = ctx.annotation_manager.add_line(
+                ctx.annotation_manager.add_line(
                     ctx.scene,
-                    &ctx.state.device,
-                    &mut ctx.state.material_manager,
                     ray_origin,
                     hit_point,
                     RgbaColor { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }, // Green

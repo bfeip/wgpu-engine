@@ -1,10 +1,15 @@
 use std::path::Path;
-use crate::{camera::Camera, material::DefaultMaterial, scene::{MeshPrimitive, PrimitiveType, Vertex}};
+use crate::{
+    camera::Camera,
+    material::{DefaultMaterial, MaterialId},
+    scene::{Mesh, MeshPrimitive, PrimitiveType, Scene, Vertex},
+    texture::Texture,
+};
 
 /// Result of loading a glTF scene, containing the scene and optional camera.
 pub struct GltfLoadResult {
     /// The loaded scene with meshes, materials, and scene tree
-    pub scene: crate::scene::Scene,
+    pub scene: Scene,
     /// Camera from the glTF file, if one was defined
     pub camera: Option<Camera>,
 }
@@ -135,15 +140,14 @@ fn get_material_for_primitive(
 
 /// Loads a material from a glTF material definition.
 ///
-/// Converts glTF PBR materials to either ColorMaterial or TextureMaterial.
+/// Converts glTF PBR materials to either color or textured materials.
+/// Returns the MaterialId of the created material.
 fn load_material(
     gltf_material: &gltf::Material,
     images: &[gltf::image::Data],
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    material_manager: &mut crate::material::MaterialManager,
-) -> anyhow::Result<crate::material::MaterialId> {
-    use crate::texture::Texture;
+    scene: &mut Scene,
+) -> anyhow::Result<MaterialId> {
+    use crate::material::Material;
 
     let pbr = gltf_material.pbr_metallic_roughness();
 
@@ -177,17 +181,16 @@ fn load_material(
             }
         };
 
-        // Create texture from image data
-        let texture = Texture::from_image(device, queue, &dynamic_image, Some("gltf_texture"))?;
+        // Create texture from image data (no GPU resources yet - lazy initialization)
+        let texture = Texture::from_image(dynamic_image);
+        let texture_id = scene.add_texture(texture);
 
-        // Create unified Material with face texture
-        let mat_id = material_manager.create_material(
-            device,
-            crate::material::Material::builder().with_face_texture(texture),
-        );
+        // Create material with face texture reference
+        let material = Material::new().with_face_texture(texture_id);
+        let mat_id = scene.add_material(material);
         Ok(mat_id)
     } else {
-        // No texture, use base color factor as ColorMaterial
+        // No texture, use base color factor
         let base_color = pbr.base_color_factor();
         let color = crate::common::RgbaColor {
             r: base_color[0],
@@ -196,11 +199,9 @@ fn load_material(
             a: base_color[3],
         };
 
-        // Create unified Material with face color
-        let mat_id = material_manager.create_material(
-            device,
-            crate::material::Material::builder().with_face_color(color),
-        );
+        // Create material with face color
+        let material = Material::new().with_face_color(color);
+        let mat_id = scene.add_material(material);
         Ok(mat_id)
     }
 }
@@ -323,20 +324,17 @@ fn find_camera_recursive(
 /// Returns a `GltfLoadResult` containing the scene and an optional camera
 /// if one was defined in the glTF file.
 ///
+/// GPU resources are not created during loading - they are lazily initialized
+/// when the scene is first rendered via `DrawState::prepare_scene()`.
+///
 /// # Arguments
 /// * `path` - Path to the glTF file
-/// * `device` - WGPU device for creating GPU resources
-/// * `queue` - WGPU queue for uploading data
-/// * `material_manager` - Material manager for creating materials
 /// * `aspect` - Aspect ratio to use for the camera (if found)
 pub fn load_gltf_scene<P: AsRef<Path>>(
     path: P,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    material_manager: &mut crate::material::MaterialManager,
     aspect: f32,
 ) -> anyhow::Result<GltfLoadResult> {
-    use crate::scene::{MeshDescriptor, Scene};
+    use crate::scene::MeshId;
     use std::collections::HashMap;
     use cgmath::SquareMatrix;
 
@@ -344,17 +342,17 @@ pub fn load_gltf_scene<P: AsRef<Path>>(
 
     let mut scene = Scene::new();
 
-    // Load all materials first
-    let mut material_map: Vec<crate::material::MaterialId> = Vec::new();
+    // Load all materials first (they'll be added to scene.materials)
+    let mut material_map: Vec<MaterialId> = Vec::new();
     for material in document.materials() {
-        let mat_id = load_material(&material, &images, device, queue, material_manager)?;
+        let mat_id = load_material(&material, &images, &mut scene)?;
         material_map.push(mat_id);
     }
 
     // Maps glTF mesh index -> list of (scene mesh, material) pairs
     // We need this structure because glTF nodes reference mesh indices, and each glTF mesh
     // can contain multiple primitives. We load each primitive as a separate scene mesh.
-    let mut mesh_map: Vec<Vec<(crate::scene::MeshId, crate::material::MaterialId)>> = Vec::new();
+    let mut mesh_map: Vec<Vec<(MeshId, MaterialId)>> = Vec::new();
 
     for mesh in document.meshes() {
         let mut primitives_data = Vec::new();
@@ -374,21 +372,13 @@ pub fn load_gltf_scene<P: AsRef<Path>>(
             let vertices = load_vertices(&primitive, &buffers)?;
             let indices = load_indices(&primitive, &buffers)?;
 
-            // Create mesh from raw data
-            let mesh_label = format!(
-                "{}_{}_prim_{}",
-                mesh.name().unwrap_or("mesh"),
-                mesh.index(),
-                prim_idx
-            );
-
             let primitives = vec![MeshPrimitive {
                 primitive_type,
                 indices,
             }];
 
-            let mesh_descriptor = MeshDescriptor::Raw { vertices, primitives };
-            let mesh_id = scene.add_mesh(device, mesh_descriptor, Some(&mesh_label))?;
+            let mesh_obj = Mesh::from_raw(vertices, primitives);
+            let mesh_id = scene.add_mesh(mesh_obj);
 
             // Create appropriate material for this primitive type
             let material_id = get_material_for_primitive(
