@@ -375,7 +375,7 @@ impl<'a> DrawState<'a> {
                         primitive_type,
                         MaterialGpuResources {
                             bind_group,
-                            buffer: None,
+                            _buffer: None,
                         },
                     );
                     material.mark_clean(primitive_type);
@@ -401,7 +401,7 @@ impl<'a> DrawState<'a> {
                         primitive_type,
                         MaterialGpuResources {
                             bind_group,
-                            buffer: Some(buffer),
+                            _buffer: Some(buffer),
                         },
                     );
                     material.mark_clean(primitive_type);
@@ -429,7 +429,7 @@ impl<'a> DrawState<'a> {
                         primitive_type,
                         MaterialGpuResources {
                             bind_group,
-                            buffer: Some(buffer),
+                            _buffer: Some(buffer),
                         },
                     );
                     material.mark_clean(primitive_type);
@@ -457,7 +457,7 @@ impl<'a> DrawState<'a> {
                         primitive_type,
                         MaterialGpuResources {
                             bind_group,
-                            buffer: Some(buffer),
+                            _buffer: Some(buffer),
                         },
                     );
                     material.mark_clean(primitive_type);

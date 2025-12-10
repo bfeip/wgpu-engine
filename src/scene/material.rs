@@ -48,7 +48,7 @@ pub type MaterialId = u32;
 /// GPU resources for a single primitive type (face, line, or point)
 pub(crate) struct MaterialGpuResources {
     pub bind_group: wgpu::BindGroup,
-    pub buffer: Option<wgpu::Buffer>, // For color materials
+    pub _buffer: Option<wgpu::Buffer>, // For color materials
 }
 
 /// Unified material that can be rendered as faces, lines, or points.
