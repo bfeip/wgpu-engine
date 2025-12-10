@@ -122,11 +122,11 @@ impl AnnotationManager {
             indices,
         }];
 
-        // Create mesh (no GPU resources yet - lazy initialization)
+        // Create mesh
         let mesh = Mesh::from_raw(vertices, primitives);
         let mesh_id = scene.add_mesh(mesh);
 
-        // Create material (no GPU resources yet - lazy initialization)
+        // Create material
         let material = Material::new().with_line_color(color);
         let material_id = scene.add_material(material);
 
@@ -287,11 +287,11 @@ impl AnnotationManager {
             indices,
         }];
 
-        // Create mesh (no GPU resources yet - lazy initialization)
+        // Create mesh
         let mesh = Mesh::from_raw(vertices, primitives);
         let mesh_id = scene.add_mesh(mesh);
 
-        // Create material (no GPU resources yet - lazy initialization)
+        // Create material
         let material = Material::new().with_point_color(color);
         let material_id = scene.add_material(material);
 
@@ -359,11 +359,11 @@ impl AnnotationManager {
             indices,
         }];
 
-        // Create mesh (no GPU resources yet - lazy initialization)
+        // Create mesh
         let mesh = Mesh::from_raw(vertices, primitives);
         let mesh_id = scene.add_mesh(mesh);
 
-        // Create material (no GPU resources yet - lazy initialization)
+        // Create material
         let material = Material::new().with_line_color(color);
         let material_id = scene.add_material(material);
 
@@ -447,11 +447,11 @@ impl AnnotationManager {
             indices,
         }];
 
-        // Create mesh (no GPU resources yet - lazy initialization)
+        // Create mesh
         let mesh = Mesh::from_raw(vertices, primitives);
         let mesh_id = scene.add_mesh(mesh);
 
-        // Create material (no GPU resources yet - lazy initialization)
+        // Create material
         let material = Material::new().with_line_color(color);
         let material_id = scene.add_material(material);
 

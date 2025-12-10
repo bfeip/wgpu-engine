@@ -146,8 +146,7 @@ pub(crate) struct MeshGpuResources {
 /// A mesh composed of vertices and primitives
 /// 
 /// Meshes store vertex data (positions, normals, texture coordinates) and primitives
-/// (triangle lists, line lists, point lists). GPU buffers are created lazily when
-/// the mesh is first rendered.
+/// (triangle lists, line lists, point lists).
 ///
 /// # Examples
 ///
@@ -177,8 +176,6 @@ pub struct Mesh {
 
 impl Mesh {
     /// Creates a new empty mesh with no vertices or primitives.
-    ///
-    /// No GPU resources are allocated until the mesh is rendered.
     pub fn new() -> Self {
         Self {
             id: 0, // Assigned by Scene
@@ -191,8 +188,6 @@ impl Mesh {
     }
 
     /// Creates a mesh from raw vertex and primitive data.
-    ///
-    /// No GPU resources are allocated until the mesh is rendered.
     ///
     /// # Arguments
     /// * `vertices` - Vertex data (positions, normals, texture coordinates)
@@ -209,8 +204,6 @@ impl Mesh {
     }
 
     /// Creates a mesh from a descriptor.
-    ///
-    /// No GPU resources are allocated until the mesh is rendered.
     ///
     /// # Arguments
     /// * `descriptor` - Source data for the mesh (empty, OBJ file, or raw data)

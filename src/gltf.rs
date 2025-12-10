@@ -189,7 +189,7 @@ fn load_material(
             }
         };
 
-        // Create texture from image data (no GPU resources yet - lazy initialization)
+        // Create texture from image data
         let texture = Texture::from_image(dynamic_image);
         let texture_id = scene.add_texture(texture);
 
@@ -331,9 +331,6 @@ fn find_camera_recursive(
 /// This is the main entry point for loading glTF files into the engine.
 /// Returns a `GltfLoadResult` containing the scene and an optional camera
 /// if one was defined in the glTF file.
-///
-/// GPU resources are not created during loading - they are lazily initialized
-/// when the scene is first rendered via `DrawState::prepare_scene()`.
 ///
 /// # Arguments
 /// * `path` - Path to the glTF file

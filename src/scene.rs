@@ -51,8 +51,6 @@ use crate::common::{Aabb, RgbaColor};
 ///
 /// // Create an instance node
 /// let node_id = scene.add_instance_node(None, mesh_id, mat_id, position, rotation, scale);
-///
-/// // GPU resources are created automatically when DrawState::render() is called
 /// ```
 pub struct Scene {
     pub meshes: HashMap<MeshId, Mesh>,
@@ -114,8 +112,6 @@ impl Scene {
 
     /// Adds a mesh to the scene.
     ///
-    /// No GPU resources are allocated. They will be created lazily during rendering.
-    ///
     /// # Arguments
     /// * `mesh` - The mesh to add
     ///
@@ -157,8 +153,6 @@ impl Scene {
 
     /// Adds a material to the scene.
     ///
-    /// No GPU resources are allocated. They will be created lazily during rendering.
-    ///
     /// # Arguments
     /// * `material` - The material to add
     ///
@@ -187,8 +181,6 @@ impl Scene {
     // ========== Texture API (device-free) ==========
 
     /// Adds a texture to the scene.
-    ///
-    /// No GPU resources are allocated. They will be created lazily during rendering.
     ///
     /// # Arguments
     /// * `texture` - The texture to add

@@ -53,10 +53,6 @@ pub(crate) struct MaterialGpuResources {
 
 /// Unified material that can be rendered as faces, lines, or points.
 ///
-/// Materials can be created without GPU resources and will have their
-/// GPU resources created lazily during rendering. Dirty flags track
-/// when GPU resources need to be created or updated.
-///
 /// # Examples
 ///
 /// ```ignore
