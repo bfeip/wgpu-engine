@@ -27,8 +27,8 @@ impl SelectionOperator {
         let ray = Ray::from_screen_point(
             cursor_x,
             cursor_y,
-            ctx.state.size.width,
-            ctx.state.size.height,
+            ctx.state.size.0,
+            ctx.state.size.1,
             &ctx.state.camera,
         );
 

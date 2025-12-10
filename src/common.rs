@@ -14,19 +14,6 @@ pub use aabb::Aabb;
 pub use plane::Plane;
 pub use convex_polyhedron::ConvexPolyhedron;
 
-/// A simple physical size struct representing width and height
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub struct PhysicalSize<T> {
-    pub width: T,
-    pub height: T,
-}
-
-impl<T> PhysicalSize<T> {
-    pub fn new(width: T, height: T) -> Self {
-        Self { width, height }
-    }
-}
-
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct RgbaColor {

@@ -4,7 +4,6 @@ use std::time::Instant;
 use crate::drawstate::DrawState;
 use crate::scene::Scene;
 use crate::annotation::AnnotationManager;
-use crate::common::PhysicalSize;
 use crate::input::{PhysicalPosition, ElementState, MouseButton, MouseScrollDelta, KeyEvent};
 
 /// Movement threshold in pixels before a mouse button hold becomes a drag.
@@ -86,8 +85,8 @@ pub enum Event {
         /// Time elapsed since last update in seconds
         delta_time: f32,
     },
-    /// Window was resized to the given physical size
-    Resized(PhysicalSize<u32>),
+    /// Window was resized to the given physical size (width, height)
+    Resized((u32, u32)),
     /// Keyboard input occurred
     KeyboardInput {
         /// The keyboard event details

@@ -2,13 +2,12 @@
 ///
 /// This module is only compiled when the `winit-support` feature is enabled.
 
-use crate::common::PhysicalSize;
 use crate::input::{PhysicalPosition, ElementState, MouseButton, MouseScrollDelta, KeyEvent, PhysicalKey, Key, NamedKey};
 use crate::event::Event;
 
-/// Converts a winit PhysicalSize to our PhysicalSize
-pub fn convert_physical_size(size: winit::dpi::PhysicalSize<u32>) -> PhysicalSize<u32> {
-    PhysicalSize::new(size.width, size.height)
+/// Converts a winit PhysicalSize to a (width, height) tuple
+pub fn convert_physical_size(size: winit::dpi::PhysicalSize<u32>) -> (u32, u32) {
+    (size.width, size.height)
 }
 
 /// Converts a winit PhysicalPosition to our PhysicalPosition

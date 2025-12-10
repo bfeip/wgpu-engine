@@ -164,7 +164,7 @@ fn render_egui_to_overlay(
     egui_renderer: &mut egui_wgpu::Renderer,
     egui_ctx: &egui::Context,
     full_output: &egui::FullOutput,
-    viewer_size: wgpu_engine::common::PhysicalSize<u32>,
+    viewer_size: (u32, u32),
     scale_factor: f32,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -182,7 +182,7 @@ fn render_egui_to_overlay(
         full_output.pixels_per_point,
     );
     let screen_descriptor = egui_wgpu::ScreenDescriptor {
-        size_in_pixels: [viewer_size.width, viewer_size.height],
+        size_in_pixels: [viewer_size.0, viewer_size.1],
         pixels_per_point: scale_factor,
     };
     egui_renderer.update_buffers(

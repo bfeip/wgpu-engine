@@ -6,7 +6,6 @@ use wgpu::util::DeviceExt;
 
 use crate::{
     camera::{Camera, CameraUniform},
-    common::PhysicalSize,
     scene::{
         material::{MaterialGpuResources, MaterialProperties},
         texture::{self, GpuTexture, Texture},
@@ -34,7 +33,7 @@ pub(crate) struct DrawState<'a> {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub config: wgpu::SurfaceConfiguration,
-    pub size: PhysicalSize<u32>,
+    pub size: (u32, u32),
     pub camera: Camera,
     /// Current cursor position in screen coordinates (x, y), or None if cursor is not over the window
     pub cursor_position: Option<(f32, f32)>,
@@ -64,7 +63,7 @@ impl<'a> DrawState<'a> {
     where
         T: Into<wgpu::SurfaceTarget<'a>>,
     {
-        let size = PhysicalSize::new(width, height);
+        let size = (width, height);
 
         // The instance is a handle to our GPU
         // Backends::all => Vulkan + Metal + DX12 + Browser WebGPU
@@ -124,8 +123,8 @@ impl<'a> DrawState<'a> {
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
-            width: size.width,
-            height: size.height,
+            width: size.0,
+            height: size.1,
             present_mode,
             alpha_mode: surface_caps.alpha_modes[0],
             view_formats: vec![],
@@ -549,14 +548,15 @@ impl<'a> DrawState<'a> {
         })
     }
 
-    pub fn resize(&mut self, new_size: PhysicalSize<u32>) {
-        if new_size.width > 0 && new_size.height > 0 {
+    pub fn resize(&mut self, new_size: (u32, u32)) {
+        let (width, height) = new_size;
+        if width > 0 && height > 0 {
             self.size = new_size;
-            self.config.width = new_size.width;
-            self.config.height = new_size.height;
+            self.config.width = width;
+            self.config.height = height;
             self.surface.configure(&self.device, &self.config);
 
-            self.camera.aspect = new_size.width as f32 / new_size.height as f32;
+            self.camera.aspect = width as f32 / height as f32;
 
             self.depth_texture =
                 Texture::create_depth_texture(&self.device, &self.config, "depth_texture");

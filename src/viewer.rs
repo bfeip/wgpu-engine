@@ -169,8 +169,8 @@ impl<'a> Viewer<'a> {
         &self.state.camera
     }
 
-    /// Get the current viewport size
-    pub fn size(&self) -> crate::common::PhysicalSize<u32> {
+    /// Get the current viewport size as (width, height)
+    pub fn size(&self) -> (u32, u32) {
         self.state.size
     }
 
