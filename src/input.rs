@@ -1,19 +1,6 @@
 /// Input types that are independent of any specific windowing library.
 /// These types mirror common windowing system input abstractions.
 
-/// Physical position in pixels
-#[derive(Debug, Copy, Clone, PartialEq)]
-pub struct PhysicalPosition<T> {
-    pub x: T,
-    pub y: T,
-}
-
-impl<T> PhysicalPosition<T> {
-    pub fn new(x: T, y: T) -> Self {
-        Self { x, y }
-    }
-}
-
 /// Element state (pressed or released)
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum ElementState {

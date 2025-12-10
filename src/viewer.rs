@@ -129,7 +129,7 @@ impl<'a> Viewer<'a> {
         self.dispatcher
             .register(EventKind::CursorMoved, |event, ctx| {
                 if let Event::CursorMoved { position } = event {
-                    ctx.state.cursor_position = Some((position.x as f32, position.y as f32));
+                    ctx.state.cursor_position = Some((position.0 as f32, position.1 as f32));
                 }
                 false // Don't stop propagation - other handlers may need cursor position too
             });

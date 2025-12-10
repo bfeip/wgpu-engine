@@ -4,7 +4,7 @@ use std::time::Instant;
 use crate::drawstate::DrawState;
 use crate::scene::Scene;
 use crate::annotation::AnnotationManager;
-use crate::input::{PhysicalPosition, ElementState, MouseButton, MouseScrollDelta, KeyEvent};
+use crate::input::{ElementState, MouseButton, MouseScrollDelta, KeyEvent};
 
 /// Movement threshold in pixels before a mouse button hold becomes a drag.
 const DRAG_THRESHOLD_PIXELS: f32 = 4.0;
@@ -101,8 +101,8 @@ pub enum Event {
     },
     /// Cursor position changed (absolute position)
     CursorMoved {
-        /// New cursor position in physical pixels
-        position: PhysicalPosition<f64>,
+        /// New cursor position in physical pixels (x, y)
+        position: (f64, f64),
     },
     /// Mouse button was pressed or released
     MouseInput {
@@ -347,8 +347,8 @@ impl EventDispatcher {
     }
 
     /// Processes CursorMoved events to update cursor position tracking.
-    fn process_cursor_moved(&mut self, position: PhysicalPosition<f64>) {
-        self.current_cursor_position = Some((position.x as f32, position.y as f32));
+    fn process_cursor_moved(&mut self, position: (f64, f64)) {
+        self.current_cursor_position = Some((position.0 as f32, position.1 as f32));
     }
 
     /// Processes MouseInput events to track button press/release and synthesize click events.
@@ -468,7 +468,7 @@ impl EventDispatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::input::{PhysicalPosition, ElementState, MouseButton, MouseScrollDelta};
+    use crate::input::{ElementState, MouseButton, MouseScrollDelta};
     use std::rc::Rc;
     use std::cell::Cell;
 
@@ -664,7 +664,7 @@ mod tests {
         });
 
         let event = Event::CursorMoved {
-            position: PhysicalPosition::new(100.0, 200.0),
+            position: (100.0, 200.0),
         };
         let mut ctx = unsafe { create_mock_context() };
 

@@ -19,6 +19,7 @@
 - Antialiasing
 - NURBS
 - 3D Overlays
+- Make operators optional feature
 
 ## Impl notes:
 - Ensure that the dirty flag is handled properly. Children of nodes that are marked dirty

@@ -3,6 +3,7 @@ use std::mem::size_of;
 use super::material::MaterialId;
 use super::mesh::MeshId;
 
+/// Unique identifier for a mesh instance
 pub type InstanceId = u32;
 
 /// An instance references a mesh and material to be rendered.

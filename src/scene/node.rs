@@ -3,6 +3,7 @@ use crate::common::Aabb;
 use cgmath::{EuclideanSpace, Matrix4, Point3, Quaternion, Vector3};
 use std::cell::Cell;
 
+/// Unique identifier for a Node in the scene tree.
 pub type NodeId = u32;
 
 /// A node in the scene tree hierarchy.

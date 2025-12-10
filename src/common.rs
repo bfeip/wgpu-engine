@@ -14,6 +14,7 @@ pub use aabb::Aabb;
 pub use plane::Plane;
 pub use convex_polyhedron::ConvexPolyhedron;
 
+/// An RGBA color, with values between 0.0 and 1.0
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct RgbaColor {

@@ -143,6 +143,8 @@ pub(crate) struct MeshGpuResources {
     pub point_index_buffer: wgpu::Buffer,
 }
 
+/// A mesh composed of vertices and primitives
+/// 
 /// Meshes store vertex data (positions, normals, texture coordinates) and primitives
 /// (triangle lists, line lists, point lists). GPU buffers are created lazily when
 /// the mesh is first rendered.
