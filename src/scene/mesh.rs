@@ -144,17 +144,29 @@ pub(crate) struct MeshGpuResources {
 }
 
 /// A mesh composed of vertices and primitives
-/// 
+///
 /// Meshes store vertex data (positions, normals, texture coordinates) and primitives
 /// (triangle lists, line lists, point lists).
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```
+/// use wgpu_engine::scene::{Mesh, MeshPrimitive, Vertex, Scene, PrimitiveType};
+///
 /// // Create from raw data (no device needed)
+/// let vertices = vec![
+///     Vertex { position: [0.0, 0.0, 0.0], tex_coords: [0.0, 0.0, 0.0], normal: [0.0, 1.0, 0.0] },
+///     Vertex { position: [1.0, 0.0, 0.0], tex_coords: [1.0, 0.0, 0.0], normal: [0.0, 1.0, 0.0] },
+///     Vertex { position: [0.5, 1.0, 0.0], tex_coords: [0.5, 1.0, 0.0], normal: [0.0, 1.0, 0.0] },
+/// ];
+/// let primitives = vec![MeshPrimitive {
+///     primitive_type: PrimitiveType::TriangleList,
+///     indices: vec![0, 1, 2],
+/// }];
 /// let mesh = Mesh::from_raw(vertices, primitives);
 ///
 /// // Add to scene
+/// let mut scene = Scene::new();
 /// let mesh_id = scene.add_mesh(mesh);
 ///
 /// // GPU resources are created automatically during rendering

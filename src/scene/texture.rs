@@ -42,13 +42,15 @@ pub(crate) struct GpuTexture {
 ///
 /// # Examples
 ///
-/// ```ignore
-/// // Create from embedded image
-/// let image = image::open("texture.png")?;
-/// let texture = Texture::from_image(image);
+/// ```
+/// use wgpu_engine::scene::{Texture, Scene};
 ///
-/// // Create from path (loaded lazily)
+/// // Create from path (loaded lazily when GPU resources are created)
 /// let texture = Texture::from_path("texture.png");
+///
+/// // Add to scene
+/// let mut scene = Scene::new();
+/// let texture_id = scene.add_texture(texture);
 ///
 /// // GPU resources are created automatically during rendering
 /// ```

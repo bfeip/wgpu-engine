@@ -55,13 +55,17 @@ pub(crate) struct MaterialGpuResources {
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```
+/// use wgpu_engine::scene::{Material, Scene};
+/// use wgpu_engine::common::RgbaColor;
+///
 /// // Create a material with face color (no GPU needed)
 /// let material = Material::new()
 ///     .with_face_color(RgbaColor::RED)
 ///     .with_line_color(RgbaColor::BLACK);
 ///
 /// // Add to scene
+/// let mut scene = Scene::new();
 /// let mat_id = scene.add_material(material);
 ///
 /// // GPU resources are created automatically during rendering

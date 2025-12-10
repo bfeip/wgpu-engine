@@ -3,8 +3,6 @@
 ## Jots
 - Fix navigation operator to use bounding for sensitivity
 
-- Split mesh into DrawMesh and Mesh for API reasons
-- Split materials into DrawMaterials and Materials for API reasons
 - Tree walker feature to skip subtrees on condition
 - Ability to walk the scene with multiple walkers at once
 

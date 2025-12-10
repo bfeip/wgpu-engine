@@ -38,10 +38,23 @@ use crate::common::{Aabb, RgbaColor};
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```
+/// use wgpu_engine::scene::{Scene, Mesh, MeshPrimitive, Vertex, Material, PrimitiveType};
+/// use wgpu_engine::common::RgbaColor;
+/// use cgmath::{Point3, Quaternion, Vector3};
+///
 /// let mut scene = Scene::new();
 ///
 /// // Add a mesh (no device needed)
+/// let vertices = vec![
+///     Vertex { position: [0.0, 0.0, 0.0], tex_coords: [0.0, 0.0, 0.0], normal: [0.0, 1.0, 0.0] },
+///     Vertex { position: [1.0, 0.0, 0.0], tex_coords: [1.0, 0.0, 0.0], normal: [0.0, 1.0, 0.0] },
+///     Vertex { position: [0.5, 1.0, 0.0], tex_coords: [0.5, 1.0, 0.0], normal: [0.0, 1.0, 0.0] },
+/// ];
+/// let primitives = vec![MeshPrimitive {
+///     primitive_type: PrimitiveType::TriangleList,
+///     indices: vec![0, 1, 2],
+/// }];
 /// let mesh = Mesh::from_raw(vertices, primitives);
 /// let mesh_id = scene.add_mesh(mesh);
 ///
@@ -50,6 +63,9 @@ use crate::common::{Aabb, RgbaColor};
 /// let mat_id = scene.add_material(material);
 ///
 /// // Create an instance node
+/// let position = Point3::new(0.0, 0.0, 0.0);
+/// let rotation = Quaternion::new(1.0, 0.0, 0.0, 0.0);
+/// let scale = Vector3::new(1.0, 1.0, 1.0);
 /// let node_id = scene.add_instance_node(None, mesh_id, mat_id, position, rotation, scale);
 /// ```
 pub struct Scene {
