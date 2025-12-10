@@ -112,7 +112,7 @@ impl<'a> Viewer<'a> {
     pub async fn from_canvas(canvas: web_sys::HtmlCanvasElement) -> Self {
         let width = canvas.width();
         let height = canvas.height();
-        Self::new(canvas, width, height).await
+        Self::new(wgpu::SurfaceTarget::Canvas(canvas), width, height).await
     }
 
     /// Register default event handlers for common viewer operations
