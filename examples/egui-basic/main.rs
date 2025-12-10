@@ -1,12 +1,22 @@
+mod ui;
+
 use std::sync::Arc;
 use egui_wgpu::RendererOptions;
 use winit::{
     application::ApplicationHandler, event, event_loop::{ActiveEventLoop, EventLoop}, window::{Window, WindowId}
 };
 
-use wgpu_engine::{Viewer, winit_support};
+use wgpu_engine::{Viewer, winit_support, load_gltf_scene};
 use wgpu_engine::input::{ElementState, Key, NamedKey};
 use wgpu_engine::operator::BuiltinOperatorId;
+use wgpu_engine::scene::Scene;
+
+/// Debug actions triggered by key presses
+enum DebugAction {
+    CycleOperator,
+    ToggleOrtho,
+    Exit,
+}
 
 /// Application state for the winit event loop with egui integration
 struct App<'a> {
@@ -15,6 +25,8 @@ struct App<'a> {
     egui_ctx: Option<egui::Context>,
     egui_winit: Option<egui_winit::State>,
     egui_renderer: Option<egui_wgpu::Renderer>,
+    /// Pending file path to load (set by file dialog, processed in main loop)
+    pending_gltf_path: Option<std::path::PathBuf>,
 }
 
 impl<'a> App<'a> {
@@ -62,50 +74,116 @@ impl<'a> App<'a> {
 
     /// Handle the RedrawRequested event - build UI and render the frame
     fn handle_redraw_requested(&mut self) {
-        let window = self.window.as_ref().unwrap();
-        let viewer = self.viewer.as_mut().unwrap();
-        let egui_ctx = self.egui_ctx.as_ref().unwrap();
-        let egui_winit = self.egui_winit.as_mut().unwrap();
-        let egui_renderer = self.egui_renderer.as_mut().unwrap();
+        // Process any pending glTF file load
+        if let Some(path) = self.pending_gltf_path.take() {
+            self.load_gltf_file(&path);
+        }
 
-        // Dispatch Update event for continuous operations (WASD movement, etc.)
-        viewer.update();
+        // Clone Arc to avoid borrow conflicts
+        let window = Arc::clone(self.window.as_ref().unwrap());
+        let egui_ctx = self.egui_ctx.as_ref().unwrap().clone();
 
-        // Build egui UI
-        let raw_input = egui_winit.take_egui_input(window.as_ref());
-        let full_output = egui_ctx.run(raw_input, |ctx| {
-            build_ui(ctx, viewer);
-        });
+        // Build egui UI and render scene
+        let actions = {
+            let viewer = self.viewer.as_mut().unwrap();
+            let egui_winit = self.egui_winit.as_mut().unwrap();
+            let egui_renderer = self.egui_renderer.as_mut().unwrap();
 
-        // Process egui platform output (clipboard, cursor, etc.)
-        egui_winit.handle_platform_output(
-            window.as_ref(),
-            full_output.platform_output.clone(),
-        );
+            // Dispatch Update event for continuous operations (WASD movement, etc.)
+            viewer.update();
 
-        // Capture viewer size and scale factor before the closure
-        let viewer_size = viewer.size();
-        let scale_factor = window.scale_factor() as f32;
+            // Build egui UI
+            let raw_input = egui_winit.take_egui_input(window.as_ref());
+            let mut actions = ui::UiActions::default();
 
-        // Render 3D scene + egui overlay
-        if let Err(e) = viewer.render_with_overlay(|device, queue, encoder, view| {
-            render_egui_to_overlay(
-                egui_renderer,
-                egui_ctx,
-                &full_output,
-                viewer_size,
-                scale_factor,
-                device,
-                queue,
-                encoder,
-                view,
+            let full_output = egui_ctx.run(raw_input, |ctx| {
+                actions = ui::build(ctx, viewer);
+            });
+
+            // Process egui platform output (clipboard, cursor, etc.)
+            egui_winit.handle_platform_output(
+                window.as_ref(),
+                full_output.platform_output.clone(),
             );
-        }) {
-            log::error!("Render error: {}", e);
+
+            // Capture viewer size and scale factor before the closure
+            let viewer_size = viewer.size();
+            let scale_factor = window.scale_factor() as f32;
+
+            // Render 3D scene + egui overlay
+            if let Err(e) = viewer.render_with_overlay(|device, queue, encoder, view| {
+                render_egui_to_overlay(
+                    egui_renderer,
+                    &egui_ctx,
+                    &full_output,
+                    viewer_size,
+                    scale_factor,
+                    device,
+                    queue,
+                    encoder,
+                    view,
+                );
+            }) {
+                log::error!("Render error: {}", e);
+            }
+
+            actions
+        };
+
+        // Handle UI actions (outside the borrow scope)
+        if actions.load_file {
+            self.open_gltf_file_dialog();
+        }
+        if actions.clear_scene {
+            self.clear_scene();
         }
 
         // Request next frame
         window.request_redraw();
+    }
+
+    /// Open a file dialog to select a glTF file
+    fn open_gltf_file_dialog(&mut self) {
+        let file = rfd::FileDialog::new()
+            .add_filter("glTF", &["gltf", "glb"])
+            .pick_file();
+
+        if let Some(path) = file {
+            self.pending_gltf_path = Some(path);
+        }
+    }
+
+    /// Load a glTF file into the scene
+    fn load_gltf_file(&mut self, path: &std::path::Path) {
+        let viewer = self.viewer.as_mut().unwrap();
+        let aspect = {
+            let size = viewer.size();
+            size.0 as f32 / size.1 as f32
+        };
+
+        match load_gltf_scene(path, aspect) {
+            Ok(result) => {
+                // Replace the scene with the loaded one
+                viewer.scene = result.scene;
+
+                // Apply camera if one was found in the glTF
+                if let Some(camera) = result.camera {
+                    *viewer.camera_mut() = camera;
+                }
+
+                log::info!("Loaded glTF: {}", path.display());
+            }
+            Err(e) => {
+                log::error!("Failed to load glTF {}: {}", path.display(), e);
+            }
+        }
+    }
+
+    /// Clear the scene (remove all nodes, meshes, instances, etc.)
+    fn clear_scene(&mut self) {
+        let viewer = self.viewer.as_mut().unwrap();
+        viewer.scene = Scene::new();
+        log::info!("Scene cleared");
     }
 
     /// Handle events that egui didn't consume
@@ -160,13 +238,6 @@ impl<'a> App<'a> {
         let camera = viewer.camera_mut();
         camera.ortho = !camera.ortho;
     }
-}
-
-/// Debug actions triggered by key presses
-enum DebugAction {
-    CycleOperator,
-    ToggleOrtho,
-    Exit,
 }
 
 /// Render egui overlay on top of the 3D scene
@@ -283,105 +354,6 @@ impl<'a> ApplicationHandler for App<'a> {
     }
 }
 
-/// Build the egui UI
-fn build_ui(ctx: &egui::Context, viewer: &Viewer) {
-    // Determine which operator mode we're in by comparing positions
-    // The one with lower position (closer to front) is the active navigation mode
-    let walk_id: u32 = BuiltinOperatorId::Walk.into();
-    let nav_id: u32 = BuiltinOperatorId::Navigation.into();
-    let walk_pos = viewer.operator_manager.position(walk_id);
-    let nav_pos = viewer.operator_manager.position(nav_id);
-    let is_walk_mode = match (walk_pos, nav_pos) {
-        (Some(w), Some(n)) => w < n,
-        (Some(_), None) => true,
-        _ => false,
-    };
-    let is_nav_mode = !is_walk_mode && nav_pos.is_some();
-
-    // Performance overlay
-    egui::TopBottomPanel::new(egui::panel::TopBottomSide::Top, "Performance")
-        .show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(format!(
-                    "FPS: {:.1}",
-                    ctx.input(|i| i.stable_dt).recip()
-                ));
-                ui.separator();
-                // Show current mode
-                if is_walk_mode {
-                    ui.label("Mode: Walk");
-                } else if is_nav_mode {
-                    ui.label("Mode: Orbit");
-                } else if let Some(front) = viewer.operator_manager.front() {
-                    ui.label(format!("Mode: {}", front.name()));
-                }
-            });
-        });
-
-    // Main control panel
-    egui::SidePanel::new(egui::panel::Side::Left, "Viewer Controls")
-        .show(ctx, |ui| {
-            ui.heading("Camera");
-
-            let camera = viewer.camera();
-            ui.label(format!(
-                "Projection: {}",
-                if camera.ortho { "Orthographic" } else { "Perspective" }
-            ));
-            ui.label(format!(
-                "Position: ({:.2}, {:.2}, {:.2})",
-                camera.eye.x, camera.eye.y, camera.eye.z
-            ));
-            ui.label(format!(
-                "Target: ({:.2}, {:.2}, {:.2})",
-                camera.target.x, camera.target.y, camera.target.z
-            ));
-
-            ui.separator();
-
-            ui.heading("Controls");
-
-            // Show mode-specific controls
-            if is_walk_mode {
-                ui.label("WASD: Move");
-                ui.label("Left Mouse Drag: Look around");
-            } else if is_nav_mode {
-                ui.label("Left Mouse Drag: Orbit camera");
-                ui.label("Right Mouse Drag: Pan camera");
-                ui.label("Mouse Wheel: Zoom in/out");
-            } else {
-                // Fallback: show both
-                ui.label("WASD: Walk movement");
-                ui.label("Left Mouse Drag: Look around / Orbit");
-                ui.label("Right Mouse Drag: Pan camera");
-                ui.label("Mouse Wheel: Zoom in/out");
-            }
-
-            ui.separator();
-            ui.label("C: Cycle mode");
-            ui.label("O: Toggle ortho/perspective");
-            ui.label("ESC: Exit application");
-
-            ui.separator();
-
-            ui.heading("Operators");
-            // Mark the active navigation mode (Walk or Nav, whichever has higher priority)
-            let active_nav_id = if is_walk_mode { Some(walk_id) } else if is_nav_mode { Some(nav_id) } else { None };
-            for op in viewer.operator_manager.iter() {
-                let prefix = if Some(op.id()) == active_nav_id { "→ " } else { "  " };
-                ui.label(format!("{}{}", prefix, op.name()));
-            }
-
-            ui.separator();
-
-            ui.heading("Scene Info");
-            ui.label(format!("Meshes: {}", viewer.scene.meshes.len()));
-            ui.label(format!("Instances: {}", viewer.scene.instances.len()));
-            ui.label(format!("Nodes: {}", viewer.scene.nodes.len()));
-            ui.label(format!("Lights: {}", viewer.scene.lights.len()));
-        });
-}
-
 fn main() {
     // Initialize logging
     env_logger::init();
@@ -396,6 +368,7 @@ fn main() {
         egui_ctx: None,
         egui_winit: None,
         egui_renderer: None,
+        pending_gltf_path: None,
     };
 
     // Run the event loop

@@ -6,10 +6,11 @@
 - Tree walker feature to skip subtrees on condition
 - Ability to walk the scene with multiple walkers at once
 
-- Drag and drop GLTF loading operator
-- Orthographic camera
+- Example glTF loading
 - Highlighting and proper selection
+- egui canvas frame
 - Instance flags and visibility
+- Higher level faces and lines
 - Mesh wireframe
 - Multiple lights
 - Optimize drawing
