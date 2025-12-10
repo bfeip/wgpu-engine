@@ -2,9 +2,7 @@ use std::path::Path;
 use crate::{
     camera::Camera,
     scene::{
-        material::Material,
-        texture::Texture,
-        Mesh, MeshId, MeshPrimitive, PrimitiveType, Scene, Vertex,
+        Material, Texture, Mesh, MeshId, MeshPrimitive, PrimitiveType, Scene, Vertex,
         MaterialId, DEFAULT_MATERIAL_ID,
     },
 };

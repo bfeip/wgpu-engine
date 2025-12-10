@@ -1,10 +1,10 @@
 mod batch;
 mod instance;
-pub mod light;
-pub mod material;
+mod light;
+mod material;
 mod mesh;
 mod node;
-pub mod texture;
+mod texture;
 mod tree;
 
 use cgmath::{Matrix4, SquareMatrix};
@@ -12,6 +12,7 @@ use image::DynamicImage;
 use std::collections::HashMap;
 use std::path::Path;
 
+// Public API exports
 pub use instance::{Instance, InstanceId};
 pub use light::Light;
 pub use material::{Material, MaterialId, DEFAULT_MATERIAL_ID};
@@ -19,9 +20,14 @@ pub use mesh::{Mesh, MeshDescriptor, MeshId, MeshPrimitive, ObjMesh, PrimitiveTy
 pub use node::{Node, NodeId};
 pub use texture::{Texture, TextureId};
 pub use tree::TreeVisitor;
+
+// Crate-internal exports
 pub(crate) use batch::DrawBatch;
 pub(crate) use instance::InstanceRaw;
 pub(crate) use light::LightUniform;
+pub(crate) use material::{MaterialGpuResources, MaterialProperties};
+pub(crate) use texture::GpuTexture;
+
 use tree::collect_instance_transforms;
 
 use crate::common::{Aabb, RgbaColor};

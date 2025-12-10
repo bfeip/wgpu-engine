@@ -15,7 +15,7 @@ mod viewer;
 #[cfg(feature = "winit-support")]
 pub mod winit_support;
 
-pub use scene::{Scene, Light};
+pub use scene::Scene;
 pub use viewer::Viewer;
 pub use camera::Camera;
 pub use annotation::{AnnotationId, AnnotationManager};

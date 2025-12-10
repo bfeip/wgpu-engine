@@ -7,9 +7,8 @@ use wgpu::util::DeviceExt;
 use crate::{
     camera::{Camera, CameraUniform},
     scene::{
-        material::{MaterialGpuResources, MaterialProperties},
-        texture::{self, GpuTexture, Texture},
-        InstanceRaw, LightUniform, PrimitiveType, Scene, Vertex,
+        GpuTexture, InstanceRaw, LightUniform, MaterialGpuResources, MaterialProperties,
+        PrimitiveType, Scene, Texture, Vertex,
     },
     shaders::ShaderGenerator,
 };
@@ -531,7 +530,7 @@ impl<'a> DrawState<'a> {
                         conservative: false,
                     },
                     depth_stencil: Some(wgpu::DepthStencilState {
-                        format: texture::Texture::DEPTH_FORMAT,
+                        format: Texture::DEPTH_FORMAT,
                         depth_write_enabled: true,
                         depth_compare: wgpu::CompareFunction::Less,
                         stencil: wgpu::StencilState::default(),
