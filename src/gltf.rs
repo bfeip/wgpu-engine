@@ -281,20 +281,35 @@ fn extract_camera_from_node(
                 fovy,
                 znear,
                 zfar,
+                ortho: false,
             })
         }
-        gltf::camera::Projection::Orthographic(_ortho) => {
-            // We don't support orthographic cameras yet, but we can still create
-            // a perspective camera at the same position as a fallback
-            log::warn!("Orthographic camera found but not supported, using perspective fallback");
+        gltf::camera::Projection::Orthographic(ortho_cam) => {
+            // glTF orthographic uses xmag/ymag as half-extents
+            // We derive an equivalent fovy from the distance and ymag
+            let ymag = ortho_cam.ymag();
+            let znear = ortho_cam.znear();
+            let zfar = ortho_cam.zfar();
+
+            // Calculate an equivalent fovy that would produce the same view height
+            // at the current distance: ymag = distance * tan(fovy/2)
+            // So: fovy = 2 * atan(ymag / distance)
+            let distance = (eye - target).magnitude();
+            let fovy = if distance > 0.0 {
+                2.0 * (ymag / distance).atan().to_degrees()
+            } else {
+                45.0 // fallback
+            };
+
             Some(Camera {
                 eye,
                 target,
                 up,
                 aspect,
-                fovy: 45.0,
-                znear: 0.1,
-                zfar: 1000.0,
+                fovy,
+                znear,
+                zfar,
+                ortho: true,
             })
         }
     }

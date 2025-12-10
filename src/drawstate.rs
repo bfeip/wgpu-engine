@@ -181,6 +181,7 @@ impl<'a> DrawState<'a> {
             fovy: 45.0,
             znear: 0.001,
             zfar: 100.0,
+            ortho: false,
         };
 
         let mut camera_uniform = CameraUniform::new();

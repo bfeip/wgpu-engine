@@ -1,3 +1,10 @@
+/// Matrix to convert from OpenGL clip-space depth [-1, 1] to WGPU depth [0, 1].
+///
+/// WGPU uses a different depth convention than OpenGL:
+/// - OpenGL NDC depth: [-1, 1] (near to far)
+/// - WGPU NDC depth: [0, 1] (near to far)
+///
+/// This matrix remaps Z: `z' = 0.5 * z + 0.5`
 #[rustfmt::skip]
 const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
     1.0, 0.0, 0.0, 0.0,
@@ -6,22 +13,72 @@ const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
     0.0, 0.0, 0.5, 1.0,
 );
 
+/// A camera that defines the viewpoint and projection for rendering.
+///
+/// The camera combines view parameters (position, orientation) with projection
+/// parameters (field of view, clipping planes) to produce a view-projection matrix
+/// used by the GPU to transform world-space coordinates to clip-space.
+///
+/// # Example
+///
+/// ```
+/// use cgmath::{Point3, Vector3};
+/// use wgpu_engine::Camera;
+///
+/// let camera = Camera {
+///     eye: Point3::new(0.0, 0.0, 5.0),
+///     target: Point3::new(0.0, 0.0, 0.0),
+///     up: Vector3::new(0.0, 1.0, 0.0),
+///     aspect: 16.0 / 9.0,
+///     fovy: 45.0,
+///     znear: 0.1,
+///     zfar: 100.0,
+///     ortho: false,
+/// };
+/// ```
 pub struct Camera {
+    /// The position of the camera in world space.
     pub eye: cgmath::Point3<f32>,
+    /// The point the camera is looking at in world space.
     pub target: cgmath::Point3<f32>,
+    /// The up direction vector (typically Y-up: `(0, 1, 0)`).
     pub up: cgmath::Vector3<f32>,
+    /// The aspect ratio of the viewport (width / height).
     pub aspect: f32,
+    /// Vertical field of view in degrees (used for perspective projection).
     pub fovy: f32,
+    /// Distance to the near clipping plane.
     pub znear: f32,
+    /// Distance to the far clipping plane.
     pub zfar: f32,
+    /// When true, use orthographic projection instead of perspective.
+    ///
+    /// The orthographic view size is derived from the camera distance and fovy,
+    /// so zoom (changing distance) works naturally for both projection modes.
+    pub ortho: bool,
 }
 
 impl Camera {
+    /// Builds the combined view-projection matrix for this camera.
+    ///
+    /// The resulting matrix transforms world-space coordinates to clip-space,
+    /// ready for the GPU rasterizer. It combines:
+    /// - View matrix: transforms world space to camera/view space
+    /// - Projection matrix: transforms view space to clip space (perspective or orthographic)
+    /// - Depth remapping: converts OpenGL depth convention to WGPU convention
     pub fn build_view_projection_matrix(&self) -> cgmath::Matrix4<f32> {
         let view = cgmath::Matrix4::look_at_rh(self.eye, self.target, self.up);
-        let proj = cgmath::perspective(cgmath::Deg(self.fovy), self.aspect, self.znear, self.zfar);
+        let proj = if self.ortho {
+            // Derive orthographic bounds from camera distance and fovy.
+            // This allows zoom (changing distance) to work naturally.
+            let half_height = self.length() * (self.fovy.to_radians() / 2.0).tan();
+            let half_width = half_height * self.aspect;
+            cgmath::ortho(-half_width, half_width, -half_height, half_height, self.znear, self.zfar)
+        } else {
+            cgmath::perspective(cgmath::Deg(self.fovy), self.aspect, self.znear, self.zfar)
+        };
 
-        return OPENGL_TO_WGPU_MATRIX * proj * view;
+        OPENGL_TO_WGPU_MATRIX * proj * view
     }
 
     /// Returns the camera's forward vector
@@ -43,10 +100,11 @@ impl Camera {
         self.eye.distance(self.target)
     }
 
+    /// Creates a GPU-compatible uniform buffer representation of this camera.
     pub(crate) fn to_uniform(&self) -> CameraUniform {
         let mut ret = CameraUniform::new();
-        ret.update_view_proj(&self);
-        return ret;
+        ret.update_view_proj(self);
+        ret
     }
 
     /// Adjusts the camera to fit a bounding box in view.
@@ -200,13 +258,20 @@ impl Camera {
 }
 
 
+/// GPU uniform buffer layout for camera data.
+///
+/// This struct is `#[repr(C)]` and implements `bytemuck::Pod` for direct
+/// memory mapping to GPU buffers. It contains only the view-projection matrix,
+/// which is uploaded to bind group 0 for use by shaders.
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct CameraUniform {
+    /// Combined view-projection matrix (64 bytes, 4x4 f32).
     view_proj: [[f32; 4]; 4],
 }
 
 impl CameraUniform {
+    /// Creates a new camera uniform initialized to the identity matrix.
     pub fn new() -> Self {
         use cgmath::SquareMatrix;
         Self {
@@ -214,6 +279,7 @@ impl CameraUniform {
         }
     }
 
+    /// Updates the view-projection matrix from the given camera.
     pub fn update_view_proj(&mut self, camera: &Camera) {
         self.view_proj = camera.build_view_projection_matrix().into();
     }
@@ -236,6 +302,7 @@ mod tests {
             fovy: 45.0,
             znear: 0.1,
             zfar: 100.0,
+            ortho: false,
         }
     }
 
@@ -291,6 +358,7 @@ mod tests {
             fovy: 45.0,
             znear: 0.1,
             zfar: 100.0,
+            ortho: false,
         };
 
         // Distance from (3,4,0) to (0,0,0) is sqrt(9 + 16) = 5.0
@@ -308,6 +376,7 @@ mod tests {
             fovy: 45.0,
             znear: 0.1,
             zfar: 100.0,
+            ortho: false,
         };
 
         // Distance should be zero when eye == target
@@ -325,6 +394,7 @@ mod tests {
             fovy: 45.0,
             znear: 0.1,
             zfar: 100.0,
+            ortho: false,
         };
 
         let vp = camera.build_view_projection_matrix();
@@ -844,5 +914,183 @@ mod tests {
             (ndc.z - screen.z).abs() < EPSILON,
             "Depth should match"
         );
+    }
+
+    // ===== Orthographic Projection Tests =====
+
+    fn create_ortho_test_camera() -> Camera {
+        Camera {
+            eye: Point3::new(0.0, 0.0, 5.0),
+            target: Point3::new(0.0, 0.0, 0.0),
+            up: Vector3::new(0.0, 1.0, 0.0),
+            aspect: 16.0 / 9.0,
+            fovy: 45.0,
+            znear: 0.1,
+            zfar: 100.0,
+            ortho: true,
+        }
+    }
+
+    #[test]
+    fn test_ortho_build_view_projection_valid() {
+        let camera = create_ortho_test_camera();
+        let vp = camera.build_view_projection_matrix();
+
+        // Should produce a valid matrix (not NaN or infinity)
+        for i in 0..4 {
+            for j in 0..4 {
+                assert!(vp[i][j].is_finite(), "Matrix element [{i}][{j}] is not finite");
+            }
+        }
+
+        // Determinant should be non-zero (invertible)
+        let det = vp.determinant();
+        assert!(det.abs() > EPSILON, "Ortho matrix should be invertible");
+    }
+
+    #[test]
+    fn test_ortho_project_unproject_ndc_roundtrip() {
+        let camera = create_ortho_test_camera();
+
+        let test_points = vec![
+            Point3::new(0.0, 0.0, 0.0),    // Origin (camera target)
+            Point3::new(1.0, 0.0, 0.0),    // Right
+            Point3::new(0.0, 1.0, 0.0),    // Up
+            Point3::new(0.0, 0.0, -1.0),   // Forward from target
+            Point3::new(2.5, 1.5, -3.0),   // Arbitrary point
+        ];
+
+        for original_point in test_points {
+            let ndc = camera.project_point_ndc(original_point);
+            let unprojected = camera.unproject_point_ndc(ndc)
+                .expect("Failed to unproject ortho point");
+
+            assert!(
+                (unprojected.x - original_point.x).abs() < 1e-4,
+                "Ortho X mismatch: original={}, unprojected={}", original_point.x, unprojected.x
+            );
+            assert!(
+                (unprojected.y - original_point.y).abs() < 1e-4,
+                "Ortho Y mismatch: original={}, unprojected={}", original_point.y, unprojected.y
+            );
+            assert!(
+                (unprojected.z - original_point.z).abs() < 1e-4,
+                "Ortho Z mismatch: original={}, unprojected={}", original_point.z, unprojected.z
+            );
+        }
+    }
+
+    #[test]
+    fn test_ortho_target_projects_to_center() {
+        let camera = create_ortho_test_camera();
+
+        let ndc = camera.project_point_ndc(camera.target);
+
+        // Target should project to center (0, 0)
+        assert!(ndc.x.abs() < 1e-4, "Ortho target should project to NDC center X, got {}", ndc.x);
+        assert!(ndc.y.abs() < 1e-4, "Ortho target should project to NDC center Y, got {}", ndc.y);
+        assert!(ndc.z >= 0.0 && ndc.z <= 1.0, "NDC Z should be in [0, 1], got {}", ndc.z);
+    }
+
+    #[test]
+    fn test_ortho_depth_ordering() {
+        let camera = create_ortho_test_camera();
+
+        let point_near = Point3::new(0.0, 0.0, 1.0);   // Closer
+        let point_far = Point3::new(0.0, 0.0, -2.0);   // Farther
+
+        let ndc_near = camera.project_point_ndc(point_near);
+        let ndc_far = camera.project_point_ndc(point_far);
+
+        // Closer point should have smaller Z
+        assert!(
+            ndc_near.z < ndc_far.z,
+            "Ortho closer point should have smaller NDC Z: near={}, far={}",
+            ndc_near.z, ndc_far.z
+        );
+    }
+
+    #[test]
+    fn test_ortho_no_perspective_distortion() {
+        let camera = create_ortho_test_camera();
+
+        // In orthographic projection, objects at different Z distances
+        // should project to the same X/Y in NDC (no foreshortening)
+        let point_near = Point3::new(1.0, 1.0, 2.0);
+        let point_far = Point3::new(1.0, 1.0, -5.0);
+
+        let ndc_near = camera.project_point_ndc(point_near);
+        let ndc_far = camera.project_point_ndc(point_far);
+
+        // X and Y should be identical regardless of Z distance
+        assert!(
+            (ndc_near.x - ndc_far.x).abs() < 1e-5,
+            "Ortho X should be same at different depths: near={}, far={}",
+            ndc_near.x, ndc_far.x
+        );
+        assert!(
+            (ndc_near.y - ndc_far.y).abs() < 1e-5,
+            "Ortho Y should be same at different depths: near={}, far={}",
+            ndc_near.y, ndc_far.y
+        );
+    }
+
+    #[test]
+    fn test_ortho_vs_perspective_different_matrices() {
+        let mut camera = create_test_camera();
+
+        let persp_vp = camera.build_view_projection_matrix();
+
+        camera.ortho = true;
+        let ortho_vp = camera.build_view_projection_matrix();
+
+        // Matrices should be different
+        let mut found_difference = false;
+        for i in 0..4 {
+            for j in 0..4 {
+                if (persp_vp[i][j] - ortho_vp[i][j]).abs() > EPSILON {
+                    found_difference = true;
+                    break;
+                }
+            }
+        }
+        assert!(found_difference, "Perspective and orthographic matrices should differ");
+    }
+
+    #[test]
+    fn test_ortho_screen_roundtrip() {
+        let camera = create_ortho_test_camera();
+        let screen_width = 1920;
+        let screen_height = 1080;
+
+        let test_points = vec![
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(1.0, 1.0, 1.0),
+            Point3::new(-0.5, 2.0, -1.0),
+        ];
+
+        for original_point in test_points {
+            let screen = camera.project_point_screen(original_point, screen_width, screen_height);
+            let unprojected = camera.unproject_point_screen(
+                screen.x, screen.y, screen.z,
+                screen_width, screen_height
+            ).expect("Failed to unproject ortho screen point");
+
+            assert!(
+                (unprojected.x - original_point.x).abs() < 1e-3,
+                "Ortho screen roundtrip X mismatch: original={}, unprojected={}",
+                original_point.x, unprojected.x
+            );
+            assert!(
+                (unprojected.y - original_point.y).abs() < 1e-3,
+                "Ortho screen roundtrip Y mismatch: original={}, unprojected={}",
+                original_point.y, unprojected.y
+            );
+            assert!(
+                (unprojected.z - original_point.z).abs() < 1e-3,
+                "Ortho screen roundtrip Z mismatch: original={}, unprojected={}",
+                original_point.z, unprojected.z
+            );
+        }
     }
 }

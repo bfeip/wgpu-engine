@@ -118,6 +118,7 @@ impl<'a> App<'a> {
         if let Some(action) = Self::get_debug_key_action(&app_event) {
             match action {
                 DebugAction::CycleOperator => self.cycle_operator_mode(),
+                DebugAction::ToggleOrtho => self.toggle_ortho(),
                 DebugAction::Exit => event_loop.exit(),
             }
         }
@@ -137,6 +138,7 @@ impl<'a> App<'a> {
 
         match &key_event.logical_key {
             Key::Character('c') => Some(DebugAction::CycleOperator),
+            Key::Character('o') => Some(DebugAction::ToggleOrtho),
             Key::Named(NamedKey::Escape) => Some(DebugAction::Exit),
             _ => None,
         }
@@ -151,11 +153,19 @@ impl<'a> App<'a> {
         // Swap Walk and Navigation operators, preserving Selection operator position
         viewer.operator_manager.swap(walk_id, nav_id, &mut viewer.dispatcher);
     }
+
+    /// Toggle between perspective and orthographic projection
+    fn toggle_ortho(&mut self) {
+        let viewer = self.viewer.as_mut().unwrap();
+        let camera = viewer.camera_mut();
+        camera.ortho = !camera.ortho;
+    }
 }
 
 /// Debug actions triggered by key presses
 enum DebugAction {
     CycleOperator,
+    ToggleOrtho,
     Exit,
 }
 
@@ -315,6 +325,10 @@ fn build_ui(ctx: &egui::Context, viewer: &Viewer) {
 
             let camera = viewer.camera();
             ui.label(format!(
+                "Projection: {}",
+                if camera.ortho { "Orthographic" } else { "Perspective" }
+            ));
+            ui.label(format!(
                 "Position: ({:.2}, {:.2}, {:.2})",
                 camera.eye.x, camera.eye.y, camera.eye.z
             ));
@@ -345,6 +359,7 @@ fn build_ui(ctx: &egui::Context, viewer: &Viewer) {
 
             ui.separator();
             ui.label("C: Cycle mode");
+            ui.label("O: Toggle ortho/perspective");
             ui.label("ESC: Exit application");
 
             ui.separator();
