@@ -1,32 +1,55 @@
 use crate::common::RgbaColor;
 
+/// A light source
 pub struct Light {
+    /// World-space position of the light source.
     position: cgmath::Vector3<f32>,
+    /// Color and intensity of the light (RGBA, alpha can modulate intensity).
     color: RgbaColor,
 }
 
 impl Light {
+    /// Creates a new light at the given position with the specified color.
+    ///
+    /// # Arguments
+    ///
+    /// * `position` - World-space position of the light
+    /// * `color` - Light color (RGB) and intensity (alpha)
     pub fn new(position: cgmath::Vector3<f32>, color: RgbaColor) -> Self {
-        Self {
-            position,
-            color
-        }
+        Self { position, color }
     }
 
+    /// Converts the light to a GPU-compatible uniform structure.
     pub(crate) fn to_uniform(&self) -> LightUniform {
         LightUniform {
             position: self.position.into(),
             _padding: 0,
-            color: bytemuck::cast(self.color)
+            color: bytemuck::cast(self.color),
         }
     }
 }
 
+/// GPU-compatible representation of a light for shader uniforms.
+///
+/// This struct is laid out to match WGSL uniform buffer alignment requirements:
+/// - 16-byte alignment for vec4 types
+/// - Padding inserted after position to align color
+///
+/// # Memory Layout (32 bytes total)
+///
+/// | Offset | Size | Field     |
+/// |--------|------|-----------|
+/// | 0      | 12   | position  |
+/// | 12     | 4    | _padding  |
+/// | 16     | 16   | color     |
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct LightUniform {
+    /// Light position in world space.
     position: [f32; 3],
-    _padding: u32, // 16 byte spacing required
+    /// Padding for 16-byte alignment (required by WGSL uniform buffers).
+    _padding: u32,
+    /// Light color as RGBA.
     color: [f32; 4],
 }
 
