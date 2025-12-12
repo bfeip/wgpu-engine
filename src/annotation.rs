@@ -11,11 +11,12 @@ pub type AnnotationId = u32;
 /// Manages 3D annotations for debugging and visualization.
 ///
 /// All annotations are stored under a single root node in the scene tree,
-/// allowing for easy show/hide and bulk removal operations.
+/// allowing for easy show/hide and bulk removal operations. The root node
+/// is managed by the Scene and will be recreated if the scene is cleared.
+///
+/// After calling `Scene::clear()`, you should also call `AnnotationManager::reset()`
+/// to clear stale annotation tracking state.
 pub struct AnnotationManager {
-    /// Root node for all annotations
-    root_node_id: NodeId,
-
     /// Maps annotation IDs to their scene node IDs
     annotation_nodes: HashMap<AnnotationId, NodeId>,
 
@@ -25,16 +26,19 @@ pub struct AnnotationManager {
 
 impl AnnotationManager {
     /// Creates a new annotation manager.
-    ///
-    /// This creates a root node in the scene to hold all annotations.
-    pub fn new(scene: &mut Scene) -> Self {
-        let root_node_id = scene.add_default_node(None);
-
+    pub fn new() -> Self {
         Self {
-            root_node_id,
             annotation_nodes: HashMap::new(),
             next_annotation_id: 0,
         }
+    }
+
+    /// Resets the annotation manager state.
+    ///
+    /// Call this after `Scene::clear()` to clear stale annotation tracking.
+    pub fn reset(&mut self) {
+        self.annotation_nodes.clear();
+        self.next_annotation_id = 0;
     }
 
     /// Returns the number of active annotations.
@@ -44,15 +48,16 @@ impl AnnotationManager {
 
     /// Returns the root node ID for all annotations.
     ///
-    /// This can be used to exclude annotations from scene queries.
-    pub fn root_node(&self) -> NodeId {
-        self.root_node_id
+    /// This gets the annotation root from the scene, creating it if necessary.
+    pub fn root_node(&self, scene: &mut Scene) -> NodeId {
+        scene.annotation_root_node()
     }
 
     /// Shows or hides all annotations by scaling the root node.
     // TODO: Fix when proper visibility is implemented
     pub fn set_visible(&mut self, scene: &mut Scene, visible: bool) {
-        if let Some(root) = scene.get_node_mut(self.root_node_id) {
+        let root_id = self.root_node(scene);
+        if let Some(root) = scene.get_node_mut(root_id) {
             if visible {
                 root.set_scale(Vector3::new(1.0, 1.0, 1.0));
             } else {
@@ -122,6 +127,9 @@ impl AnnotationManager {
             indices,
         }];
 
+        // Get annotation root node first (before other borrows)
+        let root_id = self.root_node(scene);
+
         // Create mesh
         let mesh = Mesh::from_raw(vertices, primitives);
         let mesh_id = scene.add_mesh(mesh);
@@ -132,13 +140,13 @@ impl AnnotationManager {
 
         // Create node
         let node_id = scene.add_instance_node(
-            Some(self.root_node_id),
+            Some(root_id),
             mesh_id,
             material_id,
             Point3::new(0.0, 0.0, 0.0),
             Quaternion::new(1.0, 0.0, 0.0, 0.0),
             Vector3::new(1.0, 1.0, 1.0),
-        );
+        ).expect("Annotation root node must exist");
 
         // Track annotation
         let annotation_id = self.next_annotation_id;
@@ -157,8 +165,12 @@ impl AnnotationManager {
         origin: Point3<f32>,
         size: f32,
     ) -> AnnotationId {
+        // Get annotation root node first (before other borrows)
+        let root_id = self.root_node(scene);
+
         // Create parent node for axes group
-        let parent_node_id = scene.add_default_node(Some(self.root_node_id));
+        let parent_node_id = scene.add_default_node(Some(root_id))
+            .expect("Annotation root node must exist");
 
         // Create X axis (red)
         let x_mat = scene.add_material(
@@ -190,7 +202,7 @@ impl AnnotationManager {
             Point3::new(0.0, 0.0, 0.0),
             Quaternion::new(1.0, 0.0, 0.0, 0.0),
             Vector3::new(1.0, 1.0, 1.0)
-        );
+        ).expect("Parent node must exist");
 
         // Create Y axis (green)
         let y_mat = scene.add_material(
@@ -222,7 +234,7 @@ impl AnnotationManager {
             Point3::new(0.0, 0.0, 0.0),
             Quaternion::new(1.0, 0.0, 0.0, 0.0),
             Vector3::new(1.0, 1.0, 1.0)
-        );
+        ).expect("Parent node must exist");
 
         // Create Z axis (blue)
         let z_mat = scene.add_material(
@@ -254,7 +266,7 @@ impl AnnotationManager {
             Point3::new(0.0, 0.0, 0.0),
             Quaternion::new(1.0, 0.0, 0.0, 0.0),
             Vector3::new(1.0, 1.0, 1.0)
-        );
+        ).expect("Parent node must exist");
 
         // Track annotation
         let annotation_id = self.next_annotation_id;
@@ -271,6 +283,9 @@ impl AnnotationManager {
         positions: &[Point3<f32>],
         color: RgbaColor,
     ) -> AnnotationId {
+        // Get annotation root node first (before other borrows)
+        let root_id = self.root_node(scene);
+
         let vertices: Vec<Vertex> = positions
             .iter()
             .map(|&p| Vertex {
@@ -297,13 +312,13 @@ impl AnnotationManager {
 
         // Create node
         let node_id = scene.add_instance_node(
-            Some(self.root_node_id),
+            Some(root_id),
             mesh_id,
             material_id,
             Point3::new(0.0, 0.0, 0.0),
             Quaternion::new(1.0, 0.0, 0.0, 0.0),
             Vector3::new(1.0, 1.0, 1.0),
-        );
+        ).expect("Annotation root node must exist");
 
         // Track annotation
         let annotation_id = self.next_annotation_id;
@@ -321,6 +336,9 @@ impl AnnotationManager {
         size: Vector3<f32>,
         color: RgbaColor,
     ) -> AnnotationId {
+        // Get annotation root node first (before other borrows)
+        let root_id = self.root_node(scene);
+
         let half = size / 2.0;
 
         // Create 8 corners of the box
@@ -369,13 +387,13 @@ impl AnnotationManager {
 
         // Create node
         let node_id = scene.add_instance_node(
-            Some(self.root_node_id),
+            Some(root_id),
             mesh_id,
             material_id,
             Point3::new(0.0, 0.0, 0.0),
             Quaternion::new(1.0, 0.0, 0.0, 0.0),
             Vector3::new(1.0, 1.0, 1.0),
-        );
+        ).expect("Annotation root node must exist");
 
         // Track annotation
         let annotation_id = self.next_annotation_id;
@@ -394,6 +412,9 @@ impl AnnotationManager {
         divisions: u32,
         color: RgbaColor,
     ) -> AnnotationId {
+        // Get annotation root node first (before other borrows)
+        let root_id = self.root_node(scene);
+
         let half_size = size / 2.0;
         let step = size / divisions as f32;
 
@@ -457,13 +478,13 @@ impl AnnotationManager {
 
         // Create node
         let node_id = scene.add_instance_node(
-            Some(self.root_node_id),
+            Some(root_id),
             mesh_id,
             material_id,
             Point3::new(0.0, 0.0, 0.0),
             Quaternion::new(1.0, 0.0, 0.0, 0.0),
             Vector3::new(1.0, 1.0, 1.0),
-        );
+        ).expect("Annotation root node must exist");
 
         // Track annotation
         let annotation_id = self.next_annotation_id;

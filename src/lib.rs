@@ -1,3 +1,4 @@
+mod annotation;
 mod camera;
 pub mod common;
 pub mod input;
@@ -8,15 +9,14 @@ mod shaders;
 mod gltf;
 pub mod event;
 pub mod operator;
-mod annotation;
 mod viewer;
 
 // Winit support - only available when winit is a dependency
 #[cfg(feature = "winit-support")]
 pub mod winit_support;
 
+pub use annotation::{AnnotationId, AnnotationManager};
 pub use scene::Scene;
 pub use viewer::Viewer;
 pub use camera::Camera;
-pub use annotation::{AnnotationId, AnnotationManager};
 pub use gltf::{load_gltf_scene, GltfLoadResult};

@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
+use crate::annotation::AnnotationManager;
 use crate::drawstate::DrawState;
 use crate::scene::Scene;
-use crate::annotation::AnnotationManager;
 use crate::input::{ElementState, MouseButton, MouseScrollDelta, KeyEvent};
 
 /// Movement threshold in pixels before a mouse button hold becomes a drag.

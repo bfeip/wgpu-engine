@@ -422,7 +422,7 @@ pub fn load_gltf_scene<P: AsRef<Path>>(
 
         // Process all root nodes
         for gltf_node in gltf_scene.nodes() {
-            load_node_recursive(&gltf_node, None, &mut scene, &mesh_map, &mut node_map);
+            load_node_recursive(&gltf_node, None, &mut scene, &mesh_map, &mut node_map)?;
 
             // Search for camera if we haven't found one yet
             if camera.is_none() {
@@ -445,7 +445,7 @@ fn load_node_recursive(
     scene: &mut crate::scene::Scene,
     mesh_map: &[Vec<LoadedPrimitive>],
     node_map: &mut std::collections::HashMap<usize, crate::scene::NodeId>,
-) {
+) -> anyhow::Result<()> {
 
     // Decompose transform
     let (position, rotation, scale) = decompose_transform(&gltf_node.transform());
@@ -456,10 +456,10 @@ fn load_node_recursive(
 
         if primitives.is_empty() {
             // Mesh has no triangle primitives (only lines/points), treat as transform node
-            scene.add_node(parent, position, rotation, scale)
+            scene.add_node(parent, position, rotation, scale)?
         } else if primitives.len() > 1 {
             // Multi-primitive mesh: create parent node and child nodes for each primitive
-            let parent_node_id = scene.add_node(parent, position, rotation, scale);
+            let parent_node_id = scene.add_node(parent, position, rotation, scale)?;
 
             // Create child nodes for each primitive with identity transform
             for (mesh_id, material_id) in primitives {
@@ -470,24 +470,26 @@ fn load_node_recursive(
                     cgmath::Point3::new(0.0, 0.0, 0.0),
                     cgmath::Quaternion::new(1.0, 0.0, 0.0, 0.0),
                     cgmath::Vector3::new(1.0, 1.0, 1.0),
-                );
+                )?;
             }
 
             parent_node_id
         } else {
             // Single primitive: create a single instance node
             let (mesh_id, material_id) = primitives[0];
-            scene.add_instance_node(parent, mesh_id, material_id, position, rotation, scale)
+            scene.add_instance_node(parent, mesh_id, material_id, position, rotation, scale)?
         }
     } else {
         // No mesh, just a transform node
-        scene.add_node(parent, position, rotation, scale)
+        scene.add_node(parent, position, rotation, scale)?
     };
 
     node_map.insert(gltf_node.index(), node_id);
 
     // Recurse for all children
     for child in gltf_node.children() {
-        load_node_recursive(&child, Some(node_id), scene, mesh_map, node_map);
+        load_node_recursive(&child, Some(node_id), scene, mesh_map, node_map)?;
     }
+
+    Ok(())
 }

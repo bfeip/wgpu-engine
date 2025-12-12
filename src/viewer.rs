@@ -59,7 +59,7 @@ impl<'a> Viewer<'a> {
             },
         )];
 
-        let annotation_manager = AnnotationManager::new(&mut scene);
+        let annotation_manager = AnnotationManager::new();
 
         let mut dispatcher = EventDispatcher::new();
         let mut operator_manager = OperatorManager::new();

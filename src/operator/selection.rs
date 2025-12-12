@@ -43,7 +43,7 @@ impl SelectionOperator {
 
         // Draw debug lines
         if results.is_empty() {
-            let annotation_root = ctx.annotation_manager.root_node();
+            let annotation_root = ctx.annotation_manager.root_node(ctx.scene);
             let mut closest_bbox_hit: Option<f32> = None;
 
             for &root_id in ctx.scene.root_nodes() {

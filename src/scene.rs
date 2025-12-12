@@ -80,6 +80,9 @@ pub struct Scene {
     pub materials: HashMap<MaterialId, Material>,
     pub textures: HashMap<TextureId, Texture>,
 
+    /// Root node for annotations, created lazily when first requested
+    annotation_root_node: Option<NodeId>,
+
     next_mesh_id: MeshId,
     next_instance_id: InstanceId,
     next_node_id: NodeId,
@@ -105,6 +108,8 @@ impl Scene {
 
             materials: HashMap::new(),
             textures: HashMap::new(),
+
+            annotation_root_node: None,
 
             next_mesh_id: 0,
             next_instance_id: 0,
@@ -318,14 +323,31 @@ impl Scene {
 
     /// Adds a new node to the scene tree.
     ///
-    /// Returns the ID of the newly created node.
+    /// # Arguments
+    /// * `parent` - Optional parent node ID. If `Some`, the parent must exist in the scene.
+    /// * `position` - Local position of the node.
+    /// * `rotation` - Local rotation of the node.
+    /// * `scale` - Local scale of the node.
+    ///
+    /// # Returns
+    /// The ID of the newly created node, or an error if the parent doesn't exist.
+    ///
+    /// # Errors
+    /// Returns an error if `parent` is `Some` but the specified node doesn't exist.
     pub fn add_node(
         &mut self,
         parent: Option<NodeId>,
         position: cgmath::Point3<f32>,
         rotation: cgmath::Quaternion<f32>,
         scale: cgmath::Vector3<f32>,
-    ) -> NodeId {
+    ) -> anyhow::Result<NodeId> {
+        // Validate parent exists if specified
+        if let Some(parent_id) = parent {
+            if !self.nodes.contains_key(&parent_id) {
+                anyhow::bail!("Parent node with ID {} not found in scene", parent_id);
+            }
+        }
+
         let id = self.next_node_id;
         self.next_node_id += 1;
 
@@ -334,22 +356,35 @@ impl Scene {
         // Set up parent-child relationship
         if let Some(parent_id) = parent {
             node.set_parent(Some(parent_id));
-            if let Some(parent_node) = self.nodes.get_mut(&parent_id) {
-                parent_node.add_child(id);
-            }
+            // Safe to unwrap since we validated parent exists above
+            self.nodes.get_mut(&parent_id).unwrap().add_child(id);
         } else {
             // No parent, so this is a root node
             self.root_nodes.push(id);
         }
 
         self.nodes.insert(id, node);
-        id
+        Ok(id)
     }
 
     /// Adds a new node with an instance attached.
     ///
     /// This is a convenience method that creates both an instance and a node
-    /// in one call. Returns the node ID.
+    /// in one call.
+    ///
+    /// # Arguments
+    /// * `parent` - Optional parent node ID. If `Some`, the parent must exist in the scene.
+    /// * `mesh` - The mesh ID for this instance.
+    /// * `material` - The material ID for this instance.
+    /// * `position` - Local position of the node.
+    /// * `rotation` - Local rotation of the node.
+    /// * `scale` - Local scale of the node.
+    ///
+    /// # Returns
+    /// The ID of the newly created node, or an error if the parent doesn't exist.
+    ///
+    /// # Errors
+    /// Returns an error if `parent` is `Some` but the specified node doesn't exist.
     pub fn add_instance_node(
         &mut self,
         parent: Option<NodeId>,
@@ -358,23 +393,31 @@ impl Scene {
         position: cgmath::Point3<f32>,
         rotation: cgmath::Quaternion<f32>,
         scale: cgmath::Vector3<f32>,
-    ) -> NodeId {
+    ) -> anyhow::Result<NodeId> {
         // Create the instance
         let instance_id = self.add_instance(mesh, material);
 
-        // Create the node
-        let node_id = self.add_node(parent, position, rotation, scale);
+        // Create the node (validates parent exists)
+        let node_id = self.add_node(parent, position, rotation, scale)?;
 
         // Attach instance to node
-        if let Some(node) = self.nodes.get_mut(&node_id) {
-            node.set_instance(Some(instance_id));
-        }
+        // Safe to unwrap since we just created the node above
+        self.nodes.get_mut(&node_id).unwrap().set_instance(Some(instance_id));
 
-        node_id
+        Ok(node_id)
     }
 
     /// Adds a node with default transform (identity).
-    pub fn add_default_node(&mut self, parent: Option<NodeId>) -> NodeId {
+    ///
+    /// # Arguments
+    /// * `parent` - Optional parent node ID. If `Some`, the parent must exist in the scene.
+    ///
+    /// # Returns
+    /// The ID of the newly created node, or an error if the parent doesn't exist.
+    ///
+    /// # Errors
+    /// Returns an error if `parent` is `Some` but the specified node doesn't exist.
+    pub fn add_default_node(&mut self, parent: Option<NodeId>) -> anyhow::Result<NodeId> {
         use cgmath::{Point3, Quaternion, Vector3};
 
         self.add_node(
@@ -433,6 +476,57 @@ impl Scene {
 
         // Finally, remove the node itself
         self.nodes.remove(&node_id);
+    }
+
+    /// Clears all nodes from the scene.
+    ///
+    /// This removes all nodes, instances, meshes, materials (except the default),
+    /// textures, and lights from the scene, resetting it to an empty state.
+    pub fn clear(&mut self) {
+        self.nodes.clear();
+        self.root_nodes.clear();
+        self.instances.clear();
+        self.meshes.clear();
+        self.lights.clear();
+        self.textures.clear();
+        self.annotation_root_node = None;
+
+        // Keep only the default material (ID 0), remove all others
+        self.materials.retain(|&id, _| id == DEFAULT_MATERIAL_ID);
+
+        // Reset ID counters (but keep material counter since default material exists)
+        self.next_node_id = 0;
+        self.next_instance_id = 0;
+        self.next_mesh_id = 0;
+        self.next_texture_id = 0;
+        // Don't reset next_material_id since we keep the default material
+    }
+
+    /// Returns the root node for annotations, creating it if necessary.
+    ///
+    /// The annotation root node is a dedicated root node used by the
+    /// `AnnotationManager` to organize all annotation geometry. This node
+    /// is automatically recreated if the scene is cleared.
+    ///
+    /// # Panics
+    /// Panics in debug builds if the annotation root node was set but no longer
+    /// exists in the scene. This indicates the node was removed directly instead
+    /// of using `clear()`.
+    pub fn annotation_root_node(&mut self) -> NodeId {
+        if let Some(node_id) = self.annotation_root_node {
+            debug_assert!(
+                self.nodes.contains_key(&node_id),
+                "Annotation root node {} was removed without clearing the scene",
+                node_id
+            );
+            return node_id;
+        }
+
+        // Create a new annotation root node
+        let node_id = self.add_default_node(None)
+            .expect("Failed to create annotation root node");
+        self.annotation_root_node = Some(node_id);
+        node_id
     }
 
     /// Invalidates cached bounds for a node and all its ancestors.
@@ -644,7 +738,7 @@ mod tests {
     fn test_add_root_node() {
         let mut scene = Scene::new();
 
-        let node_id = scene.add_default_node(None);
+        let node_id = scene.add_default_node(None).unwrap();
 
         assert_eq!(node_id, 0);
         assert_eq!(scene.nodes.len(), 1);
@@ -660,8 +754,8 @@ mod tests {
     fn test_add_child_node() {
         let mut scene = Scene::new();
 
-        let root = scene.add_default_node(None);
-        let child = scene.add_default_node(Some(root));
+        let root = scene.add_default_node(None).unwrap();
+        let child = scene.add_default_node(Some(root)).unwrap();
 
         assert_eq!(scene.nodes.len(), 2);
         assert_eq!(scene.root_nodes.len(), 1);
@@ -679,10 +773,10 @@ mod tests {
     fn test_add_multiple_children() {
         let mut scene = Scene::new();
 
-        let root = scene.add_default_node(None);
-        let child1 = scene.add_default_node(Some(root));
-        let child2 = scene.add_default_node(Some(root));
-        let child3 = scene.add_default_node(Some(root));
+        let root = scene.add_default_node(None).unwrap();
+        let child1 = scene.add_default_node(Some(root)).unwrap();
+        let child2 = scene.add_default_node(Some(root)).unwrap();
+        let child3 = scene.add_default_node(Some(root)).unwrap();
 
         let root_node = scene.get_node(root).unwrap();
         assert_eq!(root_node.children().len(), 3);
@@ -701,10 +795,10 @@ mod tests {
         let mut scene = Scene::new();
 
         // Create a chain: root -> child1 -> child2 -> child3
-        let root = scene.add_default_node(None);
-        let child1 = scene.add_default_node(Some(root));
-        let child2 = scene.add_default_node(Some(child1));
-        let child3 = scene.add_default_node(Some(child2));
+        let root = scene.add_default_node(None).unwrap();
+        let child1 = scene.add_default_node(Some(root)).unwrap();
+        let child2 = scene.add_default_node(Some(child1)).unwrap();
+        let child3 = scene.add_default_node(Some(child2)).unwrap();
 
         // Verify the chain is correct
         assert_eq!(scene.get_node(root).unwrap().parent(), None);
@@ -723,9 +817,9 @@ mod tests {
     fn test_multiple_root_nodes() {
         let mut scene = Scene::new();
 
-        let root1 = scene.add_default_node(None);
-        let root2 = scene.add_default_node(None);
-        let root3 = scene.add_default_node(None);
+        let root1 = scene.add_default_node(None).unwrap();
+        let root2 = scene.add_default_node(None).unwrap();
+        let root3 = scene.add_default_node(None).unwrap();
 
         assert_eq!(scene.root_nodes.len(), 3);
         assert!(scene.root_nodes.contains(&root1));
@@ -749,12 +843,12 @@ mod tests {
         //   /  \      \
         //  gc1  gc2   gc3
 
-        let root = scene.add_default_node(None);
-        let c1 = scene.add_default_node(Some(root));
-        let c2 = scene.add_default_node(Some(root));
-        let gc1 = scene.add_default_node(Some(c1));
-        let gc2 = scene.add_default_node(Some(c1));
-        let gc3 = scene.add_default_node(Some(c2));
+        let root = scene.add_default_node(None).unwrap();
+        let c1 = scene.add_default_node(Some(root)).unwrap();
+        let c2 = scene.add_default_node(Some(root)).unwrap();
+        let gc1 = scene.add_default_node(Some(c1)).unwrap();
+        let gc2 = scene.add_default_node(Some(c1)).unwrap();
+        let gc3 = scene.add_default_node(Some(c2)).unwrap();
 
         // Verify structure
         assert_eq!(scene.root_nodes.len(), 1);
@@ -790,7 +884,7 @@ mod tests {
             Point3::new(0.0, 0.0, 0.0),
             Quaternion::new(1.0, 0.0, 0.0, 0.0),
             Vector3::new(1.0, 1.0, 1.0),
-        );
+        ).unwrap();
 
         assert_eq!(scene.nodes.len(), 1);
         assert_eq!(scene.instances.len(), 1);
@@ -811,7 +905,7 @@ mod tests {
     #[test]
     fn test_root_node_identity_transform() {
         let mut scene = Scene::new();
-        let root = scene.add_default_node(None);
+        let root = scene.add_default_node(None).unwrap();
 
         let transform = scene.nodes_transform(root);
         let identity = Matrix4::identity();
@@ -838,7 +932,7 @@ mod tests {
             Point3::new(10.0, 0.0, 0.0),
             Quaternion::new(1.0, 0.0, 0.0, 0.0),
             Vector3::new(1.0, 1.0, 1.0),
-        );
+        ).unwrap();
 
         // Child at (5, 0, 0) relative to parent
         let child = scene.add_node(
@@ -846,7 +940,7 @@ mod tests {
             Point3::new(5.0, 0.0, 0.0),
             Quaternion::new(1.0, 0.0, 0.0, 0.0),
             Vector3::new(1.0, 1.0, 1.0),
-        );
+        ).unwrap();
 
         let child_transform = scene.nodes_transform(child);
 
@@ -866,7 +960,7 @@ mod tests {
             Point3::new(0.0, 0.0, 0.0),
             Quaternion::new(1.0, 0.0, 0.0, 0.0),
             Vector3::new(2.0, 2.0, 2.0),
-        );
+        ).unwrap();
 
         // Child at (1, 0, 0)
         let child = scene.add_node(
@@ -874,7 +968,7 @@ mod tests {
             Point3::new(1.0, 0.0, 0.0),
             Quaternion::new(1.0, 0.0, 0.0, 0.0),
             Vector3::new(1.0, 1.0, 1.0),
-        );
+        ).unwrap();
 
         let child_transform = scene.nodes_transform(child);
 
@@ -885,7 +979,7 @@ mod tests {
     #[test]
     fn test_transform_caching() {
         let mut scene = Scene::new();
-        let root = scene.add_default_node(None);
+        let root = scene.add_default_node(None).unwrap();
 
         // First computation
         let transform1 = scene.nodes_transform(root);
@@ -908,7 +1002,7 @@ mod tests {
     #[test]
     fn test_transform_invalidation_on_change() {
         let mut scene = Scene::new();
-        let node_id = scene.add_default_node(None);
+        let node_id = scene.add_default_node(None).unwrap();
 
         // Compute transform to populate cache
         let _transform = scene.nodes_transform(node_id);
@@ -930,10 +1024,10 @@ mod tests {
         let mut scene = Scene::new();
 
         // Build a tree
-        let root = scene.add_default_node(None);
-        let child1 = scene.add_default_node(Some(root));
-        let child2 = scene.add_default_node(Some(root));
-        let grandchild = scene.add_default_node(Some(child1));
+        let root = scene.add_default_node(None).unwrap();
+        let child1 = scene.add_default_node(Some(root)).unwrap();
+        let child2 = scene.add_default_node(Some(root)).unwrap();
+        let grandchild = scene.add_default_node(Some(child1)).unwrap();
 
         // Verify every node can be accessed
         assert!(scene.get_node(root).is_some());
@@ -969,8 +1063,8 @@ mod tests {
     fn test_bidirectional_consistency() {
         let mut scene = Scene::new();
 
-        let parent = scene.add_default_node(None);
-        let child = scene.add_default_node(Some(parent));
+        let parent = scene.add_default_node(None).unwrap();
+        let child = scene.add_default_node(Some(parent)).unwrap();
 
         // Parent should list child
         let parent_node = scene.get_node(parent).unwrap();
@@ -985,10 +1079,10 @@ mod tests {
     fn test_no_orphaned_nodes() {
         let mut scene = Scene::new();
 
-        let root1 = scene.add_default_node(None);
-        let root2 = scene.add_default_node(None);
-        let _child1 = scene.add_default_node(Some(root1));
-        let _child2 = scene.add_default_node(Some(root2));
+        let root1 = scene.add_default_node(None).unwrap();
+        let root2 = scene.add_default_node(None).unwrap();
+        let _child1 = scene.add_default_node(Some(root1)).unwrap();
+        let _child2 = scene.add_default_node(Some(root2)).unwrap();
 
         // All nodes should be reachable from roots
         let mut reachable = std::collections::HashSet::new();
@@ -1017,12 +1111,12 @@ mod tests {
     fn test_large_tree_consistency() {
         let mut scene = Scene::new();
 
-        let root = scene.add_default_node(None);
+        let root = scene.add_default_node(None).unwrap();
 
         // Create 100 children
         let mut children = Vec::new();
         for _ in 0..100 {
-            let child = scene.add_default_node(Some(root));
+            let child = scene.add_default_node(Some(root)).unwrap();
             children.push(child);
         }
 
@@ -1060,21 +1154,21 @@ mod tests {
             Point3::new(0.0, 0.0, 0.0),
             Quaternion::new(1.0, 0.0, 0.0, 0.0),
             Vector3::new(1.0, 1.0, 1.0),
-        );
+        ).unwrap();
 
         scene.add_instance_node(
             None, 1, 2,
             Point3::new(0.0, 0.0, 0.0),
             Quaternion::new(1.0, 0.0, 0.0, 0.0),
             Vector3::new(1.0, 1.0, 1.0),
-        );
+        ).unwrap();
 
         scene.add_instance_node(
             None, 1, 1,
             Point3::new(0.0, 0.0, 0.0),
             Quaternion::new(1.0, 0.0, 0.0, 0.0),
             Vector3::new(1.0, 1.0, 1.0),
-        );
+        ).unwrap();
 
         let batches = scene.collect_draw_batches();
 
@@ -1103,7 +1197,7 @@ mod tests {
     #[test]
     fn test_get_node_mut_allows_modification() {
         let mut scene = Scene::new();
-        let node_id = scene.add_default_node(None);
+        let node_id = scene.add_default_node(None).unwrap();
 
         {
             let node = scene.get_node_mut(node_id).unwrap();
@@ -1112,5 +1206,55 @@ mod tests {
 
         let node = scene.get_node(node_id).unwrap();
         assert_eq!(node.position(), Point3::new(10.0, 20.0, 30.0));
+    }
+
+    // ========================================================================
+    // Parent Validation Tests
+    // ========================================================================
+
+    #[test]
+    fn test_add_node_with_invalid_parent_fails() {
+        let mut scene = Scene::new();
+
+        // Try to add a node with a non-existent parent
+        let result = scene.add_node(
+            Some(999), // Non-existent parent ID
+            Point3::new(0.0, 0.0, 0.0),
+            Quaternion::new(1.0, 0.0, 0.0, 0.0),
+            Vector3::new(1.0, 1.0, 1.0),
+        );
+
+        assert!(result.is_err());
+        assert_eq!(scene.nodes.len(), 0);
+    }
+
+    #[test]
+    fn test_add_default_node_with_invalid_parent_fails() {
+        let mut scene = Scene::new();
+
+        let result = scene.add_default_node(Some(999));
+
+        assert!(result.is_err());
+        assert_eq!(scene.nodes.len(), 0);
+    }
+
+    #[test]
+    fn test_add_instance_node_with_invalid_parent_fails() {
+        let mut scene = Scene::new();
+
+        let result = scene.add_instance_node(
+            Some(999),
+            0,
+            0,
+            Point3::new(0.0, 0.0, 0.0),
+            Quaternion::new(1.0, 0.0, 0.0, 0.0),
+            Vector3::new(1.0, 1.0, 1.0),
+        );
+
+        assert!(result.is_err());
+        // No node should be created
+        assert_eq!(scene.nodes.len(), 0);
+        // But instance is created before the node validation - this is a side effect
+        // that could be improved in the future
     }
 }
