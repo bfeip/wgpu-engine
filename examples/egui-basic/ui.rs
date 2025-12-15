@@ -2,6 +2,9 @@ use wgpu_engine::Viewer;
 use wgpu_engine::operator::BuiltinOperatorId;
 use wgpu_engine::scene::NodeId;
 
+const WALK_OPERATOR_ID: u32 = BuiltinOperatorId::Walk as u32;
+const NAV_OPERATOR_ID: u32 = BuiltinOperatorId::Navigation as u32;
+
 /// Actions requested by the UI that need to be handled by the application.
 #[derive(Default)]
 pub struct UiActions {
@@ -24,17 +27,13 @@ pub fn build(ctx: &egui::Context, viewer: &Viewer) -> UiActions {
 
 /// Information about the current navigation mode.
 struct ModeInfo {
-    walk_id: u32,
-    nav_id: u32,
     is_walk_mode: bool,
     is_nav_mode: bool,
 }
 
 fn get_mode_info(viewer: &Viewer) -> ModeInfo {
-    let walk_id: u32 = BuiltinOperatorId::Walk.into();
-    let nav_id: u32 = BuiltinOperatorId::Navigation.into();
-    let walk_pos = viewer.operator_manager.position(walk_id);
-    let nav_pos = viewer.operator_manager.position(nav_id);
+    let walk_pos = viewer.operator_manager.position(WALK_OPERATOR_ID);
+    let nav_pos = viewer.operator_manager.position(NAV_OPERATOR_ID);
 
     let is_walk_mode = match (walk_pos, nav_pos) {
         (Some(w), Some(n)) => w < n,
@@ -44,8 +43,6 @@ fn get_mode_info(viewer: &Viewer) -> ModeInfo {
     let is_nav_mode = !is_walk_mode && nav_pos.is_some();
 
     ModeInfo {
-        walk_id,
-        nav_id,
         is_walk_mode,
         is_nav_mode,
     }
@@ -167,9 +164,9 @@ fn build_operators_section(ui: &mut egui::Ui, viewer: &Viewer, mode: &ModeInfo) 
     ui.heading("Operators");
 
     let active_nav_id = if mode.is_walk_mode {
-        Some(mode.walk_id)
+        Some(WALK_OPERATOR_ID)
     } else if mode.is_nav_mode {
-        Some(mode.nav_id)
+        Some(NAV_OPERATOR_ID)
     } else {
         None
     };

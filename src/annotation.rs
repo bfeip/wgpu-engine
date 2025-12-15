@@ -143,6 +143,7 @@ impl AnnotationManager {
             Some(root_id),
             mesh_id,
             material_id,
+            None,
             Point3::new(0.0, 0.0, 0.0),
             Quaternion::new(1.0, 0.0, 0.0, 0.0),
             Vector3::new(1.0, 1.0, 1.0),
@@ -169,7 +170,7 @@ impl AnnotationManager {
         let root_id = self.root_node(scene);
 
         // Create parent node for axes group
-        let parent_node_id = scene.add_default_node(Some(root_id))
+        let parent_node_id = scene.add_default_node(Some(root_id), None)
             .expect("Annotation root node must exist");
 
         // Create X axis (red)
@@ -199,6 +200,7 @@ impl AnnotationManager {
             Some(parent_node_id),
             x_mesh,
             x_mat,
+            None,
             Point3::new(0.0, 0.0, 0.0),
             Quaternion::new(1.0, 0.0, 0.0, 0.0),
             Vector3::new(1.0, 1.0, 1.0)
@@ -231,6 +233,7 @@ impl AnnotationManager {
             Some(parent_node_id),
             y_mesh,
             y_mat,
+            None,
             Point3::new(0.0, 0.0, 0.0),
             Quaternion::new(1.0, 0.0, 0.0, 0.0),
             Vector3::new(1.0, 1.0, 1.0)
@@ -263,6 +266,7 @@ impl AnnotationManager {
             Some(parent_node_id),
             z_mesh,
             z_mat,
+            None,
             Point3::new(0.0, 0.0, 0.0),
             Quaternion::new(1.0, 0.0, 0.0, 0.0),
             Vector3::new(1.0, 1.0, 1.0)
@@ -315,6 +319,7 @@ impl AnnotationManager {
             Some(root_id),
             mesh_id,
             material_id,
+            None,
             Point3::new(0.0, 0.0, 0.0),
             Quaternion::new(1.0, 0.0, 0.0, 0.0),
             Vector3::new(1.0, 1.0, 1.0),
@@ -390,6 +395,7 @@ impl AnnotationManager {
             Some(root_id),
             mesh_id,
             material_id,
+            None,
             Point3::new(0.0, 0.0, 0.0),
             Quaternion::new(1.0, 0.0, 0.0, 0.0),
             Vector3::new(1.0, 1.0, 1.0),
@@ -481,6 +487,7 @@ impl AnnotationManager {
             Some(root_id),
             mesh_id,
             material_id,
+            None,
             Point3::new(0.0, 0.0, 0.0),
             Quaternion::new(1.0, 0.0, 0.0, 0.0),
             Vector3::new(1.0, 1.0, 1.0),

@@ -32,13 +32,14 @@ impl Node {
     /// Creates a new node with the given transform components.
     pub fn new(
         id: NodeId,
+        name: Option<String>,
         position: Point3<f32>,
         rotation: Quaternion<f32>,
         scale: Vector3<f32>,
     ) -> Self {
         Self {
             id,
-            name: None,
+            name,
             position,
             rotation,
             scale,
@@ -54,6 +55,7 @@ impl Node {
     pub fn new_default(id: NodeId) -> Self {
         Self::new(
             id,
+            None,
             Point3::new(0.0, 0.0, 0.0),
             Quaternion::new(1.0, 0.0, 0.0, 0.0), // Identity quaternion
             Vector3::new(1.0, 1.0, 1.0),
@@ -200,7 +202,7 @@ mod tests {
         let rotation = Quaternion::new(1.0, 0.0, 0.0, 0.0);
         let scale = Vector3::new(2.0, 2.0, 2.0);
 
-        let node = Node::new(42, position, rotation, scale);
+        let node = Node::new(42, None, position, rotation, scale);
 
         assert_eq!(node.id, 42);
         assert_eq!(node.position(), position);
@@ -250,7 +252,7 @@ mod tests {
         let rotation = Quaternion::new(1.0, 0.0, 0.0, 0.0); // Identity
         let scale = Vector3::new(1.0, 1.0, 1.0); // Unity scale
 
-        let node = Node::new(0, position, rotation, scale);
+        let node = Node::new(0, None, position, rotation, scale);
         let transform = node.compute_local_transform();
 
         // Check translation components (last column)
@@ -266,7 +268,7 @@ mod tests {
         let rotation = Quaternion::from_angle_z(Deg(90.0)); // 90 degrees around Z
         let scale = Vector3::new(1.0, 1.0, 1.0);
 
-        let node = Node::new(0, position, rotation, scale);
+        let node = Node::new(0, None, position, rotation, scale);
         let transform = node.compute_local_transform();
 
         // Apply transform to point (1, 0, 0) - should become roughly (0, 1, 0)
@@ -286,7 +288,7 @@ mod tests {
         let rotation = Quaternion::new(1.0, 0.0, 0.0, 0.0);
         let scale = Vector3::new(2.0, 3.0, 4.0);
 
-        let node = Node::new(0, position, rotation, scale);
+        let node = Node::new(0, None, position, rotation, scale);
         let transform = node.compute_local_transform();
 
         // Check diagonal elements (scale factors)
@@ -302,7 +304,7 @@ mod tests {
         let rotation = Quaternion::from_angle_y(Deg(45.0));
         let scale = Vector3::new(2.0, 2.0, 2.0);
 
-        let node = Node::new(0, position, rotation, scale);
+        let node = Node::new(0, None, position, rotation, scale);
         let transform = node.compute_local_transform();
 
         // Manually compute expected transform
@@ -699,7 +701,7 @@ mod tests {
         let rotation = Quaternion::new(1.0, 0.0, 0.0, 0.0);
         let scale = Vector3::new(0.0, 0.0, 0.0);
 
-        let node = Node::new(0, position, rotation, scale);
+        let node = Node::new(0, None, position, rotation, scale);
         let transform = node.compute_local_transform();
 
         // Should produce a zero-scale transform (degenerate)
@@ -714,7 +716,7 @@ mod tests {
         let rotation = Quaternion::new(1.0, 0.0, 0.0, 0.0);
         let scale = Vector3::new(-1.0, 1.0, 1.0); // Flip X
 
-        let node = Node::new(0, position, rotation, scale);
+        let node = Node::new(0, None, position, rotation, scale);
         let transform = node.compute_local_transform();
 
         // X axis should be flipped
