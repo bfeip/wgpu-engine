@@ -8,6 +8,7 @@
 
 - Example glTF loading
 - Highlighting and proper selection
+- Merge event dispatcher and operator manager into something like "interaction manager"
 - egui canvas frame
 - Instance flags and visibility
 - Higher level faces and lines

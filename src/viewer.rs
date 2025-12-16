@@ -331,15 +331,6 @@ impl<'a> Viewer<'a> {
     ///
     /// For most overlay use cases, prefer `render_with_overlay()` which handles
     /// surface management and command submission automatically.
-    ///
-    /// # Example
-    /// ```no_run
-    /// # use wgpu_engine::Viewer;
-    /// # fn example(viewer: &mut Viewer) -> Result<(), anyhow::Error> {
-    /// // This example shows manual control - not recommended for most use cases
-    /// # Ok(())
-    /// # }
-    /// ```
     pub fn render_scene_to_view(
         &mut self,
         view: &wgpu::TextureView,
