@@ -175,6 +175,13 @@ impl<'a> EguiViewerApp<'a> {
         &self.window
     }
 
+    /// Request a redraw of the window.
+    ///
+    /// This is a convenience method equivalent to `self.window().request_redraw()`.
+    pub fn request_redraw(&self) {
+        self.window.request_redraw();
+    }
+
     /// Handle a window event.
     ///
     /// This processes the event through egui first, then forwards it to the

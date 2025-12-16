@@ -1,7 +1,7 @@
-/// Internal rendering utilities for egui overlay.
-///
-/// This module contains the low-level rendering logic for rendering egui
-/// on top of the 3D scene. This is not part of the public API.
+//! Internal rendering utilities for egui overlay.
+//!
+//! This module contains the low-level rendering logic for rendering egui
+//! on top of the 3D scene. This is not part of the public API.
 
 /// Render egui overlay on top of the 3D scene.
 ///

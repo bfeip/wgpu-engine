@@ -55,7 +55,7 @@ impl<'a> App<'a> {
         }
 
         // Request next frame
-        self.viewer_app.as_ref().unwrap().window().request_redraw();
+        self.viewer_app.as_ref().unwrap().request_redraw();
     }
 
     /// Open a file dialog to select a glTF file
@@ -167,7 +167,7 @@ impl<'a> ApplicationHandler for App<'a> {
                 window_attrs,
             ));
 
-            viewer_app.window().request_redraw();
+            viewer_app.request_redraw();
             self.viewer_app = Some(viewer_app);
         }
     }
