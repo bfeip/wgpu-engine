@@ -230,7 +230,8 @@ impl<'a> App<'a> {
         let nav_id: u32 = BuiltinOperatorId::Navigation.into();
 
         // Swap Walk and Navigation operators, preserving Selection operator position
-        viewer.swap_operators(walk_id, nav_id);
+        let (op_mgr, dispatcher) = viewer.operator_manager_and_dispatcher_mut();
+        op_mgr.swap(walk_id, nav_id, dispatcher);
     }
 
     /// Toggle between perspective and orthographic projection

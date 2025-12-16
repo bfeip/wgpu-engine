@@ -227,13 +227,24 @@ impl<'a> Viewer<'a> {
         &mut self.annotation_manager
     }
 
-    /// Swap the positions of two operators in the operator manager
+    /// Get mutable references to both the operator manager and event dispatcher
     ///
-    /// This is a convenience method that handles the coordination between
-    /// the operator manager and dispatcher, which would otherwise require
-    /// two simultaneous mutable borrows.
-    pub fn swap_operators(&mut self, id1: u32, id2: u32) {
-        self.operator_manager.swap(id1, id2, &mut self.dispatcher);
+    /// This method allows you to access both components simultaneously, which is
+    /// necessary for operations like adding, removing, or reordering operators.
+    /// Many OperatorManager methods (push_front, push_back, remove, move_to_front,
+    /// move_to_back, swap) require both references to maintain synchronization
+    /// between operator priority and callback ordering.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use wgpu_engine::Viewer;
+    /// # fn example(viewer: &mut Viewer) {
+    /// let (op_mgr, dispatcher) = viewer.operator_manager_and_dispatcher_mut();
+    /// op_mgr.swap(id1, id2, dispatcher);
+    /// # }
+    /// ```
+    pub fn operator_manager_and_dispatcher_mut(&mut self) -> (&mut OperatorManager, &mut EventDispatcher) {
+        (&mut self.operator_manager, &mut self.dispatcher)
     }
 
     /// Render the scene using the default rendering path
