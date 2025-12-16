@@ -1,4 +1,12 @@
 [workspace]
 resolver = "3"
-members = ["core"]
+members = ["core", "gltf-viewer"]
 default-members = ["core"]
+
+
+[profile.small]
+inherits = "release"
+opt-level = "s"
+strip = true
+lto = true
+codegen-units = 1
