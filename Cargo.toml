@@ -26,11 +26,12 @@ required-features = ["winit-support"]
 [[example]]
 name = "egui"
 path = "examples/egui-basic/main.rs"
-required-features = ["winit-support"]
+required-features = ["egui-support"]
 
 
 [features]
 winit-support = ["winit"]
+egui-support = ["winit-support", "egui", "egui-wgpu", "egui-winit"]
 
 
 [dependencies]
@@ -47,6 +48,9 @@ obj-rs = "0.7"
 gltf = { version = "1.4", features = [ "utils" ]}
 wesl = "0.2.0"
 bitflags = "2.0"
+egui = { version = "0.33", optional = true }
+egui-wgpu = { version = "0.33", optional = true }
+egui-winit = { version = "0.33", optional = true }
 
 
 [dependencies.image]
@@ -56,9 +60,6 @@ features = ["png", "jpeg"]
 
 
 [dev-dependencies]
-egui = "0.33"
-egui-wgpu = "0.33"
-egui-winit = "0.33"
 rfd = "0.15"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

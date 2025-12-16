@@ -15,6 +15,10 @@ mod viewer;
 #[cfg(feature = "winit-support")]
 pub mod winit_support;
 
+// Egui support - only available when egui is a dependency
+#[cfg(feature = "egui-support")]
+pub mod egui_support;
+
 pub use annotation::{AnnotationId, AnnotationManager};
 pub use scene::Scene;
 pub use viewer::Viewer;

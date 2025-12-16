@@ -1,13 +1,15 @@
 mod ui;
 
-use std::sync::Arc;
-use egui_wgpu::RendererOptions;
 use winit::{
-    application::ApplicationHandler, event, event_loop::{ActiveEventLoop, EventLoop}, window::{Window, WindowId}
+    application::ApplicationHandler,
+    event::{DeviceEvent, WindowEvent},
+    event_loop::{ActiveEventLoop, EventLoop},
+    window::{Window, WindowId},
 };
 
-use wgpu_engine::{Viewer, winit_support, load_gltf_scene};
+use wgpu_engine::egui_support::EguiViewerApp;
 use wgpu_engine::input::{ElementState, Key, NamedKey};
+use wgpu_engine::load_gltf_scene;
 use wgpu_engine::operator::BuiltinOperatorId;
 use wgpu_engine::scene::Scene;
 
@@ -20,127 +22,40 @@ enum DebugAction {
 
 /// Application state for the winit event loop with egui integration
 struct App<'a> {
-    window: Option<Arc<Window>>,
-    viewer: Option<Viewer<'a>>,
-    egui_ctx: Option<egui::Context>,
-    egui_winit: Option<egui_winit::State>,
-    egui_renderer: Option<egui_wgpu::Renderer>,
+    viewer_app: Option<EguiViewerApp<'a>>,
     /// Pending file path to load (set by file dialog, processed in main loop)
     pending_gltf_path: Option<std::path::PathBuf>,
 }
 
 impl<'a> App<'a> {
-    /// Initialize the window, viewer, and egui
-    fn initialize(&mut self, event_loop: &ActiveEventLoop) {
-        let window_attrs = Window::default_attributes()
-            .with_title("WGPU Engine - egui Example")
-            .with_min_inner_size(winit::dpi::PhysicalSize::new(1600, 800));
-
-        let window = Arc::new(event_loop.create_window(window_attrs).unwrap());
-
-        // Create viewer with the window
-        let size = window.inner_size();
-        let viewer = pollster::block_on(Viewer::new(
-            Arc::clone(&window),
-            size.width,
-            size.height,
-        ));
-
-        // Initialize egui
-        let egui_ctx = egui::Context::default();
-        let egui_winit = egui_winit::State::new(
-            egui_ctx.clone(),
-            egui::ViewportId::ROOT,
-            &window,
-            Some(window.scale_factor() as f32),
-            None,
-            None,
-        );
-
-        let (device, _queue) = viewer.wgpu_resources();
-        let egui_renderer = egui_wgpu::Renderer::new(
-            device,
-            viewer.surface_format(),
-            RendererOptions::default()
-        );
-
-        window.request_redraw();
-
-        self.window = Some(window);
-        self.viewer = Some(viewer);
-        self.egui_ctx = Some(egui_ctx);
-        self.egui_winit = Some(egui_winit);
-        self.egui_renderer = Some(egui_renderer);
-    }
-
     /// Handle the RedrawRequested event - build UI and render the frame
     fn handle_redraw_requested(&mut self) {
         // Process any pending glTF file load
-        if let Some(path) = self.pending_gltf_path.take() {
-            self.load_gltf_file(&path);
+        if self.pending_gltf_path.is_some() {
+            self.load_gltf_file();
         }
 
-        // Clone Arc to avoid borrow conflicts
-        let window = Arc::clone(self.window.as_ref().unwrap());
-        let egui_ctx = self.egui_ctx.as_ref().unwrap().clone();
-
-        // Build egui UI and render scene
-        let actions = {
-            let viewer = self.viewer.as_mut().unwrap();
-            let egui_winit = self.egui_winit.as_mut().unwrap();
-            let egui_renderer = self.egui_renderer.as_mut().unwrap();
-
-            // Dispatch Update event for continuous operations (WASD movement, etc.)
-            viewer.update();
-
-            // Build egui UI
-            let raw_input = egui_winit.take_egui_input(window.as_ref());
-            let mut actions = ui::UiActions::default();
-
-            let full_output = egui_ctx.run(raw_input, |ctx| {
-                actions = ui::build(ctx, viewer);
-            });
-
-            // Process egui platform output (clipboard, cursor, etc.)
-            egui_winit.handle_platform_output(
-                window.as_ref(),
-                full_output.platform_output.clone(),
-            );
-
-            // Capture viewer size and scale factor before the closure
-            let viewer_size = viewer.size();
-            let scale_factor = window.scale_factor() as f32;
-
-            // Render 3D scene + egui overlay
-            if let Err(e) = viewer.render_with_overlay(|device, queue, encoder, view| {
-                render_egui_to_overlay(
-                    egui_renderer,
-                    &egui_ctx,
-                    &full_output,
-                    viewer_size,
-                    scale_factor,
-                    device,
-                    queue,
-                    encoder,
-                    view,
-                );
+        // Build egui UI and render
+        let mut ui_actions = ui::UiActions::default();
+        {
+            let viewer_app = self.viewer_app.as_mut().unwrap();
+            if let Err(e) = viewer_app.render(|ctx, viewer| {
+                ui_actions = ui::build(ctx, viewer);
             }) {
                 log::error!("Render error: {}", e);
             }
+        }
 
-            actions
-        };
-
-        // Handle UI actions (outside the borrow scope)
-        if actions.load_file {
+        // Handle UI actions (after releasing viewer_app borrow)
+        if ui_actions.load_file {
             self.open_gltf_file_dialog();
         }
-        if actions.clear_scene {
+        if ui_actions.clear_scene {
             self.clear_scene();
         }
 
         // Request next frame
-        window.request_redraw();
+        self.viewer_app.as_ref().unwrap().window().request_redraw();
     }
 
     /// Open a file dialog to select a glTF file
@@ -155,14 +70,19 @@ impl<'a> App<'a> {
     }
 
     /// Load a glTF file into the scene
-    fn load_gltf_file(&mut self, path: &std::path::Path) {
-        let viewer = self.viewer.as_mut().unwrap();
+    fn load_gltf_file(&mut self) {
+        let Some(path) = self.pending_gltf_path.take() else {
+            return;
+        };
+
+        let viewer = self.viewer_app.as_mut().unwrap().viewer_mut();
         let aspect = {
             let size = viewer.size();
             size.0 as f32 / size.1 as f32
         };
 
-        match load_gltf_scene(path, aspect) {
+        let path_str = path.display().to_string();
+        match load_gltf_scene(&path, aspect) {
             Ok(result) => {
                 // Replace the scene with the loaded one
                 viewer.set_scene(result.scene);
@@ -172,37 +92,28 @@ impl<'a> App<'a> {
                     viewer.set_camera(camera);
                 }
 
-                log::info!("Loaded glTF: {}", path.display());
+                log::info!("Loaded glTF: {}", path_str);
             }
             Err(e) => {
-                log::error!("Failed to load glTF {}: {}", path.display(), e);
+                log::error!("Failed to load glTF {}: {}", path_str, e);
             }
         }
     }
 
     /// Clear the scene (remove all nodes, meshes, instances, etc.)
     fn clear_scene(&mut self) {
-        let viewer = self.viewer.as_mut().unwrap();
-        viewer.set_scene(Scene::new());
+        let viewer_app = self.viewer_app.as_mut().unwrap();
+        viewer_app.viewer_mut().set_scene(Scene::new());
         log::info!("Scene cleared");
     }
 
-    /// Handle events that egui didn't consume
-    fn handle_non_egui_event(&mut self, event: event::Event<()>, event_loop: &ActiveEventLoop) {
-        let Some(app_event) = winit_support::convert_event(event) else {
-            return;
-        };
-
-        // Handle debug keys before passing to viewer
-        if let Some(action) = Self::get_debug_key_action(&app_event) {
-            match action {
-                DebugAction::CycleOperator => self.cycle_operator_mode(),
-                DebugAction::ToggleOrtho => self.toggle_ortho(),
-                DebugAction::Exit => event_loop.exit(),
-            }
+    /// Handle debug key actions
+    fn handle_debug_key_action(&mut self, action: DebugAction, event_loop: &ActiveEventLoop) {
+        match action {
+            DebugAction::CycleOperator => self.cycle_operator_mode(),
+            DebugAction::ToggleOrtho => self.toggle_ortho(),
+            DebugAction::Exit => event_loop.exit(),
         }
-
-        self.viewer.as_mut().unwrap().handle_event(&app_event);
     }
 
     /// Check if event is a debug key press and return the action
@@ -225,7 +136,8 @@ impl<'a> App<'a> {
 
     /// Cycle between Walk and Navigation operators by swapping their positions
     fn cycle_operator_mode(&mut self) {
-        let viewer = self.viewer.as_mut().unwrap();
+        let viewer_app = self.viewer_app.as_mut().unwrap();
+        let viewer = viewer_app.viewer_mut();
         let walk_id: u32 = BuiltinOperatorId::Walk.into();
         let nav_id: u32 = BuiltinOperatorId::Navigation.into();
 
@@ -236,123 +148,68 @@ impl<'a> App<'a> {
 
     /// Toggle between perspective and orthographic projection
     fn toggle_ortho(&mut self) {
-        let viewer = self.viewer.as_mut().unwrap();
-        let camera = viewer.camera_mut();
+        let viewer_app = self.viewer_app.as_mut().unwrap();
+        let camera = viewer_app.viewer_mut().camera_mut();
         camera.ortho = !camera.ortho;
-    }
-}
-
-/// Render egui overlay on top of the 3D scene
-fn render_egui_to_overlay(
-    egui_renderer: &mut egui_wgpu::Renderer,
-    egui_ctx: &egui::Context,
-    full_output: &egui::FullOutput,
-    viewer_size: (u32, u32),
-    scale_factor: f32,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    encoder: &mut wgpu::CommandEncoder,
-    view: &wgpu::TextureView,
-) {
-    // Update egui textures
-    for (id, image_delta) in &full_output.textures_delta.set {
-        egui_renderer.update_texture(device, queue, *id, image_delta);
-    }
-
-    // Tessellate and update buffers
-    let clipped_primitives = egui_ctx.tessellate(
-        full_output.shapes.clone(),
-        full_output.pixels_per_point,
-    );
-    let screen_descriptor = egui_wgpu::ScreenDescriptor {
-        size_in_pixels: [viewer_size.0, viewer_size.1],
-        pixels_per_point: scale_factor,
-    };
-    egui_renderer.update_buffers(
-        device,
-        queue,
-        encoder,
-        &clipped_primitives,
-        &screen_descriptor,
-    );
-
-    // Create render pass for egui
-    {
-        let render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("egui Render Pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load, // Load 3D scene content
-                    store: wgpu::StoreOp::Store,
-                },
-                depth_slice: None,
-            })],
-            depth_stencil_attachment: None,
-            occlusion_query_set: None,
-            timestamp_writes: None,
-        });
-
-        egui_renderer.render(
-            &mut render_pass.forget_lifetime(),
-            &clipped_primitives,
-            &screen_descriptor,
-        );
-    }
-
-    // Free textures marked for deletion
-    for id in &full_output.textures_delta.free {
-        egui_renderer.free_texture(id);
     }
 }
 
 impl<'a> ApplicationHandler for App<'a> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         // Initialize on first resume
-        if self.window.is_none() {
-            self.initialize(event_loop);
+        if self.viewer_app.is_none() {
+            let window_attrs = Window::default_attributes()
+                .with_title("WGPU Engine - egui Example")
+                .with_min_inner_size(winit::dpi::PhysicalSize::new(1600, 800));
+
+            let viewer_app = pollster::block_on(EguiViewerApp::with_window_attrs(
+                event_loop,
+                window_attrs,
+            ));
+
+            viewer_app.window().request_redraw();
+            self.viewer_app = Some(viewer_app);
         }
     }
 
     fn window_event(
         &mut self,
         event_loop: &ActiveEventLoop,
-        window_id: WindowId,
-        event: event::WindowEvent,
+        _window_id: WindowId,
+        event: WindowEvent,
     ) {
-        let window = self.window.as_ref().unwrap();
-        let egui_winit = self.egui_winit.as_mut().unwrap();
-
-        // Give egui a chance to handle window events first
-        let response = egui_winit.on_window_event(window.as_ref(), &event);
-        let egui_consumed = response.consumed;
+        let viewer_app = self.viewer_app.as_mut().unwrap();
 
         match event {
-            event::WindowEvent::CloseRequested => {
+            WindowEvent::CloseRequested => {
                 event_loop.exit();
             }
-            event::WindowEvent::RedrawRequested => {
+            WindowEvent::RedrawRequested => {
                 self.handle_redraw_requested();
             }
-            _ => {}
-        }
+            _ => {
+                // Handle event - egui gets priority via handle_window_event
+                viewer_app.handle_window_event(&event);
 
-        // Convert and handle all window events (only if egui didn't consume them)
-        if !egui_consumed {
-            let event = event::Event::WindowEvent { window_id, event };
-            self.handle_non_egui_event(event, event_loop);
+                // Check for debug keys (convert to app event for checking)
+                if let Some(app_event) = wgpu_engine::winit_support::convert_window_event(event) {
+                    if let Some(action) = Self::get_debug_key_action(&app_event) {
+                        self.handle_debug_key_action(action, event_loop);
+                    }
+                }
+            }
         }
     }
 
     fn device_event(
         &mut self,
-        event_loop: &ActiveEventLoop,
-        device_id: event::DeviceId,
-        event: event::DeviceEvent,
+        _event_loop: &ActiveEventLoop,
+        _device_id: winit::event::DeviceId,
+        event: DeviceEvent,
     ) {
-        let event = winit::event::Event::DeviceEvent { device_id, event };
-        self.handle_non_egui_event(event, event_loop);
+        if let Some(viewer_app) = &mut self.viewer_app {
+            viewer_app.handle_device_event(&event);
+        }
     }
 }
 
@@ -365,11 +222,7 @@ fn main() {
 
     // Create application state
     let mut app = App {
-        window: None,
-        viewer: None,
-        egui_ctx: None,
-        egui_winit: None,
-        egui_renderer: None,
+        viewer_app: None,
         pending_gltf_path: None,
     };
 
