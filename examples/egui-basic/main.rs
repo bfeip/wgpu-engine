@@ -33,7 +33,8 @@ impl<'a> App<'a> {
     /// Initialize the window, viewer, and egui
     fn initialize(&mut self, event_loop: &ActiveEventLoop) {
         let window_attrs = Window::default_attributes()
-            .with_title("WGPU Engine - egui Example");
+            .with_title("WGPU Engine - egui Example")
+            .with_min_inner_size(winit::dpi::PhysicalSize::new(1600, 800));
 
         let window = Arc::new(event_loop.create_window(window_attrs).unwrap());
 
@@ -164,11 +165,11 @@ impl<'a> App<'a> {
         match load_gltf_scene(path, aspect) {
             Ok(result) => {
                 // Replace the scene with the loaded one
-                viewer.scene = result.scene;
+                viewer.set_scene(result.scene);
 
                 // Apply camera if one was found in the glTF
                 if let Some(camera) = result.camera {
-                    *viewer.camera_mut() = camera;
+                    viewer.set_camera(camera);
                 }
 
                 log::info!("Loaded glTF: {}", path.display());
@@ -182,7 +183,7 @@ impl<'a> App<'a> {
     /// Clear the scene (remove all nodes, meshes, instances, etc.)
     fn clear_scene(&mut self) {
         let viewer = self.viewer.as_mut().unwrap();
-        viewer.scene = Scene::new();
+        viewer.set_scene(Scene::new());
         log::info!("Scene cleared");
     }
 
@@ -229,7 +230,7 @@ impl<'a> App<'a> {
         let nav_id: u32 = BuiltinOperatorId::Navigation.into();
 
         // Swap Walk and Navigation operators, preserving Selection operator position
-        viewer.operator_manager.swap(walk_id, nav_id, &mut viewer.dispatcher);
+        viewer.swap_operators(walk_id, nav_id);
     }
 
     /// Toggle between perspective and orthographic projection

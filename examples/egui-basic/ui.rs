@@ -32,8 +32,8 @@ struct ModeInfo {
 }
 
 fn get_mode_info(viewer: &Viewer) -> ModeInfo {
-    let walk_pos = viewer.operator_manager.position(WALK_OPERATOR_ID);
-    let nav_pos = viewer.operator_manager.position(NAV_OPERATOR_ID);
+    let walk_pos = viewer.operator_manager().position(WALK_OPERATOR_ID);
+    let nav_pos = viewer.operator_manager().position(NAV_OPERATOR_ID);
 
     let is_walk_mode = match (walk_pos, nav_pos) {
         (Some(w), Some(n)) => w < n,
@@ -63,7 +63,7 @@ fn build_performance_panel(ctx: &egui::Context, mode: &ModeInfo, viewer: &Viewer
                     ui.label("Mode: Walk");
                 } else if mode.is_nav_mode {
                     ui.label("Mode: Orbit");
-                } else if let Some(front) = viewer.operator_manager.front() {
+                } else if let Some(front) = viewer.operator_manager().front() {
                     ui.label(format!("Mode: {}", front.name()));
                 }
             });
@@ -93,11 +93,11 @@ fn build_scene_panel(ctx: &egui::Context, viewer: &Viewer, actions: &mut UiActio
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    if viewer.scene.root_nodes.is_empty() {
+                    if viewer.scene().root_nodes.is_empty() {
                         ui.label("(empty)");
                     } else {
-                        for &root_id in &viewer.scene.root_nodes {
-                            render_node_tree(ui, &viewer.scene, root_id, 0);
+                        for &root_id in &viewer.scene().root_nodes {
+                            render_node_tree(ui, viewer.scene(), root_id, 0);
                         }
                     }
                 });
@@ -171,7 +171,7 @@ fn build_operators_section(ui: &mut egui::Ui, viewer: &Viewer, mode: &ModeInfo) 
         None
     };
 
-    for op in viewer.operator_manager.iter() {
+    for op in viewer.operator_manager().iter() {
         let prefix = if Some(op.id()) == active_nav_id { "> " } else { "  " };
         ui.label(format!("{}{}", prefix, op.name()));
     }
@@ -179,10 +179,10 @@ fn build_operators_section(ui: &mut egui::Ui, viewer: &Viewer, mode: &ModeInfo) 
 
 fn build_scene_info_section(ui: &mut egui::Ui, viewer: &Viewer) {
     ui.heading("Scene Info");
-    ui.label(format!("Meshes: {}", viewer.scene.meshes.len()));
-    ui.label(format!("Instances: {}", viewer.scene.instances.len()));
-    ui.label(format!("Nodes: {}", viewer.scene.nodes.len()));
-    ui.label(format!("Lights: {}", viewer.scene.lights.len()));
+    ui.label(format!("Meshes: {}", viewer.scene().meshes.len()));
+    ui.label(format!("Instances: {}", viewer.scene().instances.len()));
+    ui.label(format!("Nodes: {}", viewer.scene().nodes.len()));
+    ui.label(format!("Lights: {}", viewer.scene().lights.len()));
 }
 
 /// Recursively render a node and its children in the scene tree.

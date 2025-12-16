@@ -11,10 +11,10 @@ use crate::{
 /// Main viewer that encapsulates the rendering state, scene, and event handling
 pub struct Viewer<'a> {
     state: DrawState<'a>,
-    pub scene: Scene,
-    pub dispatcher: EventDispatcher,
-    pub operator_manager: OperatorManager,
-    pub annotation_manager: AnnotationManager,
+    scene: Scene,
+    dispatcher: EventDispatcher,
+    operator_manager: OperatorManager,
+    annotation_manager: AnnotationManager,
     /// Last time update() was called, for delta_time calculation
     last_update_time: Option<Instant>,
 }
@@ -25,24 +25,8 @@ impl<'a> Viewer<'a> {
     where
         T: Into<wgpu::SurfaceTarget<'a>>,
     {
-        let mut state = DrawState::new(surface_target, width, height).await;
-
-        // Load default scene (TODO: make this configurable)
-        let aspect = width as f32 / height as f32;
-        let load_result = crate::gltf::load_gltf_scene(
-            "/home/zachary/src/glTF-Sample-Models/2.0/FlightHelmet/glTF/FlightHelmet.gltf",
-            aspect,
-        )
-        .unwrap();
-
-        let mut scene = load_result.scene;
-
-        // Use camera from glTF if available, otherwise fit camera to scene bounds
-        if let Some(camera) = load_result.camera {
-            state.camera = camera;
-        } else if let Some(bounds) = scene.bounding() {
-            state.camera.fit_to_bounds(&bounds);
-        }
+        let state = DrawState::new(surface_target, width, height).await;
+        let mut scene = Scene::new();
 
         // Set up default lighting
         scene.lights = vec![crate::scene::Light::new(
@@ -70,17 +54,17 @@ impl<'a> Viewer<'a> {
             Box::new(SelectionOperator::new(BuiltinOperatorId::Selection.into()));
         operator_manager.push_back(selection_operator, &mut dispatcher);
 
-        // Walk operator for WASD movement
-        let walk_operator = Box::new(WalkOperator::new(
-            BuiltinOperatorId::Walk.into(),
-        ));
-        operator_manager.push_back(walk_operator, &mut dispatcher);
-
         // Navigation operator for orbit/pan/zoom
         let nav_operator = Box::new(NavigationOperator::new(
             BuiltinOperatorId::Navigation.into(),
         ));
         operator_manager.push_back(nav_operator, &mut dispatcher);
+
+        // Walk operator for WASD movement
+        let walk_operator = Box::new(WalkOperator::new(
+            BuiltinOperatorId::Walk.into(),
+        ));
+        operator_manager.push_back(walk_operator, &mut dispatcher);
 
         // Create viewer
         let mut viewer = Self {
@@ -174,6 +158,11 @@ impl<'a> Viewer<'a> {
         &mut self.state.camera
     }
 
+    /// Set the camera to a new value
+    pub fn set_camera(&mut self, camera: crate::camera::Camera) {
+        self.state.camera = camera;
+    }
+
     /// Get the current viewport size as (width, height)
     pub fn size(&self) -> (u32, u32) {
         self.state.size
@@ -191,6 +180,60 @@ impl<'a> Viewer<'a> {
     /// A tuple of (&Device, &Queue) for creating buffers, pipelines, etc.
     pub fn wgpu_resources(&self) -> (&wgpu::Device, &wgpu::Queue) {
         (&self.state.device, &self.state.queue)
+    }
+
+    /// Get a reference to the scene
+    pub fn scene(&self) -> &Scene {
+        &self.scene
+    }
+
+    /// Get a mutable reference to the scene
+    pub fn scene_mut(&mut self) -> &mut Scene {
+        &mut self.scene
+    }
+
+    /// Set the scene to a new value
+    pub fn set_scene(&mut self, scene: Scene) {
+        self.scene = scene;
+    }
+
+    /// Get a reference to the event dispatcher
+    pub fn dispatcher(&self) -> &EventDispatcher {
+        &self.dispatcher
+    }
+
+    /// Get a mutable reference to the event dispatcher
+    pub fn dispatcher_mut(&mut self) -> &mut EventDispatcher {
+        &mut self.dispatcher
+    }
+
+    /// Get a reference to the operator manager
+    pub fn operator_manager(&self) -> &OperatorManager {
+        &self.operator_manager
+    }
+
+    /// Get a mutable reference to the operator manager
+    pub fn operator_manager_mut(&mut self) -> &mut OperatorManager {
+        &mut self.operator_manager
+    }
+
+    /// Get a reference to the annotation manager
+    pub fn annotation_manager(&self) -> &AnnotationManager {
+        &self.annotation_manager
+    }
+
+    /// Get a mutable reference to the annotation manager
+    pub fn annotation_manager_mut(&mut self) -> &mut AnnotationManager {
+        &mut self.annotation_manager
+    }
+
+    /// Swap the positions of two operators in the operator manager
+    ///
+    /// This is a convenience method that handles the coordination between
+    /// the operator manager and dispatcher, which would otherwise require
+    /// two simultaneous mutable borrows.
+    pub fn swap_operators(&mut self, id1: u32, id2: u32) {
+        self.operator_manager.swap(id1, id2, &mut self.dispatcher);
     }
 
     /// Render the scene using the default rendering path
