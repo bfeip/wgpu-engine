@@ -350,14 +350,41 @@ fn find_camera_recursive(
 /// # Arguments
 /// * `path` - Path to the glTF file
 /// * `aspect` - Aspect ratio to use for the camera (if found)
-pub fn load_gltf_scene<P: AsRef<Path>>(
+pub fn load_gltf_scene_from_path<P: AsRef<Path>>(
     path: P,
+    aspect: f32,
+) -> anyhow::Result<GltfLoadResult> {
+    let (document, buffers, images) = gltf::import(path)?;
+    load_gltf_from_data(document, buffers, images, aspect)
+}
+
+/// Loads a glTF scene from a byte slice.
+///
+/// This is useful for loading glTF data that has been read from memory,
+/// such as when loading files in a web browser via JavaScript.
+/// Returns a `GltfLoadResult` containing the scene and an optional camera
+/// if one was defined in the glTF file.
+///
+/// # Arguments
+/// * `data` - The glTF file contents as a byte slice
+/// * `aspect` - Aspect ratio to use for the camera (if found)
+pub fn load_gltf_scene_from_slice(
+    data: &[u8],
+    aspect: f32,
+) -> anyhow::Result<GltfLoadResult> {
+    let (document, buffers, images) = gltf::import_slice(data)?;
+    load_gltf_from_data(document, buffers, images, aspect)
+}
+
+/// Internal helper to load a glTF scene from parsed data.
+fn load_gltf_from_data(
+    document: gltf::Document,
+    buffers: Vec<gltf::buffer::Data>,
+    images: Vec<gltf::image::Data>,
     aspect: f32,
 ) -> anyhow::Result<GltfLoadResult> {
     use std::collections::HashMap;
     use cgmath::SquareMatrix;
-
-    let (document, buffers, images) = gltf::import(path)?;
 
     let mut scene = Scene::new();
 

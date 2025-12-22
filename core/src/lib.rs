@@ -23,4 +23,4 @@ pub use annotation::{AnnotationId, AnnotationManager};
 pub use scene::Scene;
 pub use viewer::Viewer;
 pub use camera::Camera;
-pub use gltf::{load_gltf_scene, GltfLoadResult};
+pub use gltf::{load_gltf_scene_from_path, load_gltf_scene_from_slice, GltfLoadResult};

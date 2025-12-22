@@ -9,7 +9,7 @@ use winit::{
 
 use wgpu_engine::egui_support::EguiViewerApp;
 use wgpu_engine::input::{ElementState, Key, NamedKey};
-use wgpu_engine::load_gltf_scene;
+use wgpu_engine::load_gltf_scene_from_path;
 use wgpu_engine::operator::BuiltinOperatorId;
 use wgpu_engine::scene::Scene;
 
@@ -82,7 +82,7 @@ impl<'a> App<'a> {
         };
 
         let path_str = path.display().to_string();
-        match load_gltf_scene(&path, aspect) {
+        match load_gltf_scene_from_path(&path, aspect) {
             Ok(result) => {
                 // Replace the scene with the loaded one
                 viewer.set_scene(result.scene);
