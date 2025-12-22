@@ -26,43 +26,38 @@ winit-support = ["winit"]
 egui-support = ["winit-support", "egui", "egui-wgpu", "egui-winit"]
 
 
+# Shared dependencies
 [dependencies]
-winit = { version = "0.30", features = [ "android-native-activity" ], optional = true}
-env_logger = "0.10"
-log = "0.4"
-wgpu = "27.0"
-cfg-if = "1"
-pollster = "0.3"
-bytemuck = { version = "1.16", features = [ "derive" ] }
 anyhow = "1.0"
-cgmath = "0.18"
-obj-rs = "0.7"
-gltf = { version = "1.4", features = [ "utils" ]}
-wesl = "0.2.0"
 bitflags = "2.0"
+bytemuck = { version = "1.16", features = ["derive"] }
+cfg-if = "1"
+cgmath = "0.18"
 egui = { version = "0.33", optional = true }
 egui-wgpu = { version = "0.33", optional = true }
+env_logger = "0.10"
+gltf = { version = "1.4", features = ["utils"] }
+image = { version = "0.24", default-features = false, features = ["png", "jpeg"] }
+log = "0.4"
+obj-rs = "0.7"
+pollster = "0.3"
+wesl = "0.2.0"
+wgpu = "27.0"
+winit = { version = "0.30", features = ["android-native-activity"], optional = true }
+
+# Native-only dependencies
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 egui-winit = { version = "0.33", optional = true }
 
-
-[dependencies.image]
-version = "0.24"
-default-features = false
-features = ["png", "jpeg"]
-
-
-[dev-dependencies]
-rfd = "0.15"
-
+# Web-only dependencies
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1.6"
 console_log = "1.0"
-wgpu = { version = "27.0", features = ["webgl"]}
+egui-winit = { version = "0.33", optional = true, default-features = false, features = ["links"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4.30"
-web-sys = { version = "0.3", features = [
-    "Document",
-    "Window",
-    "Element",
-    "HtmlCanvasElement",
-]}
+web-sys = { version = "0.3", features = ["Document", "Window", "Element", "HtmlCanvasElement"] }
+wgpu = { version = "27.0", features = ["webgl"] }
+
+[dev-dependencies]
+rfd = "0.15"
