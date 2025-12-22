@@ -1,0 +1,15 @@
+[build]
+# Output directory for the built files
+dist = "dist"
+
+# Don't include file hashes in output names for simpler development
+filehash = false
+
+[watch]
+# Paths to watch for changes during development
+watch = ["src", "index.html", "Trunk.toml"]
+
+[serve]
+# Default address and port for trunk serve
+addresses = ["127.0.0.1"]
+port = 8080
