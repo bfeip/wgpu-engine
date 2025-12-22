@@ -1327,6 +1327,7 @@ dependencies = [
  "console_log",
  "egui",
  "env_logger",
+ "js-sys",
  "log",
  "pollster 0.3.0",
  "rfd",
