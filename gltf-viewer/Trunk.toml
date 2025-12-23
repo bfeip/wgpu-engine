@@ -13,3 +13,6 @@ watch = ["src", "index.html", "Trunk.toml"]
 # Default address and port for trunk serve
 addresses = ["127.0.0.1"]
 port = 8080
+
+# I need to log a feature request with Thunk for more control over the
+# wasm-bindgen step in order to get a debuggable wasm.
