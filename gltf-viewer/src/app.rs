@@ -1,7 +1,9 @@
+use std::sync::Arc;
+
 use winit::{
     application::ApplicationHandler,
     event::{DeviceEvent, WindowEvent},
-    event_loop::ActiveEventLoop,
+    event_loop::{ActiveEventLoop, EventLoopProxy},
     window::{Window, WindowId},
 };
 
@@ -14,6 +16,35 @@ use wgpu_engine::scene::Scene;
 
 use crate::ui;
 
+/// Events sent from async tasks back to the main event loop
+#[allow(dead_code)] // ViewerInitFailed reserved for future error handling
+pub enum AppEvent {
+    /// WGPU initialization completed successfully
+    ViewerReady(Box<EguiViewerApp<'static>>),
+    /// WGPU initialization failed (reserved for future use)
+    ViewerInitFailed(String),
+    /// File data loaded from web file input
+    #[cfg(target_arch = "wasm32")]
+    FileLoaded(Vec<u8>),
+}
+
+/// Application initialization state
+enum InitState {
+    /// Not yet started initialization
+    Uninitialized,
+    /// Async initialization in progress
+    Initializing {
+        /// Keep window alive during initialization
+        #[allow(dead_code)]
+        window: Arc<Window>,
+    },
+    /// Fully initialized and ready
+    Ready(EguiViewerApp<'static>),
+    /// Initialization failed
+    #[allow(dead_code)]
+    Failed(String),
+}
+
 /// Debug actions triggered by key presses
 enum DebugAction {
     ToggleOrtho,
@@ -22,8 +53,9 @@ enum DebugAction {
 }
 
 /// Application state for the winit event loop with egui integration
-pub struct App<'a> {
-    viewer_app: Option<EguiViewerApp<'a>>,
+pub struct App {
+    state: InitState,
+    proxy: EventLoopProxy<AppEvent>,
 
     /// Pending file path to load (native only)
     #[cfg(not(target_arch = "wasm32"))]
@@ -34,10 +66,11 @@ pub struct App<'a> {
     pending_gltf_data: Option<Vec<u8>>,
 }
 
-impl<'a> App<'a> {
-    pub fn new() -> Self {
+impl App {
+    pub fn new(proxy: EventLoopProxy<AppEvent>) -> Self {
         Self {
-            viewer_app: None,
+            state: InitState::Uninitialized,
+            proxy,
             #[cfg(not(target_arch = "wasm32"))]
             pending_gltf_path: None,
             #[cfg(target_arch = "wasm32")]
@@ -45,15 +78,80 @@ impl<'a> App<'a> {
         }
     }
 
+    /// Start async initialization of the viewer
+    fn start_initialization(&mut self, event_loop: &ActiveEventLoop) {
+        let window_attrs = Window::default_attributes()
+            .with_title("glTF Viewer")
+            .with_min_inner_size(winit::dpi::PhysicalSize::new(800, 600));
+
+        // Platform-specific window setup
+        #[cfg(target_arch = "wasm32")]
+        let window_attrs = {
+            use wasm_bindgen::JsCast;
+            use winit::platform::web::WindowAttributesExtWebSys;
+
+            let web_window = web_sys::window().expect("no window");
+            let document = web_window.document().expect("no document");
+            let canvas = document
+                .get_element_by_id("gltf-viewer-canvas")
+                .expect("no canvas with id 'gltf-viewer-canvas'")
+                .dyn_into::<web_sys::HtmlCanvasElement>()
+                .expect("element is not a canvas");
+
+            // Set canvas internal dimensions to match its CSS layout size.
+            // Without this, the canvas may have 0x0 dimensions which causes
+            // WGPU surface creation to fail.
+            let width = canvas.client_width().max(1) as u32;
+            let height = canvas.client_height().max(1) as u32;
+            canvas.set_width(width);
+            canvas.set_height(height);
+
+            let inner_size = winit::dpi::PhysicalSize::new(width, height);
+            window_attrs.with_canvas(Some(canvas)).with_inner_size(inner_size)
+        };
+
+        let window = Arc::new(
+            event_loop
+                .create_window(window_attrs)
+                .expect("Failed to create window"),
+        );
+
+        let size = window.inner_size();
+        log::info!("Window inner size: ({}, {})", size.width, size.height);
+
+        self.state = InitState::Initializing {
+            window: Arc::clone(&window),
+        };
+
+        let proxy = self.proxy.clone();
+        let init_future = async move {
+            // Note: EguiViewerApp::from_window currently panics on failure.
+            // For more robust error handling, the core library could be modified
+            // to return Result<EguiViewerApp, Error> instead.
+            let viewer_app = EguiViewerApp::from_window(window, Some(winit::dpi::PhysicalSize::new(300, 300))).await;
+            let _ = proxy.send_event(AppEvent::ViewerReady(Box::new(viewer_app)));
+        };
+
+        // Platform-specific async execution
+        #[cfg(not(target_arch = "wasm32"))]
+        pollster::block_on(init_future);
+
+        #[cfg(target_arch = "wasm32")]
+        wasm_bindgen_futures::spawn_local(init_future);
+    }
+
     /// Handle the RedrawRequested event - build UI and render the frame
     fn handle_redraw_requested(&mut self) {
-        // Process any pending glTF file load
+        if !matches!(self.state, InitState::Ready(_)) {
+            return;
+        }
+
+        // Process any pending glTF file load first
         self.process_pending_load();
 
         // Build egui UI and render
         let mut ui_actions = ui::UiActions::default();
-        {
-            let viewer_app = self.viewer_app.as_mut().unwrap();
+        if let InitState::Ready(ref mut viewer_app) = self.state {
             if let Err(e) = viewer_app.render(|ctx, viewer| {
                 ui_actions = ui::build(ctx, viewer);
             }) {
@@ -61,7 +159,7 @@ impl<'a> App<'a> {
             }
         }
 
-        // Handle UI actions (after releasing viewer_app borrow)
+        // Handle UI actions (outside the borrow scope)
         if ui_actions.load_file {
             self.open_file_dialog();
         }
@@ -70,7 +168,9 @@ impl<'a> App<'a> {
         }
 
         // Request next frame
-        self.viewer_app.as_ref().unwrap().request_redraw();
+        if let InitState::Ready(ref app) = self.state {
+            app.request_redraw();
+        }
     }
 
     /// Process any pending glTF load
@@ -108,7 +208,11 @@ impl<'a> App<'a> {
     /// Load glTF from file path (native only)
     #[cfg(not(target_arch = "wasm32"))]
     fn load_gltf_from_path(&mut self, path: &std::path::Path) {
-        let viewer = self.viewer_app.as_mut().unwrap().viewer_mut();
+        let InitState::Ready(ref mut viewer_app) = self.state else {
+            return;
+        };
+
+        let viewer = viewer_app.viewer_mut();
         let aspect = {
             let size = viewer.size();
             size.0 as f32 / size.1 as f32
@@ -129,9 +233,14 @@ impl<'a> App<'a> {
         }
     }
 
-    /// Load glTF from bytes
+    /// Load glTF from bytes (used on web platform)
+    #[allow(dead_code)] // Only used on wasm32
     fn load_gltf_from_bytes(&mut self, data: &[u8]) {
-        let viewer = self.viewer_app.as_mut().unwrap().viewer_mut();
+        let InitState::Ready(ref mut viewer_app) = self.state else {
+            return;
+        };
+
+        let viewer = viewer_app.viewer_mut();
         let aspect = {
             let size = viewer.size();
             size.0 as f32 / size.1 as f32
@@ -172,11 +281,11 @@ impl<'a> App<'a> {
         }
     }
 
-    /// Setup the hidden file input element for web
+    /// Setup the hidden file input element for web with proper async callback
     #[cfg(target_arch = "wasm32")]
     fn setup_web_file_input(&self, document: &web_sys::Document) {
-        use wasm_bindgen::JsCast;
-        use web_sys::HtmlInputElement;
+        use wasm_bindgen::{closure::Closure, JsCast};
+        use web_sys::{FileReader, HtmlInputElement};
 
         let input: HtmlInputElement = document
             .create_element("input")
@@ -187,17 +296,44 @@ impl<'a> App<'a> {
         input.set_accept(".gltf,.glb");
         input.set_id("gltf-file-input");
         let _ = input.style().set_property("display", "none");
-        document.body().unwrap().append_child(&input).unwrap();
 
-        // Note: File reading is handled via the change event, which we set up
-        // but the actual reading would need to use a callback mechanism.
-        // For simplicity, we log that the user needs to implement async file reading.
-        log::info!("Web file input set up. File reading requires async handling.");
+        // Clone proxy for the closure
+        let proxy = self.proxy.clone();
+
+        let onchange = Closure::<dyn Fn(_)>::new(move |event: web_sys::Event| {
+            let input: HtmlInputElement = event.target().unwrap().dyn_into().unwrap();
+            if let Some(files) = input.files() {
+                if let Some(file) = files.get(0) {
+                    let reader = FileReader::new().unwrap();
+                    let proxy_clone = proxy.clone();
+
+                    let onload = Closure::<dyn Fn(_)>::new(move |event: web_sys::ProgressEvent| {
+                        let reader: FileReader = event.target().unwrap().dyn_into().unwrap();
+                        if let Ok(result) = reader.result() {
+                            let array = js_sys::Uint8Array::new(&result);
+                            let data = array.to_vec();
+                            let _ = proxy_clone.send_event(AppEvent::FileLoaded(data));
+                        }
+                    });
+
+                    reader.set_onload(Some(onload.as_ref().unchecked_ref()));
+                    onload.forget(); // Prevent cleanup - closure must live forever
+                    reader.read_as_array_buffer(&file).unwrap();
+                }
+            }
+        });
+
+        input.set_onchange(Some(onchange.as_ref().unchecked_ref()));
+        onchange.forget(); // Prevent cleanup - closure must live forever
+
+        document.body().unwrap().append_child(&input).unwrap();
     }
 
     /// Clear the scene
     fn clear_scene(&mut self) {
-        let viewer_app = self.viewer_app.as_mut().unwrap();
+        let InitState::Ready(ref mut viewer_app) = self.state else {
+            return;
+        };
         viewer_app.viewer_mut().set_scene(Scene::new());
         log::info!("Scene cleared");
     }
@@ -232,76 +368,44 @@ impl<'a> App<'a> {
 
     /// Toggle between perspective and orthographic projection
     fn toggle_ortho(&mut self) {
-        let viewer_app = self.viewer_app.as_mut().unwrap();
+        let InitState::Ready(ref mut viewer_app) = self.state else {
+            return;
+        };
         let camera = viewer_app.viewer_mut().camera_mut();
         camera.ortho = !camera.ortho;
     }
 }
 
-impl<'a> ApplicationHandler for App<'a> {
+impl ApplicationHandler<AppEvent> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.viewer_app.is_some() {
+        if !matches!(self.state, InitState::Uninitialized) {
+            // Already initialized or initializing
+            if let InitState::Ready(ref app) = self.state {
+                app.request_redraw();
+            }
             return;
         }
+        self.start_initialization(event_loop);
+    }
 
-        let window_attrs = Window::default_attributes()
-            .with_title("glTF Viewer")
-            .with_min_inner_size(winit::dpi::PhysicalSize::new(800, 600));
-
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let viewer_app = pollster::block_on(EguiViewerApp::with_window_attrs(
-                event_loop,
-                window_attrs,
-            ));
-            viewer_app.request_redraw();
-            self.viewer_app = Some(viewer_app);
-        }
-
-        #[cfg(target_arch = "wasm32")]
-        {
-            use std::sync::Arc;
-            use wasm_bindgen::JsCast;
-            use winit::platform::web::WindowAttributesExtWebSys;
-
-            // Get the canvas element from the page
-            let window = web_sys::window().expect("no window");
-            let document = window.document().expect("no document");
-            let canvas = document
-                .get_element_by_id("gltf-viewer-canvas")
-                .expect("no canvas with id 'gltf-viewer-canvas'");
-            let canvas: web_sys::HtmlCanvasElement = canvas
-                .dyn_into()
-                .expect("element is not a canvas");
-
-            let window_attrs = window_attrs.with_canvas(Some(canvas));
-
-            // Spawn async initialization
-            let event_loop_window = Arc::new(
-                event_loop
-                    .create_window(window_attrs)
-                    .expect("Failed to create window"),
-            );
-
-            // For web, we need to handle async initialization differently.
-            // The EguiViewerApp requires an async context for WGPU initialization.
-            // We'll use wasm_bindgen_futures to spawn the async task.
-            let _window = event_loop_window; // Keep window alive
-
-            // Store a temporary placeholder - the actual viewer will be created async
-            // This is a simplified approach; a production app would use channels or
-            // shared state to communicate the created viewer back.
-            log::info!("Web initialization started - WGPU async init required");
-
-            // Note: Full web implementation would use EventLoopProxy with user events
-            // to communicate the created viewer back to the App after async init.
-            // For now, this is a placeholder showing the structure.
-            wasm_bindgen_futures::spawn_local(async move {
-                log::info!("Async WGPU initialization starting...");
-                // A full implementation would:
-                // 1. Create the viewer asynchronously
-                // 2. Send it back via EventLoopProxy user events
-            });
+    fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: AppEvent) {
+        match event {
+            AppEvent::ViewerReady(viewer_app) => {
+                log::info!("Viewer initialization complete");
+                viewer_app.request_redraw();
+                self.state = InitState::Ready(*viewer_app);
+            }
+            AppEvent::ViewerInitFailed(error) => {
+                log::error!("Viewer initialization failed: {}", error);
+                self.state = InitState::Failed(error);
+            }
+            #[cfg(target_arch = "wasm32")]
+            AppEvent::FileLoaded(data) => {
+                self.pending_gltf_data = Some(data);
+                if let InitState::Ready(ref app) = self.state {
+                    app.request_redraw();
+                }
+            }
         }
     }
 
@@ -311,26 +415,35 @@ impl<'a> ApplicationHandler for App<'a> {
         _window_id: WindowId,
         event: WindowEvent,
     ) {
-        let Some(viewer_app) = self.viewer_app.as_mut() else {
-            return;
-        };
+        match &mut self.state {
+            InitState::Ready(viewer_app) => {
+                match event {
+                    WindowEvent::CloseRequested => {
+                        event_loop.exit();
+                    }
+                    WindowEvent::RedrawRequested => {
+                        self.handle_redraw_requested();
+                    }
+                    _ => {
+                        viewer_app.handle_window_event(&event);
 
-        match event {
-            WindowEvent::CloseRequested => {
-                event_loop.exit();
-            }
-            WindowEvent::RedrawRequested => {
-                self.handle_redraw_requested();
-            }
-            _ => {
-                viewer_app.handle_window_event(&event);
-
-                if let Some(app_event) = wgpu_engine::winit_support::convert_window_event(event) {
-                    if let Some(action) = Self::get_debug_key_action(&app_event) {
-                        self.handle_debug_key_action(action, event_loop);
+                        if let Some(app_event) =
+                            wgpu_engine::winit_support::convert_window_event(event)
+                        {
+                            if let Some(action) = Self::get_debug_key_action(&app_event) {
+                                self.handle_debug_key_action(action, event_loop);
+                            }
+                        }
                     }
                 }
             }
+            InitState::Initializing { .. } => {
+                // Minimal handling during initialization
+                if let WindowEvent::CloseRequested = event {
+                    event_loop.exit();
+                }
+            }
+            _ => {}
         }
     }
 
@@ -340,7 +453,7 @@ impl<'a> ApplicationHandler for App<'a> {
         _device_id: winit::event::DeviceId,
         event: DeviceEvent,
     ) {
-        if let Some(viewer_app) = &mut self.viewer_app {
+        if let InitState::Ready(ref mut viewer_app) = self.state {
             viewer_app.handle_device_event(&event);
         }
     }

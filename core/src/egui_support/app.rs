@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use egui_wgpu::RendererOptions;
+use winit::dpi::PhysicalSize;
 use winit::event::{DeviceEvent, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowAttributes};
@@ -62,6 +63,61 @@ pub struct EguiViewerApp<'a> {
     egui_ctx: egui::Context,
     egui_winit: egui_winit::State,
     egui_renderer: egui_wgpu::Renderer,
+}
+
+impl EguiViewerApp<'static> {
+    /// Create from an existing Arc<Window>.
+    ///
+    /// This is useful for platforms that need to create the window
+    /// separately from the viewer (e.g., WASM async initialization).
+    /// Since the window is wrapped in an Arc, the lifetime is `'static`.
+    ///
+    /// # Arguments
+    ///
+    /// * `window` - An Arc-wrapped window to use for rendering
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use std::sync::Arc;
+    /// use wgpu_engine::egui_support::EguiViewerApp;
+    /// use winit::window::Window;
+    ///
+    /// // Create window separately
+    /// let window = Arc::new(event_loop.create_window(Window::default_attributes()).unwrap());
+    ///
+    /// // Create viewer asynchronously
+    /// let app = pollster::block_on(EguiViewerApp::from_window(window));
+    /// ```
+    pub async fn from_window(window: Arc<Window>, size: Option<PhysicalSize<u32>>) -> Self {
+        let size = size.unwrap_or(window.inner_size());
+        let viewer = Viewer::new(Arc::clone(&window), size.width, size.height).await;
+
+        let egui_ctx = egui::Context::default();
+        let egui_winit = egui_winit::State::new(
+            egui_ctx.clone(),
+            egui::ViewportId::ROOT,
+            &window,
+            Some(window.scale_factor() as f32),
+            None,
+            None,
+        );
+
+        let (device, _queue) = viewer.wgpu_resources();
+        let egui_renderer = egui_wgpu::Renderer::new(
+            device,
+            viewer.surface_format(),
+            RendererOptions::default(),
+        );
+
+        Self {
+            window,
+            viewer,
+            egui_ctx,
+            egui_winit,
+            egui_renderer,
+        }
+    }
 }
 
 impl<'a> EguiViewerApp<'a> {
