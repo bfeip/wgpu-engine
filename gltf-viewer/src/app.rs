@@ -394,6 +394,14 @@ impl ApplicationHandler<AppEvent> for App {
                 log::info!("Viewer initialization complete");
                 viewer_app.request_redraw();
                 self.state = InitState::Ready(*viewer_app);
+
+                // On web, the canvas size may not be known until after initialization.
+                // Send a synthetic resize event to ensure the viewer has the correct size.
+                #[cfg(target_arch = "wasm32")]
+                if let InitState::Ready(ref mut app) = self.state {
+                    let size = app.window().inner_size();
+                    app.handle_window_event(&WindowEvent::Resized(size));
+                }
             }
             AppEvent::ViewerInitFailed(error) => {
                 log::error!("Viewer initialization failed: {}", error);
