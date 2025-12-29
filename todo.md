@@ -7,10 +7,11 @@
 - Ability to walk the scene with multiple walkers at once
 
 - Example glTF loading
+- Instance flags and visibility
+- Camera interpolation
 - Highlighting and proper selection
 - Merge event dispatcher and operator manager into something like "interaction manager"
 - egui canvas frame
-- Instance flags and visibility
 - Higher level faces and lines
 - Mesh wireframe
 - Multiple lights
@@ -20,6 +21,16 @@
 - NURBS
 - 3D Overlays
 - Make operators optional feature
+
+## Tech debt
+- The annotation manager should be made a part of the scene, but not modify nodes
+directly. They'll be reified when the scene is drawn or something.
+- The scene should have better dirty state management. I think currently the states
+are all set at once or something like that.
+- load_gltf functions rename + docs update
+- wgsl parser compilation issue
+- trunk debug WASM
+- Update readme
 
 ## Impl notes:
 - Ensure that the dirty flag is handled properly. Children of nodes that are marked dirty
