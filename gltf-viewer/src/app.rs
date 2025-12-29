@@ -98,16 +98,11 @@ impl App {
                 .dyn_into::<web_sys::HtmlCanvasElement>()
                 .expect("element is not a canvas");
 
-            // Set canvas internal dimensions to match its CSS layout size.
-            // Without this, the canvas may have 0x0 dimensions which causes
-            // WGPU surface creation to fail.
-            let width = canvas.client_width().max(1) as u32;
-            let height = canvas.client_height().max(1) as u32;
-            canvas.set_width(width);
-            canvas.set_height(height);
-
-            let inner_size = winit::dpi::PhysicalSize::new(width, height);
-            window_attrs.with_canvas(Some(canvas)).with_inner_size(inner_size)
+            // Don't manually set canvas dimensions or inner_size - let winit's
+            // ResizeObserver handle CSS-based sizing (per winit PR #2859).
+            // This allows winit to detect and fire WindowEvent::Resized when
+            // the browser window is resized.
+            window_attrs.with_canvas(Some(canvas))
         };
 
         let window = Arc::new(
