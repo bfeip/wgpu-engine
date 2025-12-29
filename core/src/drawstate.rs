@@ -13,6 +13,37 @@ use crate::{
     shaders::ShaderGenerator,
 };
 
+/// Maximum texture dimension for WebGL. When the canvas exceeds this size,
+/// we scale down the surface while preserving aspect ratio.
+#[cfg(target_arch = "wasm32")]
+const MAX_TEXTURE_DIMENSION: u32 = 2048;
+
+/// Clamp dimensions to the maximum texture size while preserving aspect ratio.
+/// On native platforms, returns the input dimensions unchanged.
+fn clamp_surface_size(width: u32, height: u32) -> (u32, u32) {
+    #[cfg(target_arch = "wasm32")]
+    {
+        if width <= MAX_TEXTURE_DIMENSION && height <= MAX_TEXTURE_DIMENSION {
+            return (width, height);
+        }
+
+        let scale = if width >= height {
+            MAX_TEXTURE_DIMENSION as f32 / width as f32
+        } else {
+            MAX_TEXTURE_DIMENSION as f32 / height as f32
+        };
+
+        let new_width = ((width as f32 * scale).round() as u32).max(1);
+        let new_height = ((height as f32 * scale).round() as u32).max(1);
+        (new_width, new_height)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        (width, height)
+    }
+}
+
 // Vertex shader attribute locations
 pub(crate) enum VertexShaderLocations {
     VertexPosition = 0,
@@ -62,7 +93,7 @@ impl<'a> DrawState<'a> {
     where
         T: Into<wgpu::SurfaceTarget<'a>>,
     {
-        let size = (width, height);
+        let size = clamp_surface_size(width, height);
 
         // The instance is a handle to our GPU
         // Backends::all => Vulkan + Metal + DX12 + Browser WebGPU
@@ -551,9 +582,10 @@ impl<'a> DrawState<'a> {
     pub fn resize(&mut self, new_size: (u32, u32)) {
         let (width, height) = new_size;
         if width > 0 && height > 0 {
-            self.size = new_size;
-            self.config.width = width;
-            self.config.height = height;
+            let (clamped_width, clamped_height) = clamp_surface_size(width, height);
+            self.size = (clamped_width, clamped_height);
+            self.config.width = clamped_width;
+            self.config.height = clamped_height;
             self.surface.configure(&self.device, &self.config);
 
             self.camera.aspect = width as f32 / height as f32;
