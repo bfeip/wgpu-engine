@@ -86,7 +86,7 @@ impl App {
 
         // Platform-specific window setup
         #[cfg(target_arch = "wasm32")]
-        let window_attrs = {
+        let (window_attrs, initial_size) = {
             use wasm_bindgen::JsCast;
             use winit::platform::web::WindowAttributesExtWebSys;
 
@@ -98,21 +98,27 @@ impl App {
                 .dyn_into::<web_sys::HtmlCanvasElement>()
                 .expect("element is not a canvas");
 
+            let dpr = web_window.device_pixel_ratio();
+            let width = (canvas.client_width() as f64 * dpr) as u32;
+            let height = (canvas.client_height() as f64 * dpr) as u32;
+            let initial_size = Some(winit::dpi::PhysicalSize::new(width.max(1), height.max(1)));
+
             // Don't manually set canvas dimensions or inner_size - let winit's
             // ResizeObserver handle CSS-based sizing (per winit PR #2859).
             // This allows winit to detect and fire WindowEvent::Resized when
             // the browser window is resized.
-            window_attrs.with_canvas(Some(canvas))
+            let window_attrs = window_attrs.with_canvas(Some(canvas));
+
+            (window_attrs, initial_size)
         };
+        #[cfg(not(target_arch = "wasm32"))]
+        let initial_size = None;
 
         let window = Arc::new(
             event_loop
                 .create_window(window_attrs)
                 .expect("Failed to create window"),
         );
-
-        let size = window.inner_size();
-        log::info!("Window inner size: ({}, {})", size.width, size.height);
 
         self.state = InitState::Initializing {
             window: Arc::clone(&window),
@@ -123,7 +129,7 @@ impl App {
             // Note: EguiViewerApp::from_window currently panics on failure.
             // For more robust error handling, the core library could be modified
             // to return Result<EguiViewerApp, Error> instead.
-            let viewer_app = EguiViewerApp::from_window(window, Some(winit::dpi::PhysicalSize::new(300, 300))).await;
+            let viewer_app = EguiViewerApp::from_window(window, initial_size).await;
             let _ = proxy.send_event(AppEvent::ViewerReady(Box::new(viewer_app)));
         };
 
