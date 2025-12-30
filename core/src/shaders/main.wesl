@@ -36,7 +36,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     // Legacy paths
-    @if(has_texture && has_lighting) {
+    @if(has_texture && has_lighting && !use_pbr) {
         return fragment_texture_lit(in);
     }
 
