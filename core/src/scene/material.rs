@@ -1,9 +1,17 @@
 use bitflags::bitflags;
+use bytemuck::{Pod, Zeroable};
 
 use crate::common::RgbaColor;
 
 use super::mesh::PrimitiveType;
 use super::texture::TextureId;
+
+/// Default roughness factor when not specified
+pub const DEFAULT_ROUGHNESS: f32 = 0.5;
+/// Default metallic factor when not specified
+pub const DEFAULT_METALLIC: f32 = 0.0;
+/// Default normal scale when not specified
+pub const DEFAULT_NORMAL_SCALE: f32 = 1.0;
 
 bitflags! {
     /// Additional material rendering flags for extensibility
@@ -18,15 +26,39 @@ bitflags! {
     }
 }
 
-/// Material properties that determine shader generation and rendering behavior
+/// PBR material parameters for GPU uniform buffer.
+///
+/// This struct is sent to the shader and contains all scalar factors
+/// plus flags indicating which textures are present.
+#[repr(C)]
+#[derive(Debug, Copy, Clone, Pod, Zeroable)]
+pub struct PbrUniform {
+    pub base_color_factor: [f32; 4],
+    pub metallic_factor: f32,
+    pub roughness_factor: f32,
+    pub normal_scale: f32,
+    pub texture_flags: u32,
+}
+
+impl PbrUniform {
+    pub const FLAG_HAS_BASE_COLOR_TEXTURE: u32 = 1 << 0;
+    pub const FLAG_HAS_NORMAL_TEXTURE: u32 = 1 << 1;
+    pub const FLAG_HAS_METALLIC_ROUGHNESS_TEXTURE: u32 = 1 << 2;
+}
+
+/// Material properties that determine shader generation and rendering behavior.
 ///
 /// This drives:
 /// - Shader generation (ShaderGenerator uses these for conditional compilation)
 /// - Pipeline creation (different properties = different pipelines)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MaterialProperties {
-    /// Whether this material uses a texture (vs solid color)
-    pub has_texture: bool,
+    /// Whether this material has a base color texture
+    pub has_base_color_texture: bool,
+    /// Whether this material has a normal map
+    pub has_normal_map: bool,
+    /// Whether this material has a metallic-roughness texture
+    pub has_metallic_roughness_texture: bool,
     /// Whether lighting calculations should be applied
     pub has_lighting: bool,
     /// Additional rendering flags
@@ -51,7 +83,10 @@ pub(crate) struct MaterialGpuResources {
     pub _buffer: Option<wgpu::Buffer>, // For color materials
 }
 
-/// Unified material that can be rendered as faces, lines, or points.
+/// PBR material that can be rendered as faces, lines, or points.
+///
+/// Supports physically-based rendering with base color, normal maps,
+/// and metallic-roughness textures. Missing textures fall back to scalar factors.
 ///
 /// # Examples
 ///
@@ -59,32 +94,47 @@ pub(crate) struct MaterialGpuResources {
 /// use wgpu_engine::scene::{Material, Scene};
 /// use wgpu_engine::common::RgbaColor;
 ///
-/// // Create a material with face color (no GPU needed)
+/// // Create a simple colored material
 /// let material = Material::new()
-///     .with_face_color(RgbaColor::RED)
+///     .with_base_color_factor(RgbaColor::RED)
 ///     .with_line_color(RgbaColor::BLACK);
 ///
 /// // Add to scene
 /// let mut scene = Scene::new();
 /// let mat_id = scene.add_material(material);
 ///
-/// // GPU resources are created automatically during rendering
+/// // PBR materials can also have textures:
+/// // material.with_base_color_texture(texture_id)
+/// //         .with_metallic_factor(0.0)
+/// //         .with_roughness_factor(0.5);
 /// ```
 pub struct Material {
     /// Unique identifier for this material
     pub id: MaterialId,
 
-    // Face rendering data (triangles with lighting)
-    /// Face color (if not using texture)
-    pub face_color: Option<RgbaColor>,
-    /// Face texture ID (if not using solid color) - references Scene's textures
-    pub face_texture: Option<TextureId>,
+    // PBR textures (optional, for face rendering)
+    /// Base color texture (albedo)
+    pub base_color_texture: Option<TextureId>,
+    /// Normal map texture
+    pub normal_texture: Option<TextureId>,
+    /// Metallic-roughness texture (G=roughness, B=metallic per glTF spec)
+    pub metallic_roughness_texture: Option<TextureId>,
 
-    // Line rendering data (no lighting)
+    // PBR scalar factors (always present, used as multipliers or fallbacks)
+    /// Base color factor (multiplied with texture if present)
+    pub base_color_factor: RgbaColor,
+    /// Metallic factor (0.0 = dielectric, 1.0 = metal)
+    pub metallic_factor: f32,
+    /// Roughness factor (0.0 = smooth, 1.0 = rough)
+    pub roughness_factor: f32,
+    /// Normal map scale
+    pub normal_scale: f32,
+
+    // Line rendering data (no lighting, no PBR)
     /// Line color
     pub line_color: Option<RgbaColor>,
 
-    // Point rendering data (no lighting)
+    // Point rendering data (no lighting, no PBR)
     /// Point color
     pub point_color: Option<RgbaColor>,
 
@@ -100,15 +150,19 @@ pub struct Material {
 }
 
 impl Material {
-    /// Create a new empty material.
+    /// Create a new material with default PBR values.
     ///
-    /// The material has no colors or textures set. Use builder methods
-    /// like `with_face_color()` to configure it.
+    /// Defaults: white base color, metallic=0.0, roughness=0.5, no textures.
     pub fn new() -> Self {
         Self {
             id: 0, // Assigned by Scene
-            face_color: None,
-            face_texture: None,
+            base_color_texture: None,
+            normal_texture: None,
+            metallic_roughness_texture: None,
+            base_color_factor: RgbaColor::WHITE,
+            metallic_factor: DEFAULT_METALLIC,
+            roughness_factor: DEFAULT_ROUGHNESS,
+            normal_scale: DEFAULT_NORMAL_SCALE,
             line_color: None,
             point_color: None,
             face_gpu: None,
@@ -122,24 +176,51 @@ impl Material {
 
     // ========== Builder methods (chainable) ==========
 
-    /// Set the face color (for solid color face rendering).
-    ///
-    /// Note: face_color and face_texture are mutually exclusive.
-    /// Setting face_color clears any face_texture.
-    pub fn with_face_color(mut self, color: RgbaColor) -> Self {
-        self.face_color = Some(color);
-        self.face_texture = None;
+    /// Set the base color texture.
+    pub fn with_base_color_texture(mut self, texture_id: TextureId) -> Self {
+        self.base_color_texture = Some(texture_id);
         self.face_dirty = true;
         self
     }
 
-    /// Set the face texture ID (for textured face rendering).
-    ///
-    /// Note: face_color and face_texture are mutually exclusive.
-    /// Setting face_texture clears any face_color.
-    pub fn with_face_texture(mut self, texture_id: TextureId) -> Self {
-        self.face_texture = Some(texture_id);
-        self.face_color = None;
+    /// Set the normal map texture.
+    pub fn with_normal_texture(mut self, texture_id: TextureId) -> Self {
+        self.normal_texture = Some(texture_id);
+        self.face_dirty = true;
+        self
+    }
+
+    /// Set the metallic-roughness texture.
+    pub fn with_metallic_roughness_texture(mut self, texture_id: TextureId) -> Self {
+        self.metallic_roughness_texture = Some(texture_id);
+        self.face_dirty = true;
+        self
+    }
+
+    /// Set the base color factor (multiplied with texture if present).
+    pub fn with_base_color_factor(mut self, color: RgbaColor) -> Self {
+        self.base_color_factor = color;
+        self.face_dirty = true;
+        self
+    }
+
+    /// Set the metallic factor (0.0 = dielectric, 1.0 = metal).
+    pub fn with_metallic_factor(mut self, metallic: f32) -> Self {
+        self.metallic_factor = metallic;
+        self.face_dirty = true;
+        self
+    }
+
+    /// Set the roughness factor (0.0 = smooth, 1.0 = rough).
+    pub fn with_roughness_factor(mut self, roughness: f32) -> Self {
+        self.roughness_factor = roughness;
+        self.face_dirty = true;
+        self
+    }
+
+    /// Set the normal map scale.
+    pub fn with_normal_scale(mut self, scale: f32) -> Self {
+        self.normal_scale = scale;
         self.face_dirty = true;
         self
     }
@@ -160,17 +241,15 @@ impl Material {
 
     // ========== Mutation methods (set dirty flags) ==========
 
-    /// Set the face color, marking the material as dirty.
-    pub fn set_face_color(&mut self, color: RgbaColor) {
-        self.face_color = Some(color);
-        self.face_texture = None;
+    /// Set the base color texture, marking the material as dirty.
+    pub fn set_base_color_texture(&mut self, texture_id: TextureId) {
+        self.base_color_texture = Some(texture_id);
         self.face_dirty = true;
     }
 
-    /// Set the face texture ID, marking the material as dirty.
-    pub fn set_face_texture(&mut self, texture_id: TextureId) {
-        self.face_texture = Some(texture_id);
-        self.face_color = None;
+    /// Set the base color factor, marking the material as dirty.
+    pub fn set_base_color_factor(&mut self, color: RgbaColor) {
+        self.base_color_factor = color;
         self.face_dirty = true;
     }
 
@@ -195,15 +274,46 @@ impl Material {
     pub fn get_properties(&self, primitive_type: PrimitiveType) -> MaterialProperties {
         match primitive_type {
             PrimitiveType::TriangleList => MaterialProperties {
-                has_texture: self.face_texture.is_some(),
+                has_base_color_texture: self.base_color_texture.is_some(),
+                has_normal_map: self.normal_texture.is_some(),
+                has_metallic_roughness_texture: self.metallic_roughness_texture.is_some(),
                 has_lighting: true,
                 flags: MaterialFlags::NONE,
             },
             PrimitiveType::LineList | PrimitiveType::PointList => MaterialProperties {
-                has_texture: false,
+                has_base_color_texture: false,
+                has_normal_map: false,
+                has_metallic_roughness_texture: false,
                 has_lighting: false,
                 flags: MaterialFlags::NONE,
             },
+        }
+    }
+
+    /// Build the PBR uniform for GPU upload.
+    pub fn build_pbr_uniform(&self) -> PbrUniform {
+        let mut texture_flags = 0u32;
+        if self.base_color_texture.is_some() {
+            texture_flags |= PbrUniform::FLAG_HAS_BASE_COLOR_TEXTURE;
+        }
+        if self.normal_texture.is_some() {
+            texture_flags |= PbrUniform::FLAG_HAS_NORMAL_TEXTURE;
+        }
+        if self.metallic_roughness_texture.is_some() {
+            texture_flags |= PbrUniform::FLAG_HAS_METALLIC_ROUGHNESS_TEXTURE;
+        }
+
+        PbrUniform {
+            base_color_factor: [
+                self.base_color_factor.r,
+                self.base_color_factor.g,
+                self.base_color_factor.b,
+                self.base_color_factor.a,
+            ],
+            metallic_factor: self.metallic_factor,
+            roughness_factor: self.roughness_factor,
+            normal_scale: self.normal_scale,
+            texture_flags,
         }
     }
 
@@ -223,11 +333,12 @@ impl Material {
     }
 
     /// Check if the material has data for a given primitive type.
+    ///
+    /// For faces, PBR materials always have data (at minimum the base_color_factor).
     pub fn has_primitive_data(&self, primitive_type: PrimitiveType) -> bool {
         match primitive_type {
-            PrimitiveType::TriangleList => {
-                self.face_color.is_some() || self.face_texture.is_some()
-            }
+            // PBR materials always have face data (base_color_factor is always set)
+            PrimitiveType::TriangleList => true,
             PrimitiveType::LineList => self.line_color.is_some(),
             PrimitiveType::PointList => self.point_color.is_some(),
         }

@@ -193,8 +193,8 @@ fn load_material(
         let texture = Texture::from_image(dynamic_image);
         let texture_id = scene.add_texture(texture);
 
-        // Create material with face texture reference
-        let material = Material::new().with_face_texture(texture_id);
+        // Create material with base color texture
+        let material = Material::new().with_base_color_texture(texture_id);
         let mat_id = scene.add_material(material);
         Ok(mat_id)
     } else {
@@ -207,8 +207,8 @@ fn load_material(
             a: base_color[3],
         };
 
-        // Create material with face color
-        let material = Material::new().with_face_color(color);
+        // Create material with base color factor
+        let material = Material::new().with_base_color_factor(color);
         let mat_id = scene.add_material(material);
         Ok(mat_id)
     }

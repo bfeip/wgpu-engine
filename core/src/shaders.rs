@@ -64,8 +64,10 @@ impl ShaderGenerator {
         }
 
         // Build feature map for WESL conditional compilation
+        // For now, map base_color_texture to the legacy has_texture feature
+        // Full PBR shader support will be added in a later phase
         let features = [
-            ("has_texture", properties.has_texture),
+            ("has_texture", properties.has_base_color_texture),
             ("has_lighting", properties.has_lighting),
         ];
 
@@ -75,7 +77,7 @@ impl ShaderGenerator {
         let result = self.compiler.compile(&path)?;
         let wgsl = result.to_string();
 
-        let shader_label = match (properties.has_texture, properties.has_lighting) {
+        let shader_label = match (properties.has_base_color_texture, properties.has_lighting) {
             (true, true) => "Lit Texture Material Shader",
             (true, false) => "Unlit Texture Material Shader",
             (false, true) => "Lit Color Material Shader",

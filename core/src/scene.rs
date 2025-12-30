@@ -59,14 +59,14 @@ use crate::common::{Aabb, RgbaColor};
 /// let mesh_id = scene.add_mesh(mesh);
 ///
 /// // Add a material (no device needed)
-/// let material = Material::new().with_face_color(RgbaColor::RED);
+/// let material = Material::new().with_base_color_factor(RgbaColor::RED);
 /// let mat_id = scene.add_material(material);
 ///
 /// // Create an instance node
 /// let position = Point3::new(0.0, 0.0, 0.0);
 /// let rotation = Quaternion::new(1.0, 0.0, 0.0, 0.0);
 /// let scale = Vector3::new(1.0, 1.0, 1.0);
-/// let node_id = scene.add_instance_node(None, mesh_id, mat_id, position, rotation, scale);
+/// let node_id = scene.add_instance_node(None, mesh_id, mat_id, None, position, rotation, scale);
 /// ```
 pub struct Scene {
     pub meshes: HashMap<MeshId, Mesh>,
@@ -121,9 +121,9 @@ impl Scene {
         // Create default material (ID 0)
         scene.add_material(
             Material::new()
-                .with_face_color(RgbaColor { r: 1.0, g: 0.3, b: 1.0, a: 1.0 }) // Magenta
-                .with_line_color(RgbaColor { r: 0.0, g: 0.0, b: 0.0, a: 1.0 })
-                .with_point_color(RgbaColor { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }),
+                .with_base_color_factor(RgbaColor::MAGENTA) // For debugging unassigned faces
+                .with_line_color(RgbaColor::BLACK)
+                .with_point_color(RgbaColor::BLACK),
         );
 
         scene

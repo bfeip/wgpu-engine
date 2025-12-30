@@ -83,6 +83,12 @@ pub(crate) struct DrawState<'a> {
     lights_bind_group: wgpu::BindGroup,
     depth_texture: GpuTexture,
 
+    // Default textures for PBR materials (used when specific textures are not provided)
+    /// 1x1 white texture for missing base color textures
+    pub(crate) default_white_texture: GpuTexture,
+    /// 1x1 neutral normal texture (0.5, 0.5, 1.0) for missing normal maps
+    pub(crate) default_normal_texture: GpuTexture,
+
     pipeline_cache: HashMap<(MaterialProperties, PrimitiveType), wgpu::RenderPipeline>,
 }
 
@@ -303,6 +309,20 @@ impl<'a> DrawState<'a> {
 
         let depth_texture = Texture::create_depth_texture(&device, &config, "depth_texture");
 
+        // Create default textures for PBR materials
+        let default_white_texture = Texture::create_solid_color_texture(
+            &device,
+            &queue,
+            [255, 255, 255, 255],
+            "default_white_texture",
+        );
+        let default_normal_texture = Texture::create_solid_color_texture(
+            &device,
+            &queue,
+            [128, 128, 255, 255], // Neutral normal (0.5, 0.5, 1.0) in tangent space
+            "default_normal_texture",
+        );
+
         Self {
             surface,
             device,
@@ -321,6 +341,8 @@ impl<'a> DrawState<'a> {
             lights_buffer,
             lights_bind_group,
             depth_texture,
+            default_white_texture,
+            default_normal_texture,
             pipeline_cache: HashMap::new(),
         }
     }
@@ -380,15 +402,15 @@ impl<'a> DrawState<'a> {
 
         match primitive_type {
             PrimitiveType::TriangleList => {
-                if let Some(texture_id) = material.face_texture {
-                    // Texture-based face rendering
+                if let Some(texture_id) = material.base_color_texture {
+                    // Texture-based face rendering (base color texture)
                     let texture = scene.textures.get(&texture_id).ok_or_else(|| {
                         anyhow::anyhow!("Texture {} not found for material {}", texture_id, material_id)
                     })?;
                     let gpu_tex = texture.gpu();
 
                     let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("Material Face Texture Bind Group"),
+                        label: Some("Material Base Color Texture Bind Group"),
                         layout: &self.texture_bind_group_layout,
                         entries: &[
                             wgpu::BindGroupEntry {
@@ -411,16 +433,17 @@ impl<'a> DrawState<'a> {
                         },
                     );
                     material.mark_clean(primitive_type);
-                } else if let Some(color) = material.face_color {
-                    // Color-based face rendering
+                } else {
+                    // Color-based face rendering (using base_color_factor)
+                    let color = material.base_color_factor;
                     let buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("Material Face Color Buffer"),
+                        label: Some("Material Base Color Factor Buffer"),
                         contents: bytes_of(&color),
                         usage: wgpu::BufferUsages::UNIFORM,
                     });
 
                     let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("Material Face Color Bind Group"),
+                        label: Some("Material Base Color Factor Bind Group"),
                         layout: &self.color_bind_group_layout,
                         entries: &[wgpu::BindGroupEntry {
                             binding: 0,
@@ -507,7 +530,7 @@ impl<'a> DrawState<'a> {
     ) -> &wgpu::RenderPipeline {
         let cache_key = (properties.clone(), primitive_type);
         self.pipeline_cache.entry(cache_key).or_insert_with(|| {
-            let pipeline_layout = if properties.has_texture {
+            let pipeline_layout = if properties.has_base_color_texture {
                 &self.texture_material_pipeline_layout
             } else {
                 &self.color_material_pipeline_layout

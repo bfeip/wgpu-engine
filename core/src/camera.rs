@@ -261,27 +261,34 @@ impl Camera {
 /// GPU uniform buffer layout for camera data.
 ///
 /// This struct is `#[repr(C)]` and implements `bytemuck::Pod` for direct
-/// memory mapping to GPU buffers. It contains only the view-projection matrix,
-/// which is uploaded to bind group 0 for use by shaders.
+/// memory mapping to GPU buffers. It contains the view-projection matrix
+/// and eye position, uploaded to bind group 0 for use by shaders.
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct CameraUniform {
     /// Combined view-projection matrix (64 bytes, 4x4 f32).
     view_proj: [[f32; 4]; 4],
+    /// Camera eye position in world space (for view direction calculation in PBR).
+    eye_position: [f32; 3],
+    /// Padding for 16-byte alignment.
+    _padding: u32,
 }
 
 impl CameraUniform {
-    /// Creates a new camera uniform initialized to the identity matrix.
+    /// Creates a new camera uniform initialized to identity matrix and origin.
     pub fn new() -> Self {
         use cgmath::SquareMatrix;
         Self {
             view_proj: cgmath::Matrix4::identity().into(),
+            eye_position: [0.0, 0.0, 0.0],
+            _padding: 0,
         }
     }
 
-    /// Updates the view-projection matrix from the given camera.
+    /// Updates the uniform from the given camera.
     pub fn update_view_proj(&mut self, camera: &Camera) {
         self.view_proj = camera.build_view_projection_matrix().into();
+        self.eye_position = [camera.eye.x, camera.eye.y, camera.eye.z];
     }
 }
 
@@ -497,8 +504,11 @@ mod tests {
     fn test_camera_uniform_layout() {
         use std::mem;
 
-        // Verify size is correct for GPU (4x4 matrix of f32)
-        assert_eq!(mem::size_of::<CameraUniform>(), 64);
+        // Verify size is correct for GPU:
+        // - view_proj: 64 bytes (4x4 f32)
+        // - eye_position: 12 bytes (3x f32)
+        // - padding: 4 bytes (for 16-byte alignment)
+        assert_eq!(mem::size_of::<CameraUniform>(), 80);
 
         // Verify alignment is appropriate for GPU
         assert_eq!(mem::align_of::<CameraUniform>(), 4);
