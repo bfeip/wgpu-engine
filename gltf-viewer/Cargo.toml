@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 wgpu-engine = { path = "../core", features = ["egui-support"] }
+cgmath = "0.18"
 log = "0.4"
 egui = "0.33"
 winit = "0.30"

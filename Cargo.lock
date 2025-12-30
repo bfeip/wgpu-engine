@@ -1323,6 +1323,7 @@ dependencies = [
 name = "gltf-viewer"
 version = "0.1.0"
 dependencies = [
+ "cgmath",
  "console_error_panic_hook",
  "console_log",
  "egui",

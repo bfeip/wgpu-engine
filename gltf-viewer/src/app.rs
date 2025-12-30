@@ -222,10 +222,7 @@ impl App {
         let path_str = path.display().to_string();
         match wgpu_engine::load_gltf_scene_from_path(path, aspect) {
             Ok(result) => {
-                viewer.set_scene(result.scene);
-                if let Some(camera) = result.camera {
-                    viewer.set_camera(camera);
-                }
+                Self::apply_gltf_result(viewer, result);
                 log::info!("Loaded glTF: {}", path_str);
             }
             Err(e) => {
@@ -249,16 +246,51 @@ impl App {
 
         match wgpu_engine::load_gltf_scene_from_slice(data, aspect) {
             Ok(result) => {
-                viewer.set_scene(result.scene);
-                if let Some(camera) = result.camera {
-                    viewer.set_camera(camera);
-                }
+                Self::apply_gltf_result(viewer, result);
                 log::info!("Loaded glTF from bytes");
             }
             Err(e) => {
                 log::error!("Failed to load glTF: {}", e);
             }
         }
+    }
+
+    /// Apply a loaded glTF result to the viewer.
+    ///
+    /// Sets the scene and camera. If the glTF file doesn't define a camera,
+    /// computes a default camera that fits the scene bounds.
+    fn apply_gltf_result(viewer: &mut wgpu_engine::Viewer, result: wgpu_engine::GltfLoadResult) {
+        viewer.set_scene(result.scene);
+
+        let camera = result.camera.unwrap_or_else(|| {
+            Self::camera_for_scene(viewer.scene(), viewer.camera().aspect)
+        });
+        viewer.set_camera(camera);
+    }
+
+    /// Create a camera that fits the scene bounds.
+    ///
+    /// Uses a default isometric-like view direction and fits the camera
+    /// so the entire scene is visible.
+    fn camera_for_scene(scene: &Scene, aspect: f32) -> wgpu_engine::Camera {
+        use cgmath::{Point3, Vector3};
+
+        let mut camera = wgpu_engine::Camera {
+            eye: Point3::new(1.0, 1.0, 1.0),
+            target: Point3::new(0.0, 0.0, 0.0),
+            up: Vector3::new(0.0, 1.0, 0.0),
+            aspect,
+            fovy: 45.0,
+            znear: 0.1,
+            zfar: 100.0,
+            ortho: false,
+        };
+
+        if let Some(bounds) = scene.bounding() {
+            camera.fit_to_bounds(&bounds);
+        }
+
+        camera
     }
 
     /// Trigger the web file input element
