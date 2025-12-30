@@ -7,6 +7,7 @@ import package::vertex::vertex_standard;
 import package::fragment_color_lit::fragment_color_lit;
 import package::fragment_color_unlit::fragment_color_unlit;
 import package::fragment_texture_lit::fragment_texture_lit;
+import package::fragment_pbr_lit::fragment_pbr_lit;
 
 // Vertex shader entry point
 @vertex
@@ -22,6 +23,12 @@ fn vs_main(
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Conditional compilation based on material properties
+    // PBR path (highest priority when enabled)
+    @if(use_pbr && has_lighting) {
+        return fragment_pbr_lit(in);
+    }
+
+    // Legacy paths
     @if(has_texture && has_lighting) {
         return fragment_texture_lit(in);
     }

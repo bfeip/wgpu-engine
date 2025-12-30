@@ -17,6 +17,11 @@ const SHADER_MATERIAL_TEXTURE: &str = include_str!("shaders/material_texture.wes
 const SHADER_FRAGMENT_COLOR_LIT: &str = include_str!("shaders/fragment_color_lit.wesl");
 const SHADER_FRAGMENT_COLOR_UNLIT: &str = include_str!("shaders/fragment_color_unlit.wesl");
 const SHADER_FRAGMENT_TEXTURE_LIT: &str = include_str!("shaders/fragment_texture_lit.wesl");
+// PBR shader modules
+const SHADER_PBR: &str = include_str!("shaders/pbr.wesl");
+const SHADER_MATERIAL_PBR: &str = include_str!("shaders/material_pbr.wesl");
+const SHADER_NORMAL_MAPPING: &str = include_str!("shaders/normal_mapping.wesl");
+const SHADER_FRAGMENT_PBR_LIT: &str = include_str!("shaders/fragment_pbr_lit.wesl");
 
 /// Shader generator using WESL compiler to create modular shaders
 pub(crate) struct ShaderGenerator {
@@ -46,6 +51,11 @@ impl ShaderGenerator {
         resolver.add_module("package::fragment_color_lit".parse().unwrap(), SHADER_FRAGMENT_COLOR_LIT.into());
         resolver.add_module("package::fragment_color_unlit".parse().unwrap(), SHADER_FRAGMENT_COLOR_UNLIT.into());
         resolver.add_module("package::fragment_texture_lit".parse().unwrap(), SHADER_FRAGMENT_TEXTURE_LIT.into());
+        // PBR modules
+        resolver.add_module("package::pbr".parse().unwrap(), SHADER_PBR.into());
+        resolver.add_module("package::material_pbr".parse().unwrap(), SHADER_MATERIAL_PBR.into());
+        resolver.add_module("package::normal_mapping".parse().unwrap(), SHADER_NORMAL_MAPPING.into());
+        resolver.add_module("package::fragment_pbr_lit".parse().unwrap(), SHADER_FRAGMENT_PBR_LIT.into());
 
         // Create compiler with standard extensions enabled, then swap in the virtual resolver
         let compiler = Wesl::new(".").set_custom_resolver(resolver);
@@ -64,11 +74,13 @@ impl ShaderGenerator {
         }
 
         // Build feature map for WESL conditional compilation
-        // For now, map base_color_texture to the legacy has_texture feature
-        // Full PBR shader support will be added in a later phase
+        // use_pbr enables the PBR shader path (requires PBR bind group layout)
+        // For now, enable PBR when normal or metallic-roughness textures are present
+        let use_pbr = properties.has_normal_map || properties.has_metallic_roughness_texture;
         let features = [
             ("has_texture", properties.has_base_color_texture),
             ("has_lighting", properties.has_lighting),
+            ("use_pbr", use_pbr),
         ];
 
         // Set features and compile the main module
@@ -77,11 +89,15 @@ impl ShaderGenerator {
         let result = self.compiler.compile(&path)?;
         let wgsl = result.to_string();
 
-        let shader_label = match (properties.has_base_color_texture, properties.has_lighting) {
-            (true, true) => "Lit Texture Material Shader",
-            (true, false) => "Unlit Texture Material Shader",
-            (false, true) => "Lit Color Material Shader",
-            (false, false) => "Unlit Color Material Shader",
+        let shader_label = if use_pbr && properties.has_lighting {
+            "PBR Lit Material Shader"
+        } else {
+            match (properties.has_base_color_texture, properties.has_lighting) {
+                (true, true) => "Lit Texture Material Shader",
+                (true, false) => "Unlit Texture Material Shader",
+                (false, true) => "Lit Color Material Shader",
+                (false, false) => "Unlit Color Material Shader",
+            }
         };
 
         let module = device.create_shader_module(ShaderModuleDescriptor {

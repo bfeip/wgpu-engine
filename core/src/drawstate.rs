@@ -71,11 +71,13 @@ pub(crate) struct DrawState<'a> {
     // Bind group layouts for materials
     pub(crate) color_bind_group_layout: wgpu::BindGroupLayout,
     pub(crate) texture_bind_group_layout: wgpu::BindGroupLayout,
+    pub(crate) pbr_bind_group_layout: wgpu::BindGroupLayout,
 
     shader_generator: ShaderGenerator,
 
     color_material_pipeline_layout: wgpu::PipelineLayout,
     texture_material_pipeline_layout: wgpu::PipelineLayout,
+    pbr_material_pipeline_layout: wgpu::PipelineLayout,
 
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
@@ -208,6 +210,79 @@ impl<'a> DrawState<'a> {
                 ],
             });
 
+        // PBR bind group layout: uniform + 3 textures with samplers
+        let pbr_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("PBR Material Bind Group Layout"),
+                entries: &[
+                    // Binding 0: PbrUniform (factors + flags)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // Binding 1: Base color texture
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
+                    // Binding 2: Base color sampler
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    // Binding 3: Normal texture
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
+                    // Binding 4: Normal sampler
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    // Binding 5: Metallic-roughness texture
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 5,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
+                    // Binding 6: Metallic-roughness sampler
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 6,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+
         let shader_generator = ShaderGenerator::new();
 
         let camera = Camera {
@@ -234,7 +309,8 @@ impl<'a> DrawState<'a> {
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
+                    // Visible in both VERTEX (for view_proj) and FRAGMENT (for eye_position in PBR)
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -307,6 +383,17 @@ impl<'a> DrawState<'a> {
                 push_constant_ranges: &[],
             });
 
+        let pbr_material_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("PBR Material Pipeline Layout"),
+                bind_group_layouts: &[
+                    &camera_bind_group_layout,
+                    &light_bind_group_layout,
+                    &pbr_bind_group_layout,
+                ],
+                push_constant_ranges: &[],
+            });
+
         let depth_texture = Texture::create_depth_texture(&device, &config, "depth_texture");
 
         // Create default textures for PBR materials
@@ -333,9 +420,11 @@ impl<'a> DrawState<'a> {
             cursor_position: None,
             color_bind_group_layout,
             texture_bind_group_layout,
+            pbr_bind_group_layout,
             shader_generator,
             color_material_pipeline_layout,
             texture_material_pipeline_layout,
+            pbr_material_pipeline_layout,
             camera_buffer,
             camera_bind_group,
             lights_buffer,
@@ -400,10 +489,103 @@ impl<'a> DrawState<'a> {
     ) -> Result<()> {
         let material = scene.materials.get(&material_id).unwrap();
 
+        // Check if this material needs PBR path
+        let use_pbr = material.normal_texture.is_some()
+            || material.metallic_roughness_texture.is_some();
+
         match primitive_type {
             PrimitiveType::TriangleList => {
-                if let Some(texture_id) = material.base_color_texture {
-                    // Texture-based face rendering (base color texture)
+                if use_pbr {
+                    // PBR material path - create bind group with all PBR textures
+                    let pbr_uniform = material.build_pbr_uniform();
+                    let buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("PBR Uniform Buffer"),
+                        contents: bytes_of(&pbr_uniform),
+                        usage: wgpu::BufferUsages::UNIFORM,
+                    });
+
+                    // Get base color texture or use default white
+                    let (base_color_view, base_color_sampler) =
+                        if let Some(tex_id) = material.base_color_texture {
+                            let tex = scene.textures.get(&tex_id).ok_or_else(|| {
+                                anyhow::anyhow!("Base color texture {} not found", tex_id)
+                            })?;
+                            let gpu = tex.gpu();
+                            (&gpu.view, &gpu.sampler)
+                        } else {
+                            (&self.default_white_texture.view, &self.default_white_texture.sampler)
+                        };
+
+                    // Get normal texture or use default neutral normal
+                    let (normal_view, normal_sampler) =
+                        if let Some(tex_id) = material.normal_texture {
+                            let tex = scene.textures.get(&tex_id).ok_or_else(|| {
+                                anyhow::anyhow!("Normal texture {} not found", tex_id)
+                            })?;
+                            let gpu = tex.gpu();
+                            (&gpu.view, &gpu.sampler)
+                        } else {
+                            (&self.default_normal_texture.view, &self.default_normal_texture.sampler)
+                        };
+
+                    // Get metallic-roughness texture or use default white
+                    let (mr_view, mr_sampler) =
+                        if let Some(tex_id) = material.metallic_roughness_texture {
+                            let tex = scene.textures.get(&tex_id).ok_or_else(|| {
+                                anyhow::anyhow!("Metallic-roughness texture {} not found", tex_id)
+                            })?;
+                            let gpu = tex.gpu();
+                            (&gpu.view, &gpu.sampler)
+                        } else {
+                            (&self.default_white_texture.view, &self.default_white_texture.sampler)
+                        };
+
+                    let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("PBR Material Bind Group"),
+                        layout: &self.pbr_bind_group_layout,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: buffer.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::TextureView(base_color_view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 2,
+                                resource: wgpu::BindingResource::Sampler(base_color_sampler),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 3,
+                                resource: wgpu::BindingResource::TextureView(normal_view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 4,
+                                resource: wgpu::BindingResource::Sampler(normal_sampler),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 5,
+                                resource: wgpu::BindingResource::TextureView(mr_view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 6,
+                                resource: wgpu::BindingResource::Sampler(mr_sampler),
+                            },
+                        ],
+                    });
+
+                    let material = scene.materials.get_mut(&material_id).unwrap();
+                    material.set_gpu(
+                        primitive_type,
+                        MaterialGpuResources {
+                            bind_group,
+                            _buffer: Some(buffer),
+                        },
+                    );
+                    material.mark_clean(primitive_type);
+                } else if let Some(texture_id) = material.base_color_texture {
+                    // Legacy texture-based face rendering (base color texture only)
                     let texture = scene.textures.get(&texture_id).ok_or_else(|| {
                         anyhow::anyhow!("Texture {} not found for material {}", texture_id, material_id)
                     })?;
@@ -434,7 +616,7 @@ impl<'a> DrawState<'a> {
                     );
                     material.mark_clean(primitive_type);
                 } else {
-                    // Color-based face rendering (using base_color_factor)
+                    // Legacy color-based face rendering (using base_color_factor)
                     let color = material.base_color_factor;
                     let buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                         label: Some("Material Base Color Factor Buffer"),
@@ -530,7 +712,11 @@ impl<'a> DrawState<'a> {
     ) -> &wgpu::RenderPipeline {
         let cache_key = (properties.clone(), primitive_type);
         self.pipeline_cache.entry(cache_key).or_insert_with(|| {
-            let pipeline_layout = if properties.has_base_color_texture {
+            // Select pipeline layout based on material type
+            let use_pbr = properties.has_normal_map || properties.has_metallic_roughness_texture;
+            let pipeline_layout = if use_pbr {
+                &self.pbr_material_pipeline_layout
+            } else if properties.has_base_color_texture {
                 &self.texture_material_pipeline_layout
             } else {
                 &self.color_material_pipeline_layout

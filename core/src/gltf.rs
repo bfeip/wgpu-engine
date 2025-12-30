@@ -148,9 +148,42 @@ fn get_material_for_primitive(
     }
 }
 
+/// Loads an image from glTF image data and adds it as a texture to the scene.
+fn load_gltf_texture(
+    gltf_image: &gltf::image::Data,
+    scene: &mut Scene,
+) -> anyhow::Result<crate::scene::TextureId> {
+    let dynamic_image = match gltf_image.format {
+        gltf::image::Format::R8G8B8A8 => {
+            image::DynamicImage::ImageRgba8(
+                image::RgbaImage::from_raw(
+                    gltf_image.width,
+                    gltf_image.height,
+                    gltf_image.pixels.clone()
+                ).ok_or_else(|| anyhow::anyhow!("Failed to create image from glTF data"))?
+            )
+        }
+        gltf::image::Format::R8G8B8 => {
+            image::DynamicImage::ImageRgb8(
+                image::RgbImage::from_raw(
+                    gltf_image.width,
+                    gltf_image.height,
+                    gltf_image.pixels.clone()
+                ).ok_or_else(|| anyhow::anyhow!("Failed to create image from glTF data"))?
+            )
+        }
+        _ => {
+            return Err(anyhow::anyhow!("Unsupported glTF image format: {:?}", gltf_image.format));
+        }
+    };
+
+    let texture = Texture::from_image(dynamic_image);
+    Ok(scene.add_texture(texture))
+}
+
 /// Loads a material from a glTF material definition.
 ///
-/// Converts glTF PBR materials to either color or textured materials.
+/// Extracts full PBR data including base color, metallic-roughness, and normal maps.
 /// Returns the MaterialId of the created material.
 fn load_material(
     gltf_material: &gltf::Material,
@@ -159,59 +192,49 @@ fn load_material(
 ) -> anyhow::Result<MaterialId> {
     let pbr = gltf_material.pbr_metallic_roughness();
 
-    // Check if material has a base color texture
-    if let Some(gltf_texture_info) = pbr.base_color_texture() {
-        let gltf_texture = gltf_texture_info.texture();
-        let image_index = gltf_texture.source().index();
-        let gltf_image = &images[image_index];
+    // Start with a new material
+    let mut material = Material::new();
 
-        let dynamic_image = match gltf_image.format {
-            gltf::image::Format::R8G8B8A8 => {
-                image::DynamicImage::ImageRgba8(
-                    image::RgbaImage::from_raw(
-                        gltf_image.width,
-                        gltf_image.height,
-                        gltf_image.pixels.clone()
-                    ).ok_or_else(|| anyhow::anyhow!("Failed to create image from glTF data"))?
-                )
-            }
-            gltf::image::Format::R8G8B8 => {
-                image::DynamicImage::ImageRgb8(
-                    image::RgbImage::from_raw(
-                        gltf_image.width,
-                        gltf_image.height,
-                        gltf_image.pixels.clone()
-                    ).ok_or_else(|| anyhow::anyhow!("Failed to create image from glTF data"))?
-                )
-            }
-            _ => {
-                return Err(anyhow::anyhow!("Unsupported glTF image format"));
-            }
-        };
+    // Base color factor (always present, defaults to white in glTF)
+    let base_color = pbr.base_color_factor();
+    material = material.with_base_color_factor(crate::common::RgbaColor {
+        r: base_color[0],
+        g: base_color[1],
+        b: base_color[2],
+        a: base_color[3],
+    });
 
-        // Create texture from image data
-        let texture = Texture::from_image(dynamic_image);
-        let texture_id = scene.add_texture(texture);
-
-        // Create material with base color texture
-        let material = Material::new().with_base_color_texture(texture_id);
-        let mat_id = scene.add_material(material);
-        Ok(mat_id)
-    } else {
-        // No texture, use base color factor
-        let base_color = pbr.base_color_factor();
-        let color = crate::common::RgbaColor {
-            r: base_color[0],
-            g: base_color[1],
-            b: base_color[2],
-            a: base_color[3],
-        };
-
-        // Create material with base color factor
-        let material = Material::new().with_base_color_factor(color);
-        let mat_id = scene.add_material(material);
-        Ok(mat_id)
+    // Base color texture (optional)
+    if let Some(tex_info) = pbr.base_color_texture() {
+        let image_index = tex_info.texture().source().index();
+        let texture_id = load_gltf_texture(&images[image_index], scene)?;
+        material = material.with_base_color_texture(texture_id);
     }
+
+    // Metallic and roughness factors
+    material = material
+        .with_metallic_factor(pbr.metallic_factor())
+        .with_roughness_factor(pbr.roughness_factor());
+
+    // Metallic-roughness texture (optional)
+    // glTF packs roughness in G channel and metallic in B channel
+    if let Some(tex_info) = pbr.metallic_roughness_texture() {
+        let image_index = tex_info.texture().source().index();
+        let texture_id = load_gltf_texture(&images[image_index], scene)?;
+        material = material.with_metallic_roughness_texture(texture_id);
+    }
+
+    // Normal map (from material, not from PBR extension)
+    if let Some(normal_tex) = gltf_material.normal_texture() {
+        let image_index = normal_tex.texture().source().index();
+        let texture_id = load_gltf_texture(&images[image_index], scene)?;
+        material = material
+            .with_normal_texture(texture_id)
+            .with_normal_scale(normal_tex.scale());
+    }
+
+    let mat_id = scene.add_material(material);
+    Ok(mat_id)
 }
 
 /// Converts a glTF transform to a 4x4 matrix.
