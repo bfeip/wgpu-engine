@@ -7,9 +7,7 @@ use crate::camera::Camera;
 use crate::event::{CallbackId, Event, EventDispatcher, EventKind};
 use crate::input::{ElementState, Key, MouseButton};
 use crate::operator::{Operator, OperatorId};
-
-/// Movement speed in units per second when a movement key is held.
-const MOVE_SPEED: f32 = 1.0;
+use crate::scene_scale;
 
 /// Mouse look sensitivity in radians per pixel of mouse movement.
 const LOOK_SENSITIVITY: f32 = 0.003;
@@ -94,7 +92,7 @@ impl WalkState {
     /// Apply movement based on currently pressed keys.
     /// Uses delta_time for frame-rate independent movement.
     /// Returns true if any movement was applied.
-    fn apply_movement(&self, camera: &mut Camera, delta_time: f32) -> bool {
+    fn apply_movement(&self, camera: &mut Camera, delta_time: f32, model_radius: f32) -> bool {
         let mut movement = Vector3::new(0.0, 0.0, 0.0);
 
         // Get horizontal forward direction (project onto XZ plane for ground-based movement)
@@ -125,9 +123,10 @@ impl WalkState {
             movement -= right;
         }
 
-        // Normalize and apply speed if there's any movement
+        // Normalize and apply speed scaled to model size
         if movement.magnitude2() > 0.0 {
-            movement = movement.normalize() * MOVE_SPEED * delta_time;
+            let walk_speed = scene_scale::walk_speed(model_radius);
+            movement = movement.normalize() * walk_speed * delta_time;
             camera.eye += movement;
             camera.target += movement;
             return true;
@@ -246,13 +245,14 @@ impl Operator for WalkOperator {
         let update_callback = dispatcher.register(EventKind::Update, move |event, ctx| {
             if let Event::Update { delta_time } = event {
                 if *delta_time > 1.0 {
-                    // Do not apply movement is there's more than a second
+                    // Do not apply movement if there's more than a second
                     // between updates.
                     return false;
                 }
                 let s = operator_state.borrow();
                 if s.is_moving() {
-                    s.apply_movement(&mut ctx.state.camera, *delta_time);
+                    let model_radius = scene_scale::model_radius_from_bounds(ctx.scene.bounding().as_ref());
+                    s.apply_movement(&mut ctx.state.camera, *delta_time, model_radius);
                     return true;
                 }
             }

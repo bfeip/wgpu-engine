@@ -173,6 +173,18 @@ impl Aabb {
         )
     }
 
+    /// Returns the diagonal length of the AABB (distance from min to max corner).
+    pub fn diagonal(&self) -> f32 {
+        let (sx, sy, sz) = self.size();
+        (sx * sx + sy * sy + sz * sz).sqrt()
+    }
+
+    /// Returns the bounding sphere radius (half the diagonal).
+    /// This represents the smallest sphere centered at the AABB center that contains the box.
+    pub fn bounding_sphere_radius(&self) -> f32 {
+        self.diagonal() / 2.0
+    }
+
     /// Tests if a point is inside the AABB (inclusive of boundaries).
     pub fn contains_point(&self, point: Point3<f32>) -> bool {
         point.x >= self.min.x && point.x <= self.max.x &&

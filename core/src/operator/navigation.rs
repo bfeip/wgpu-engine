@@ -6,6 +6,7 @@ use cgmath::MetricSpace;
 use crate::camera::Camera;
 use crate::event::{CallbackId, Event, EventDispatcher, EventKind};
 use crate::operator::{Operator, OperatorId};
+use crate::scene_scale;
 
 /// Internal state for the navigation operator.
 struct NavState {
@@ -16,11 +17,6 @@ struct NavState {
     /// Base distance from camera to target.
     radius: f32,
 }
-
-// TODO: in the future these should be proportional to the model bounds
-// Camera distance bounds for zoom
-const MIN_RADIUS: f32 = 0.01; // Minimum camera distance
-const MAX_RADIUS: f32 = 50.0; // Maximum camera distance
 
 impl NavState {
     fn new() -> Self {
@@ -71,15 +67,23 @@ impl NavState {
     }
 
     /// Handle zoom via mouse wheel by adjusting camera distance.
+    /// Uses exponential zoom for consistent feel at all distances.
     /// Positive delta = zoom in (decrease radius)
     /// Negative delta = zoom out (increase radius)
-    fn handle_zoom(&mut self, delta: f32, camera: &mut Camera) {
-        // TODO: in the future zoom amount should be proportional to model radius.
-        const ZOOM_SENSITIVITY: f32 = 0.01; // Distance units per wheel unit
+    fn handle_zoom(&mut self, delta: f32, camera: &mut Camera, model_radius: f32) {
+        // Exponential zoom: each scroll step moves a fraction of current distance
+        let zoom_factor = scene_scale::zoom_factor();
+        let factor = if delta > 0.0 {
+            1.0 - zoom_factor // zoom in
+        } else {
+            1.0 + zoom_factor // zoom out
+        };
 
-        // Adjust zoom offset and clamp (positive delta decreases radius = zoom in)
-        self.radius -= delta * ZOOM_SENSITIVITY;
-        self.radius = self.radius.clamp(MIN_RADIUS, MAX_RADIUS);
+        self.radius *= factor.powf(delta.abs());
+        self.radius = self.radius.clamp(
+            scene_scale::min_camera_radius(model_radius),
+            scene_scale::max_camera_radius(model_radius),
+        );
 
         // Update camera position with new radius
         self.update_camera_position(camera);
@@ -107,18 +111,16 @@ impl NavState {
 
     /// Handle panning based on mouse movement.
     /// Moves both camera eye and target perpendicular to the view direction.
-    fn handle_pan(&self, dx: f64, dy: f64, camera: &mut Camera) {
-        const PAN_SENSITIVITY: f32 = 1.0;
-
-        let dx = dx as f32 * PAN_SENSITIVITY;
-        let dy = dy as f32 * PAN_SENSITIVITY;
+    fn handle_pan(&self, dx: f64, dy: f64, camera: &mut Camera, model_radius: f32) {
+        let dx = dx as f32;
+        let dy = dy as f32;
 
         // Get camera right and up vectors
         let right = camera.right();
         let up_view = camera.up;
 
-        // Scale pan speed by distance from target
-        let pan_scale = camera.length() * 0.001;
+        // Scale pan speed by model size for consistent feel
+        let pan_scale = scene_scale::pan_sensitivity(model_radius);
 
         // Move both eye and target perpendicular to view direction
         let offset = right * (-dx * pan_scale) + up_view * (dy * pan_scale);
@@ -178,6 +180,7 @@ impl Operator for NavigationOperator {
                 use crate::input::MouseButton;
 
                 let mut s = operator_state.borrow_mut();
+                let model_radius = scene_scale::model_radius_from_bounds(ctx.scene.bounding().as_ref());
 
                 match button {
                     MouseButton::Left => {
@@ -187,7 +190,7 @@ impl Operator for NavigationOperator {
                     }
                     MouseButton::Right => {
                         // Pan camera
-                        s.handle_pan(delta.0 as f64, delta.1 as f64, &mut ctx.state.camera);
+                        s.handle_pan(delta.0 as f64, delta.1 as f64, &mut ctx.state.camera, model_radius);
                         true
                     }
                     _ => false,
@@ -204,6 +207,7 @@ impl Operator for NavigationOperator {
                 use crate::input::MouseScrollDelta;
 
                 let mut s = operator_state.borrow_mut();
+                let model_radius = scene_scale::model_radius_from_bounds(ctx.scene.bounding().as_ref());
 
                 // Extract the scroll amount (positive = zoom in, negative = zoom out)
                 let scroll_amount = match delta {
@@ -212,7 +216,7 @@ impl Operator for NavigationOperator {
                 };
 
                 s.init_from_camera(&ctx.state.camera);
-                s.handle_zoom(scroll_amount, &mut ctx.state.camera);
+                s.handle_zoom(scroll_amount, &mut ctx.state.camera, model_radius);
 
                 true
             } else {

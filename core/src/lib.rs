@@ -9,6 +9,7 @@ mod shaders;
 mod gltf;
 pub mod event;
 pub mod operator;
+mod scene_scale;
 mod viewer;
 
 // Winit support - only available when winit is a dependency
