@@ -48,6 +48,7 @@ enum InitState {
 /// Debug actions triggered by key presses
 enum DebugAction {
     ToggleOrtho,
+    FitCameraToScene,
     #[cfg(not(target_arch = "wasm32"))]
     Exit,
 }
@@ -375,6 +376,7 @@ impl App {
     fn handle_debug_key_action(&mut self, action: DebugAction, event_loop: &ActiveEventLoop) {
         match action {
             DebugAction::ToggleOrtho => self.toggle_ortho(),
+            DebugAction::FitCameraToScene => self.fit_camera_to_scene(),
             #[cfg(not(target_arch = "wasm32"))]
             DebugAction::Exit => event_loop.exit(),
         }
@@ -393,6 +395,7 @@ impl App {
 
         match &key_event.logical_key {
             Key::Character('o') => Some(DebugAction::ToggleOrtho),
+            Key::Character('f') => Some(DebugAction::FitCameraToScene),
             #[cfg(not(target_arch = "wasm32"))]
             Key::Named(NamedKey::Escape) => Some(DebugAction::Exit),
             _ => None,
@@ -406,6 +409,17 @@ impl App {
         };
         let camera = viewer_app.viewer_mut().camera_mut();
         camera.ortho = !camera.ortho;
+    }
+
+    /// Fit the camera to show the entire scene
+    fn fit_camera_to_scene(&mut self) {
+        let InitState::Ready(ref mut viewer_app) = self.state else {
+            return;
+        };
+        let viewer = viewer_app.viewer_mut();
+        if let Some(bounds) = viewer.scene().bounding() {
+            viewer.camera_mut().fit_to_bounds(&bounds);
+        }
     }
 }
 
