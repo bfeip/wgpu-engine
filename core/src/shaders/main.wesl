@@ -4,10 +4,17 @@
 
 import package::common::{VertexInput, InstanceInput, VertexOutput};
 import package::vertex::vertex_standard;
-import package::fragment_color_lit::fragment_color_lit;
-import package::fragment_color_unlit::fragment_color_unlit;
-import package::fragment_texture_lit::fragment_texture_lit;
-import package::fragment_pbr_lit::fragment_pbr_lit;
+
+// Conditionally import fragment shaders to avoid binding conflicts
+// PBR and texture paths use different bind group layouts at group 2
+@if(use_pbr && has_lighting)
+    import package::fragment_pbr_lit::fragment_pbr_lit;
+@if(has_texture && has_lighting && !use_pbr)
+    import package::fragment_texture_lit::fragment_texture_lit;
+@if(!has_texture && has_lighting)
+    import package::fragment_color_lit::fragment_color_lit;
+@if(!has_texture && !has_lighting)
+    import package::fragment_color_unlit::fragment_color_unlit;
 
 // Vertex shader entry point
 @vertex
