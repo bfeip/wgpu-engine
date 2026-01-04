@@ -440,6 +440,10 @@ impl<'a> DrawState<'a> {
     ///
     /// This method ensures all textures, materials, and meshes have their GPU resources
     /// created or updated as needed. It should be called before `render_scene_to_view()`.
+    //
+    // TODO: This iterates more or less everything in the scene. For performance in the future,
+    // we should keep track of the need for these updates in the scene. I.e. mark things as
+    // dirty if they need to be reified.
     pub fn prepare_scene(&mut self, scene: &mut Scene) -> Result<()> {
         // 1. Prepare all textures first (materials depend on them)
         for texture in scene.textures.values_mut() {
@@ -480,6 +484,55 @@ impl<'a> DrawState<'a> {
         Ok(())
     }
 
+    /// Resolve a texture from the scene, falling back to a default texture if not found.
+    fn resolve_texture_or_default<'b>(
+        &'b self,
+        scene: &'b Scene,
+        texture_id: Option<u32>,
+        default: &'b GpuTexture,
+        name: &str,
+    ) -> Result<(&'b wgpu::TextureView, &'b wgpu::Sampler)> {
+        if let Some(tex_id) = texture_id {
+            let tex = scene
+                .textures
+                .get(&tex_id)
+                .ok_or_else(|| anyhow::anyhow!("{} texture {} not found", name, tex_id))?;
+            let gpu = tex.gpu();
+            Ok((&gpu.view, &gpu.sampler))
+        } else {
+            Ok((&default.view, &default.sampler))
+        }
+    }
+
+    /// Create GPU resources for a color-based material (uniform buffer + bind group).
+    fn create_color_material_resources(
+        &self,
+        color: &crate::common::RgbaColor,
+        label: &str,
+    ) -> MaterialGpuResources {
+        let buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(label),
+                contents: bytes_of(color),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(label),
+            layout: &self.color_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffer.as_entire_binding(),
+            }],
+        });
+
+        MaterialGpuResources {
+            bind_group,
+            _buffer: Some(buffer),
+        }
+    }
+
     /// Prepare GPU resources for a specific material primitive type.
     fn prepare_material_primitive(
         &self,
@@ -487,221 +540,185 @@ impl<'a> DrawState<'a> {
         material_id: u32,
         primitive_type: PrimitiveType,
     ) -> Result<()> {
+        match primitive_type {
+            PrimitiveType::TriangleList => self.prepare_triangle_material(scene, material_id),
+            PrimitiveType::LineList => self.prepare_line_material(scene, material_id),
+            PrimitiveType::PointList => self.prepare_point_material(scene, material_id),
+        }
+    }
+
+    /// Prepare GPU resources for triangle (face) rendering.
+    fn prepare_triangle_material(&self, scene: &mut Scene, material_id: u32) -> Result<()> {
+        let material = scene.materials.get(&material_id).unwrap();
+        let use_pbr =
+            material.normal_texture.is_some() || material.metallic_roughness_texture.is_some();
+
+        if use_pbr {
+            self.prepare_pbr_material(scene, material_id)
+        } else if material.base_color_texture.is_some() {
+            self.prepare_textured_material(scene, material_id)
+        } else {
+            self.prepare_colored_material(scene, material_id)
+        }
+    }
+
+    /// Prepare GPU resources for PBR material (normal/metallic-roughness textures).
+    fn prepare_pbr_material(&self, scene: &mut Scene, material_id: u32) -> Result<()> {
         let material = scene.materials.get(&material_id).unwrap();
 
-        // Check if this material needs PBR path
-        let use_pbr = material.normal_texture.is_some()
-            || material.metallic_roughness_texture.is_some();
+        let pbr_uniform = material.build_pbr_uniform();
+        let buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("PBR Uniform Buffer"),
+                contents: bytes_of(&pbr_uniform),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
 
-        match primitive_type {
-            PrimitiveType::TriangleList => {
-                if use_pbr {
-                    // PBR material path - create bind group with all PBR textures
-                    let pbr_uniform = material.build_pbr_uniform();
-                    let buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("PBR Uniform Buffer"),
-                        contents: bytes_of(&pbr_uniform),
-                        usage: wgpu::BufferUsages::UNIFORM,
-                    });
+        let (base_color_view, base_color_sampler) = self.resolve_texture_or_default(
+            scene,
+            material.base_color_texture,
+            &self.default_white_texture,
+            "Base color",
+        )?;
+        let (normal_view, normal_sampler) = self.resolve_texture_or_default(
+            scene,
+            material.normal_texture,
+            &self.default_normal_texture,
+            "Normal",
+        )?;
+        let (mr_view, mr_sampler) = self.resolve_texture_or_default(
+            scene,
+            material.metallic_roughness_texture,
+            &self.default_white_texture,
+            "Metallic-roughness",
+        )?;
 
-                    // Get base color texture or use default white
-                    let (base_color_view, base_color_sampler) =
-                        if let Some(tex_id) = material.base_color_texture {
-                            let tex = scene.textures.get(&tex_id).ok_or_else(|| {
-                                anyhow::anyhow!("Base color texture {} not found", tex_id)
-                            })?;
-                            let gpu = tex.gpu();
-                            (&gpu.view, &gpu.sampler)
-                        } else {
-                            (&self.default_white_texture.view, &self.default_white_texture.sampler)
-                        };
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("PBR Material Bind Group"),
+            layout: &self.pbr_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(base_color_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(base_color_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(normal_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::Sampler(normal_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::TextureView(mr_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::Sampler(mr_sampler),
+                },
+            ],
+        });
 
-                    // Get normal texture or use default neutral normal
-                    let (normal_view, normal_sampler) =
-                        if let Some(tex_id) = material.normal_texture {
-                            let tex = scene.textures.get(&tex_id).ok_or_else(|| {
-                                anyhow::anyhow!("Normal texture {} not found", tex_id)
-                            })?;
-                            let gpu = tex.gpu();
-                            (&gpu.view, &gpu.sampler)
-                        } else {
-                            (&self.default_normal_texture.view, &self.default_normal_texture.sampler)
-                        };
+        let material = scene.materials.get_mut(&material_id).unwrap();
+        material.set_gpu(
+            PrimitiveType::TriangleList,
+            MaterialGpuResources {
+                bind_group,
+                _buffer: Some(buffer),
+            },
+        );
+        material.mark_clean(PrimitiveType::TriangleList);
+        Ok(())
+    }
 
-                    // Get metallic-roughness texture or use default white
-                    let (mr_view, mr_sampler) =
-                        if let Some(tex_id) = material.metallic_roughness_texture {
-                            let tex = scene.textures.get(&tex_id).ok_or_else(|| {
-                                anyhow::anyhow!("Metallic-roughness texture {} not found", tex_id)
-                            })?;
-                            let gpu = tex.gpu();
-                            (&gpu.view, &gpu.sampler)
-                        } else {
-                            (&self.default_white_texture.view, &self.default_white_texture.sampler)
-                        };
+    /// Prepare GPU resources for texture-only material (base color texture, no PBR).
+    fn prepare_textured_material(&self, scene: &mut Scene, material_id: u32) -> Result<()> {
+        let material = scene.materials.get(&material_id).unwrap();
+        let texture_id = material.base_color_texture.unwrap();
 
-                    let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("PBR Material Bind Group"),
-                        layout: &self.pbr_bind_group_layout,
-                        entries: &[
-                            wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: buffer.as_entire_binding(),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 1,
-                                resource: wgpu::BindingResource::TextureView(base_color_view),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 2,
-                                resource: wgpu::BindingResource::Sampler(base_color_sampler),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 3,
-                                resource: wgpu::BindingResource::TextureView(normal_view),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 4,
-                                resource: wgpu::BindingResource::Sampler(normal_sampler),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 5,
-                                resource: wgpu::BindingResource::TextureView(mr_view),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 6,
-                                resource: wgpu::BindingResource::Sampler(mr_sampler),
-                            },
-                        ],
-                    });
+        let texture = scene.textures.get(&texture_id).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Texture {} not found for material {}",
+                texture_id,
+                material_id
+            )
+        })?;
+        let gpu_tex = texture.gpu();
 
-                    let material = scene.materials.get_mut(&material_id).unwrap();
-                    material.set_gpu(
-                        primitive_type,
-                        MaterialGpuResources {
-                            bind_group,
-                            _buffer: Some(buffer),
-                        },
-                    );
-                    material.mark_clean(primitive_type);
-                } else if let Some(texture_id) = material.base_color_texture {
-                    // Legacy texture-based face rendering (base color texture only)
-                    let texture = scene.textures.get(&texture_id).ok_or_else(|| {
-                        anyhow::anyhow!("Texture {} not found for material {}", texture_id, material_id)
-                    })?;
-                    let gpu_tex = texture.gpu();
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Material Base Color Texture Bind Group"),
+            layout: &self.texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&gpu_tex.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&gpu_tex.sampler),
+                },
+            ],
+        });
 
-                    let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("Material Base Color Texture Bind Group"),
-                        layout: &self.texture_bind_group_layout,
-                        entries: &[
-                            wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: wgpu::BindingResource::TextureView(&gpu_tex.view),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 1,
-                                resource: wgpu::BindingResource::Sampler(&gpu_tex.sampler),
-                            },
-                        ],
-                    });
+        let material = scene.materials.get_mut(&material_id).unwrap();
+        material.set_gpu(
+            PrimitiveType::TriangleList,
+            MaterialGpuResources {
+                bind_group,
+                _buffer: None,
+            },
+        );
+        material.mark_clean(PrimitiveType::TriangleList);
+        Ok(())
+    }
 
-                    let material = scene.materials.get_mut(&material_id).unwrap();
-                    material.set_gpu(
-                        primitive_type,
-                        MaterialGpuResources {
-                            bind_group,
-                            _buffer: None,
-                        },
-                    );
-                    material.mark_clean(primitive_type);
-                } else {
-                    // Legacy color-based face rendering (using base_color_factor)
-                    let color = material.base_color_factor;
-                    let buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("Material Base Color Factor Buffer"),
-                        contents: bytes_of(&color),
-                        usage: wgpu::BufferUsages::UNIFORM,
-                    });
+    /// Prepare GPU resources for color-only material (base_color_factor, no textures).
+    fn prepare_colored_material(&self, scene: &mut Scene, material_id: u32) -> Result<()> {
+        let material = scene.materials.get(&material_id).unwrap();
+        let gpu_resources =
+            self.create_color_material_resources(&material.base_color_factor, "Base Color Factor");
 
-                    let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("Material Base Color Factor Bind Group"),
-                        layout: &self.color_bind_group_layout,
-                        entries: &[wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: buffer.as_entire_binding(),
-                        }],
-                    });
+        let material = scene.materials.get_mut(&material_id).unwrap();
+        material.set_gpu(PrimitiveType::TriangleList, gpu_resources);
+        material.mark_clean(PrimitiveType::TriangleList);
+        Ok(())
+    }
 
-                    let material = scene.materials.get_mut(&material_id).unwrap();
-                    material.set_gpu(
-                        primitive_type,
-                        MaterialGpuResources {
-                            bind_group,
-                            _buffer: Some(buffer),
-                        },
-                    );
-                    material.mark_clean(primitive_type);
-                }
-            }
-            PrimitiveType::LineList => {
-                if let Some(color) = material.line_color {
-                    let buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("Material Line Color Buffer"),
-                        contents: bytes_of(&color),
-                        usage: wgpu::BufferUsages::UNIFORM,
-                    });
+    /// Prepare GPU resources for line rendering.
+    fn prepare_line_material(&self, scene: &mut Scene, material_id: u32) -> Result<()> {
+        let material = scene.materials.get(&material_id).unwrap();
 
-                    let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("Material Line Color Bind Group"),
-                        layout: &self.color_bind_group_layout,
-                        entries: &[wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: buffer.as_entire_binding(),
-                        }],
-                    });
+        if let Some(color) = material.line_color {
+            let gpu_resources = self.create_color_material_resources(&color, "Line Color");
 
-                    let material = scene.materials.get_mut(&material_id).unwrap();
-                    material.set_gpu(
-                        primitive_type,
-                        MaterialGpuResources {
-                            bind_group,
-                            _buffer: Some(buffer),
-                        },
-                    );
-                    material.mark_clean(primitive_type);
-                }
-            }
-            PrimitiveType::PointList => {
-                if let Some(color) = material.point_color {
-                    let buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("Material Point Color Buffer"),
-                        contents: bytes_of(&color),
-                        usage: wgpu::BufferUsages::UNIFORM,
-                    });
-
-                    let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("Material Point Color Bind Group"),
-                        layout: &self.color_bind_group_layout,
-                        entries: &[wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: buffer.as_entire_binding(),
-                        }],
-                    });
-
-                    let material = scene.materials.get_mut(&material_id).unwrap();
-                    material.set_gpu(
-                        primitive_type,
-                        MaterialGpuResources {
-                            bind_group,
-                            _buffer: Some(buffer),
-                        },
-                    );
-                    material.mark_clean(primitive_type);
-                }
-            }
+            let material = scene.materials.get_mut(&material_id).unwrap();
+            material.set_gpu(PrimitiveType::LineList, gpu_resources);
+            material.mark_clean(PrimitiveType::LineList);
         }
+        Ok(())
+    }
 
+    /// Prepare GPU resources for point rendering.
+    fn prepare_point_material(&self, scene: &mut Scene, material_id: u32) -> Result<()> {
+        let material = scene.materials.get(&material_id).unwrap();
+
+        if let Some(color) = material.point_color {
+            let gpu_resources = self.create_color_material_resources(&color, "Point Color");
+
+            let material = scene.materials.get_mut(&material_id).unwrap();
+            material.set_gpu(PrimitiveType::PointList, gpu_resources);
+            material.mark_clean(PrimitiveType::PointList);
+        }
         Ok(())
     }
 
