@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use web_time::Instant;
 
 use crate::annotation::AnnotationManager;
-use crate::drawstate::DrawState;
+use crate::drawstate::Renderer;
 use crate::scene::Scene;
 use crate::input::{ElementState, MouseButton, MouseScrollDelta, KeyEvent};
 
@@ -22,7 +22,7 @@ const CLICK_TIME_THRESHOLD_MS: u64 = 300;
 /// - `'c`: The callback lifetime - represents the duration of a single event callback invocation
 pub struct EventContext<'w, 'c> {
     /// Mutable reference to the rendering state
-    pub(crate) state: &'c mut DrawState<'w>,
+    pub(crate) state: &'c mut Renderer<'w>,
     /// Mutable reference to the scene
     pub scene: &'c mut Scene,
     /// Mutable reference to the annotation manager
@@ -483,7 +483,7 @@ mod tests {
     unsafe fn create_mock_context<'w, 'c>() -> EventContext<'w, 'c> {
         let dangling = std::ptr::NonNull::dangling();
         EventContext {
-            state: unsafe { &mut *(dangling.as_ptr() as *mut DrawState) },
+            state: unsafe { &mut *(dangling.as_ptr() as *mut Renderer) },
             scene: unsafe { &mut *(dangling.as_ptr() as *mut Scene) },
             annotation_manager: unsafe { &mut *(dangling.as_ptr() as *mut AnnotationManager) },
         }

@@ -2,7 +2,7 @@ use web_time::Instant;
 
 use crate::{
     annotation::AnnotationManager,
-    drawstate::DrawState,
+    drawstate::Renderer,
     event::{Event, EventContext, EventDispatcher, EventKind},
     operator::{BuiltinOperatorId, NavigationOperator, OperatorManager, SelectionOperator, WalkOperator},
     scene::Scene,
@@ -10,7 +10,7 @@ use crate::{
 
 /// Main viewer that encapsulates the rendering state, scene, and event handling
 pub struct Viewer<'a> {
-    state: DrawState<'a>,
+    state: Renderer<'a>,
     scene: Scene,
     dispatcher: EventDispatcher,
     operator_manager: OperatorManager,
@@ -25,7 +25,7 @@ impl<'a> Viewer<'a> {
     where
         T: Into<wgpu::SurfaceTarget<'a>>,
     {
-        let state = DrawState::new(surface_target, width, height).await;
+        let state = Renderer::new(surface_target, width, height).await;
         let mut scene = Scene::new();
 
         // Set up default lighting

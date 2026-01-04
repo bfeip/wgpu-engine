@@ -58,7 +58,7 @@ pub(crate) enum VertexShaderLocations {
     InstanceNormalRow2,
 }
 
-pub(crate) struct DrawState<'a> {
+pub(crate) struct Renderer<'a> {
     pub surface: wgpu::Surface<'a>,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
@@ -94,10 +94,10 @@ pub(crate) struct DrawState<'a> {
     pipeline_cache: HashMap<(MaterialProperties, PrimitiveType), wgpu::RenderPipeline>,
 }
 
-impl<'a> DrawState<'a> {
+impl<'a> Renderer<'a> {
     // Creating some of the wgpu types requires async code
     // The target parameter can be a Window, Canvas, or any type implementing the necessary traits
-    pub async fn new<T>(target: T, width: u32, height: u32) -> DrawState<'a>
+    pub async fn new<T>(target: T, width: u32, height: u32) -> Renderer<'a>
     where
         T: Into<wgpu::SurfaceTarget<'a>>,
     {
