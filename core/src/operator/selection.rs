@@ -29,11 +29,11 @@ impl SelectionOperator {
             cursor_y,
             ctx.state.size.0,
             ctx.state.size.1,
-            &ctx.state.camera,
+            ctx.state.camera(),
         );
 
         // Calculate camera distance for miss visualization
-        let camera_distance = (ctx.state.camera.eye - ctx.state.camera.target).magnitude();
+        let camera_distance = (ctx.state.camera().eye - ctx.state.camera().target).magnitude();
 
         // Perform picking
         let results = pick_all_from_ray(&ray, ctx.scene);

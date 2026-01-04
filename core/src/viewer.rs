@@ -150,17 +150,17 @@ impl<'a> Viewer<'a> {
 
     /// Get a reference to the current camera
     pub fn camera(&self) -> &crate::camera::Camera {
-        &self.state.camera
+        self.state.camera()
     }
 
     /// Get a mutable reference to the current camera
     pub fn camera_mut(&mut self) -> &mut crate::camera::Camera {
-        &mut self.state.camera
+        self.state.camera_mut()
     }
 
     /// Set the camera to a new value
     pub fn set_camera(&mut self, camera: crate::camera::Camera) {
-        self.state.camera = camera;
+        *self.state.camera_mut() = camera;
     }
 
     /// Get the current viewport size as (width, height)
