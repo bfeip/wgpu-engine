@@ -32,7 +32,7 @@ bitflags! {
 /// plus flags indicating which textures are present.
 #[repr(C)]
 #[derive(Debug, Copy, Clone, Pod, Zeroable)]
-pub struct PbrUniform {
+pub(crate) struct PbrUniform {
     pub base_color_factor: [f32; 4],
     pub metallic_factor: f32,
     pub roughness_factor: f32,
@@ -368,7 +368,7 @@ impl Material {
     }
 
     /// Build the PBR uniform for GPU upload.
-    pub fn build_pbr_uniform(&self) -> PbrUniform {
+    pub(crate) fn build_pbr_uniform(&self) -> PbrUniform {
         let mut texture_flags = 0u32;
         if self.base_color_texture.is_some() {
             texture_flags |= PbrUniform::FLAG_HAS_BASE_COLOR_TEXTURE;
