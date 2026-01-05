@@ -67,7 +67,11 @@ impl ShaderGenerator {
     }
 
     /// Generate a shader module for the given material properties
-    pub fn generate_shader(&mut self, device: &wgpu::Device, properties: &MaterialProperties) -> anyhow::Result<wgpu::ShaderModule> {
+    pub fn generate_shader(
+        &mut self,
+        device: &wgpu::Device,
+        properties: &MaterialProperties
+    ) -> anyhow::Result<wgpu::ShaderModule> {
         // Check cache first
         if let Some(cached) = self.module_cache.get(properties) {
             return Ok(cached.clone());

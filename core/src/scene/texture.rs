@@ -28,8 +28,7 @@ pub enum TextureSource {
 ///
 /// These are created lazily when the texture is first needed for rendering.
 pub(crate) struct GpuTexture {
-    #[allow(unused)]
-    pub texture: wgpu::Texture,
+    pub _texture: wgpu::Texture,
     pub view: wgpu::TextureView,
     pub sampler: wgpu::Sampler,
 }
@@ -237,7 +236,7 @@ impl Texture {
             ..Default::default()
         });
 
-        self.gpu = Some(GpuTexture { texture, view, sampler });
+        self.gpu = Some(GpuTexture { _texture: texture, view, sampler });
         self.dirty = false;
 
         Ok(())
@@ -291,7 +290,7 @@ impl Texture {
 
     /// Create a 1x1 solid color texture for use as a default texture.
     ///
-    /// This is used for PBR materials when a specific texture is not provided.
+    /// This is used for materials when a specific texture is not provided.
     /// The texture is created immediately with GPU resources.
     ///
     /// # Arguments
@@ -349,7 +348,7 @@ impl Texture {
             ..Default::default()
         });
 
-        GpuTexture { texture, view, sampler }
+        GpuTexture { _texture: texture, view, sampler }
     }
 
     /// Create a depth texture for use as a depth buffer.
@@ -392,6 +391,6 @@ impl Texture {
             ..Default::default()
         });
 
-        GpuTexture { texture, view, sampler }
+        GpuTexture { _texture: texture, view, sampler }
     }
 }
