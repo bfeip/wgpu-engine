@@ -114,29 +114,29 @@ pub struct Material {
 
     // PBR textures (optional, for face rendering)
     /// Base color texture (albedo)
-    pub base_color_texture: Option<TextureId>,
+    base_color_texture: Option<TextureId>,
     /// Normal map texture
-    pub normal_texture: Option<TextureId>,
+    normal_texture: Option<TextureId>,
     /// Metallic-roughness texture (G=roughness, B=metallic per glTF spec)
-    pub metallic_roughness_texture: Option<TextureId>,
+    metallic_roughness_texture: Option<TextureId>,
 
     // PBR scalar factors (always present, used as multipliers or fallbacks)
     /// Base color factor (multiplied with texture if present)
-    pub base_color_factor: RgbaColor,
+    base_color_factor: RgbaColor,
     /// Metallic factor (0.0 = dielectric, 1.0 = metal)
-    pub metallic_factor: f32,
+    metallic_factor: f32,
     /// Roughness factor (0.0 = smooth, 1.0 = rough)
-    pub roughness_factor: f32,
+    roughness_factor: f32,
     /// Normal map scale
-    pub normal_scale: f32,
+    normal_scale: f32,
 
     // Line rendering data (no lighting, no PBR)
     /// Line color
-    pub line_color: Option<RgbaColor>,
+    line_color: Option<RgbaColor>,
 
     // Point rendering data (no lighting, no PBR)
     /// Point color
-    pub point_color: Option<RgbaColor>,
+    point_color: Option<RgbaColor>,
 
     // GPU resources per primitive type (created lazily)
     pub(crate) face_gpu: Option<MaterialGpuResources>,
@@ -172,6 +172,53 @@ impl Material {
             line_dirty: true,
             point_dirty: true,
         }
+    }
+
+    // ========== Getter methods ==========
+
+    /// Get the base color texture ID.
+    pub fn base_color_texture(&self) -> Option<TextureId> {
+        self.base_color_texture
+    }
+
+    /// Get the normal map texture ID.
+    pub fn normal_texture(&self) -> Option<TextureId> {
+        self.normal_texture
+    }
+
+    /// Get the metallic-roughness texture ID.
+    pub fn metallic_roughness_texture(&self) -> Option<TextureId> {
+        self.metallic_roughness_texture
+    }
+
+    /// Get the base color factor.
+    pub fn base_color_factor(&self) -> RgbaColor {
+        self.base_color_factor
+    }
+
+    /// Get the metallic factor.
+    pub fn metallic_factor(&self) -> f32 {
+        self.metallic_factor
+    }
+
+    /// Get the roughness factor.
+    pub fn roughness_factor(&self) -> f32 {
+        self.roughness_factor
+    }
+
+    /// Get the normal map scale.
+    pub fn normal_scale(&self) -> f32 {
+        self.normal_scale
+    }
+
+    /// Get the line color.
+    pub fn line_color(&self) -> Option<RgbaColor> {
+        self.line_color
+    }
+
+    /// Get the point color.
+    pub fn point_color(&self) -> Option<RgbaColor> {
+        self.point_color
     }
 
     // ========== Builder methods (chainable) ==========
@@ -250,6 +297,36 @@ impl Material {
     /// Set the base color factor, marking the material as dirty.
     pub fn set_base_color_factor(&mut self, color: RgbaColor) {
         self.base_color_factor = color;
+        self.face_dirty = true;
+    }
+
+    /// Set the normal map texture, marking the material as dirty.
+    pub fn set_normal_texture(&mut self, texture_id: TextureId) {
+        self.normal_texture = Some(texture_id);
+        self.face_dirty = true;
+    }
+
+    /// Set the metallic-roughness texture, marking the material as dirty.
+    pub fn set_metallic_roughness_texture(&mut self, texture_id: TextureId) {
+        self.metallic_roughness_texture = Some(texture_id);
+        self.face_dirty = true;
+    }
+
+    /// Set the metallic factor, marking the material as dirty.
+    pub fn set_metallic_factor(&mut self, metallic: f32) {
+        self.metallic_factor = metallic;
+        self.face_dirty = true;
+    }
+
+    /// Set the roughness factor, marking the material as dirty.
+    pub fn set_roughness_factor(&mut self, roughness: f32) {
+        self.roughness_factor = roughness;
+        self.face_dirty = true;
+    }
+
+    /// Set the normal map scale, marking the material as dirty.
+    pub fn set_normal_scale(&mut self, scale: f32) {
+        self.normal_scale = scale;
         self.face_dirty = true;
     }
 

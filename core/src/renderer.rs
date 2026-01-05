@@ -637,11 +637,11 @@ impl<'a> Renderer<'a> {
     fn prepare_triangle_material(&self, scene: &mut Scene, material_id: u32) -> Result<()> {
         let material = scene.materials.get(&material_id).unwrap();
         let use_pbr =
-            material.normal_texture.is_some() || material.metallic_roughness_texture.is_some();
+            material.normal_texture().is_some() || material.metallic_roughness_texture().is_some();
 
         if use_pbr {
             self.prepare_pbr_material(scene, material_id)
-        } else if material.base_color_texture.is_some() {
+        } else if material.base_color_texture().is_some() {
             self.prepare_textured_material(scene, material_id)
         } else {
             self.prepare_colored_material(scene, material_id)
@@ -663,19 +663,19 @@ impl<'a> Renderer<'a> {
 
         let (base_color_view, base_color_sampler) = self.resolve_texture_or_default(
             scene,
-            material.base_color_texture,
+            material.base_color_texture(),
             &self.default_textures.white,
             "Base color",
         )?;
         let (normal_view, normal_sampler) = self.resolve_texture_or_default(
             scene,
-            material.normal_texture,
+            material.normal_texture(),
             &self.default_textures.normal,
             "Normal",
         )?;
         let (mr_view, mr_sampler) = self.resolve_texture_or_default(
             scene,
-            material.metallic_roughness_texture,
+            material.metallic_roughness_texture(),
             &self.default_textures.white,
             "Metallic-roughness",
         )?;
@@ -730,7 +730,7 @@ impl<'a> Renderer<'a> {
     /// Prepare GPU resources for texture-only material (base color texture, no PBR).
     fn prepare_textured_material(&self, scene: &mut Scene, material_id: u32) -> Result<()> {
         let material = scene.materials.get(&material_id).unwrap();
-        let texture_id = material.base_color_texture.unwrap();
+        let texture_id = material.base_color_texture().unwrap();
 
         let texture = scene.textures.get(&texture_id).ok_or_else(|| {
             anyhow::anyhow!(
@@ -772,7 +772,7 @@ impl<'a> Renderer<'a> {
     fn prepare_colored_material(&self, scene: &mut Scene, material_id: u32) -> Result<()> {
         let material = scene.materials.get(&material_id).unwrap();
         let gpu_resources =
-            self.create_color_material_resources(&material.base_color_factor, "Base Color Factor");
+            self.create_color_material_resources(&material.base_color_factor(), "Base Color Factor");
 
         let material = scene.materials.get_mut(&material_id).unwrap();
         material.set_gpu(PrimitiveType::TriangleList, gpu_resources);
@@ -784,7 +784,7 @@ impl<'a> Renderer<'a> {
     fn prepare_line_material(&self, scene: &mut Scene, material_id: u32) -> Result<()> {
         let material = scene.materials.get(&material_id).unwrap();
 
-        if let Some(color) = material.line_color {
+        if let Some(color) = material.line_color() {
             let gpu_resources = self.create_color_material_resources(&color, "Line Color");
 
             let material = scene.materials.get_mut(&material_id).unwrap();
@@ -798,7 +798,7 @@ impl<'a> Renderer<'a> {
     fn prepare_point_material(&self, scene: &mut Scene, material_id: u32) -> Result<()> {
         let material = scene.materials.get(&material_id).unwrap();
 
-        if let Some(color) = material.point_color {
+        if let Some(color) = material.point_color() {
             let gpu_resources = self.create_color_material_resources(&color, "Point Color");
 
             let material = scene.materials.get_mut(&material_id).unwrap();
