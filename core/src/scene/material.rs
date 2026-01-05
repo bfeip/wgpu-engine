@@ -83,9 +83,9 @@ pub(crate) struct MaterialGpuResources {
     pub _buffer: Option<wgpu::Buffer>, // For color materials
 }
 
-/// PBR material that can be rendered as faces, lines, or points.
+/// Material that can be rendered as faces, lines, or points.
 ///
-/// Supports physically-based rendering with base color, normal maps,
+/// Supports physically-based rendering for faces with base color, normal maps,
 /// and metallic-roughness textures. Missing textures fall back to scalar factors.
 ///
 /// # Examples
@@ -150,7 +150,7 @@ pub struct Material {
 }
 
 impl Material {
-    /// Create a new material with default PBR values.
+    /// Create a new material with default values.
     ///
     /// Defaults: white base color, metallic=0.0, roughness=0.5, no textures.
     pub fn new() -> Self {
