@@ -6,7 +6,7 @@ use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
 use crate::{
     common::{Aabb, ConvexPolyhedron, Ray},
-    drawstate::VertexShaderLocations,
+    renderer::VertexShaderLocations,
 };
 
 /// Unique identifier for a mesh in the scene.

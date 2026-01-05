@@ -2,7 +2,7 @@ use web_time::Instant;
 
 use crate::{
     annotation::AnnotationManager,
-    drawstate::Renderer,
+    renderer::Renderer,
     event::{Event, EventContext, EventDispatcher, EventKind},
     operator::{BuiltinOperatorId, NavigationOperator, OperatorManager, SelectionOperator, WalkOperator},
     scene::Scene,

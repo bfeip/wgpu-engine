@@ -34,7 +34,7 @@ pub(crate) struct InstanceRaw {
 
 impl InstanceRaw {
     pub fn desc() -> wgpu::VertexBufferLayout<'static> {
-        use crate::drawstate::VertexShaderLocations as VSL;
+        use crate::renderer::VertexShaderLocations as VSL;
 
         wgpu::VertexBufferLayout {
             array_stride: size_of::<Self>() as wgpu::BufferAddress,

@@ -4,7 +4,7 @@ pub mod common;
 pub mod input;
 pub mod scene;
 pub mod geom_query;
-mod drawstate;
+mod renderer;
 mod shaders;
 mod gltf;
 pub mod event;

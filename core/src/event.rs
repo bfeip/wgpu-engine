@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use web_time::Instant;
 
 use crate::annotation::AnnotationManager;
-use crate::drawstate::Renderer;
+use crate::renderer::Renderer;
 use crate::scene::Scene;
 use crate::input::{ElementState, MouseButton, MouseScrollDelta, KeyEvent};
 
