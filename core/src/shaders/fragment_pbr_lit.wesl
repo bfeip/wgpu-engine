@@ -2,6 +2,7 @@
 // PBR fragment shader with Cook-Torrance BRDF
 
 import package::common::VertexOutput;
+import package::constants::AMBIENT_FACTOR;
 import package::camera::camera;
 import package::lighting::lights;
 import package::material_pbr::{get_base_color, get_metallic_roughness};
@@ -40,7 +41,7 @@ fn fragment_pbr_lit(in: VertexOutput) -> vec4<f32> {
     );
 
     // Add ambient term (simple constant for now)
-    let ambient = vec3<f32>(0.03) * albedo;
+    let ambient = vec3<f32>(AMBIENT_FACTOR) * albedo;
 
     let color = ambient + light_contribution;
 

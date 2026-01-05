@@ -1,7 +1,16 @@
 // material_pbr.wesl
 // PBR material uniform and texture bindings at group 2
 
-import package::constants::{GROUP_MATERIAL};
+import package::constants::{
+    GROUP_MATERIAL,
+    BINDING_PBR_PARAMS,
+    BINDING_PBR_BASE_COLOR_TEXTURE,
+    BINDING_PBR_BASE_COLOR_SAMPLER,
+    BINDING_PBR_NORMAL_TEXTURE,
+    BINDING_PBR_NORMAL_SAMPLER,
+    BINDING_PBR_METALLIC_ROUGHNESS_TEXTURE,
+    BINDING_PBR_METALLIC_ROUGHNESS_SAMPLER,
+};
 
 struct PbrParams {
     base_color_factor: vec4<f32>,
@@ -16,22 +25,22 @@ const FLAG_HAS_BASE_COLOR_TEXTURE: u32 = 1u;
 const FLAG_HAS_NORMAL_TEXTURE: u32 = 2u;
 const FLAG_HAS_METALLIC_ROUGHNESS_TEXTURE: u32 = 4u;
 
-@group(GROUP_MATERIAL) @binding(0)
+@group(GROUP_MATERIAL) @binding(BINDING_PBR_PARAMS)
 var<uniform> pbr_params: PbrParams;
 
-@group(GROUP_MATERIAL) @binding(1)
+@group(GROUP_MATERIAL) @binding(BINDING_PBR_BASE_COLOR_TEXTURE)
 var t_base_color: texture_2d<f32>;
-@group(GROUP_MATERIAL) @binding(2)
+@group(GROUP_MATERIAL) @binding(BINDING_PBR_BASE_COLOR_SAMPLER)
 var s_base_color: sampler;
 
-@group(GROUP_MATERIAL) @binding(3)
+@group(GROUP_MATERIAL) @binding(BINDING_PBR_NORMAL_TEXTURE)
 var t_normal: texture_2d<f32>;
-@group(GROUP_MATERIAL) @binding(4)
+@group(GROUP_MATERIAL) @binding(BINDING_PBR_NORMAL_SAMPLER)
 var s_normal: sampler;
 
-@group(GROUP_MATERIAL) @binding(5)
+@group(GROUP_MATERIAL) @binding(BINDING_PBR_METALLIC_ROUGHNESS_TEXTURE)
 var t_metallic_roughness: texture_2d<f32>;
-@group(GROUP_MATERIAL) @binding(6)
+@group(GROUP_MATERIAL) @binding(BINDING_PBR_METALLIC_ROUGHNESS_SAMPLER)
 var s_metallic_roughness: sampler;
 
 fn has_base_color_texture() -> bool {
