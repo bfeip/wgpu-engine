@@ -485,6 +485,9 @@ fn load_gltf_from_data(
         }
     }
 
+    // Add default lights if the glTF scene doesn't define any
+    scene.set_default_lights();
+
     Ok(GltfLoadResult { scene, camera })
 }
 

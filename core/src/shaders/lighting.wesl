@@ -11,14 +11,13 @@ import package::common::{
 var<uniform> lights: LightsUniform;
 
 // Calculate distance attenuation for point and spot lights.
-// If range is 0, uses simple inverse square falloff.
+// If range is 0 (infinite), returns 1.0 (no attenuation).
 // If range > 0, applies smooth falloff to zero at range.
 fn calculate_attenuation(distance: f32, range: f32) -> f32 {
     if (range <= 0.0) {
-        // Simple inverse square falloff (with offset to avoid division issues at distance 0)
-        return 1.0 / (distance * distance + 1.0);
+        return 1.0;  // No attenuation for infinite range lights
     }
-    // Smooth falloff to zero at range
+    // Range-based attenuation for finite-range lights
     let d = distance / range;
     let range_falloff = saturate(1.0 - d * d);
     return range_falloff * range_falloff / (distance * distance + 1.0);

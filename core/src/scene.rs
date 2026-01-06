@@ -506,6 +506,20 @@ impl Scene {
         // Don't reset next_material_id since we keep the default material
     }
 
+    /// Sets up default lighting for the scene if no lights are present.
+    ///
+    /// Adds a single white point light at position (3, 3, 3) with intensity 1.0.
+    /// This is useful when loading scenes that don't define their own lights.
+    pub fn set_default_lights(&mut self) {
+        if self.lights.is_empty() {
+            self.lights.push(Light::point(
+                cgmath::Vector3::new(3.0, 3.0, 3.0),
+                crate::common::RgbaColor { r: 1.0, g: 1.0, b: 1.0, a: 1.0 },
+                1.0,
+            ));
+        }
+    }
+
     /// Returns the root node for annotations, creating it if necessary.
     ///
     /// The annotation root node is a dedicated root node used by the
