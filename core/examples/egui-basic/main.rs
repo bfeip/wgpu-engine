@@ -7,11 +7,13 @@ use winit::{
     window::{Window, WindowId},
 };
 
+use cgmath::Vector3;
+use wgpu_engine::common::RgbaColor;
 use wgpu_engine::egui_support::EguiViewerApp;
 use wgpu_engine::input::{ElementState, Key, NamedKey};
 use wgpu_engine::load_gltf_scene_from_path;
 use wgpu_engine::operator::BuiltinOperatorId;
-use wgpu_engine::scene::Scene;
+use wgpu_engine::scene::{Light, LightType, Scene, MAX_LIGHTS};
 
 /// Debug actions triggered by key presses
 enum DebugAction {
@@ -52,6 +54,9 @@ impl<'a> App<'a> {
         }
         if ui_actions.clear_scene {
             self.clear_scene();
+        }
+        if let Some(light_type) = ui_actions.add_light {
+            self.add_light(light_type);
         }
 
         // Request next frame
@@ -105,6 +110,43 @@ impl<'a> App<'a> {
         let viewer_app = self.viewer_app.as_mut().unwrap();
         viewer_app.viewer_mut().set_scene(Scene::new());
         log::info!("Scene cleared");
+    }
+
+    /// Add a new light of the specified type to the scene
+    fn add_light(&mut self, light_type: LightType) {
+        let viewer = self.viewer_app.as_mut().unwrap().viewer_mut();
+        let lights = &mut viewer.scene_mut().lights;
+
+        // Check limit
+        if lights.len() >= MAX_LIGHTS {
+            log::warn!("Cannot add light: maximum of {} lights reached", MAX_LIGHTS);
+            return;
+        }
+
+        let white = RgbaColor {
+            r: 1.0,
+            g: 1.0,
+            b: 1.0,
+            a: 1.0,
+        };
+
+        let light = match light_type {
+            LightType::Point => Light::point(Vector3::new(0.0, 3.0, 0.0), white, 1.0),
+            LightType::Directional => {
+                Light::directional(Vector3::new(0.0, -1.0, 0.0), white, 1.0)
+            }
+            LightType::Spot => Light::spot(
+                Vector3::new(0.0, 3.0, 0.0),
+                Vector3::new(0.0, -1.0, 0.0),
+                white,
+                1.0,
+                30.0_f32.to_radians(),
+                45.0_f32.to_radians(),
+            ),
+        };
+
+        lights.push(light);
+        log::info!("Added {:?} light", light_type);
     }
 
     /// Handle debug key actions

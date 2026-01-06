@@ -14,7 +14,7 @@ use std::path::Path;
 
 // Public API exports
 pub use instance::{Instance, InstanceId};
-pub use light::Light;
+pub use light::{Light, LightType, MAX_LIGHTS};
 pub use material::{Material, MaterialId, DEFAULT_MATERIAL_ID};
 pub use mesh::{Mesh, MeshDescriptor, MeshId, MeshPrimitive, ObjMesh, PrimitiveType, Vertex};
 pub use node::{Node, NodeId};

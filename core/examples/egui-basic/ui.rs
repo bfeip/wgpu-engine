@@ -1,25 +1,36 @@
-use wgpu_engine::Viewer;
+use cgmath::{InnerSpace, Vector3};
+use wgpu_engine::common::RgbaColor;
 use wgpu_engine::operator::BuiltinOperatorId;
-use wgpu_engine::scene::NodeId;
+use wgpu_engine::scene::{Light, LightType, NodeId, MAX_LIGHTS};
+use wgpu_engine::Viewer;
 
 const WALK_OPERATOR_ID: u32 = BuiltinOperatorId::Walk as u32;
 const NAV_OPERATOR_ID: u32 = BuiltinOperatorId::Navigation as u32;
+
+/// Tab selection for the left panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum LeftPanelTab {
+    #[default]
+    Scene,
+    Lights,
+}
 
 /// Actions requested by the UI that need to be handled by the application.
 #[derive(Default)]
 pub struct UiActions {
     pub load_file: bool,
     pub clear_scene: bool,
+    pub add_light: Option<LightType>,
 }
 
 /// Build all egui UI panels and return any actions requested.
-pub fn build(ctx: &egui::Context, viewer: &Viewer) -> UiActions {
+pub fn build(ctx: &egui::Context, viewer: &mut Viewer) -> UiActions {
     let mut actions = UiActions::default();
 
     let mode_info = get_mode_info(viewer);
 
     build_performance_panel(ctx, &mode_info, viewer);
-    build_scene_panel(ctx, viewer, &mut actions);
+    build_left_panel(ctx, viewer, &mut actions);
     build_info_panel(ctx, viewer, &mode_info);
 
     actions
@@ -70,38 +81,270 @@ fn build_performance_panel(ctx: &egui::Context, mode: &ModeInfo, viewer: &Viewer
         });
 }
 
-/// Left panel with scene controls and tree view.
-fn build_scene_panel(ctx: &egui::Context, viewer: &Viewer, actions: &mut UiActions) {
-    egui::SidePanel::new(egui::panel::Side::Left, "Scene Controls")
-        .default_width(200.0)
+/// Left panel with tabs for scene and lights.
+fn build_left_panel(ctx: &egui::Context, viewer: &mut Viewer, actions: &mut UiActions) {
+    egui::SidePanel::new(egui::panel::Side::Left, "Left Panel")
+        .default_width(220.0)
         .show(ctx, |ui| {
-            ui.heading("Scene");
-
-            ui.horizontal(|ui| {
-                if ui.button("Load glTF...").clicked() {
-                    actions.load_file = true;
-                }
-                if ui.button("Clear").clicked() {
-                    actions.clear_scene = true;
-                }
+            // Get/set tab state from egui memory
+            let tab_id = ui.id().with("left_panel_tab");
+            let mut current_tab = ui.memory(|mem| {
+                mem.data.get_temp::<LeftPanelTab>(tab_id).unwrap_or_default()
             });
+
+            // Tab selector
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut current_tab, LeftPanelTab::Scene, "Scene");
+                ui.selectable_value(&mut current_tab, LeftPanelTab::Lights, "Lights");
+            });
+
+            // Store updated tab
+            ui.memory_mut(|mem| mem.data.insert_temp(tab_id, current_tab));
 
             ui.separator();
 
-            ui.heading("Scene Tree");
-
-            egui::ScrollArea::vertical()
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    if viewer.scene().root_nodes.is_empty() {
-                        ui.label("(empty)");
-                    } else {
-                        for &root_id in &viewer.scene().root_nodes {
-                            render_node_tree(ui, viewer.scene(), root_id, 0);
-                        }
-                    }
-                });
+            // Tab content
+            match current_tab {
+                LeftPanelTab::Scene => build_scene_tab(ui, viewer, actions),
+                LeftPanelTab::Lights => build_lights_tab(ui, viewer, actions),
+            }
         });
+}
+
+/// Scene tab content with load/clear buttons and tree view.
+fn build_scene_tab(ui: &mut egui::Ui, viewer: &Viewer, actions: &mut UiActions) {
+    ui.horizontal(|ui| {
+        if ui.button("Load glTF...").clicked() {
+            actions.load_file = true;
+        }
+        if ui.button("Clear").clicked() {
+            actions.clear_scene = true;
+        }
+    });
+
+    ui.separator();
+
+    ui.heading("Scene Tree");
+
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            if viewer.scene().root_nodes.is_empty() {
+                ui.label("(empty)");
+            } else {
+                for &root_id in &viewer.scene().root_nodes {
+                    render_node_tree(ui, viewer.scene(), root_id, 0);
+                }
+            }
+        });
+}
+
+/// Lights tab content with add/edit/delete controls.
+fn build_lights_tab(ui: &mut egui::Ui, viewer: &mut Viewer, actions: &mut UiActions) {
+    // Add light controls
+    ui.horizontal(|ui| {
+        ui.label("Add:");
+        if ui.button("Point").clicked() {
+            actions.add_light = Some(LightType::Point);
+        }
+        if ui.button("Dir").clicked() {
+            actions.add_light = Some(LightType::Directional);
+        }
+        if ui.button("Spot").clicked() {
+            actions.add_light = Some(LightType::Spot);
+        }
+    });
+
+    let light_count = viewer.scene().lights.len();
+    ui.label(format!("({}/{} lights)", light_count, MAX_LIGHTS));
+
+    ui.separator();
+
+    // Light list with editors
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            if light_count == 0 {
+                ui.label("No lights in scene");
+            } else {
+                let mut light_to_delete: Option<usize> = None;
+
+                for i in 0..viewer.scene().lights.len() {
+                    let delete_requested = build_light_editor(ui, viewer, i);
+                    if delete_requested {
+                        light_to_delete = Some(i);
+                    }
+                    ui.separator();
+                }
+
+                // Handle deletion after iteration
+                if let Some(idx) = light_to_delete {
+                    viewer.scene_mut().lights.remove(idx);
+                }
+            }
+        });
+}
+
+/// Build editor UI for a single light. Returns true if delete was requested.
+fn build_light_editor(ui: &mut egui::Ui, viewer: &mut Viewer, index: usize) -> bool {
+    let mut delete_requested = false;
+
+    // Get light info for the header
+    let light_type_name = match &viewer.scene().lights[index] {
+        Light::Point { .. } => "Point",
+        Light::Directional { .. } => "Directional",
+        Light::Spot { .. } => "Spot",
+    };
+
+    let header_id = ui.make_persistent_id(format!("light_{}", index));
+
+    egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), header_id, true)
+        .show_header(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(format!("{} #{}", light_type_name, index));
+                if ui.small_button("X").clicked() {
+                    delete_requested = true;
+                }
+            });
+        })
+        .body(|ui| {
+            // Edit the light properties
+            let light = &mut viewer.scene_mut().lights[index];
+
+            match light {
+                Light::Point {
+                    position,
+                    color,
+                    intensity,
+                    range,
+                } => {
+                    build_color_edit(ui, color);
+                    build_intensity_edit(ui, intensity);
+                    build_position_edit(ui, position);
+                    build_range_edit(ui, range);
+                }
+                Light::Directional {
+                    direction,
+                    color,
+                    intensity,
+                } => {
+                    build_color_edit(ui, color);
+                    build_intensity_edit(ui, intensity);
+                    build_direction_edit(ui, direction);
+                }
+                Light::Spot {
+                    position,
+                    direction,
+                    color,
+                    intensity,
+                    range,
+                    inner_cone_angle,
+                    outer_cone_angle,
+                } => {
+                    build_color_edit(ui, color);
+                    build_intensity_edit(ui, intensity);
+                    build_position_edit(ui, position);
+                    build_direction_edit(ui, direction);
+                    build_range_edit(ui, range);
+                    build_cone_angles_edit(ui, inner_cone_angle, outer_cone_angle);
+                }
+            }
+        });
+
+    delete_requested
+}
+
+fn build_color_edit(ui: &mut egui::Ui, color: &mut RgbaColor) {
+    ui.horizontal(|ui| {
+        ui.label("Color:");
+        let mut rgb = [color.r, color.g, color.b];
+        if ui.color_edit_button_rgb(&mut rgb).changed() {
+            color.r = rgb[0];
+            color.g = rgb[1];
+            color.b = rgb[2];
+        }
+    });
+}
+
+fn build_intensity_edit(ui: &mut egui::Ui, intensity: &mut f32) {
+    ui.horizontal(|ui| {
+        ui.label("Intensity:");
+        ui.add(egui::DragValue::new(intensity).speed(0.1).range(0.0..=100.0));
+    });
+}
+
+fn build_position_edit(ui: &mut egui::Ui, position: &mut Vector3<f32>) {
+    ui.label("Position:");
+    ui.horizontal(|ui| {
+        ui.label("X:");
+        ui.add(egui::DragValue::new(&mut position.x).speed(0.1));
+        ui.label("Y:");
+        ui.add(egui::DragValue::new(&mut position.y).speed(0.1));
+    });
+    ui.horizontal(|ui| {
+        ui.label("Z:");
+        ui.add(egui::DragValue::new(&mut position.z).speed(0.1));
+    });
+}
+
+fn build_direction_edit(ui: &mut egui::Ui, direction: &mut Vector3<f32>) {
+    ui.label("Direction:");
+    ui.horizontal(|ui| {
+        ui.label("X:");
+        ui.add(egui::DragValue::new(&mut direction.x).speed(0.01).range(-1.0..=1.0));
+        ui.label("Y:");
+        ui.add(egui::DragValue::new(&mut direction.y).speed(0.01).range(-1.0..=1.0));
+    });
+    ui.horizontal(|ui| {
+        ui.label("Z:");
+        ui.add(egui::DragValue::new(&mut direction.z).speed(0.01).range(-1.0..=1.0));
+        if ui.button("Norm").clicked() && direction.magnitude() > 0.0 {
+            *direction = direction.normalize();
+        }
+    });
+}
+
+fn build_range_edit(ui: &mut egui::Ui, range: &mut f32) {
+    ui.horizontal(|ui| {
+        ui.label("Range:");
+        ui.add(egui::DragValue::new(range).speed(0.1).range(0.0..=1000.0));
+        if *range == 0.0 {
+            ui.label("(infinite)");
+        }
+    });
+}
+
+fn build_cone_angles_edit(ui: &mut egui::Ui, inner: &mut f32, outer: &mut f32) {
+    let mut inner_deg = inner.to_degrees();
+    let mut outer_deg = outer.to_degrees();
+
+    ui.horizontal(|ui| {
+        ui.label("Inner cone:");
+        if ui
+            .add(egui::DragValue::new(&mut inner_deg).speed(1.0).range(0.0..=90.0).suffix("°"))
+            .changed()
+        {
+            *inner = inner_deg.to_radians();
+            // Ensure inner <= outer
+            if *inner > *outer {
+                *outer = *inner;
+            }
+        }
+    });
+
+    ui.horizontal(|ui| {
+        ui.label("Outer cone:");
+        if ui
+            .add(egui::DragValue::new(&mut outer_deg).speed(1.0).range(0.0..=90.0).suffix("°"))
+            .changed()
+        {
+            *outer = outer_deg.to_radians();
+            // Ensure outer >= inner
+            if *outer < *inner {
+                *inner = *outer;
+            }
+        }
+    });
 }
 
 /// Right panel with camera info, controls, and scene statistics.
