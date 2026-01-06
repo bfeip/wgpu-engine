@@ -1,12 +1,12 @@
 # TODO
 
 ## Jots
-- Fix navigation operator to use bounding for sensitivity
-
 - Tree walker feature to skip subtrees on condition
 - Ability to walk the scene with multiple walkers at once
 
-- Example glTF loading
+- Integration tests
+  - Materials (including faces, lines, and points)
+  - Lights
 - Instance flags and visibility
 - Camera interpolation
 - Highlighting and proper selection
@@ -14,9 +14,7 @@
 - egui canvas frame
 - Higher level faces and lines
 - Mesh wireframe
-- Multiple lights
 - Optimize drawing
-- PBR rendering
 - Antialiasing
 - NURBS
 - 3D Overlays
