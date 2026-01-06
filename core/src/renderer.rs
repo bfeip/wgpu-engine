@@ -7,7 +7,7 @@ use wgpu::util::DeviceExt;
 use crate::{
     camera::{Camera, CameraUniform},
     scene::{
-        GpuTexture, InstanceRaw, LightUniform, MaterialGpuResources, MaterialProperties,
+        GpuTexture, InstanceRaw, LightsArrayUniform, MaterialGpuResources, MaterialProperties,
         PrimitiveType, Scene, Texture, Vertex,
     },
     shaders::ShaderGenerator,
@@ -421,7 +421,7 @@ impl<'a> Renderer<'a> {
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Light buffer"),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            size: std::mem::size_of::<LightUniform>() as wgpu::BufferAddress,
+            size: std::mem::size_of::<LightsArrayUniform>() as wgpu::BufferAddress,
             mapped_at_creation: false,
         });
 
@@ -922,14 +922,11 @@ impl<'a> Renderer<'a> {
         self.queue
             .write_buffer(&self.camera_resources.buffer, 0, camera_buffer_contents);
 
-        // Update light uniform
+        // Update lights uniform array
         // TODO: only when needed
-        if !scene.lights.is_empty() {
-            let light_uniform_slice = &[scene.lights[0].to_uniform()];
-            let light_buffer_contents: &[u8] = bytemuck::cast_slice(light_uniform_slice);
-            self.queue
-                .write_buffer(&self.lights.buffer, 0, light_buffer_contents);
-        }
+        let lights_uniform = LightsArrayUniform::from_lights(&scene.lights);
+        self.queue
+            .write_buffer(&self.lights.buffer, 0, bytes_of(&lights_uniform));
 
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

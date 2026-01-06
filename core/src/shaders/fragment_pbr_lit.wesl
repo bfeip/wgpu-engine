@@ -1,13 +1,53 @@
 // fragment_pbr_lit.wesl
-// PBR fragment shader with Cook-Torrance BRDF
+// PBR fragment shader with Cook-Torrance BRDF and multi-light support
 
-import package::common::VertexOutput;
+import package::common::{
+    VertexOutput, LightUniform,
+    LIGHT_TYPE_POINT, LIGHT_TYPE_DIRECTIONAL, LIGHT_TYPE_SPOT, MAX_LIGHTS
+};
 import package::constants::AMBIENT_FACTOR;
 import package::camera::camera;
-import package::lighting::lights;
+import package::lighting::{lights, calculate_attenuation, calculate_spot_cone_falloff};
 import package::material_pbr::{get_base_color, get_metallic_roughness};
 import package::normal_mapping::get_normal;
 import package::pbr::calculate_pbr_direct_light;
+
+// Calculate light direction and radiance for a point light
+fn get_point_light_params(
+    light: LightUniform,
+    world_position: vec3<f32>
+) -> array<vec3<f32>, 2> {
+    let to_light = light.position - world_position;
+    let distance = length(to_light);
+    let light_dir = to_light / distance;
+    let attenuation = calculate_attenuation(distance, light.range);
+    let radiance = light.color * light.intensity * attenuation;
+    return array<vec3<f32>, 2>(light_dir, radiance);
+}
+
+// Calculate light direction and radiance for a directional light
+fn get_directional_light_params(light: LightUniform) -> array<vec3<f32>, 2> {
+    let light_dir = -light.direction;
+    let radiance = light.color * light.intensity;
+    return array<vec3<f32>, 2>(light_dir, radiance);
+}
+
+// Calculate light direction and radiance for a spotlight
+fn get_spot_light_params(
+    light: LightUniform,
+    world_position: vec3<f32>
+) -> array<vec3<f32>, 2> {
+    let to_light = light.position - world_position;
+    let distance = length(to_light);
+    let light_dir = to_light / distance;
+    let attenuation = calculate_attenuation(distance, light.range);
+    let cone_falloff = calculate_spot_cone_falloff(
+        -light_dir, light.direction,
+        light.inner_cone_cos, light.outer_cone_cos
+    );
+    let radiance = light.color * light.intensity * attenuation * cone_falloff;
+    return array<vec3<f32>, 2>(light_dir, radiance);
+}
 
 fn fragment_pbr_lit(in: VertexOutput) -> vec4<f32> {
     // Get base color (texture * factor, or just factor)
@@ -26,24 +66,45 @@ fn fragment_pbr_lit(in: VertexOutput) -> vec4<f32> {
     // View direction (from surface to camera)
     let v = normalize(camera.eye_position - in.world_position);
 
-    // Light direction (from surface to light)
-    let l = normalize(lights.position - in.world_position);
+    // Accumulate light contributions
+    var lo = vec3<f32>(0.0);
 
-    // Calculate PBR lighting
-    let light_contribution = calculate_pbr_direct_light(
-        lights.color.rgb * lights.color.a,
-        l,
-        v,
-        n,
-        albedo,
-        metallic,
-        roughness
-    );
+    for (var i = 0u; i < lights.light_count && i < MAX_LIGHTS; i = i + 1u) {
+        let light = lights.lights[i];
+        var light_dir: vec3<f32>;
+        var radiance: vec3<f32>;
+
+        if (light.light_type == LIGHT_TYPE_POINT) {
+            let params = get_point_light_params(light, in.world_position);
+            light_dir = params[0];
+            radiance = params[1];
+        } else if (light.light_type == LIGHT_TYPE_DIRECTIONAL) {
+            let params = get_directional_light_params(light);
+            light_dir = params[0];
+            radiance = params[1];
+        } else if (light.light_type == LIGHT_TYPE_SPOT) {
+            let params = get_spot_light_params(light, in.world_position);
+            light_dir = params[0];
+            radiance = params[1];
+        } else {
+            continue;
+        }
+
+        lo += calculate_pbr_direct_light(
+            radiance,
+            light_dir,
+            v,
+            n,
+            albedo,
+            metallic,
+            roughness
+        );
+    }
 
     // Add ambient term (simple constant for now)
     let ambient = vec3<f32>(AMBIENT_FACTOR) * albedo;
 
-    let color = ambient + light_contribution;
+    let color = ambient + lo;
 
     // HDR tonemapping (simple Reinhard)
     let mapped = color / (color + vec3<f32>(1.0));

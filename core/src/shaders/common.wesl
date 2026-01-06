@@ -6,9 +6,34 @@ struct CameraUniform {
     eye_position: vec3<f32>,
 };
 
-struct LightsUniform {
+// Light type constants
+const LIGHT_TYPE_POINT: u32 = 0u;
+const LIGHT_TYPE_DIRECTIONAL: u32 = 1u;
+const LIGHT_TYPE_SPOT: u32 = 2u;
+
+const MAX_LIGHTS: u32 = 8u;
+
+// Single light uniform (64 bytes, matches Rust LightUniform)
+struct LightUniform {
+    light_type: u32,
+    range: f32,
+    inner_cone_cos: f32,
+    outer_cone_cos: f32,
     position: vec3<f32>,
-    color: vec4<f32>
+    intensity: f32,
+    direction: vec3<f32>,
+    _padding1: f32,
+    color: vec3<f32>,
+    _padding2: f32,
+};
+
+// Lights array uniform (528 bytes, matches Rust LightsArrayUniform)
+// WGSL adds implicit padding after light_count to align the array to 16 bytes.
+// The Rust struct has explicit [u32; 3] padding to match this layout.
+struct LightsUniform {
+    light_count: u32,
+    // implicit 12 bytes padding here (WGSL aligns array to 16 bytes)
+    lights: array<LightUniform, 8>,
 }
 
 struct VertexInput {

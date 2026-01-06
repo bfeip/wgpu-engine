@@ -1,11 +1,8 @@
+use cgmath::Vector3;
 use web_time::Instant;
 
 use crate::{
-    annotation::AnnotationManager,
-    renderer::Renderer,
-    event::{Event, EventContext, EventDispatcher, EventKind},
-    operator::{BuiltinOperatorId, NavigationOperator, OperatorManager, SelectionOperator, WalkOperator},
-    scene::Scene,
+    annotation::AnnotationManager, common::RgbaColor, event::{Event, EventContext, EventDispatcher, EventKind}, operator::{BuiltinOperatorId, NavigationOperator, OperatorManager, SelectionOperator, WalkOperator}, renderer::Renderer, scene::Scene
 };
 
 /// Main viewer that encapsulates the rendering state, scene, and event handling
@@ -29,18 +26,10 @@ impl<'a> Viewer<'a> {
         let mut scene = Scene::new();
 
         // Set up default lighting
-        scene.lights = vec![crate::scene::Light::new(
-            cgmath::Vector3 {
-                x: 3.,
-                y: 3.,
-                z: 3.,
-            },
-            crate::common::RgbaColor {
-                r: 1.0,
-                g: 1.0,
-                b: 1.0,
-                a: 1.0,
-            },
+        scene.lights = vec![crate::scene::Light::point(
+            Vector3::new(1.0, -1.0, 1.0),
+            RgbaColor{ r: 1.0, g: 1.0, b: 1.0, a: 1.0 },
+            100.0
         )];
 
         let annotation_manager = AnnotationManager::new();

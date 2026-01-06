@@ -24,7 +24,7 @@ pub use tree::TreeVisitor;
 // Crate-internal exports
 pub(crate) use batch::DrawBatch;
 pub(crate) use instance::InstanceRaw;
-pub(crate) use light::LightUniform;
+pub(crate) use light::LightsArrayUniform;
 pub(crate) use material::{MaterialGpuResources, MaterialProperties};
 pub(crate) use texture::GpuTexture;
 
