@@ -6,11 +6,13 @@
 //! and BRDF LUT) using GPU compute shaders.
 
 mod cubemap;
+mod equirect;
 mod hdr_loader;
 
 pub use hdr_loader::{load_hdr_from_path, HdrImage};
 
 pub(crate) use cubemap::{CubemapFace, GpuCubemap};
+pub(crate) use equirect::EquirectToCubePipeline;
 
 use std::path::PathBuf;
 

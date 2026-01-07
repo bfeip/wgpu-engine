@@ -1,6 +1,10 @@
 // constants.wesl
 // Shader constants for bind groups and bindings
 
+// Mathematical constants
+const PI: f32 = 3.14159265359;
+const TAU: f32 = 6.28318530718;
+
 // Bind group indices
 const GROUP_CAMERA: u32 = 0u;
 const GROUP_LIGHTS: u32 = 1u;

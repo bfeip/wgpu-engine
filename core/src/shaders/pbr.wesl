@@ -1,7 +1,7 @@
 // pbr.wesl
 // Physically Based Rendering BRDF functions (Cook-Torrance with GGX)
 
-const PI: f32 = 3.14159265359;
+import package::constants::PI;
 
 // Fresnel-Schlick approximation
 fn fresnel_schlick(cos_theta: f32, f0: vec3<f32>) -> vec3<f32> {
