@@ -12,6 +12,8 @@ use image::DynamicImage;
 use std::collections::HashMap;
 use std::path::Path;
 
+use crate::ibl::{EnvironmentMap, EnvironmentMapId};
+
 // Public API exports
 pub use instance::{Instance, InstanceId};
 pub use light::{Light, LightType, MAX_LIGHTS};
@@ -80,6 +82,11 @@ pub struct Scene {
     pub materials: HashMap<MaterialId, Material>,
     pub textures: HashMap<TextureId, Texture>,
 
+    // Environment maps for IBL
+    pub environment_maps: HashMap<EnvironmentMapId, EnvironmentMap>,
+    /// The currently active environment map for IBL lighting.
+    pub active_environment_map: Option<EnvironmentMapId>,
+
     /// Root node for annotations, created lazily when first requested
     annotation_root_node: Option<NodeId>,
 
@@ -88,6 +95,7 @@ pub struct Scene {
     next_node_id: NodeId,
     next_material_id: MaterialId,
     next_texture_id: TextureId,
+    next_environment_map_id: EnvironmentMapId,
 }
 
 impl Scene {
@@ -109,6 +117,9 @@ impl Scene {
             materials: HashMap::new(),
             textures: HashMap::new(),
 
+            environment_maps: HashMap::new(),
+            active_environment_map: None,
+
             annotation_root_node: None,
 
             next_mesh_id: 0,
@@ -116,6 +127,7 @@ impl Scene {
             next_node_id: 0,
             next_material_id: 0,
             next_texture_id: 0,
+            next_environment_map_id: 0,
         };
 
         // Create default material (ID 0)
@@ -250,6 +262,47 @@ impl Scene {
     /// Gets a mutable reference to a texture by ID.
     pub fn get_texture_mut(&mut self, id: TextureId) -> Option<&mut Texture> {
         self.textures.get_mut(&id)
+    }
+
+    // ========== Environment Map API (IBL) ==========
+
+    /// Adds an environment map to the scene.
+    ///
+    /// # Arguments
+    /// * `environment_map` - The environment map to add
+    ///
+    /// # Returns
+    /// The unique ID assigned to this environment map
+    pub fn add_environment_map(&mut self, environment_map: EnvironmentMap) -> EnvironmentMapId {
+        let id = self.next_environment_map_id;
+        self.next_environment_map_id += 1;
+
+        let mut environment_map = environment_map;
+        environment_map.id = id;
+        self.environment_maps.insert(id, environment_map);
+        id
+    }
+
+    /// Gets a reference to an environment map by ID.
+    pub fn get_environment_map(&self, id: EnvironmentMapId) -> Option<&EnvironmentMap> {
+        self.environment_maps.get(&id)
+    }
+
+    /// Gets a mutable reference to an environment map by ID.
+    pub fn get_environment_map_mut(&mut self, id: EnvironmentMapId) -> Option<&mut EnvironmentMap> {
+        self.environment_maps.get_mut(&id)
+    }
+
+    /// Sets the active environment map for IBL lighting.
+    ///
+    /// Pass `None` to disable IBL lighting.
+    pub fn set_active_environment_map(&mut self, id: Option<EnvironmentMapId>) {
+        self.active_environment_map = id;
+    }
+
+    /// Gets the currently active environment map ID, if any.
+    pub fn active_environment_map(&self) -> Option<EnvironmentMapId> {
+        self.active_environment_map
     }
 
     // ========== Instance API ==========
@@ -485,7 +538,7 @@ impl Scene {
     /// Clears all nodes from the scene.
     ///
     /// This removes all nodes, instances, meshes, materials (except the default),
-    /// textures, and lights from the scene, resetting it to an empty state.
+    /// textures, lights, and environment maps from the scene, resetting it to an empty state.
     pub fn clear(&mut self) {
         self.nodes.clear();
         self.root_nodes.clear();
@@ -493,6 +546,8 @@ impl Scene {
         self.meshes.clear();
         self.lights.clear();
         self.textures.clear();
+        self.environment_maps.clear();
+        self.active_environment_map = None;
         self.annotation_root_node = None;
 
         // Keep only the default material (ID 0), remove all others
@@ -503,6 +558,7 @@ impl Scene {
         self.next_instance_id = 0;
         self.next_mesh_id = 0;
         self.next_texture_id = 0;
+        self.next_environment_map_id = 0;
         // Don't reset next_material_id since we keep the default material
     }
 
