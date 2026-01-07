@@ -8,11 +8,13 @@
 mod cubemap;
 mod equirect;
 mod hdr_loader;
+mod irradiance;
 
 pub use hdr_loader::{load_hdr_from_path, HdrImage};
 
 pub(crate) use cubemap::{CubemapFace, GpuCubemap};
 pub(crate) use equirect::EquirectToCubePipeline;
+pub(crate) use irradiance::IrradiancePipeline;
 
 use std::path::PathBuf;
 
