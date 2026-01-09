@@ -8,7 +8,8 @@
 const PI: f32 = 3.14159265359;
 const SAMPLE_COUNT: u32 = 1024u;
 
-@group(0) @binding(0) var output_lut: texture_storage_2d<rg16float, write>;
+// Rg16Float doesn't support storage binding on all platforms, use Rgba16Float
+@group(0) @binding(0) var output_lut: texture_storage_2d<rgba16float, write>;
 
 // Radical inverse using Van der Corput sequence
 fn radical_inverse_vdc(bits_in: u32) -> f32 {

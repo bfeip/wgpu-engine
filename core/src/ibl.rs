@@ -69,7 +69,8 @@ impl EnvironmentMap {
     /// Create an environment map from an equirectangular HDR file path.
     ///
     /// The HDR file will be loaded and processed when the environment is first used.
-    pub fn from_hdr_path(id: EnvironmentMapId, path: impl Into<PathBuf>) -> Self {
+    /// This is internal - use `Scene::add_environment_map_from_hdr_path` to create environment maps.
+    pub(crate) fn from_hdr_path(id: EnvironmentMapId, path: impl Into<PathBuf>) -> Self {
         Self {
             id,
             source: EnvironmentSource::EquirectangularPath(path.into()),

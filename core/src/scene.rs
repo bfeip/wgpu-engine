@@ -276,20 +276,23 @@ impl Scene {
 
     // ========== Environment Map API (IBL) ==========
 
-    /// Adds an environment map to the scene.
+    /// Creates and adds an environment map from an equirectangular HDR file path.
+    ///
+    /// The HDR file will be loaded and processed into IBL maps when first rendered.
     ///
     /// # Arguments
-    /// * `environment_map` - The environment map to add
+    /// * `path` - Path to an HDR file (.hdr format)
     ///
     /// # Returns
     /// The unique ID assigned to this environment map
-    pub fn add_environment_map(&mut self, environment_map: EnvironmentMap) -> EnvironmentMapId {
+    pub fn add_environment_map_from_hdr_path(
+        &mut self,
+        path: impl Into<std::path::PathBuf>,
+    ) -> EnvironmentMapId {
         let id = self.next_environment_map_id;
+        let env_map = EnvironmentMap::from_hdr_path(id, path);
         self.next_environment_map_id += 1;
-
-        let mut environment_map = environment_map;
-        environment_map.id = id;
-        self.environment_maps.insert(id, environment_map);
+        self.environment_maps.insert(id, env_map);
         id
     }
 

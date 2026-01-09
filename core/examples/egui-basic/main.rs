@@ -27,14 +27,19 @@ struct App<'a> {
     viewer_app: Option<EguiViewerApp<'a>>,
     /// Pending file path to load (set by file dialog, processed in main loop)
     pending_gltf_path: Option<std::path::PathBuf>,
+    /// Pending HDR environment path to load
+    pending_hdr_path: Option<std::path::PathBuf>,
 }
 
 impl<'a> App<'a> {
     /// Handle the RedrawRequested event - build UI and render the frame
     fn handle_redraw_requested(&mut self) {
-        // Process any pending glTF file load
+        // Process any pending file loads
         if self.pending_gltf_path.is_some() {
             self.load_gltf_file();
+        }
+        if self.pending_hdr_path.is_some() {
+            self.load_hdr_file();
         }
 
         // Build egui UI and render
@@ -57,6 +62,12 @@ impl<'a> App<'a> {
         }
         if let Some(light_type) = ui_actions.add_light {
             self.add_light(light_type);
+        }
+        if ui_actions.load_environment {
+            self.open_hdr_file_dialog();
+        }
+        if ui_actions.clear_environment {
+            self.clear_environment();
         }
 
         // Request next frame
@@ -147,6 +158,39 @@ impl<'a> App<'a> {
 
         lights.push(light);
         log::info!("Added {:?} light", light_type);
+    }
+
+    /// Open a file dialog to select an HDR environment map
+    fn open_hdr_file_dialog(&mut self) {
+        let file = rfd::FileDialog::new()
+            .add_filter("HDR", &["hdr"])
+            .pick_file();
+
+        if let Some(path) = file {
+            self.pending_hdr_path = Some(path);
+        }
+    }
+
+    /// Load an HDR environment map into the scene
+    fn load_hdr_file(&mut self) {
+        let Some(path) = self.pending_hdr_path.take() else {
+            return;
+        };
+
+        let viewer = self.viewer_app.as_mut().unwrap().viewer_mut();
+        let path_str = path.display().to_string();
+
+        let scene = viewer.scene_mut();
+        let env_id = scene.add_environment_map_from_hdr_path(&path);
+        scene.set_active_environment_map(Some(env_id));
+        log::info!("Loaded HDR environment: {}", path_str);
+    }
+
+    /// Clear the active environment map
+    fn clear_environment(&mut self) {
+        let viewer = self.viewer_app.as_mut().unwrap().viewer_mut();
+        viewer.scene_mut().set_active_environment_map(None);
+        log::info!("Environment cleared");
     }
 
     /// Handle debug key actions
@@ -266,6 +310,7 @@ fn main() {
     let mut app = App {
         viewer_app: None,
         pending_gltf_path: None,
+        pending_hdr_path: None,
     };
 
     // Run the event loop
