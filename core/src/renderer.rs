@@ -6,9 +6,10 @@ use wgpu::util::DeviceExt;
 
 use crate::{
     camera::{Camera, CameraUniform},
+    ibl::IblResources,
     scene::{
         GpuTexture, InstanceRaw, LightsArrayUniform, MaterialGpuResources, MaterialProperties,
-        PrimitiveType, Scene, Texture, Vertex,
+        PrimitiveType, Scene, SceneProperties, Texture, Vertex,
     },
     shaders::ShaderGenerator,
 };
@@ -49,6 +50,8 @@ struct MaterialPipelineLayouts {
     color: wgpu::PipelineLayout,
     texture: wgpu::PipelineLayout,
     pbr: wgpu::PipelineLayout,
+    /// PBR with IBL (includes environment bind group)
+    pbr_ibl: wgpu::PipelineLayout,
 }
 
 /// Default fallback textures for rendering.
@@ -121,7 +124,8 @@ pub(crate) struct Renderer<'a> {
 
     // Other
     shader_generator: ShaderGenerator,
-    pipeline_cache: HashMap<(MaterialProperties, PrimitiveType), wgpu::RenderPipeline>,
+    pipeline_cache: HashMap<(MaterialProperties, SceneProperties, PrimitiveType), wgpu::RenderPipeline>,
+    ibl_resources: IblResources,
 }
 
 impl<'a> Renderer<'a> {
@@ -206,11 +210,13 @@ impl<'a> Renderer<'a> {
         let camera_resources =
             Self::create_camera_resources(&device, config.width as f32 / config.height as f32);
         let lights = Self::create_light_resources(&device);
+        let ibl_resources = IblResources::new(&device, &queue);
         let pipelines = Self::create_pipeline_layouts(
             &device,
             &camera_resources.bind_group_layout,
             &lights.bind_group_layout,
             &material_layouts,
+            &ibl_resources.bind_group_layout,
         );
         let default_textures = Self::create_default_textures(&device, &queue, &config);
         let shader_generator = ShaderGenerator::new();
@@ -229,6 +235,7 @@ impl<'a> Renderer<'a> {
             default_textures,
             shader_generator,
             pipeline_cache: HashMap::new(),
+            ibl_resources,
         }
     }
 
@@ -461,6 +468,7 @@ impl<'a> Renderer<'a> {
         camera_bind_group_layout: &wgpu::BindGroupLayout,
         light_bind_group_layout: &wgpu::BindGroupLayout,
         material_layouts: &MaterialBindGroupLayouts,
+        ibl_bind_group_layout: &wgpu::BindGroupLayout,
     ) -> MaterialPipelineLayouts {
         let color = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Color Material Pipeline Layout"),
@@ -492,7 +500,18 @@ impl<'a> Renderer<'a> {
             push_constant_ranges: &[],
         });
 
-        MaterialPipelineLayouts { color, texture, pbr }
+        let pbr_ibl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("PBR IBL Material Pipeline Layout"),
+            bind_group_layouts: &[
+                camera_bind_group_layout,
+                light_bind_group_layout,
+                &material_layouts.pbr,
+                ibl_bind_group_layout,
+            ],
+            push_constant_ranges: &[],
+        });
+
+        MaterialPipelineLayouts { color, texture, pbr, pbr_ibl }
     }
 
     /// Create default fallback textures for rendering.
@@ -564,6 +583,16 @@ impl<'a> Renderer<'a> {
         for mesh in scene.meshes.values_mut() {
             if mesh.needs_gpu_upload() {
                 mesh.ensure_gpu_resources(&self.device);
+            }
+        }
+
+        // 4. Process environment maps for IBL
+        if let Some(env_id) = scene.active_environment_map {
+            if let Some(env_map) = scene.environment_maps.get_mut(&env_id) {
+                if env_map.needs_generation() {
+                    self.ibl_resources
+                        .process_environment(&self.device, &self.queue, env_map)?;
+                }
             }
         }
 
@@ -810,16 +839,20 @@ impl<'a> Renderer<'a> {
 
     fn get_or_create_pipeline(
         &mut self,
-        properties: MaterialProperties,
+        material_props: MaterialProperties,
+        scene_props: SceneProperties,
         primitive_type: PrimitiveType,
     ) -> &wgpu::RenderPipeline {
-        let cache_key = (properties.clone(), primitive_type);
+        let cache_key = (material_props.clone(), scene_props.clone(), primitive_type);
         self.pipeline_cache.entry(cache_key).or_insert_with(|| {
-            // Select pipeline layout based on material type
-            let use_pbr = properties.has_normal_map || properties.has_metallic_roughness_texture;
-            let pipeline_layout = if use_pbr {
+            // Select pipeline layout based on material type and scene properties
+            let use_pbr = material_props.has_normal_map || material_props.has_metallic_roughness_texture;
+            let use_ibl = scene_props.has_ibl && use_pbr && material_props.has_lighting;
+            let pipeline_layout = if use_ibl {
+                &self.pipelines.pbr_ibl
+            } else if use_pbr {
                 &self.pipelines.pbr
-            } else if properties.has_base_color_texture {
+            } else if material_props.has_base_color_texture {
                 &self.pipelines.texture
             } else {
                 &self.pipelines.color
@@ -827,7 +860,7 @@ impl<'a> Renderer<'a> {
 
             let shader = self
                 .shader_generator
-                .generate_shader(&self.device, &properties)
+                .generate_shader(&self.device, &material_props, &scene_props)
                 .expect("Failed to generate shader");
 
             let topology = match primitive_type {
@@ -963,22 +996,36 @@ impl<'a> Renderer<'a> {
             // Collect all instances into batches grouped by mesh and material
             let batches = scene.collect_draw_batches();
 
+            // Build scene properties for shader generation and bind IBL if active
+            let has_ibl = if let Some(env_id) = scene.active_environment_map {
+                if let Some(processed) = self.ibl_resources.get_processed(env_id) {
+                    render_pass.set_bind_group(3, &processed.bind_group, &[]);
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            let scene_props = SceneProperties { has_ibl };
+
             // Track current pipeline key to minimize pipeline changes
-            let mut current_pipeline_key: Option<(MaterialProperties, PrimitiveType)> = None;
+            let mut current_pipeline_key: Option<(MaterialProperties, SceneProperties, PrimitiveType)> = None;
 
             // Render each batch
             for batch in batches {
                 let mesh = scene.meshes.get(&batch.mesh_id).unwrap();
                 let material = scene.materials.get(&batch.material_id).unwrap();
-                let properties = material.get_properties(batch.primitive_type);
+                let material_props = material.get_properties(batch.primitive_type);
 
                 // Bind material for this batch
                 material.bind(&mut render_pass, batch.primitive_type);
 
-                // Only change pipeline if material properties or primitive type changes
-                let pipeline_key = (properties.clone(), batch.primitive_type);
+                // Only change pipeline if material properties, scene properties, or primitive type changes
+                let pipeline_key = (material_props.clone(), scene_props.clone(), batch.primitive_type);
                 if current_pipeline_key.as_ref() != Some(&pipeline_key) {
-                    let pipeline = self.get_or_create_pipeline(properties, batch.primitive_type);
+                    let pipeline = self.get_or_create_pipeline(material_props, scene_props.clone(), batch.primitive_type);
                     render_pass.set_pipeline(pipeline);
                     current_pipeline_key = Some(pipeline_key);
                 }

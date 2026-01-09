@@ -34,6 +34,16 @@ use tree::collect_instance_transforms;
 
 use crate::common::{Aabb, RgbaColor};
 
+/// Scene-level properties that affect shader generation.
+///
+/// Unlike MaterialProperties which describe individual materials,
+/// SceneProperties describes scene-wide rendering features.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub(crate) struct SceneProperties {
+    /// Whether image-based lighting is active (environment map present)
+    pub has_ibl: bool,
+}
+
 /// The scene container holding all meshes, materials, textures, instances, nodes, and lights.
 ///
 /// Scene provides device-free APIs for creating and managing scene objects.

@@ -3,7 +3,10 @@ use std::collections::HashMap;
 use wgpu::ShaderModuleDescriptor;
 use wesl::{Wesl, ModulePath, VirtualResolver};
 
-use crate::scene::MaterialProperties;
+use crate::scene::{MaterialProperties, SceneProperties};
+
+/// Combined key for shader cache (material + scene properties)
+type ShaderCacheKey = (MaterialProperties, SceneProperties);
 
 // Embed shader sources at compile time for WASM compatibility
 const SHADER_MAIN: &str = include_str!("shaders/main.wesl");
@@ -22,13 +25,15 @@ const SHADER_PBR: &str = include_str!("shaders/pbr.wesl");
 const SHADER_MATERIAL_PBR: &str = include_str!("shaders/material_pbr.wesl");
 const SHADER_NORMAL_MAPPING: &str = include_str!("shaders/normal_mapping.wesl");
 const SHADER_FRAGMENT_PBR_LIT: &str = include_str!("shaders/fragment_pbr_lit.wesl");
+// IBL shader module
+const SHADER_IBL: &str = include_str!("shaders/ibl.wesl");
 
 /// Shader generator using WESL compiler to create modular shaders
 pub(crate) struct ShaderGenerator {
     /// WESL compiler instance with embedded shader sources
     compiler: Wesl<VirtualResolver<'static>>,
-    /// Cache of compiled shader modules (MaterialProperties → ShaderModule)
-    module_cache: HashMap<MaterialProperties, wgpu::ShaderModule>,
+    /// Cache of compiled shader modules keyed by (MaterialProperties, SceneProperties)
+    module_cache: HashMap<ShaderCacheKey, wgpu::ShaderModule>,
 }
 
 impl ShaderGenerator {
@@ -56,6 +61,8 @@ impl ShaderGenerator {
         resolver.add_module("package::material_pbr".parse().unwrap(), SHADER_MATERIAL_PBR.into());
         resolver.add_module("package::normal_mapping".parse().unwrap(), SHADER_NORMAL_MAPPING.into());
         resolver.add_module("package::fragment_pbr_lit".parse().unwrap(), SHADER_FRAGMENT_PBR_LIT.into());
+        // IBL module
+        resolver.add_module("package::ibl".parse().unwrap(), SHADER_IBL.into());
 
         // Create compiler with standard extensions enabled, then swap in the virtual resolver
         let compiler = Wesl::new(".").set_custom_resolver(resolver);
@@ -66,25 +73,28 @@ impl ShaderGenerator {
         }
     }
 
-    /// Generate a shader module for the given material properties
+    /// Generate a shader module for the given material and scene properties
     pub fn generate_shader(
         &mut self,
         device: &wgpu::Device,
-        properties: &MaterialProperties
+        material_props: &MaterialProperties,
+        scene_props: &SceneProperties,
     ) -> anyhow::Result<wgpu::ShaderModule> {
         // Check cache first
-        if let Some(cached) = self.module_cache.get(properties) {
+        let cache_key = (material_props.clone(), scene_props.clone());
+        if let Some(cached) = self.module_cache.get(&cache_key) {
             return Ok(cached.clone());
         }
 
         // Build feature map for WESL conditional compilation
         // use_pbr enables the PBR shader path (requires PBR bind group layout)
         // For now, enable PBR when normal or metallic-roughness textures are present
-        let use_pbr = properties.has_normal_map || properties.has_metallic_roughness_texture;
+        let use_pbr = material_props.has_normal_map || material_props.has_metallic_roughness_texture;
         let features = [
-            ("has_texture", properties.has_base_color_texture),
-            ("has_lighting", properties.has_lighting),
+            ("has_texture", material_props.has_base_color_texture),
+            ("has_lighting", material_props.has_lighting),
             ("use_pbr", use_pbr),
+            ("has_ibl", scene_props.has_ibl && use_pbr && material_props.has_lighting),
         ];
 
         // Set features and compile the main module
@@ -93,10 +103,14 @@ impl ShaderGenerator {
         let result = self.compiler.compile(&path)?;
         let wgsl = result.to_string();
 
-        let shader_label = if use_pbr && properties.has_lighting {
-            "PBR Lit Material Shader"
+        let shader_label = if use_pbr && material_props.has_lighting {
+            if scene_props.has_ibl {
+                "PBR Lit IBL Material Shader"
+            } else {
+                "PBR Lit Material Shader"
+            }
         } else {
-            match (properties.has_base_color_texture, properties.has_lighting) {
+            match (material_props.has_base_color_texture, material_props.has_lighting) {
                 (true, true) => "Lit Texture Material Shader",
                 (true, false) => "Unlit Texture Material Shader",
                 (false, true) => "Lit Color Material Shader",
@@ -110,7 +124,7 @@ impl ShaderGenerator {
         });
 
         // Cache and return
-        self.module_cache.insert(properties.clone(), module.clone());
+        self.module_cache.insert(cache_key, module.clone());
         Ok(module)
     }
 }
