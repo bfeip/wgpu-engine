@@ -107,11 +107,12 @@ fn fragment_pbr_lit(in: VertexOutput) -> vec4<f32> {
     }
 
     // Ambient term: IBL when available, constant fallback otherwise
+    var ambient: vec3<f32>;
     @if(has_ibl) {
-        let ambient = calculate_ibl(n, v, albedo, metallic, roughness);
+        ambient = calculate_ibl(n, v, albedo, metallic, roughness);
     }
     @if(!has_ibl) {
-        let ambient = vec3<f32>(AMBIENT_FACTOR) * albedo;
+        ambient = vec3<f32>(AMBIENT_FACTOR) * albedo;
     }
 
     let color = ambient + lo;

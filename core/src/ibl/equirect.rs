@@ -23,21 +23,22 @@ impl EquirectToCubePipeline {
             label: Some("Equirect to Cube Bind Group Layout"),
             entries: &[
                 // Input equirectangular texture
+                // Use non-filterable since Rgba32Float doesn't support filtering
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
                         view_dimension: wgpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
                 },
-                // Sampler for equirectangular texture
+                // Sampler for equirectangular texture (non-filtering)
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
                     visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
                     count: None,
                 },
                 // Output cubemap storage texture
@@ -87,13 +88,14 @@ impl EquirectToCubePipeline {
         // Create the input 2D texture from HDR data
         let input_texture = self.create_input_texture(device, queue, hdr_image);
         let input_view = input_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        // Use nearest filtering since Rgba32Float doesn't support linear filtering
         let input_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Equirect Input Sampler"),
             address_mode_u: wgpu::AddressMode::Repeat,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
             mipmap_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
         });

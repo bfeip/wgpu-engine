@@ -8,7 +8,7 @@ const SAMPLE_COUNT: u32 = 1024u;
 
 struct PrefilterParams {
     roughness: f32,
-    _padding: vec3<f32>,
+    // Rust side pads to 16 bytes for uniform buffer requirements
 }
 
 @group(0) @binding(0) var env_cubemap: texture_cube<f32>;
