@@ -12,7 +12,7 @@ const BRDF_LUT_SHADER: &str = include_str!("../shaders/ibl/brdf_lut.wgsl");
 /// GPU resources for the BRDF lookup table.
 #[derive(Debug)]
 pub struct BrdfLut {
-    pub texture: wgpu::Texture,
+    pub _texture: wgpu::Texture,
     pub view: wgpu::TextureView,
     pub sampler: wgpu::Sampler,
 }
@@ -135,7 +135,7 @@ impl BrdfLutPipeline {
         queue.submit(std::iter::once(encoder.finish()));
 
         BrdfLut {
-            texture,
+            _texture: texture,
             view,
             sampler,
         }

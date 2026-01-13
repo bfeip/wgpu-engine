@@ -15,7 +15,7 @@ mod prefilter;
 pub use hdr_loader::{load_hdr_from_path, HdrImage};
 
 pub(crate) use brdf_lut::{BrdfLut, BrdfLutPipeline};
-pub(crate) use cubemap::{CubemapFace, GpuCubemap};
+pub(crate) use cubemap::GpuCubemap;
 pub(crate) use equirect::EquirectToCubePipeline;
 pub(crate) use irradiance::IrradiancePipeline;
 pub(crate) use prefilter::PrefilterPipeline;
@@ -121,11 +121,11 @@ impl EnvironmentMap {
 #[derive(Debug)]
 pub(crate) struct ProcessedEnvironment {
     /// Original environment as a cubemap.
-    pub environment: GpuCubemap,
+    pub _environment: GpuCubemap,
     /// Diffuse irradiance cubemap.
-    pub irradiance: GpuCubemap,
+    pub _irradiance: GpuCubemap,
     /// Pre-filtered specular cubemap.
-    pub prefiltered: GpuCubemap,
+    pub _prefiltered: GpuCubemap,
     /// Bind group for sampling in fragment shader.
     pub bind_group: wgpu::BindGroup,
 }
@@ -142,7 +142,7 @@ pub(crate) struct IblResources {
     /// Pipeline for generating pre-filtered environment maps.
     prefilter_pipeline: PrefilterPipeline,
     /// Pipeline for generating the BRDF LUT.
-    brdf_lut_pipeline: BrdfLutPipeline,
+    _brdf_lut_pipeline: BrdfLutPipeline,
     /// Shared BRDF lookup table (generated once).
     pub brdf_lut: BrdfLut,
     /// Bind group layout for IBL sampling in fragment shaders.
@@ -229,7 +229,7 @@ impl IblResources {
             equirect_pipeline,
             irradiance_pipeline,
             prefilter_pipeline,
-            brdf_lut_pipeline,
+            _brdf_lut_pipeline: brdf_lut_pipeline,
             brdf_lut,
             bind_group_layout,
             processed_environments: std::collections::HashMap::new(),
@@ -297,9 +297,9 @@ impl IblResources {
         self.processed_environments.insert(
             env_map.id,
             ProcessedEnvironment {
-                environment,
-                irradiance,
-                prefiltered,
+                _environment: environment,
+                _irradiance: irradiance,
+                _prefiltered: prefiltered,
                 bind_group,
             },
         );
@@ -314,7 +314,7 @@ impl IblResources {
     }
 
     /// Remove a processed environment.
-    pub fn remove_processed(&mut self, id: EnvironmentMapId) {
+    pub fn _remove_processed(&mut self, id: EnvironmentMapId) {
         self.processed_environments.remove(&id);
     }
 }

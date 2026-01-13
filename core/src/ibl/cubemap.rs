@@ -3,35 +3,10 @@
 //! Cubemaps are used to store environment maps, irradiance maps, and pre-filtered
 //! specular maps for image-based lighting.
 
-/// Cubemap face indices.
-#[repr(u32)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CubemapFace {
-    PositiveX = 0,
-    NegativeX = 1,
-    PositiveY = 2,
-    NegativeY = 3,
-    PositiveZ = 4,
-    NegativeZ = 5,
-}
-
-impl CubemapFace {
-    /// All faces in order.
-    pub const ALL: [CubemapFace; 6] = [
-        CubemapFace::PositiveX,
-        CubemapFace::NegativeX,
-        CubemapFace::PositiveY,
-        CubemapFace::NegativeY,
-        CubemapFace::PositiveZ,
-        CubemapFace::NegativeZ,
-    ];
-}
-
 /// GPU resources for a cubemap texture.
 ///
 /// Cubemaps consist of 6 square faces representing the +X, -X, +Y, -Y, +Z, -Z directions.
-/// The `view` is a cube view suitable for sampling in shaders, while `face_views` provides
-/// individual views for each face, useful for rendering or compute shader output.
+/// The `view` is a cube view suitable for sampling in shaders.
 #[derive(Debug)]
 pub struct GpuCubemap {
     /// The underlying wgpu texture (2D array with 6 layers).
@@ -40,13 +15,6 @@ pub struct GpuCubemap {
     pub view: wgpu::TextureView,
     /// Sampler configured for cubemap sampling.
     pub sampler: wgpu::Sampler,
-    /// Individual views for each face (for compute shader output).
-    /// Order: +X, -X, +Y, -Y, +Z, -Z
-    pub face_views: [wgpu::TextureView; 6],
-    /// Size of each face in pixels.
-    pub size: u32,
-    /// Number of mip levels.
-    pub mip_levels: u32,
 }
 
 impl GpuCubemap {
@@ -95,21 +63,6 @@ impl GpuCubemap {
             ..Default::default()
         });
 
-        // Create per-face views for compute shader output
-        let face_views = std::array::from_fn(|face| {
-            texture.create_view(&wgpu::TextureViewDescriptor {
-                label: Some(&format!("{} Face {} View", label, face)),
-                format: Some(format),
-                dimension: Some(wgpu::TextureViewDimension::D2),
-                aspect: wgpu::TextureAspect::All,
-                base_mip_level: 0,
-                mip_level_count: Some(1),
-                base_array_layer: face as u32,
-                array_layer_count: Some(1),
-                ..Default::default()
-            })
-        });
-
         // Create sampler with linear filtering for smooth cubemap sampling
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some(&format!("{} Sampler", label)),
@@ -130,32 +83,7 @@ impl GpuCubemap {
             texture,
             view,
             sampler,
-            face_views,
-            size,
-            mip_levels,
         }
-    }
-
-    /// Create a view for a specific face and mip level.
-    ///
-    /// Useful for compute shader output at different mip levels.
-    pub fn create_face_mip_view(
-        &self,
-        face: CubemapFace,
-        mip_level: u32,
-        format: wgpu::TextureFormat,
-    ) -> wgpu::TextureView {
-        self.texture.create_view(&wgpu::TextureViewDescriptor {
-            label: Some(&format!("Cubemap Face {:?} Mip {}", face, mip_level)),
-            format: Some(format),
-            dimension: Some(wgpu::TextureViewDimension::D2),
-            aspect: wgpu::TextureAspect::All,
-            base_mip_level: mip_level,
-            mip_level_count: Some(1),
-            base_array_layer: face as u32,
-            array_layer_count: Some(1),
-            ..Default::default()
-        })
     }
 
     /// Create a 2D array view suitable for compute shader storage texture binding.
