@@ -6,6 +6,32 @@ use std::cell::Cell;
 /// Unique identifier for a Node in the scene tree.
 pub type NodeId = u32;
 
+/// Explicit visibility state set by the user.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Visibility {
+    /// Node is explicitly set to visible
+    Visible,
+    /// Node is explicitly set to invisible
+    Invisible,
+}
+
+impl Default for Visibility {
+    fn default() -> Self {
+        Self::Visible
+    }
+}
+
+/// Effective visibility state computed during tree traversal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EffectiveVisibility {
+    /// Node and all descendants are visible
+    Visible,
+    /// Node is explicitly invisible
+    Invisible,
+    /// Node is visible but has some invisible descendants
+    Mixed,
+}
+
 /// A node in the scene tree hierarchy.
 pub struct Node {
     pub id: NodeId,
@@ -22,6 +48,10 @@ pub struct Node {
 
     // Content: This node can reference an instance to be rendered
     instance: Option<InstanceId>,
+
+    // Visibility
+    visibility: Visibility,
+    cached_effective_visibility: Cell<Option<EffectiveVisibility>>,
 
     // Cached computed values (for optimization)
     cached_world_transform: Cell<Option<Matrix4<f32>>>,
@@ -46,6 +76,8 @@ impl Node {
             parent: None,
             children: Vec::new(),
             instance: None,
+            visibility: Visibility::default(),
+            cached_effective_visibility: Cell::new(None),
             cached_world_transform: Cell::new(None),
             cached_bounds: Cell::new(None),
         }
@@ -183,6 +215,39 @@ impl Node {
     /// Sets the cached bounding box
     pub(super) fn set_cached_bounds(&self, bounds: Option<Aabb>) {
         self.cached_bounds.set(bounds);
+    }
+
+    // ========== Visibility Management ==========
+
+    /// Gets the explicit visibility state of this node.
+    pub fn visibility(&self) -> Visibility {
+        self.visibility
+    }
+
+    /// Sets the explicit visibility state of this node.
+    pub fn set_visibility(&mut self, visibility: Visibility) {
+        self.visibility = visibility;
+        self.cached_effective_visibility.set(None);
+    }
+
+    /// Gets the cached effective visibility if valid.
+    pub(super) fn cached_effective_visibility(&self) -> Option<EffectiveVisibility> {
+        self.cached_effective_visibility.get()
+    }
+
+    /// Sets the cached effective visibility.
+    pub(super) fn set_cached_effective_visibility(&self, visibility: EffectiveVisibility) {
+        self.cached_effective_visibility.set(Some(visibility));
+    }
+
+    /// Returns true if effective visibility needs recomputation.
+    pub fn effective_visibility_dirty(&self) -> bool {
+        self.cached_effective_visibility.get().is_none()
+    }
+
+    /// Marks visibility cache as dirty.
+    pub fn mark_visibility_dirty(&self) {
+        self.cached_effective_visibility.set(None);
     }
 }
 
@@ -680,6 +745,112 @@ mod tests {
         node.set_instance(Some(42));
         assert!(!node.transform_dirty()); // instance doesn't affect transform
         assert!(node.bounds_dirty()); // instance affects bounds
+    }
+
+    // ========================================================================
+    // Visibility Tests
+    // ========================================================================
+
+    #[test]
+    fn test_visibility_default() {
+        let node = Node::new_default(0);
+        assert_eq!(node.visibility(), Visibility::Visible);
+    }
+
+    #[test]
+    fn test_set_visibility() {
+        let mut node = Node::new_default(0);
+
+        // Default is visible
+        assert_eq!(node.visibility(), Visibility::Visible);
+
+        // Set to invisible
+        node.set_visibility(Visibility::Invisible);
+        assert_eq!(node.visibility(), Visibility::Invisible);
+
+        // Set back to visible
+        node.set_visibility(Visibility::Visible);
+        assert_eq!(node.visibility(), Visibility::Visible);
+    }
+
+    #[test]
+    fn test_visibility_cache_invalidation() {
+        let mut node = Node::new_default(0);
+
+        // Set some cached effective visibility
+        node.set_cached_effective_visibility(EffectiveVisibility::Visible);
+        assert!(!node.effective_visibility_dirty());
+
+        // Setting visibility should invalidate cache
+        node.set_visibility(Visibility::Invisible);
+        assert!(node.effective_visibility_dirty());
+    }
+
+    #[test]
+    fn test_effective_visibility_dirty() {
+        let node = Node::new_default(0);
+
+        // Initially dirty (no cache)
+        assert!(node.effective_visibility_dirty());
+
+        // Set cache - no longer dirty
+        node.set_cached_effective_visibility(EffectiveVisibility::Visible);
+        assert!(!node.effective_visibility_dirty());
+
+        // Mark dirty
+        node.mark_visibility_dirty();
+        assert!(node.effective_visibility_dirty());
+    }
+
+    #[test]
+    fn test_cached_effective_visibility() {
+        let node = Node::new_default(0);
+
+        // Initially None
+        assert_eq!(node.cached_effective_visibility(), None);
+
+        // Set to Visible
+        node.set_cached_effective_visibility(EffectiveVisibility::Visible);
+        assert_eq!(node.cached_effective_visibility(), Some(EffectiveVisibility::Visible));
+
+        // Set to Invisible
+        node.set_cached_effective_visibility(EffectiveVisibility::Invisible);
+        assert_eq!(node.cached_effective_visibility(), Some(EffectiveVisibility::Invisible));
+
+        // Set to Mixed
+        node.set_cached_effective_visibility(EffectiveVisibility::Mixed);
+        assert_eq!(node.cached_effective_visibility(), Some(EffectiveVisibility::Mixed));
+    }
+
+    #[test]
+    fn test_visibility_independent_from_transform_cache() {
+        let mut node = Node::new_default(0);
+
+        // Set transform cache
+        let transform = Matrix4::from_scale(2.0);
+        node.set_cached_world_transform(transform);
+        assert!(!node.transform_dirty());
+
+        // Setting visibility should NOT invalidate transform cache
+        node.set_visibility(Visibility::Invisible);
+        assert!(!node.transform_dirty());
+        assert!(node.effective_visibility_dirty()); // but should invalidate visibility cache
+    }
+
+    #[test]
+    fn test_mark_dirty_does_not_affect_visibility_cache() {
+        let node = Node::new_default(0);
+
+        // Set visibility cache
+        node.set_cached_effective_visibility(EffectiveVisibility::Visible);
+        assert!(!node.effective_visibility_dirty());
+
+        // Mark transform/bounds dirty
+        node.mark_dirty();
+
+        // Visibility cache should still be valid
+        assert!(!node.effective_visibility_dirty());
+        assert_eq!(node.cached_effective_visibility(), Some(EffectiveVisibility::Visible));
     }
 
     // ========================================================================

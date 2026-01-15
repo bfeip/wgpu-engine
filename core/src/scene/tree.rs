@@ -11,7 +11,9 @@ use cgmath::{Matrix3, Matrix4, SquareMatrix};
 /// The visitor receives callbacks when entering and exiting nodes.
 pub trait TreeVisitor {
     /// Called when entering a node (before processing its children).
-    fn enter_node(&mut self, node: &Node);
+    ///
+    /// Returns true to continue traversing children, false to skip the subtree.
+    fn enter_node(&mut self, node: &Node) -> bool;
 
     /// Called when exiting a node (after processing its children).
     fn exit_node(&mut self, node: &Node);
@@ -51,11 +53,13 @@ pub fn walk_tree<V: TreeVisitor>(
     };
 
     // Enter this node
-    visitor.enter_node(node);
+    let should_visit_children = visitor.enter_node(node);
 
-    // Recurse for all children
-    for &child_id in node.children() {
-        walk_tree(scene, child_id, visitor);
+    // Recurse for all children if enter_node returned true
+    if should_visit_children {
+        for &child_id in node.children() {
+            walk_tree(scene, child_id, visitor);
+        }
     }
 
     // Exit this node
@@ -99,7 +103,7 @@ impl InstanceTransformCollector {
 }
 
 impl TreeVisitor for InstanceTransformCollector {
-    fn enter_node(&mut self, node: &Node) {
+    fn enter_node(&mut self, node: &Node) -> bool {
         let parent_transform = self.current_parent_transform();
         let parent_changed = self.parent_changed();
 
@@ -125,10 +129,20 @@ impl TreeVisitor for InstanceTransformCollector {
         self.transform_stack.push(world_transform);
         self.needs_recompute_stack.push(needs_recompute);
 
+        // Check visibility
+        use crate::scene::node::Visibility;
+        if node.visibility() == Visibility::Invisible {
+            // Skip this node and its children (they're all invisible due to propagation)
+            return false;
+        }
+
         // If this node has an instance, collect it
         if let Some(instance_id) = node.instance() {
             self.results.push(InstanceTransform::new(instance_id, world_transform));
         }
+
+        // Continue traversing children
+        true
     }
 
     fn exit_node(&mut self, _node: &Node) {
