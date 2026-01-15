@@ -13,6 +13,7 @@ enum LeftPanelTab {
     #[default]
     Scene,
     Lights,
+    Environment,
 }
 
 /// Actions requested by the UI that need to be handled by the application.
@@ -21,6 +22,8 @@ pub struct UiActions {
     pub load_file: bool,
     pub clear_scene: bool,
     pub add_light: Option<LightType>,
+    pub load_environment: bool,
+    pub clear_environment: bool,
 }
 
 /// Build all egui UI panels and return any actions requested.
@@ -96,6 +99,7 @@ fn build_left_panel(ctx: &egui::Context, viewer: &mut Viewer, actions: &mut UiAc
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut current_tab, LeftPanelTab::Scene, "Scene");
                 ui.selectable_value(&mut current_tab, LeftPanelTab::Lights, "Lights");
+                ui.selectable_value(&mut current_tab, LeftPanelTab::Environment, "Env");
             });
 
             // Store updated tab
@@ -107,6 +111,7 @@ fn build_left_panel(ctx: &egui::Context, viewer: &mut Viewer, actions: &mut UiAc
             match current_tab {
                 LeftPanelTab::Scene => build_scene_tab(ui, viewer, actions),
                 LeftPanelTab::Lights => build_lights_tab(ui, viewer, actions),
+                LeftPanelTab::Environment => build_environment_tab(ui, viewer, actions),
             }
         });
 }
@@ -183,6 +188,40 @@ fn build_lights_tab(ui: &mut egui::Ui, viewer: &mut Viewer, actions: &mut UiActi
                 }
             }
         });
+}
+
+/// Environment tab content with HDR loading controls.
+fn build_environment_tab(ui: &mut egui::Ui, viewer: &Viewer, actions: &mut UiActions) {
+    ui.horizontal(|ui| {
+        if ui.button("Load HDR...").clicked() {
+            actions.load_environment = true;
+        }
+        if ui.button("Clear").clicked() {
+            actions.clear_environment = true;
+        }
+    });
+
+    ui.separator();
+
+    // Show current environment status
+    let scene = viewer.scene();
+    if let Some(env_id) = scene.active_environment_map {
+        if let Some(env_map) = scene.environment_maps.get(&env_id) {
+            ui.label(format!("Active: Environment #{}", env_id));
+            ui.label(format!("Intensity: {:.2}", env_map.intensity()));
+            ui.label(format!("Rotation: {:.1}°", env_map.rotation().to_degrees()));
+            if env_map.needs_generation() {
+                ui.label("Status: Pending generation");
+            } else {
+                ui.label("Status: Ready");
+            }
+        }
+    } else {
+        ui.label("No environment map active");
+        ui.label("");
+        ui.label("Load an HDR file to enable");
+        ui.label("image-based lighting (IBL)");
+    }
 }
 
 /// Build editor UI for a single light. Returns true if delete was requested.

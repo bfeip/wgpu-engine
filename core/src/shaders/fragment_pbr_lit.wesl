@@ -5,12 +5,17 @@ import package::common::{
     VertexOutput, LightUniform,
     LIGHT_TYPE_POINT, LIGHT_TYPE_DIRECTIONAL, LIGHT_TYPE_SPOT, MAX_LIGHTS
 };
-import package::constants::AMBIENT_FACTOR;
 import package::camera::camera;
 import package::lighting::{lights, calculate_attenuation, calculate_spot_cone_falloff};
 import package::material_pbr::{get_base_color, get_metallic_roughness};
 import package::normal_mapping::get_normal;
 import package::pbr::calculate_pbr_direct_light;
+
+// Conditionally import IBL or constant ambient
+@if(has_ibl)
+    import package::ibl::calculate_ibl;
+@if(!has_ibl)
+    import package::constants::AMBIENT_FACTOR;
 
 // Calculate light direction and radiance for a point light
 fn get_point_light_params(
@@ -101,8 +106,14 @@ fn fragment_pbr_lit(in: VertexOutput) -> vec4<f32> {
         );
     }
 
-    // Add ambient term (simple constant for now)
-    let ambient = vec3<f32>(AMBIENT_FACTOR) * albedo;
+    // Ambient term: IBL when available, constant fallback otherwise
+    var ambient: vec3<f32>;
+    @if(has_ibl) {
+        ambient = calculate_ibl(n, v, albedo, metallic, roughness);
+    }
+    @if(!has_ibl) {
+        ambient = vec3<f32>(AMBIENT_FACTOR) * albedo;
+    }
 
     let color = ambient + lo;
 

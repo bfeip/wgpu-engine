@@ -1,11 +1,18 @@
 // pbr.wesl
 // Physically Based Rendering BRDF functions (Cook-Torrance with GGX)
 
-const PI: f32 = 3.14159265359;
+import package::constants::PI;
 
 // Fresnel-Schlick approximation
 fn fresnel_schlick(cos_theta: f32, f0: vec3<f32>) -> vec3<f32> {
     return f0 + (vec3<f32>(1.0) - f0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
+}
+
+// Fresnel-Schlick with roughness term for IBL
+// At grazing angles, rough surfaces have less Fresnel effect
+fn fresnel_schlick_roughness(cos_theta: f32, f0: vec3<f32>, roughness: f32) -> vec3<f32> {
+    let one_minus_roughness = vec3<f32>(1.0 - roughness);
+    return f0 + (max(one_minus_roughness, f0) - f0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
 }
 
 // GGX/Trowbridge-Reitz Normal Distribution Function
