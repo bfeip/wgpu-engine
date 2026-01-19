@@ -1,4 +1,3 @@
-pub mod annotation;
 mod camera;
 pub mod common;
 pub mod input;

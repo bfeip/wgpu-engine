@@ -1,3 +1,4 @@
+pub mod annotation;
 mod batch;
 mod instance;
 mod light;
@@ -12,7 +13,7 @@ use image::DynamicImage;
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::annotation::{Annotation, AnnotationId, AnnotationManager};
+use annotation::{Annotation, AnnotationId, AnnotationManager};
 use crate::ibl::{EnvironmentMap, EnvironmentMapId};
 
 // Public API exports
@@ -715,7 +716,7 @@ impl Scene {
     fn create_annotation_node(
         &mut self,
         parent: NodeId,
-        data: crate::annotation::AnnotationMeshData,
+        data: annotation::AnnotationMeshData,
     ) -> Option<NodeId> {
         let mesh_id = self.add_mesh(data.mesh);
         let material_id = self.add_material(data.material);

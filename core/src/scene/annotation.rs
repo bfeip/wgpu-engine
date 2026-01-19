@@ -2,10 +2,8 @@ use std::collections::HashMap;
 
 use cgmath::{Point3, Vector3};
 
-use crate::{
-    common::RgbaColor,
-    scene::{Material, Mesh, MeshPrimitive, NodeId, PrimitiveType, Vertex},
-};
+use super::{Material, Mesh, MeshPrimitive, NodeId, PrimitiveType, Vertex};
+use crate::common::RgbaColor;
 
 /// Unique identifier for annotations
 pub type AnnotationId = u32;
