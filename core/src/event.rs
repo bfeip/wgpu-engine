@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use web_time::Instant;
 
-use crate::annotation::AnnotationManager;
 use crate::renderer::Renderer;
 use crate::scene::Scene;
 use crate::input::{ElementState, MouseButton, MouseScrollDelta, KeyEvent};
@@ -15,7 +14,7 @@ const CLICK_TIME_THRESHOLD_MS: u64 = 300;
 /// Context passed to event callbacks, providing mutable access to application state.
 ///
 /// This struct bundles all the mutable state that event callbacks need to access,
-/// including the rendering state, scene, and annotation manager.
+/// including the rendering state and scene. Annotations are accessed via `scene.annotations`.
 ///
 /// ## Lifetime Parameters
 /// - `'w`: The surface lifetime - DrawState holds a reference to a rendering surface with this lifetime
@@ -23,10 +22,8 @@ const CLICK_TIME_THRESHOLD_MS: u64 = 300;
 pub struct EventContext<'w, 'c> {
     /// Mutable reference to the rendering state
     pub(crate) state: &'c mut Renderer<'w>,
-    /// Mutable reference to the scene
+    /// Mutable reference to the scene (annotations are accessed via scene.annotations)
     pub scene: &'c mut Scene,
-    /// Mutable reference to the annotation manager
-    pub annotation_manager: &'c mut AnnotationManager,
 }
 
 /// Unique identifier for a registered callback.
@@ -485,7 +482,6 @@ mod tests {
         EventContext {
             state: unsafe { &mut *(dangling.as_ptr() as *mut Renderer) },
             scene: unsafe { &mut *(dangling.as_ptr() as *mut Scene) },
-            annotation_manager: unsafe { &mut *(dangling.as_ptr() as *mut AnnotationManager) },
         }
     }
 

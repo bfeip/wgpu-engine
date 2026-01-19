@@ -7,11 +7,12 @@ mod node;
 mod texture;
 mod tree;
 
-use cgmath::{Matrix4, SquareMatrix};
+use cgmath::{Matrix4, Point3, Quaternion, SquareMatrix, Vector3};
 use image::DynamicImage;
 use std::collections::HashMap;
 use std::path::Path;
 
+use crate::annotation::{Annotation, AnnotationId, AnnotationManager};
 use crate::ibl::{EnvironmentMap, EnvironmentMapId};
 
 // Public API exports
@@ -97,8 +98,8 @@ pub struct Scene {
     /// The currently active environment map for IBL lighting.
     pub active_environment_map: Option<EnvironmentMapId>,
 
-    /// Root node for annotations, created lazily when first requested
-    annotation_root_node: Option<NodeId>,
+    /// Annotation manager (owned by Scene for lifecycle consistency)
+    pub annotations: AnnotationManager,
 
     next_mesh_id: MeshId,
     next_instance_id: InstanceId,
@@ -130,7 +131,7 @@ impl Scene {
             environment_maps: HashMap::new(),
             active_environment_map: None,
 
-            annotation_root_node: None,
+            annotations: AnnotationManager::new(),
 
             next_mesh_id: 0,
             next_instance_id: 0,
@@ -551,7 +552,8 @@ impl Scene {
     /// Clears all nodes from the scene.
     ///
     /// This removes all nodes, instances, meshes, materials (except the default),
-    /// textures, lights, and environment maps from the scene, resetting it to an empty state.
+    /// textures, lights, environment maps, and annotations from the scene,
+    /// resetting it to an empty state.
     pub fn clear(&mut self) {
         self.nodes.clear();
         self.root_nodes.clear();
@@ -561,7 +563,9 @@ impl Scene {
         self.textures.clear();
         self.environment_maps.clear();
         self.active_environment_map = None;
-        self.annotation_root_node = None;
+
+        // Clear annotations (they're part of Scene now)
+        self.annotations.clear();
 
         // Keep only the default material (ID 0), remove all others
         self.materials.retain(|&id, _| id == DEFAULT_MATERIAL_ID);
@@ -573,6 +577,34 @@ impl Scene {
         self.next_texture_id = 0;
         self.next_environment_map_id = 0;
         // Don't reset next_material_id since we keep the default material
+    }
+
+    /// Clears scene geometry but preserves annotation data.
+    ///
+    /// Annotations will need to be re-reified after calling this.
+    /// Use this when you want to reload scene content but keep annotations.
+    pub fn clear_preserving_annotations(&mut self) {
+        self.nodes.clear();
+        self.root_nodes.clear();
+        self.instances.clear();
+        self.meshes.clear();
+        self.lights.clear();
+        self.textures.clear();
+        self.environment_maps.clear();
+        self.active_environment_map = None;
+
+        // Mark annotations as unreified (their nodes no longer exist)
+        self.annotations.mark_all_unreified();
+
+        // Keep only the default material (ID 0), remove all others
+        self.materials.retain(|&id, _| id == DEFAULT_MATERIAL_ID);
+
+        // Reset ID counters (but keep material counter since default material exists)
+        self.next_node_id = 0;
+        self.next_instance_id = 0;
+        self.next_mesh_id = 0;
+        self.next_texture_id = 0;
+        self.next_environment_map_id = 0;
     }
 
     /// Sets up default lighting for the scene if no lights are present.
@@ -589,31 +621,134 @@ impl Scene {
         }
     }
 
-    /// Returns the root node for annotations, creating it if necessary.
-    ///
-    /// The annotation root node is a dedicated root node used by the
-    /// `AnnotationManager` to organize all annotation geometry. This node
-    /// is automatically recreated if the scene is cleared.
-    ///
-    /// # Panics
-    /// Panics in debug builds if the annotation root node was set but no longer
-    /// exists in the scene. This indicates the node was removed directly instead
-    /// of using `clear()`.
-    pub fn annotation_root_node(&mut self) -> NodeId {
-        if let Some(node_id) = self.annotation_root_node {
-            debug_assert!(
-                self.nodes.contains_key(&node_id),
-                "Annotation root node {} was removed without clearing the scene",
-                node_id
-            );
-            return node_id;
+    // ========== Annotation Reification API ==========
+
+    /// Ensures the annotation root node exists and returns its ID.
+    fn ensure_annotation_root(&mut self) -> NodeId {
+        if let Some(root_id) = self.annotations.root_node() {
+            if self.nodes.contains_key(&root_id) {
+                return root_id;
+            }
         }
 
-        // Create a new annotation root node
-        let node_id = self.add_default_node(None, None)
+        let root_id = self
+            .add_default_node(None, Some("AnnotationRoot".to_string()))
             .expect("Failed to create annotation root node");
-        self.annotation_root_node = Some(node_id);
-        node_id
+        self.annotations.set_root_node(root_id);
+        root_id
+    }
+
+    /// Reifies all unreified annotations, creating scene nodes for them.
+    ///
+    /// # Returns
+    /// The number of annotations that were reified.
+    pub fn reify_annotations(&mut self) -> usize {
+        let unreified_ids: Vec<AnnotationId> = self
+            .annotations
+            .iter_unreified()
+            .map(|a| a.id())
+            .collect();
+
+        let count = unreified_ids.len();
+        for id in unreified_ids {
+            self.reify_annotation(id);
+        }
+        count
+    }
+
+    /// Reifies a single annotation by ID.
+    ///
+    /// # Returns
+    /// The NodeId of the reified annotation, or None if not found or already reified.
+    pub fn reify_annotation(&mut self, id: AnnotationId) -> Option<NodeId> {
+        // Check if already reified
+        if let Some(annotation) = self.annotations.get(id) {
+            if annotation.is_reified() {
+                return annotation.node_id();
+            }
+        }
+
+        let annotation = self.annotations.get(id)?.clone();
+        let root_id = self.ensure_annotation_root();
+
+        let node_id = match &annotation {
+            Annotation::Line(line) => {
+                let data = line.to_mesh_data();
+                self.create_annotation_node(root_id, data)
+            }
+            Annotation::Polyline(polyline) => {
+                let data = polyline.to_mesh_data()?;
+                self.create_annotation_node(root_id, data)
+            }
+            Annotation::Points(points) => {
+                let data = points.to_mesh_data()?;
+                self.create_annotation_node(root_id, data)
+            }
+            Annotation::Axes(axes) => {
+                // Axes creates multiple children under a parent node
+                let parent = self
+                    .add_default_node(Some(root_id), axes.meta.name.clone())
+                    .ok()?;
+                for data in axes.to_mesh_data() {
+                    self.create_annotation_node(parent, data);
+                }
+                Some(parent)
+            }
+            Annotation::Box(box_ann) => {
+                let data = box_ann.to_mesh_data();
+                self.create_annotation_node(root_id, data)
+            }
+            Annotation::Grid(grid) => {
+                let data = grid.to_mesh_data();
+                self.create_annotation_node(root_id, data)
+            }
+        }?;
+
+        if let Some(annotation) = self.annotations.get_mut(id) {
+            annotation.meta_mut().node_id = Some(node_id);
+        }
+
+        Some(node_id)
+    }
+
+    /// Helper to create a node from annotation mesh data
+    fn create_annotation_node(
+        &mut self,
+        parent: NodeId,
+        data: crate::annotation::AnnotationMeshData,
+    ) -> Option<NodeId> {
+        let mesh_id = self.add_mesh(data.mesh);
+        let material_id = self.add_material(data.material);
+
+        self.add_instance_node(
+            Some(parent),
+            mesh_id,
+            material_id,
+            data.name,
+            Point3::new(0.0, 0.0, 0.0),
+            Quaternion::new(1.0, 0.0, 0.0, 0.0),
+            Vector3::new(1.0, 1.0, 1.0),
+        )
+        .ok()
+    }
+
+    /// Removes an annotation and its scene node (if reified).
+    pub fn remove_annotation(&mut self, id: AnnotationId) -> Option<Annotation> {
+        let annotation = self.annotations.remove(id)?;
+        if let Some(node_id) = annotation.node_id() {
+            self.remove_node(node_id);
+        }
+        Some(annotation)
+    }
+
+    /// Sets visibility for all annotations.
+    pub fn set_annotations_visible(&mut self, visible: bool) {
+        if let Some(root_id) = self.annotations.root_node() {
+            if let Some(root) = self.get_node_mut(root_id) {
+                let scale = if visible { 1.0 } else { 0.0 };
+                root.set_scale(Vector3::new(scale, scale, scale));
+            }
+        }
     }
 
     /// Invalidates cached bounds for a node and all its ancestors.

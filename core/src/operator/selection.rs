@@ -43,12 +43,12 @@ impl SelectionOperator {
 
         // Draw debug lines
         if results.is_empty() {
-            let annotation_root = ctx.annotation_manager.root_node(ctx.scene);
+            let annotation_root = ctx.scene.annotations.root_node();
             let mut closest_bbox_hit: Option<f32> = None;
 
             for &root_id in ctx.scene.root_nodes() {
                 // Skip the annotation root node to avoid hitting our debug rays
-                if root_id == annotation_root {
+                if annotation_root == Some(root_id) {
                     continue;
                 }
 
@@ -67,8 +67,7 @@ impl SelectionOperator {
             if let Some(bbox_t) = closest_bbox_hit {
                 // Yellow ray: hit bounding box but not geometry
                 let hit_point = ray_origin + ray.direction * bbox_t;
-                ctx.annotation_manager.add_line(
-                    ctx.scene,
+                ctx.scene.annotations.add_line(
                     ray_origin,
                     hit_point,
                     RgbaColor { r: 1.0, g: 1.0, b: 0.0, a: 1.0 }, // Yellow
@@ -76,8 +75,7 @@ impl SelectionOperator {
             } else {
                 // Red ray: complete miss
                 let end_point = ray_origin + ray.direction * camera_distance;
-                ctx.annotation_manager.add_line(
-                    ctx.scene,
+                ctx.scene.annotations.add_line(
                     ray_origin,
                     end_point,
                     RgbaColor { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }, // Red
@@ -91,8 +89,7 @@ impl SelectionOperator {
                     closest_hit.hit_point.y,
                     closest_hit.hit_point.z,
                 );
-                ctx.annotation_manager.add_line(
-                    ctx.scene,
+                ctx.scene.annotations.add_line(
                     ray_origin,
                     hit_point,
                     RgbaColor { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }, // Green

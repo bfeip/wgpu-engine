@@ -1,106 +1,104 @@
 use std::collections::HashMap;
-use cgmath::{Point3, Vector3, Quaternion};
+
+use cgmath::{Point3, Vector3};
+
 use crate::{
     common::RgbaColor,
-    scene::{Material, Scene, NodeId, Mesh, MeshPrimitive, PrimitiveType, Vertex},
+    scene::{Material, Mesh, MeshPrimitive, NodeId, PrimitiveType, Vertex},
 };
 
 /// Unique identifier for annotations
 pub type AnnotationId = u32;
 
-/// Manages 3D annotations for debugging and visualization.
-///
-/// All annotations are stored under a single root node in the scene tree,
-/// allowing for easy show/hide and bulk removal operations. The root node
-/// is managed by the Scene and will be recreated if the scene is cleared.
-///
-/// After calling `Scene::clear()`, you should also call `AnnotationManager::reset()`
-/// to clear stale annotation tracking state.
-pub struct AnnotationManager {
-    /// Maps annotation IDs to their scene node IDs
-    annotation_nodes: HashMap<AnnotationId, NodeId>,
-
-    /// Next annotation ID to assign
-    next_annotation_id: AnnotationId,
+/// Data needed to create scene geometry for an annotation
+pub struct AnnotationMeshData {
+    pub mesh: Mesh,
+    pub material: Material,
+    pub name: Option<String>,
 }
 
-impl AnnotationManager {
-    /// Creates a new annotation manager.
-    pub fn new() -> Self {
+/// Common metadata for all annotations
+#[derive(Debug, Clone)]
+pub struct AnnotationMeta {
+    /// Unique ID assigned when added to manager
+    pub id: AnnotationId,
+    /// Optional user-provided name for debugging
+    pub name: Option<String>,
+    /// Whether this annotation is currently visible
+    pub visible: bool,
+    /// Node ID if this annotation has been reified (rendered to scene graph)
+    pub node_id: Option<NodeId>,
+}
+
+impl AnnotationMeta {
+    fn new(id: AnnotationId) -> Self {
         Self {
-            annotation_nodes: HashMap::new(),
-            next_annotation_id: 0,
+            id,
+            name: None,
+            visible: true,
+            node_id: None,
         }
     }
+}
 
-    /// Resets the annotation manager state.
-    ///
-    /// Call this after `Scene::clear()` to clear stale annotation tracking.
-    pub fn reset(&mut self) {
-        self.annotation_nodes.clear();
-        self.next_annotation_id = 0;
-    }
+/// A single line segment annotation
+#[derive(Debug, Clone)]
+pub struct LineAnnotation {
+    pub meta: AnnotationMeta,
+    pub start: Point3<f32>,
+    pub end: Point3<f32>,
+    pub color: RgbaColor,
+}
 
-    /// Returns the number of active annotations.
-    pub fn annotation_count(&self) -> usize {
-        self.annotation_nodes.len()
-    }
+impl LineAnnotation {
+    /// Creates mesh data for this line annotation
+    pub fn to_mesh_data(&self) -> AnnotationMeshData {
+        let vertices = vec![
+            Vertex {
+                position: self.start.into(),
+                tex_coords: [0.0; 3],
+                normal: [0.0, 1.0, 0.0],
+            },
+            Vertex {
+                position: self.end.into(),
+                tex_coords: [0.0; 3],
+                normal: [0.0, 1.0, 0.0],
+            },
+        ];
 
-    /// Returns the root node ID for all annotations.
-    ///
-    /// This gets the annotation root from the scene, creating it if necessary.
-    pub fn root_node(&self, scene: &mut Scene) -> NodeId {
-        scene.annotation_root_node()
-    }
+        let primitives = vec![MeshPrimitive {
+            primitive_type: PrimitiveType::LineList,
+            indices: vec![0, 1],
+        }];
 
-    /// Shows or hides all annotations by scaling the root node.
-    // TODO: Fix when proper visibility is implemented
-    pub fn set_visible(&mut self, scene: &mut Scene, visible: bool) {
-        let root_id = self.root_node(scene);
-        if let Some(root) = scene.get_node_mut(root_id) {
-            if visible {
-                root.set_scale(Vector3::new(1.0, 1.0, 1.0));
-            } else {
-                root.set_scale(Vector3::new(0.0, 0.0, 0.0));
-            }
+        AnnotationMeshData {
+            mesh: Mesh::from_raw(vertices, primitives),
+            material: Material::new().with_line_color(self.color),
+            name: self.meta.name.clone(),
         }
     }
+}
 
-    /// Removes a specific annotation by ID.
-    pub fn remove_annotation(&mut self, scene: &mut Scene, id: AnnotationId) {
-        if let Some(node_id) = self.annotation_nodes.remove(&id) {
-            scene.remove_node(node_id);
+/// A connected series of line segments
+#[derive(Debug, Clone)]
+pub struct PolylineAnnotation {
+    pub meta: AnnotationMeta,
+    pub points: Vec<Point3<f32>>,
+    pub color: RgbaColor,
+    /// If true, connect last point back to first
+    pub closed: bool,
+}
+
+impl PolylineAnnotation {
+    /// Creates mesh data for this polyline annotation.
+    /// Returns None if points is empty.
+    pub fn to_mesh_data(&self) -> Option<AnnotationMeshData> {
+        if self.points.is_empty() {
+            return None;
         }
-    }
 
-    /// Clears all annotations.
-    pub fn clear(&mut self, scene: &mut Scene) {
-        for (_id, node_id) in self.annotation_nodes.drain() {
-            scene.remove_node(node_id);
-        }
-    }
-
-    /// Adds a line segment between two points.
-    pub fn add_line(
-        &mut self,
-        scene: &mut Scene,
-        start: Point3<f32>,
-        end: Point3<f32>,
-        color: RgbaColor,
-    ) -> AnnotationId {
-        self.add_polyline(scene, &[start, end], color, false)
-    }
-
-    /// Adds a polyline (connected line segments).
-    pub fn add_polyline(
-        &mut self,
-        scene: &mut Scene,
-        points: &[Point3<f32>],
-        color: RgbaColor,
-        closed: bool,
-    ) -> AnnotationId {
-        // Create vertices
-        let vertices: Vec<Vertex> = points
+        let vertices: Vec<Vertex> = self
+            .points
             .iter()
             .map(|&p| Vertex {
                 position: p.into(),
@@ -109,16 +107,13 @@ impl AnnotationManager {
             })
             .collect();
 
-        // Create line indices
         let mut indices = Vec::new();
-        for i in 0..points.len().saturating_sub(1) {
+        for i in 0..self.points.len().saturating_sub(1) {
             indices.push(i as u16);
             indices.push((i + 1) as u16);
         }
-
-        // Close the loop if requested
-        if closed && points.len() > 2 {
-            indices.push((points.len() - 1) as u16);
+        if self.closed && self.points.len() > 2 {
+            indices.push((self.points.len() - 1) as u16);
             indices.push(0);
         }
 
@@ -127,170 +122,32 @@ impl AnnotationManager {
             indices,
         }];
 
-        // Get annotation root node first (before other borrows)
-        let root_id = self.root_node(scene);
-
-        // Create mesh
-        let mesh = Mesh::from_raw(vertices, primitives);
-        let mesh_id = scene.add_mesh(mesh);
-
-        // Create material
-        let material = Material::new().with_line_color(color);
-        let material_id = scene.add_material(material);
-
-        // Create node
-        let node_id = scene.add_instance_node(
-            Some(root_id),
-            mesh_id,
-            material_id,
-            None,
-            Point3::new(0.0, 0.0, 0.0),
-            Quaternion::new(1.0, 0.0, 0.0, 0.0),
-            Vector3::new(1.0, 1.0, 1.0),
-        ).expect("Annotation root node must exist");
-
-        // Track annotation
-        let annotation_id = self.next_annotation_id;
-        self.next_annotation_id += 1;
-        self.annotation_nodes.insert(annotation_id, node_id);
-
-        annotation_id
+        Some(AnnotationMeshData {
+            mesh: Mesh::from_raw(vertices, primitives),
+            material: Material::new().with_line_color(self.color),
+            name: self.meta.name.clone(),
+        })
     }
+}
 
-    /// Adds coordinate axes at the specified origin.
-    ///
-    /// X axis is red, Y axis is green, Z axis is blue.
-    pub fn add_axes(
-        &mut self,
-        scene: &mut Scene,
-        origin: Point3<f32>,
-        size: f32,
-    ) -> AnnotationId {
-        // Get annotation root node first (before other borrows)
-        let root_id = self.root_node(scene);
+/// A set of point markers
+#[derive(Debug, Clone)]
+pub struct PointsAnnotation {
+    pub meta: AnnotationMeta,
+    pub positions: Vec<Point3<f32>>,
+    pub color: RgbaColor,
+}
 
-        // Create parent node for axes group
-        let parent_node_id = scene.add_default_node(Some(root_id), None)
-            .expect("Annotation root node must exist");
+impl PointsAnnotation {
+    /// Creates mesh data for this points annotation.
+    /// Returns None if positions is empty.
+    pub fn to_mesh_data(&self) -> Option<AnnotationMeshData> {
+        if self.positions.is_empty() {
+            return None;
+        }
 
-        // Create X axis (red)
-        let x_mat = scene.add_material(
-            Material::new().with_line_color(RgbaColor { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }),
-        );
-        let x_start = origin;
-        let x_end = origin + Vector3::new(size, 0.0, 0.0);
-        let x_vertices = vec![
-            Vertex {
-                position: x_start.into(),
-                tex_coords: [0.0; 3],
-                normal: [1.0, 0.0, 0.0]
-            },
-            Vertex {
-                position: x_end.into(),
-                tex_coords: [0.0; 3],
-                normal: [1.0, 0.0, 0.0]
-            },
-        ];
-        let x_primitives = vec![MeshPrimitive {
-            primitive_type: PrimitiveType::LineList,
-            indices: vec![0, 1]
-        }];
-        let x_mesh = scene.add_mesh(Mesh::from_raw(x_vertices, x_primitives));
-        scene.add_instance_node(
-            Some(parent_node_id),
-            x_mesh,
-            x_mat,
-            None,
-            Point3::new(0.0, 0.0, 0.0),
-            Quaternion::new(1.0, 0.0, 0.0, 0.0),
-            Vector3::new(1.0, 1.0, 1.0)
-        ).expect("Parent node must exist");
-
-        // Create Y axis (green)
-        let y_mat = scene.add_material(
-            Material::new().with_line_color(RgbaColor { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }),
-        );
-        let y_start = origin;
-        let y_end = origin + Vector3::new(0.0, size, 0.0);
-        let y_vertices = vec![
-            Vertex {
-                position: y_start.into(),
-                tex_coords: [0.0; 3],
-                normal: [0.0, 1.0, 0.0]
-            },
-            Vertex {
-                position: y_end.into(),
-                tex_coords: [0.0; 3],
-                normal: [0.0, 1.0, 0.0]
-            },
-        ];
-        let y_primitives = vec![MeshPrimitive {
-            primitive_type: PrimitiveType::LineList,
-            indices: vec![0, 1]
-        }];
-        let y_mesh = scene.add_mesh(Mesh::from_raw(y_vertices, y_primitives));
-        scene.add_instance_node(
-            Some(parent_node_id),
-            y_mesh,
-            y_mat,
-            None,
-            Point3::new(0.0, 0.0, 0.0),
-            Quaternion::new(1.0, 0.0, 0.0, 0.0),
-            Vector3::new(1.0, 1.0, 1.0)
-        ).expect("Parent node must exist");
-
-        // Create Z axis (blue)
-        let z_mat = scene.add_material(
-            Material::new().with_line_color(RgbaColor { r: 0.0, g: 0.0, b: 1.0, a: 1.0 }),
-        );
-        let z_start = origin;
-        let z_end = origin + Vector3::new(0.0, 0.0, size);
-        let z_vertices = vec![
-            Vertex {
-                position: z_start.into(),
-                tex_coords: [0.0; 3],
-                normal: [0.0, 0.0, 1.0]
-            },
-            Vertex {
-                position: z_end.into(),
-                tex_coords: [0.0; 3],
-                normal: [0.0, 0.0, 1.0]
-            },
-        ];
-        let z_primitives = vec![MeshPrimitive {
-            primitive_type: PrimitiveType::LineList,
-            indices: vec![0, 1]
-        }];
-        let z_mesh = scene.add_mesh(Mesh::from_raw(z_vertices, z_primitives));
-        scene.add_instance_node(
-            Some(parent_node_id),
-            z_mesh,
-            z_mat,
-            None,
-            Point3::new(0.0, 0.0, 0.0),
-            Quaternion::new(1.0, 0.0, 0.0, 0.0),
-            Vector3::new(1.0, 1.0, 1.0)
-        ).expect("Parent node must exist");
-
-        // Track annotation
-        let annotation_id = self.next_annotation_id;
-        self.next_annotation_id += 1;
-        self.annotation_nodes.insert(annotation_id, parent_node_id);
-
-        annotation_id
-    }
-
-    /// Adds one or more points at the specified positions.
-    pub fn add_points(
-        &mut self,
-        scene: &mut Scene,
-        positions: &[Point3<f32>],
-        color: RgbaColor,
-    ) -> AnnotationId {
-        // Get annotation root node first (before other borrows)
-        let root_id = self.root_node(scene);
-
-        let vertices: Vec<Vertex> = positions
+        let vertices: Vec<Vertex> = self
+            .positions
             .iter()
             .map(|&p| Vertex {
                 position: p.into(),
@@ -299,63 +156,93 @@ impl AnnotationManager {
             })
             .collect();
 
-        let indices: Vec<u16> = (0..positions.len() as u16).collect();
+        let indices: Vec<u16> = (0..self.positions.len() as u16).collect();
 
         let primitives = vec![MeshPrimitive {
             primitive_type: PrimitiveType::PointList,
             indices,
         }];
 
-        // Create mesh
-        let mesh = Mesh::from_raw(vertices, primitives);
-        let mesh_id = scene.add_mesh(mesh);
-
-        // Create material
-        let material = Material::new().with_point_color(color);
-        let material_id = scene.add_material(material);
-
-        // Create node
-        let node_id = scene.add_instance_node(
-            Some(root_id),
-            mesh_id,
-            material_id,
-            None,
-            Point3::new(0.0, 0.0, 0.0),
-            Quaternion::new(1.0, 0.0, 0.0, 0.0),
-            Vector3::new(1.0, 1.0, 1.0),
-        ).expect("Annotation root node must exist");
-
-        // Track annotation
-        let annotation_id = self.next_annotation_id;
-        self.next_annotation_id += 1;
-        self.annotation_nodes.insert(annotation_id, node_id);
-
-        annotation_id
+        Some(AnnotationMeshData {
+            mesh: Mesh::from_raw(vertices, primitives),
+            material: Material::new().with_point_color(self.color),
+            name: self.meta.name.clone(),
+        })
     }
+}
 
-    /// Adds a wireframe box.
-    pub fn add_box(
-        &mut self,
-        scene: &mut Scene,
-        center: Point3<f32>,
-        size: Vector3<f32>,
-        color: RgbaColor,
-    ) -> AnnotationId {
-        // Get annotation root node first (before other borrows)
-        let root_id = self.root_node(scene);
+/// Coordinate axes (RGB = XYZ)
+#[derive(Debug, Clone)]
+pub struct AxesAnnotation {
+    pub meta: AnnotationMeta,
+    pub origin: Point3<f32>,
+    pub size: f32,
+}
 
-        let half = size / 2.0;
+impl AxesAnnotation {
+    /// Creates mesh data for each axis (X=red, Y=green, Z=blue).
+    /// Returns a Vec with 3 mesh data items, one per axis.
+    pub fn to_mesh_data(&self) -> Vec<AnnotationMeshData> {
+        let axes = [
+            (Vector3::new(self.size, 0.0, 0.0), RgbaColor::RED),
+            (Vector3::new(0.0, self.size, 0.0), RgbaColor::GREEN),
+            (Vector3::new(0.0, 0.0, self.size), RgbaColor::BLUE),
+        ];
 
-        // Create 8 corners of the box
+        axes.iter()
+            .map(|(dir, color)| {
+                let end = self.origin + dir;
+                let vertices = vec![
+                    Vertex {
+                        position: self.origin.into(),
+                        tex_coords: [0.0; 3],
+                        normal: [0.0, 1.0, 0.0],
+                    },
+                    Vertex {
+                        position: end.into(),
+                        tex_coords: [0.0; 3],
+                        normal: [0.0, 1.0, 0.0],
+                    },
+                ];
+
+                let primitives = vec![MeshPrimitive {
+                    primitive_type: PrimitiveType::LineList,
+                    indices: vec![0, 1],
+                }];
+
+                AnnotationMeshData {
+                    mesh: Mesh::from_raw(vertices, primitives),
+                    material: Material::new().with_line_color(*color),
+                    name: None,
+                }
+            })
+            .collect()
+    }
+}
+
+/// A wireframe box
+#[derive(Debug, Clone)]
+pub struct BoxAnnotation {
+    pub meta: AnnotationMeta,
+    pub center: Point3<f32>,
+    pub size: Vector3<f32>,
+    pub color: RgbaColor,
+}
+
+impl BoxAnnotation {
+    /// Creates mesh data for this wireframe box annotation
+    pub fn to_mesh_data(&self) -> AnnotationMeshData {
+        let half = self.size / 2.0;
+
         let corners = [
-            center + Vector3::new(-half.x, -half.y, -half.z), // 0: min corner
-            center + Vector3::new( half.x, -half.y, -half.z), // 1
-            center + Vector3::new( half.x,  half.y, -half.z), // 2
-            center + Vector3::new(-half.x,  half.y, -half.z), // 3
-            center + Vector3::new(-half.x, -half.y,  half.z), // 4
-            center + Vector3::new( half.x, -half.y,  half.z), // 5
-            center + Vector3::new( half.x,  half.y,  half.z), // 6: max corner
-            center + Vector3::new(-half.x,  half.y,  half.z), // 7
+            self.center + Vector3::new(-half.x, -half.y, -half.z),
+            self.center + Vector3::new(half.x, -half.y, -half.z),
+            self.center + Vector3::new(half.x, half.y, -half.z),
+            self.center + Vector3::new(-half.x, half.y, -half.z),
+            self.center + Vector3::new(-half.x, -half.y, half.z),
+            self.center + Vector3::new(half.x, -half.y, half.z),
+            self.center + Vector3::new(half.x, half.y, half.z),
+            self.center + Vector3::new(-half.x, half.y, half.z),
         ];
 
         let vertices: Vec<Vertex> = corners
@@ -367,14 +254,11 @@ impl AnnotationManager {
             })
             .collect();
 
-        // Create edges (12 edges for a box)
+        // 12 edges of a box
         let indices = vec![
-            // Bottom face
-            0, 1, 1, 2, 2, 3, 3, 0,
-            // Top face
-            4, 5, 5, 6, 6, 7, 7, 4,
-            // Vertical edges
-            0, 4, 1, 5, 2, 6, 3, 7,
+            0, 1, 1, 2, 2, 3, 3, 0, // Bottom face
+            4, 5, 5, 6, 6, 7, 7, 4, // Top face
+            0, 4, 1, 5, 2, 6, 3, 7, // Vertical edges
         ];
 
         let primitives = vec![MeshPrimitive {
@@ -382,56 +266,38 @@ impl AnnotationManager {
             indices,
         }];
 
-        // Create mesh
-        let mesh = Mesh::from_raw(vertices, primitives);
-        let mesh_id = scene.add_mesh(mesh);
-
-        // Create material
-        let material = Material::new().with_line_color(color);
-        let material_id = scene.add_material(material);
-
-        // Create node
-        let node_id = scene.add_instance_node(
-            Some(root_id),
-            mesh_id,
-            material_id,
-            None,
-            Point3::new(0.0, 0.0, 0.0),
-            Quaternion::new(1.0, 0.0, 0.0, 0.0),
-            Vector3::new(1.0, 1.0, 1.0),
-        ).expect("Annotation root node must exist");
-
-        // Track annotation
-        let annotation_id = self.next_annotation_id;
-        self.next_annotation_id += 1;
-        self.annotation_nodes.insert(annotation_id, node_id);
-
-        annotation_id
+        AnnotationMeshData {
+            mesh: Mesh::from_raw(vertices, primitives),
+            material: Material::new().with_line_color(self.color),
+            name: self.meta.name.clone(),
+        }
     }
+}
 
-    /// Adds a grid in the XZ plane.
-    pub fn add_grid(
-        &mut self,
-        scene: &mut Scene,
-        center: Point3<f32>,
-        size: f32,
-        divisions: u32,
-        color: RgbaColor,
-    ) -> AnnotationId {
-        // Get annotation root node first (before other borrows)
-        let root_id = self.root_node(scene);
+/// A grid in the XZ plane
+#[derive(Debug, Clone)]
+pub struct GridAnnotation {
+    pub meta: AnnotationMeta,
+    pub center: Point3<f32>,
+    pub size: f32,
+    pub divisions: u32,
+    pub color: RgbaColor,
+}
 
-        let half_size = size / 2.0;
-        let step = size / divisions as f32;
+impl GridAnnotation {
+    /// Creates mesh data for this grid annotation
+    pub fn to_mesh_data(&self) -> AnnotationMeshData {
+        let half_size = self.size / 2.0;
+        let step = self.size / self.divisions as f32;
 
         let mut vertices = Vec::new();
         let mut indices = Vec::new();
 
-        // Create grid lines parallel to X axis
-        for i in 0..=divisions {
+        // Lines parallel to X axis
+        for i in 0..=self.divisions {
             let z = -half_size + i as f32 * step;
-            let start = center + Vector3::new(-half_size, 0.0, z);
-            let end = center + Vector3::new(half_size, 0.0, z);
+            let start = self.center + Vector3::new(-half_size, 0.0, z);
+            let end = self.center + Vector3::new(half_size, 0.0, z);
 
             let idx = vertices.len() as u16;
             vertices.push(Vertex {
@@ -448,11 +314,11 @@ impl AnnotationManager {
             indices.push(idx + 1);
         }
 
-        // Create grid lines parallel to Z axis
-        for i in 0..=divisions {
+        // Lines parallel to Z axis
+        for i in 0..=self.divisions {
             let x = -half_size + i as f32 * step;
-            let start = center + Vector3::new(x, 0.0, -half_size);
-            let end = center + Vector3::new(x, 0.0, half_size);
+            let start = self.center + Vector3::new(x, 0.0, -half_size);
+            let end = self.center + Vector3::new(x, 0.0, half_size);
 
             let idx = vertices.len() as u16;
             vertices.push(Vertex {
@@ -474,30 +340,274 @@ impl AnnotationManager {
             indices,
         }];
 
-        // Create mesh
-        let mesh = Mesh::from_raw(vertices, primitives);
-        let mesh_id = scene.add_mesh(mesh);
+        AnnotationMeshData {
+            mesh: Mesh::from_raw(vertices, primitives),
+            material: Material::new().with_line_color(self.color),
+            name: self.meta.name.clone(),
+        }
+    }
+}
 
-        // Create material
-        let material = Material::new().with_line_color(color);
-        let material_id = scene.add_material(material);
+/// Enum encompassing all annotation types
+#[derive(Debug, Clone)]
+pub enum Annotation {
+    Line(LineAnnotation),
+    Polyline(PolylineAnnotation),
+    Points(PointsAnnotation),
+    Axes(AxesAnnotation),
+    Box(BoxAnnotation),
+    Grid(GridAnnotation),
+}
 
-        // Create node
-        let node_id = scene.add_instance_node(
-            Some(root_id),
-            mesh_id,
-            material_id,
-            None,
-            Point3::new(0.0, 0.0, 0.0),
-            Quaternion::new(1.0, 0.0, 0.0, 0.0),
-            Vector3::new(1.0, 1.0, 1.0),
-        ).expect("Annotation root node must exist");
+impl Annotation {
+    /// Get the annotation's metadata
+    pub fn meta(&self) -> &AnnotationMeta {
+        match self {
+            Annotation::Line(a) => &a.meta,
+            Annotation::Polyline(a) => &a.meta,
+            Annotation::Points(a) => &a.meta,
+            Annotation::Axes(a) => &a.meta,
+            Annotation::Box(a) => &a.meta,
+            Annotation::Grid(a) => &a.meta,
+        }
+    }
 
-        // Track annotation
-        let annotation_id = self.next_annotation_id;
-        self.next_annotation_id += 1;
-        self.annotation_nodes.insert(annotation_id, node_id);
+    /// Get mutable reference to annotation's metadata
+    pub fn meta_mut(&mut self) -> &mut AnnotationMeta {
+        match self {
+            Annotation::Line(a) => &mut a.meta,
+            Annotation::Polyline(a) => &mut a.meta,
+            Annotation::Points(a) => &mut a.meta,
+            Annotation::Axes(a) => &mut a.meta,
+            Annotation::Box(a) => &mut a.meta,
+            Annotation::Grid(a) => &mut a.meta,
+        }
+    }
 
-        annotation_id
+    /// Returns the annotation ID
+    pub fn id(&self) -> AnnotationId {
+        self.meta().id
+    }
+
+    /// Returns whether this annotation has been reified to the scene graph
+    pub fn is_reified(&self) -> bool {
+        self.meta().node_id.is_some()
+    }
+
+    /// Returns the node ID if reified
+    pub fn node_id(&self) -> Option<NodeId> {
+        self.meta().node_id
+    }
+}
+
+/// Manages 3D annotations with lazy reification.
+///
+/// Annotations are stored as data objects and can be reified (converted to
+/// scene nodes with meshes and materials) on demand. This separation allows
+/// annotations to survive scene clearing operations if desired, or to be
+/// automatically cleared with the scene.
+///
+/// The AnnotationManager is owned by Scene, ensuring lifecycle consistency.
+pub struct AnnotationManager {
+    /// All annotations indexed by their ID
+    annotations: HashMap<AnnotationId, Annotation>,
+
+    /// Next annotation ID to assign
+    next_id: AnnotationId,
+
+    /// Root node for all annotation geometry (lazy initialized)
+    root_node: Option<NodeId>,
+}
+
+impl Default for AnnotationManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AnnotationManager {
+    /// Creates a new empty annotation manager
+    pub fn new() -> Self {
+        Self {
+            annotations: HashMap::new(),
+            next_id: 0,
+            root_node: None,
+        }
+    }
+
+    /// Returns the number of annotations
+    pub fn len(&self) -> usize {
+        self.annotations.len()
+    }
+
+    /// Returns true if there are no annotations
+    pub fn is_empty(&self) -> bool {
+        self.annotations.is_empty()
+    }
+
+    /// Returns the number of unreified annotations
+    pub fn unreified_count(&self) -> usize {
+        self.annotations.values().filter(|a| !a.is_reified()).count()
+    }
+
+    /// Get an annotation by ID
+    pub fn get(&self, id: AnnotationId) -> Option<&Annotation> {
+        self.annotations.get(&id)
+    }
+
+    /// Get a mutable annotation by ID
+    pub fn get_mut(&mut self, id: AnnotationId) -> Option<&mut Annotation> {
+        self.annotations.get_mut(&id)
+    }
+
+    /// Iterate over all annotations
+    pub fn iter(&self) -> impl Iterator<Item = &Annotation> {
+        self.annotations.values()
+    }
+
+    /// Iterate over unreified annotations
+    pub fn iter_unreified(&self) -> impl Iterator<Item = &Annotation> {
+        self.annotations.values().filter(|a| !a.is_reified())
+    }
+
+    /// Clears all annotations and resets state.
+    pub fn clear(&mut self) {
+        self.annotations.clear();
+        self.next_id = 0;
+        self.root_node = None;
+    }
+
+    /// Marks all annotations as unreified (removes node_id references).
+    /// Called when nodes are cleared but annotations should be retained.
+    pub fn mark_all_unreified(&mut self) {
+        for annotation in self.annotations.values_mut() {
+            annotation.meta_mut().node_id = None;
+        }
+        self.root_node = None;
+    }
+
+    /// Allocate a new annotation ID
+    fn next_id(&mut self) -> AnnotationId {
+        let id = self.next_id;
+        self.next_id += 1;
+        id
+    }
+
+    // ========== Add annotation methods ==========
+    // These add annotation data but do NOT create scene nodes
+
+    /// Adds a line annotation (data only, not yet reified)
+    pub fn add_line(
+        &mut self,
+        start: Point3<f32>,
+        end: Point3<f32>,
+        color: RgbaColor,
+    ) -> AnnotationId {
+        let id = self.next_id();
+        let annotation = Annotation::Line(LineAnnotation {
+            meta: AnnotationMeta::new(id),
+            start,
+            end,
+            color,
+        });
+        self.annotations.insert(id, annotation);
+        id
+    }
+
+    /// Adds a polyline annotation (data only, not yet reified)
+    pub fn add_polyline(
+        &mut self,
+        points: Vec<Point3<f32>>,
+        color: RgbaColor,
+        closed: bool,
+    ) -> AnnotationId {
+        let id = self.next_id();
+        let annotation = Annotation::Polyline(PolylineAnnotation {
+            meta: AnnotationMeta::new(id),
+            points,
+            color,
+            closed,
+        });
+        self.annotations.insert(id, annotation);
+        id
+    }
+
+    /// Adds a points annotation (data only, not yet reified)
+    pub fn add_points(&mut self, positions: Vec<Point3<f32>>, color: RgbaColor) -> AnnotationId {
+        let id = self.next_id();
+        let annotation = Annotation::Points(PointsAnnotation {
+            meta: AnnotationMeta::new(id),
+            positions,
+            color,
+        });
+        self.annotations.insert(id, annotation);
+        id
+    }
+
+    /// Adds an axes annotation (data only, not yet reified)
+    pub fn add_axes(&mut self, origin: Point3<f32>, size: f32) -> AnnotationId {
+        let id = self.next_id();
+        let annotation = Annotation::Axes(AxesAnnotation {
+            meta: AnnotationMeta::new(id),
+            origin,
+            size,
+        });
+        self.annotations.insert(id, annotation);
+        id
+    }
+
+    /// Adds a box annotation (data only, not yet reified)
+    pub fn add_box(
+        &mut self,
+        center: Point3<f32>,
+        size: Vector3<f32>,
+        color: RgbaColor,
+    ) -> AnnotationId {
+        let id = self.next_id();
+        let annotation = Annotation::Box(BoxAnnotation {
+            meta: AnnotationMeta::new(id),
+            center,
+            size,
+            color,
+        });
+        self.annotations.insert(id, annotation);
+        id
+    }
+
+    /// Adds a grid annotation (data only, not yet reified)
+    pub fn add_grid(
+        &mut self,
+        center: Point3<f32>,
+        size: f32,
+        divisions: u32,
+        color: RgbaColor,
+    ) -> AnnotationId {
+        let id = self.next_id();
+        let annotation = Annotation::Grid(GridAnnotation {
+            meta: AnnotationMeta::new(id),
+            center,
+            size,
+            divisions,
+            color,
+        });
+        self.annotations.insert(id, annotation);
+        id
+    }
+
+    /// Removes an annotation by ID.
+    /// Returns the removed annotation if found.
+    /// Note: This does NOT remove the scene node - use Scene::remove_annotation() instead.
+    pub(crate) fn remove(&mut self, id: AnnotationId) -> Option<Annotation> {
+        self.annotations.remove(&id)
+    }
+
+    /// Sets the root node ID (called during reification)
+    pub(crate) fn set_root_node(&mut self, node_id: NodeId) {
+        self.root_node = Some(node_id);
+    }
+
+    /// Gets the root node ID
+    pub fn root_node(&self) -> Option<NodeId> {
+        self.root_node
     }
 }

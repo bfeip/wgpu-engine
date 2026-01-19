@@ -2,7 +2,7 @@ use cgmath::Vector3;
 use web_time::Instant;
 
 use crate::{
-    annotation::AnnotationManager, common::RgbaColor, event::{Event, EventContext, EventDispatcher, EventKind}, operator::{BuiltinOperatorId, NavigationOperator, OperatorManager, SelectionOperator, WalkOperator}, renderer::Renderer, scene::Scene
+    common::RgbaColor, event::{Event, EventContext, EventDispatcher, EventKind}, operator::{BuiltinOperatorId, NavigationOperator, OperatorManager, SelectionOperator, WalkOperator}, renderer::Renderer, scene::Scene
 };
 
 /// Main viewer that encapsulates the rendering state, scene, and event handling
@@ -11,7 +11,6 @@ pub struct Viewer<'a> {
     scene: Scene,
     dispatcher: EventDispatcher,
     operator_manager: OperatorManager,
-    annotation_manager: AnnotationManager,
     /// Last time update() was called, for delta_time calculation
     last_update_time: Option<Instant>,
 }
@@ -31,8 +30,6 @@ impl<'a> Viewer<'a> {
             RgbaColor{ r: 1.0, g: 1.0, b: 1.0, a: 1.0 },
             100.0
         )];
-
-        let annotation_manager = AnnotationManager::new();
 
         let mut dispatcher = EventDispatcher::new();
         let mut operator_manager = OperatorManager::new();
@@ -61,7 +58,6 @@ impl<'a> Viewer<'a> {
             scene,
             dispatcher,
             operator_manager,
-            annotation_manager,
             last_update_time: None,
         };
 
@@ -113,7 +109,6 @@ impl<'a> Viewer<'a> {
         let mut ctx = EventContext {
             state: &mut self.state,
             scene: &mut self.scene,
-            annotation_manager: &mut self.annotation_manager,
         };
         self.dispatcher.dispatch(event, &mut ctx);
     }
@@ -204,16 +199,6 @@ impl<'a> Viewer<'a> {
     /// Get a mutable reference to the operator manager
     pub fn operator_manager_mut(&mut self) -> &mut OperatorManager {
         &mut self.operator_manager
-    }
-
-    /// Get a reference to the annotation manager
-    pub fn annotation_manager(&self) -> &AnnotationManager {
-        &self.annotation_manager
-    }
-
-    /// Get a mutable reference to the annotation manager
-    pub fn annotation_manager_mut(&mut self) -> &mut AnnotationManager {
-        &mut self.annotation_manager
     }
 
     /// Get mutable references to both the operator manager and event dispatcher

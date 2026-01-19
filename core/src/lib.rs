@@ -1,4 +1,4 @@
-mod annotation;
+pub mod annotation;
 mod camera;
 pub mod common;
 pub mod input;
@@ -21,7 +21,6 @@ pub mod winit_support;
 #[cfg(feature = "egui-support")]
 pub mod egui_support;
 
-pub use annotation::{AnnotationId, AnnotationManager};
 pub use scene::Scene;
 pub use viewer::Viewer;
 pub use camera::Camera;
