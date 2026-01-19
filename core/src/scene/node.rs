@@ -81,7 +81,8 @@ impl Node {
 
     pub fn set_position(&mut self, position: Point3<f32>) {
         self.position = position;
-        self.mark_dirty();
+        self.mark_transform_dirty();
+        self.mark_bounds_dirty();
     }
 
     pub fn rotation(&self) -> Quaternion<f32> {
@@ -90,7 +91,8 @@ impl Node {
 
     pub fn set_rotation(&mut self, rotation: Quaternion<f32>) {
         self.rotation = rotation;
-        self.mark_dirty();
+        self.mark_transform_dirty();
+        self.mark_bounds_dirty();
     }
 
     pub fn scale(&self) -> Vector3<f32> {
@@ -99,7 +101,8 @@ impl Node {
 
     pub fn set_scale(&mut self, scale: Vector3<f32>) {
         self.scale = scale;
-        self.mark_dirty();
+        self.mark_transform_dirty();
+        self.mark_bounds_dirty();
     }
 
     // Hierarchy management
@@ -112,7 +115,8 @@ impl Node {
     /// Sets the parent node ID (internal use only - use Scene methods to maintain consistency).
     pub(super) fn set_parent(&mut self, parent: Option<NodeId>) {
         self.parent = parent;
-        self.mark_dirty();
+        self.mark_transform_dirty();
+        self.mark_bounds_dirty();
     }
 
     /// Gets the list of child node IDs.
@@ -124,14 +128,14 @@ impl Node {
     pub(super) fn add_child(&mut self, child: NodeId) {
         if !self.children.contains(&child) {
             self.children.push(child);
-            self.mark_dirty();
+            self.mark_bounds_dirty();
         }
     }
 
     /// Removes a child node ID from this node's children list (internal use only - use Scene methods to maintain consistency).
     pub(super) fn remove_child(&mut self, child: NodeId) {
         self.children.retain(|&id| id != child);
-        self.mark_dirty();
+        self.mark_bounds_dirty();
     }
 
     // Instance reference
@@ -146,12 +150,16 @@ impl Node {
         self.cached_bounds.set(None);
     }
 
-    /// Marks this node's computed values as dirty (needs recomputation).
+    /// Marks this node's world transform as dirty (needs recomputation).
     /// Note: This only marks this node, not descendants. The Scene is responsible
     /// for propagating dirty flags to children.
-    // TODO: There should be a way to set only bounds or only transform as dirty.
-    pub fn mark_dirty(&self) {
+    pub(super) fn mark_transform_dirty(&self) {
         self.cached_world_transform.set(None);
+    }
+
+    /// Marks this node's bounds as dirty (needs recomputation).
+    /// Note: This only marks this node, not descendants.
+    pub(super) fn mark_bounds_dirty(&self) {
         self.cached_bounds.set(None);
     }
 
@@ -518,8 +526,8 @@ mod tests {
         node.set_cached_bounds(Some(bounds));
         assert!(!node.bounds_dirty());
 
-        // Mark dirty
-        node.mark_dirty();
+        // Mark bounds dirty
+        node.mark_bounds_dirty();
         assert!(node.bounds_dirty());
     }
 
@@ -535,13 +543,13 @@ mod tests {
         node.set_cached_world_transform(transform);
         assert!(!node.transform_dirty());
 
-        // Mark dirty
-        node.mark_dirty();
+        // Mark transform dirty
+        node.mark_transform_dirty();
         assert!(node.transform_dirty());
     }
 
     #[test]
-    fn test_mark_dirty_clears_both_caches() {
+    fn test_dirty_flags_are_independent() {
         let node = Node::new_default(0);
 
         // Set both caches
@@ -557,9 +565,18 @@ mod tests {
         assert!(!node.transform_dirty());
         assert!(!node.bounds_dirty());
 
-        // Mark dirty should clear both
-        node.mark_dirty();
+        // Mark only transform dirty
+        node.mark_transform_dirty();
         assert!(node.transform_dirty());
+        assert!(!node.bounds_dirty());
+
+        // Reset transform cache
+        node.set_cached_world_transform(transform);
+        assert!(!node.transform_dirty());
+
+        // Mark only bounds dirty
+        node.mark_bounds_dirty();
+        assert!(!node.transform_dirty());
         assert!(node.bounds_dirty());
     }
 
@@ -616,16 +633,22 @@ mod tests {
     }
 
     #[test]
-    fn test_add_child_marks_dirty() {
+    fn test_add_child_marks_bounds_dirty() {
         let mut node = Node::new_default(0);
 
-        // Set cache
+        // Set both caches
         node.set_cached_world_transform(Matrix4::from_scale(1.0));
+        node.set_cached_bounds(Some(Aabb::new(
+            Point3::new(-1., -1., -1.),
+            Point3::new(1., 1., 1.)
+        )));
         assert!(!node.transform_dirty());
+        assert!(!node.bounds_dirty());
 
-        // Add child should mark dirty
+        // Add child should only mark bounds dirty, not transform
         node.add_child(2);
-        assert!(node.transform_dirty());
+        assert!(!node.transform_dirty());
+        assert!(node.bounds_dirty());
     }
 
     // ========================================================================

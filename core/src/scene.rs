@@ -629,8 +629,7 @@ impl Scene {
                 break;
             };
 
-            // Mark node as dirty to clear cached values
-            node.mark_dirty();
+            node.mark_bounds_dirty();
 
             // Move to parent
             current_id = node.parent();
