@@ -163,7 +163,7 @@ impl Operator for NavigationOperator {
                     MouseButton::Left | MouseButton::Right => {
                         // Initialize orbit/pan parameters from current camera state
                         let mut s = operator_state.borrow_mut();
-                        s.init_from_camera(ctx.state.camera());
+                        s.init_from_camera(ctx.renderer.camera());
                         true
                     }
                     _ => false,
@@ -185,12 +185,12 @@ impl Operator for NavigationOperator {
                 match button {
                     MouseButton::Left => {
                         // Orbit camera
-                        s.handle_orbit(delta.0 as f64, delta.1 as f64, ctx.state.camera_mut());
+                        s.handle_orbit(delta.0 as f64, delta.1 as f64, ctx.renderer.camera_mut());
                         true
                     }
                     MouseButton::Right => {
                         // Pan camera
-                        s.handle_pan(delta.0 as f64, delta.1 as f64, ctx.state.camera_mut(), model_radius);
+                        s.handle_pan(delta.0 as f64, delta.1 as f64, ctx.renderer.camera_mut(), model_radius);
                         true
                     }
                     _ => false,
@@ -215,8 +215,8 @@ impl Operator for NavigationOperator {
                     MouseScrollDelta::PixelDelta(_x, y) => (*y / 10.0) as f32, // Scale pixel delta
                 };
 
-                s.init_from_camera(ctx.state.camera());
-                s.handle_zoom(scroll_amount, ctx.state.camera_mut(), model_radius);
+                s.init_from_camera(ctx.renderer.camera());
+                s.handle_zoom(scroll_amount, ctx.renderer.camera_mut(), model_radius);
 
                 true
             } else {

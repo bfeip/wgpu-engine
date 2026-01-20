@@ -5,9 +5,9 @@ use crate::{
     common::RgbaColor, event::{Event, EventContext, EventDispatcher, EventKind}, operator::{BuiltinOperatorId, NavigationOperator, OperatorManager, SelectionOperator, WalkOperator}, renderer::Renderer, scene::Scene
 };
 
-/// Main viewer that encapsulates the rendering state, scene, and event handling
+/// Main viewer that encapsulates the renderer, scene, and event handling
 pub struct Viewer<'a> {
-    state: Renderer<'a>,
+    renderer: Renderer<'a>,
     scene: Scene,
     dispatcher: EventDispatcher,
     operator_manager: OperatorManager,
@@ -21,7 +21,7 @@ impl<'a> Viewer<'a> {
     where
         T: Into<wgpu::SurfaceTarget<'a>>,
     {
-        let state = Renderer::new(surface_target, width, height).await;
+        let renderer = Renderer::new(surface_target, width, height).await;
         let mut scene = Scene::new();
 
         // Set up default lighting
@@ -54,7 +54,7 @@ impl<'a> Viewer<'a> {
 
         // Create viewer
         let mut viewer = Self {
-            state,
+            renderer,
             scene,
             dispatcher,
             operator_manager,
@@ -89,7 +89,7 @@ impl<'a> Viewer<'a> {
         // Register Resized handler
         self.dispatcher.register(EventKind::Resized, |event, ctx| {
             if let crate::event::Event::Resized(physical_size) = event {
-                ctx.state.resize(*physical_size);
+                ctx.renderer.resize(*physical_size);
             }
             true
         });
@@ -98,7 +98,7 @@ impl<'a> Viewer<'a> {
         self.dispatcher
             .register(EventKind::CursorMoved, |event, ctx| {
                 if let Event::CursorMoved { position } = event {
-                    ctx.state.cursor_position = Some((position.0 as f32, position.1 as f32));
+                    ctx.renderer.cursor_position = Some((position.0 as f32, position.1 as f32));
                 }
                 false // Don't stop propagation - other handlers may need cursor position too
             });
@@ -107,7 +107,7 @@ impl<'a> Viewer<'a> {
     /// Handle a single event by dispatching it to registered handlers
     pub fn handle_event(&mut self, event: &Event) {
         let mut ctx = EventContext {
-            state: &mut self.state,
+            renderer: &mut self.renderer,
             scene: &mut self.scene,
         };
         self.dispatcher.dispatch(event, &mut ctx);
@@ -134,28 +134,28 @@ impl<'a> Viewer<'a> {
 
     /// Get a reference to the current camera
     pub fn camera(&self) -> &crate::camera::Camera {
-        self.state.camera()
+        self.renderer.camera()
     }
 
     /// Get a mutable reference to the current camera
     pub fn camera_mut(&mut self) -> &mut crate::camera::Camera {
-        self.state.camera_mut()
+        self.renderer.camera_mut()
     }
 
     /// Set the camera to a new value
     pub fn set_camera(&mut self, camera: crate::camera::Camera) {
-        *self.state.camera_mut() = camera;
+        *self.renderer.camera_mut() = camera;
     }
 
     /// Get the current viewport size as (width, height)
     pub fn size(&self) -> (u32, u32) {
-        self.state.size
+        self.renderer.size
     }
 
     /// Get the surface texture format
     /// Useful for creating render pipelines that need to match the surface format
     pub fn surface_format(&self) -> wgpu::TextureFormat {
-        self.state.config.format
+        self.renderer.config.format
     }
 
     /// Get references to the wgpu device and queue for creating GPU resources
@@ -163,7 +163,7 @@ impl<'a> Viewer<'a> {
     /// # Returns
     /// A tuple of (&Device, &Queue) for creating buffers, pipelines, etc.
     pub fn wgpu_resources(&self) -> (&wgpu::Device, &wgpu::Queue) {
-        (&self.state.device, &self.state.queue)
+        (&self.renderer.device, &self.renderer.queue)
     }
 
     /// Get a reference to the scene
@@ -223,7 +223,7 @@ impl<'a> Viewer<'a> {
 
     /// Render the scene using the default rendering path
     pub fn render(&mut self) -> Result<(), anyhow::Error> {
-        self.state.render(&mut self.scene)
+        self.renderer.render(&mut self.scene)
     }
 
     /// Render the 3D scene with a custom overlay
@@ -263,33 +263,33 @@ impl<'a> Viewer<'a> {
         F: FnOnce(&wgpu::Device, &wgpu::Queue, &mut wgpu::CommandEncoder, &wgpu::TextureView),
     {
         // Get surface texture
-        let output = self.state.surface.get_current_texture()?;
+        let output = self.renderer.surface.get_current_texture()?;
         let view = output
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
         // Create command encoder
-        let mut encoder = self.state.device.create_command_encoder(
+        let mut encoder = self.renderer.device.create_command_encoder(
             &wgpu::CommandEncoderDescriptor {
                 label: Some("Render Encoder with Overlay"),
             },
         );
 
         // Render 3D scene first
-        self.state.prepare_scene(&mut self.scene).unwrap();
-        self.state
+        self.renderer.prepare_scene(&mut self.scene).unwrap();
+        self.renderer
             .render_scene_to_view(&view, &mut encoder, &mut self.scene)?;
 
         // Call user's overlay function
         overlay_fn(
-            &self.state.device,
-            &self.state.queue,
+            &self.renderer.device,
+            &self.renderer.queue,
             &mut encoder,
             &view,
         );
 
         // Submit and present
-        self.state
+        self.renderer
             .queue
             .submit(std::iter::once(encoder.finish()));
         output.present();
@@ -310,7 +310,7 @@ impl<'a> Viewer<'a> {
         view: &wgpu::TextureView,
         encoder: &mut wgpu::CommandEncoder,
     ) -> Result<(), anyhow::Error> {
-        self.state
+        self.renderer
             .render_scene_to_view(view, encoder, &mut self.scene)
     }
 }

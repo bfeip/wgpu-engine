@@ -321,7 +321,7 @@ impl Mesh {
 
     /// Create or update GPU resources for this mesh.
     ///
-    /// This method is called automatically by `DrawState::prepare_scene()` before rendering.
+    /// This method is called automatically by `Renderer::prepare_scene()` before rendering.
     /// After this call, `gpu()` can be used to access the GPU resources.
     pub(crate) fn ensure_gpu_resources(&mut self, device: &wgpu::Device) {
         if !self.needs_gpu_upload() {

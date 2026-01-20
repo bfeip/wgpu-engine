@@ -169,7 +169,7 @@ impl Texture {
 
     /// Create or update GPU resources for this texture.
     ///
-    /// This method is called automatically by `DrawState::prepare_scene()` before rendering.
+    /// This method is called automatically by `Renderer::prepare_scene()` before rendering.
     /// After this call, `gpu()` can be used to access the GPU resources.
     ///
     /// # Arguments

@@ -27,13 +27,13 @@ impl SelectionOperator {
         let ray = Ray::from_screen_point(
             cursor_x,
             cursor_y,
-            ctx.state.size.0,
-            ctx.state.size.1,
-            ctx.state.camera(),
+            ctx.renderer.size.0,
+            ctx.renderer.size.1,
+            ctx.renderer.camera(),
         );
 
         // Calculate camera distance for miss visualization
-        let camera_distance = (ctx.state.camera().eye - ctx.state.camera().target).magnitude();
+        let camera_distance = (ctx.renderer.camera().eye - ctx.renderer.camera().target).magnitude();
 
         // Perform picking
         let results = pick_all_from_ray(&ray, ctx.scene);

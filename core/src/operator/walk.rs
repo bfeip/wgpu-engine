@@ -203,7 +203,7 @@ impl Operator for WalkOperator {
         let drag_start_callback = dispatcher.register(EventKind::MouseDragStart, move |event, ctx| {
             if let Event::MouseDragStart { button: MouseButton::Left, .. } = event {
                 let mut s = operator_state.borrow_mut();
-                s.init_from_camera(ctx.state.camera());
+                s.init_from_camera(ctx.renderer.camera());
                 true
             } else {
                 false
@@ -215,7 +215,7 @@ impl Operator for WalkOperator {
         let drag_callback = dispatcher.register(EventKind::MouseDrag, move |event, ctx| {
             if let Event::MouseDrag { button: MouseButton::Left, delta, .. } = event {
                 let mut s = operator_state.borrow_mut();
-                s.handle_look(delta.0, delta.1, ctx.state.camera_mut());
+                s.handle_look(delta.0, delta.1, ctx.renderer.camera_mut());
                 true
             } else {
                 false
@@ -230,7 +230,7 @@ impl Operator for WalkOperator {
 
                 // Initialize camera orientation on first key press
                 if key_event.state == ElementState::Pressed && !key_event.repeat {
-                    s.init_from_camera(ctx.state.camera());
+                    s.init_from_camera(ctx.renderer.camera());
                 }
 
                 // Update held key state (movement applied in Update handler)
@@ -252,7 +252,7 @@ impl Operator for WalkOperator {
                 let s = operator_state.borrow();
                 if s.is_moving() {
                     let model_radius = scene_scale::model_radius_from_bounds(ctx.scene.bounding().as_ref());
-                    s.apply_movement(ctx.state.camera_mut(), *delta_time, model_radius);
+                    s.apply_movement(ctx.renderer.camera_mut(), *delta_time, model_radius);
                     return true;
                 }
             }

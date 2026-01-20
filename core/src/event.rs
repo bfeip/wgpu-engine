@@ -17,11 +17,11 @@ const CLICK_TIME_THRESHOLD_MS: u64 = 300;
 /// including the rendering state and scene.
 ///
 /// ## Lifetime Parameters
-/// - `'w`: The surface lifetime - DrawState holds a reference to a rendering surface with this lifetime
+/// - `'w`: The surface lifetime - Renderer holds a reference to a rendering surface with this lifetime
 /// - `'c`: The callback lifetime - represents the duration of a single event callback invocation
 pub struct EventContext<'w, 'c> {
-    /// Mutable reference to the rendering state
-    pub(crate) state: &'c mut Renderer<'w>,
+    /// Mutable reference to the renderer
+    pub(crate) renderer: &'c mut Renderer<'w>,
     /// Mutable reference to the scene
     pub scene: &'c mut Scene,
 }
@@ -480,7 +480,7 @@ mod tests {
     unsafe fn create_mock_context<'w, 'c>() -> EventContext<'w, 'c> {
         let dangling = std::ptr::NonNull::dangling();
         EventContext {
-            state: unsafe { &mut *(dangling.as_ptr() as *mut Renderer) },
+            renderer: unsafe { &mut *(dangling.as_ptr() as *mut Renderer) },
             scene: unsafe { &mut *(dangling.as_ptr() as *mut Scene) },
         }
     }
