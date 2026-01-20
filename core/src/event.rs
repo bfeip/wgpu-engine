@@ -14,7 +14,7 @@ const CLICK_TIME_THRESHOLD_MS: u64 = 300;
 /// Context passed to event callbacks, providing mutable access to application state.
 ///
 /// This struct bundles all the mutable state that event callbacks need to access,
-/// including the rendering state and scene. Annotations are accessed via `scene.annotations`.
+/// including the rendering state and scene.
 ///
 /// ## Lifetime Parameters
 /// - `'w`: The surface lifetime - DrawState holds a reference to a rendering surface with this lifetime
@@ -22,7 +22,7 @@ const CLICK_TIME_THRESHOLD_MS: u64 = 300;
 pub struct EventContext<'w, 'c> {
     /// Mutable reference to the rendering state
     pub(crate) state: &'c mut Renderer<'w>,
-    /// Mutable reference to the scene (annotations are accessed via scene.annotations)
+    /// Mutable reference to the scene
     pub scene: &'c mut Scene,
 }
 
