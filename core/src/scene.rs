@@ -99,7 +99,7 @@ pub struct Scene {
     /// The currently active environment map for IBL lighting.
     pub active_environment_map: Option<EnvironmentMapId>,
 
-    /// Annotation manager (owned by Scene for lifecycle consistency)
+    /// Annotation manager
     pub annotations: AnnotationManager,
 
     next_mesh_id: MeshId,
