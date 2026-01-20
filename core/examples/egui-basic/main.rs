@@ -69,6 +69,12 @@ impl<'a> App<'a> {
         if ui_actions.clear_environment {
             self.clear_environment();
         }
+        for change in ui_actions.visibility_changes {
+            let viewer = self.viewer_app.as_mut().unwrap().viewer_mut();
+            viewer
+                .scene_mut()
+                .set_node_visibility(change.node_id, change.new_visibility);
+        }
 
         // Request next frame
         self.viewer_app.as_ref().unwrap().request_redraw();
