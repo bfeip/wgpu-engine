@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 use web_time::Instant;
 
+use crate::input::{ElementState, KeyEvent, MouseButton, MouseScrollDelta};
 use crate::renderer::Renderer;
 use crate::scene::Scene;
-use crate::input::{ElementState, MouseButton, MouseScrollDelta, KeyEvent};
+use crate::selection::SelectionManager;
 
 /// Movement threshold in pixels before a mouse button hold becomes a drag.
 const DRAG_THRESHOLD_PIXELS: f32 = 4.0;
@@ -14,7 +15,7 @@ const CLICK_TIME_THRESHOLD_MS: u64 = 300;
 /// Context passed to event callbacks, providing mutable access to application state.
 ///
 /// This struct bundles all the mutable state that event callbacks need to access,
-/// including the rendering state and scene.
+/// including the rendering state, scene, and selection.
 ///
 /// ## Lifetime Parameters
 /// - `'w`: The surface lifetime - Renderer holds a reference to a rendering surface with this lifetime
@@ -24,6 +25,8 @@ pub struct EventContext<'w, 'c> {
     pub(crate) renderer: &'c mut Renderer<'w>,
     /// Mutable reference to the scene
     pub scene: &'c mut Scene,
+    /// Mutable reference to the selection manager
+    pub selection: &'c mut SelectionManager,
 }
 
 /// Unique identifier for a registered callback.
@@ -482,6 +485,7 @@ mod tests {
         EventContext {
             renderer: unsafe { &mut *(dangling.as_ptr() as *mut Renderer) },
             scene: unsafe { &mut *(dangling.as_ptr() as *mut Scene) },
+            selection: unsafe { &mut *(dangling.as_ptr() as *mut SelectionManager) },
         }
     }
 

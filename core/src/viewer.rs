@@ -2,13 +2,21 @@ use cgmath::Vector3;
 use web_time::Instant;
 
 use crate::{
-    common::RgbaColor, event::{Event, EventContext, EventDispatcher, EventKind}, operator::{BuiltinOperatorId, NavigationOperator, OperatorManager, SelectionOperator, WalkOperator}, renderer::Renderer, scene::Scene
+    common::RgbaColor,
+    event::{Event, EventContext, EventDispatcher, EventKind},
+    operator::{
+        BuiltinOperatorId, NavigationOperator, OperatorManager, SelectionOperator, WalkOperator,
+    },
+    renderer::Renderer,
+    scene::Scene,
+    selection::SelectionManager,
 };
 
 /// Main viewer that encapsulates the renderer, scene, and event handling
 pub struct Viewer<'a> {
     renderer: Renderer<'a>,
     scene: Scene,
+    selection: SelectionManager,
     dispatcher: EventDispatcher,
     operator_manager: OperatorManager,
     /// Last time update() was called, for delta_time calculation
@@ -56,6 +64,7 @@ impl<'a> Viewer<'a> {
         let mut viewer = Self {
             renderer,
             scene,
+            selection: SelectionManager::new(),
             dispatcher,
             operator_manager,
             last_update_time: None,
@@ -109,6 +118,7 @@ impl<'a> Viewer<'a> {
         let mut ctx = EventContext {
             renderer: &mut self.renderer,
             scene: &mut self.scene,
+            selection: &mut self.selection,
         };
         self.dispatcher.dispatch(event, &mut ctx);
     }
@@ -179,6 +189,16 @@ impl<'a> Viewer<'a> {
     /// Set the scene to a new value
     pub fn set_scene(&mut self, scene: Scene) {
         self.scene = scene;
+    }
+
+    /// Get a reference to the selection manager
+    pub fn selection(&self) -> &SelectionManager {
+        &self.selection
+    }
+
+    /// Get a mutable reference to the selection manager
+    pub fn selection_mut(&mut self) -> &mut SelectionManager {
+        &mut self.selection
     }
 
     /// Get a reference to the event dispatcher

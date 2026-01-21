@@ -2,6 +2,7 @@ use crate::common::{Ray, RgbaColor};
 use crate::event::{CallbackId, Event, EventContext, EventDispatcher, EventKind};
 use crate::geom_query::pick_all_from_ray;
 use crate::operator::{Operator, OperatorId};
+use crate::selection::SelectionItem;
 use cgmath::{InnerSpace, Point3};
 
 /// Operator for selecting objects in the scene via mouse click.
@@ -95,6 +96,13 @@ impl SelectionOperator {
                     RgbaColor { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }, // Green
                 );
             }
+        }
+
+        // Update selection based on pick results
+        if let Some(closest_hit) = results.first() {
+            ctx.selection.set(SelectionItem::Node(closest_hit.node_id));
+        } else {
+            ctx.selection.clear();
         }
     }
 }

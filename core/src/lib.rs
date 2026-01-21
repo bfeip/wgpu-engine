@@ -9,6 +9,7 @@ mod shaders;
 mod gltf;
 pub mod event;
 pub mod operator;
+pub mod selection;
 mod scene_scale;
 mod viewer;
 
@@ -25,3 +26,4 @@ pub use viewer::Viewer;
 pub use camera::Camera;
 pub use gltf::{load_gltf_scene_from_path, load_gltf_scene_from_slice, GltfLoadResult};
 pub use ibl::{EnvironmentMap, EnvironmentMapId};
+pub use selection::{SelectionItem, SelectionManager};

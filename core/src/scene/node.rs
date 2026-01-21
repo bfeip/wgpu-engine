@@ -869,7 +869,7 @@ mod tests {
         assert!(!node.effective_visibility_dirty());
 
         // Mark transform/bounds dirty
-        node.mark_dirty();
+        node.mark_bounds_dirty();
 
         // Visibility cache should still be valid
         assert!(!node.effective_visibility_dirty());

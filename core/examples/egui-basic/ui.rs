@@ -404,6 +404,8 @@ fn build_info_panel(ctx: &egui::Context, viewer: &Viewer, mode: &ModeInfo) {
             ui.separator();
             build_operators_section(ui, viewer, mode);
             ui.separator();
+            build_selection_section(ui, viewer);
+            ui.separator();
             build_scene_info_section(ui, viewer);
         });
 }
@@ -463,6 +465,41 @@ fn build_operators_section(ui: &mut egui::Ui, viewer: &Viewer, mode: &ModeInfo) 
     for op in viewer.operator_manager().iter() {
         let prefix = if Some(op.id()) == active_nav_id { "> " } else { "  " };
         ui.label(format!("{}{}", prefix, op.name()));
+    }
+}
+
+fn build_selection_section(ui: &mut egui::Ui, viewer: &Viewer) {
+    ui.heading("Selection");
+
+    let selection = viewer.selection();
+
+    if selection.is_empty() {
+        ui.label("(none)");
+    } else {
+        ui.label(format!("Count: {}", selection.len()));
+
+        // Show primary selection
+        if let Some(primary) = selection.primary() {
+            let node_id = primary.node_id();
+            let node_label = viewer
+                .scene()
+                .get_node(node_id)
+                .and_then(|n| n.name.clone())
+                .unwrap_or_else(|| format!("Node #{}", node_id));
+            ui.label(format!("Primary: {}", node_label));
+        }
+
+        // List all selected nodes
+        ui.label("Selected:");
+        for item in selection.iter() {
+            let node_id = item.node_id();
+            let node_label = viewer
+                .scene()
+                .get_node(node_id)
+                .and_then(|n| n.name.clone())
+                .unwrap_or_else(|| format!("Node #{}", node_id));
+            ui.label(format!("  • {}", node_label));
+        }
     }
 }
 
