@@ -27,8 +27,9 @@ const SHADER_NORMAL_MAPPING: &str = include_str!("shaders/normal_mapping.wesl");
 const SHADER_FRAGMENT_PBR_LIT: &str = include_str!("shaders/fragment_pbr_lit.wesl");
 // IBL shader module
 const SHADER_IBL: &str = include_str!("shaders/ibl.wesl");
-// Outline shader module
-const SHADER_OUTLINE: &str = include_str!("shaders/outline.wesl");
+// Screen-space outline shader modules
+const SHADER_OUTLINE_MASK: &str = include_str!("shaders/outline_mask.wesl");
+const SHADER_OUTLINE_SCREENSPACE: &str = include_str!("shaders/outline_screenspace.wesl");
 
 /// Shader generator using WESL compiler to create modular shaders
 pub(crate) struct ShaderGenerator {
@@ -36,8 +37,10 @@ pub(crate) struct ShaderGenerator {
     compiler: Wesl<VirtualResolver<'static>>,
     /// Cache of compiled shader modules keyed by (MaterialProperties, SceneProperties)
     module_cache: HashMap<ShaderCacheKey, wgpu::ShaderModule>,
-    /// Cached outline shader module
-    outline_shader_cache: Option<wgpu::ShaderModule>,
+    /// Cached outline mask shader module
+    outline_mask_cache: Option<wgpu::ShaderModule>,
+    /// Cached outline screenspace shader module
+    outline_screenspace_cache: Option<wgpu::ShaderModule>,
 }
 
 impl ShaderGenerator {
@@ -67,8 +70,9 @@ impl ShaderGenerator {
         resolver.add_module("package::fragment_pbr_lit".parse().unwrap(), SHADER_FRAGMENT_PBR_LIT.into());
         // IBL module
         resolver.add_module("package::ibl".parse().unwrap(), SHADER_IBL.into());
-        // Outline module
-        resolver.add_module("package::outline".parse().unwrap(), SHADER_OUTLINE.into());
+        // Screen-space outline modules
+        resolver.add_module("package::outline_mask".parse().unwrap(), SHADER_OUTLINE_MASK.into());
+        resolver.add_module("package::outline_screenspace".parse().unwrap(), SHADER_OUTLINE_SCREENSPACE.into());
 
         // Create compiler with standard extensions enabled, then swap in the virtual resolver
         let compiler = Wesl::new(".").set_custom_resolver(resolver);
@@ -76,7 +80,8 @@ impl ShaderGenerator {
         Self {
             compiler,
             module_cache: HashMap::new(),
-            outline_shader_cache: None,
+            outline_mask_cache: None,
+            outline_screenspace_cache: None,
         }
     }
 
@@ -135,26 +140,47 @@ impl ShaderGenerator {
         Ok(module)
     }
 
-    /// Generate the outline shader module for selection highlighting.
-    /// The shader is compiled once and cached for subsequent calls.
-    pub fn generate_outline_shader(&mut self, device: &wgpu::Device) -> anyhow::Result<wgpu::ShaderModule> {
-        if let Some(cached) = &self.outline_shader_cache {
+    /// Generate the outline mask shader module.
+    /// Renders selected objects to a mask texture.
+    pub fn generate_outline_mask_shader(&mut self, device: &wgpu::Device) -> anyhow::Result<wgpu::ShaderModule> {
+        if let Some(cached) = &self.outline_mask_cache {
             return Ok(cached.clone());
         }
 
-        // Compile the outline module with no special features
-        let path: ModulePath = "package::outline".parse()?;
+        let path: ModulePath = "package::outline_mask".parse()?;
         let empty_features: [(&str, bool); 0] = [];
         self.compiler.set_features(empty_features);
         let result = self.compiler.compile(&path)?;
         let wgsl = result.to_string();
 
         let module = device.create_shader_module(ShaderModuleDescriptor {
-            label: Some("Outline Shader"),
+            label: Some("Outline Mask Shader"),
             source: wgpu::ShaderSource::Wgsl(wgsl.into()),
         });
 
-        self.outline_shader_cache = Some(module.clone());
+        self.outline_mask_cache = Some(module.clone());
+        Ok(module)
+    }
+
+    /// Generate the screen-space outline shader module.
+    /// Fullscreen post-process that samples the mask texture to draw outlines.
+    pub fn generate_outline_screenspace_shader(&mut self, device: &wgpu::Device) -> anyhow::Result<wgpu::ShaderModule> {
+        if let Some(cached) = &self.outline_screenspace_cache {
+            return Ok(cached.clone());
+        }
+
+        let path: ModulePath = "package::outline_screenspace".parse()?;
+        let empty_features: [(&str, bool); 0] = [];
+        self.compiler.set_features(empty_features);
+        let result = self.compiler.compile(&path)?;
+        let wgsl = result.to_string();
+
+        let module = device.create_shader_module(ShaderModuleDescriptor {
+            label: Some("Outline Screenspace Shader"),
+            source: wgpu::ShaderSource::Wgsl(wgsl.into()),
+        });
+
+        self.outline_screenspace_cache = Some(module.clone());
         Ok(module)
     }
 }

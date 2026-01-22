@@ -13,7 +13,7 @@ use crate::scene::NodeId;
 pub struct SelectionConfig {
     /// Color of the selection outline (RGBA, 0.0-1.0).
     pub outline_color: [f32; 4],
-    /// Width of the outline in world units (vertex expansion along normals).
+    /// Width of the outline in pixels (screen-space).
     pub outline_width: f32,
     /// Whether outline rendering is enabled.
     pub outline_enabled: bool,
@@ -23,7 +23,7 @@ impl Default for SelectionConfig {
     fn default() -> Self {
         Self {
             outline_color: [1.0, 0.6, 0.0, 1.0], // Orange
-            outline_width: 0.02,
+            outline_width: 3.0,                   // 3 pixels
             outline_enabled: true,
         }
     }
