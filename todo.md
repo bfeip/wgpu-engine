@@ -21,9 +21,7 @@
 - Make operators optional feature
 
 ## Tech debt
-- The annotation manager should be made a part of the scene, but not modify nodes
-directly. They'll be reified when the scene is drawn or something.
-- The scene should have better dirty state management. I think currently the states
-are all set at once or something like that.
+- Renderer refactor needed. We should gather up all the Uniforms and GPU resources
+and make them owned by the renderer module.
 - load_gltf functions rename + docs update
 - wgsl parser compilation issue

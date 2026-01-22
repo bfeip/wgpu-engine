@@ -67,8 +67,9 @@ pub struct Texture {
 }
 
 impl Texture {
-    /// Depth texture format used for depth buffers.
-    pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+    /// Depth-stencil texture format used for depth and stencil buffers.
+    /// Uses Depth24PlusStencil8 to enable stencil operations (e.g., selection outlines).
+    pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24PlusStencil8;
 
     /// Create a texture from an embedded image.
     ///

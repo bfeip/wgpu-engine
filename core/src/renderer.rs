@@ -8,9 +8,11 @@ use crate::{
     camera::{Camera, CameraUniform},
     ibl::IblResources,
     scene::{
-        GpuTexture, InstanceRaw, LightsArrayUniform, MaterialGpuResources, MaterialProperties,
-        PrimitiveType, Scene, SceneProperties, Texture, Vertex,
+        batch::partition_batches, GpuTexture, InstanceRaw, LightsArrayUniform,
+        MaterialGpuResources, MaterialProperties, PrimitiveType, Scene, SceneProperties, Texture,
+        Vertex,
     },
+    selection::SelectionManager,
     shaders::ShaderGenerator,
 };
 
@@ -59,6 +61,26 @@ struct DefaultTextures {
     depth: GpuTexture,
     white: GpuTexture,
     normal: GpuTexture,
+}
+
+/// GPU uniform data for outline rendering.
+/// Must match the layout in outline.wesl.
+#[repr(C)]
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct OutlineUniform {
+    color: [f32; 4],
+    width: f32,
+    _padding: [f32; 3],
+}
+
+/// GPU resources for selection outline rendering.
+struct OutlineResources {
+    pipeline: wgpu::RenderPipeline,
+    uniform_buffer: wgpu::Buffer,
+    _bind_group_layout: wgpu::BindGroupLayout,
+    bind_group: wgpu::BindGroup,
+    /// Pipeline for writing selected objects to stencil buffer
+    stencil_write_pipeline: wgpu::RenderPipeline,
 }
 
 // =============================================================================
@@ -126,6 +148,7 @@ pub(crate) struct Renderer<'a> {
     shader_generator: ShaderGenerator,
     pipeline_cache: HashMap<(MaterialProperties, SceneProperties, PrimitiveType), wgpu::RenderPipeline>,
     ibl_resources: IblResources,
+    outline_resources: OutlineResources,
 }
 
 impl<'a> Renderer<'a> {
@@ -219,7 +242,13 @@ impl<'a> Renderer<'a> {
             &ibl_resources.bind_group_layout,
         );
         let default_textures = Self::create_default_textures(&device, &queue, &config);
-        let shader_generator = ShaderGenerator::new();
+        let mut shader_generator = ShaderGenerator::new();
+        let outline_resources = Self::create_outline_resources(
+            &device,
+            &config,
+            &camera_resources.bind_group_layout,
+            &mut shader_generator,
+        );
 
         Self {
             surface,
@@ -236,6 +265,7 @@ impl<'a> Renderer<'a> {
             shader_generator,
             pipeline_cache: HashMap::new(),
             ibl_resources,
+            outline_resources,
         }
     }
 
@@ -535,6 +565,197 @@ impl<'a> Renderer<'a> {
         );
 
         DefaultTextures { depth, white, normal }
+    }
+
+    /// Create GPU resources for selection outline rendering.
+    fn create_outline_resources(
+        device: &wgpu::Device,
+        config: &wgpu::SurfaceConfiguration,
+        camera_bind_group_layout: &wgpu::BindGroupLayout,
+        shader_generator: &mut ShaderGenerator,
+    ) -> OutlineResources {
+        // Create uniform buffer with default values
+        let uniform = OutlineUniform {
+            color: [1.0, 0.6, 0.0, 1.0], // Orange
+            width: 0.02,
+            _padding: [0.0; 3],
+        };
+        let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Outline Uniform Buffer"),
+            contents: bytemuck::cast_slice(&[uniform]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        // Create bind group layout for outline uniforms (group 2)
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Outline Bind Group Layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+
+        // Create bind group
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Outline Bind Group"),
+            layout: &bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform_buffer.as_entire_binding(),
+            }],
+        });
+
+        // Create pipeline layout (camera at group 0, outline at group 1)
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Outline Pipeline Layout"),
+            bind_group_layouts: &[camera_bind_group_layout, &bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        // Generate outline shader
+        let shader = shader_generator
+            .generate_outline_shader(device)
+            .expect("Failed to generate outline shader");
+
+        // Create the outline render pipeline
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Outline Pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_outline"),
+                buffers: &[Vertex::desc(), InstanceRaw::desc()],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_outline"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                // Cull front faces so we see the expanded back faces as outline
+                cull_mode: Some(wgpu::Face::Front),
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: Texture::DEPTH_FORMAT,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                // Only draw where stencil is NOT 1 (outside the object)
+                stencil: wgpu::StencilState {
+                    front: wgpu::StencilFaceState {
+                        compare: wgpu::CompareFunction::NotEqual,
+                        fail_op: wgpu::StencilOperation::Keep,
+                        depth_fail_op: wgpu::StencilOperation::Keep,
+                        pass_op: wgpu::StencilOperation::Keep,
+                    },
+                    back: wgpu::StencilFaceState {
+                        compare: wgpu::CompareFunction::NotEqual,
+                        fail_op: wgpu::StencilOperation::Keep,
+                        depth_fail_op: wgpu::StencilOperation::Keep,
+                        pass_op: wgpu::StencilOperation::Keep,
+                    },
+                    read_mask: 0xFF,
+                    write_mask: 0x00,
+                },
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview: None,
+            cache: None,
+        });
+
+        // Create a simpler pipeline for writing to stencil buffer
+        // This reuses the main scene shaders but with stencil write enabled
+        let stencil_write_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("Stencil Write Pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_outline"),
+                    buffers: &[Vertex::desc(), InstanceRaw::desc()],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_outline"),
+                    // Don't write to color buffer - just stencil
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: config.format,
+                        blend: Some(wgpu::BlendState::REPLACE),
+                        write_mask: wgpu::ColorWrites::empty(),
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: Some(wgpu::Face::Back),
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    unclipped_depth: false,
+                    conservative: false,
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: Texture::DEPTH_FORMAT,
+                    depth_write_enabled: false,
+                    depth_compare: wgpu::CompareFunction::LessEqual,
+                    // Write 1 to stencil for all pixels that pass depth test
+                    stencil: wgpu::StencilState {
+                        front: wgpu::StencilFaceState {
+                            compare: wgpu::CompareFunction::Always,
+                            fail_op: wgpu::StencilOperation::Keep,
+                            depth_fail_op: wgpu::StencilOperation::Keep,
+                            pass_op: wgpu::StencilOperation::Replace,
+                        },
+                        back: wgpu::StencilFaceState {
+                            compare: wgpu::CompareFunction::Always,
+                            fail_op: wgpu::StencilOperation::Keep,
+                            depth_fail_op: wgpu::StencilOperation::Keep,
+                            pass_op: wgpu::StencilOperation::Replace,
+                        },
+                        read_mask: 0xFF,
+                        write_mask: 0xFF,
+                    },
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                multiview: None,
+                cache: None,
+            });
+
+        OutlineResources {
+            pipeline,
+            uniform_buffer,
+            _bind_group_layout: bind_group_layout,
+            bind_group,
+            stencil_write_pipeline,
+        }
     }
 
     // =========================================================================
@@ -943,13 +1164,15 @@ impl<'a> Renderer<'a> {
         }
     }
 
-    /// Render the scene to a specific view, updating uniforms and drawing all batches
-    /// The encoder is not submitted - the caller is responsible for that
+    /// Render the scene to a specific view, updating uniforms and drawing all batches.
+    /// If a selection is provided and not empty, selection outlines will be rendered.
+    /// The encoder is not submitted - the caller is responsible for that.
     pub(crate) fn render_scene_to_view(
         &mut self,
         view: &wgpu::TextureView,
         encoder: &mut wgpu::CommandEncoder,
         scene: &Scene,
+        selection: Option<&SelectionManager>,
     ) -> Result<()> {
         // Update camera uniform
         // TODO: only when needed
@@ -964,6 +1187,43 @@ impl<'a> Renderer<'a> {
         self.queue
             .write_buffer(&self.lights.buffer, 0, bytes_of(&lights_uniform));
 
+        // Collect all instances into batches grouped by mesh and material
+        let batches = scene.collect_draw_batches();
+
+        // Partition batches by selection state if selection is provided
+        let (selected_batches, has_selection) = if let Some(sel) = selection {
+            if !sel.is_empty() && sel.config().outline_enabled {
+                let (selected, _non_selected) =
+                    partition_batches(&batches, |inst| sel.is_node_selected(inst.node_id));
+                let has_selected = !selected.is_empty();
+                (selected, has_selected)
+            } else {
+                (vec![], false)
+            }
+        } else {
+            (vec![], false)
+        };
+
+        // Update outline uniform if we have a selection
+        if has_selection {
+            if let Some(sel) = selection {
+                let config = sel.config();
+                let outline_uniform = OutlineUniform {
+                    color: config.outline_color,
+                    width: config.outline_width,
+                    _padding: [0.0; 3],
+                };
+                self.queue.write_buffer(
+                    &self.outline_resources.uniform_buffer,
+                    0,
+                    bytemuck::cast_slice(&[outline_uniform]),
+                );
+            }
+        }
+
+        // =====================================================================
+        // Pass 1: Main scene render (clears stencil to 0)
+        // =====================================================================
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("3D Scene Render Pass"),
@@ -987,7 +1247,10 @@ impl<'a> Renderer<'a> {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Store,
                     }),
-                    stencil_ops: None,
+                    stencil_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(0),
+                        store: wgpu::StoreOp::Store,
+                    }),
                 }),
                 occlusion_query_set: None,
                 timestamp_writes: None,
@@ -995,9 +1258,6 @@ impl<'a> Renderer<'a> {
 
             render_pass.set_bind_group(0, &self.camera_resources.bind_group, &[]);
             render_pass.set_bind_group(1, &self.lights.bind_group, &[]);
-
-            // Collect all instances into batches grouped by mesh and material
-            let batches = scene.collect_draw_batches();
 
             // Build scene properties for shader generation and bind IBL if active
             let has_ibl = if let Some(env_id) = scene.active_environment_map {
@@ -1014,10 +1274,11 @@ impl<'a> Renderer<'a> {
             let scene_props = SceneProperties { has_ibl };
 
             // Track current pipeline key to minimize pipeline changes
-            let mut current_pipeline_key: Option<(MaterialProperties, SceneProperties, PrimitiveType)> = None;
+            let mut current_pipeline_key: Option<(MaterialProperties, SceneProperties, PrimitiveType)> =
+                None;
 
             // Render each batch
-            for batch in batches {
+            for batch in &batches {
                 let mesh = scene.meshes.get(&batch.mesh_id).unwrap();
                 let material = scene.materials.get(&batch.material_id).unwrap();
                 let material_props = material.get_properties(batch.primitive_type);
@@ -1028,7 +1289,8 @@ impl<'a> Renderer<'a> {
                 // Only change pipeline if material properties, scene properties, or primitive type changes
                 let pipeline_key = (material_props.clone(), scene_props.clone(), batch.primitive_type);
                 if current_pipeline_key.as_ref() != Some(&pipeline_key) {
-                    let pipeline = self.get_or_create_pipeline(material_props, scene_props.clone(), batch.primitive_type);
+                    let pipeline =
+                        self.get_or_create_pipeline(material_props, scene_props.clone(), batch.primitive_type);
                     render_pass.set_pipeline(pipeline);
                     current_pipeline_key = Some(pipeline_key);
                 }
@@ -1043,10 +1305,113 @@ impl<'a> Renderer<'a> {
             }
         }
 
+        // =====================================================================
+        // Pass 2 & 3: Selection outline (only if we have selected objects)
+        // =====================================================================
+        if has_selection {
+            // Pass 2: Write stencil = 1 for selected objects
+            {
+                let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Stencil Write Pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                        depth_slice: None,
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &self.default_textures.depth.view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        }),
+                    }),
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                });
+
+                render_pass.set_pipeline(&self.outline_resources.stencil_write_pipeline);
+                render_pass.set_stencil_reference(1);
+                render_pass.set_bind_group(0, &self.camera_resources.bind_group, &[]);
+                render_pass.set_bind_group(1, &self.outline_resources.bind_group, &[]);
+
+                for batch in &selected_batches {
+                    if batch.primitive_type != PrimitiveType::TriangleList {
+                        continue; // Only outline triangle meshes
+                    }
+                    let mesh = scene.meshes.get(&batch.mesh_id).unwrap();
+                    mesh.draw_instances(
+                        &self.device,
+                        &mut render_pass,
+                        batch.primitive_type,
+                        &batch.instances,
+                    );
+                }
+            }
+
+            // Pass 3: Draw outline where stencil != 1
+            {
+                let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Outline Render Pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                        depth_slice: None,
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &self.default_textures.depth.view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Discard,
+                        }),
+                    }),
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                });
+
+                render_pass.set_pipeline(&self.outline_resources.pipeline);
+                render_pass.set_stencil_reference(1);
+                render_pass.set_bind_group(0, &self.camera_resources.bind_group, &[]);
+                render_pass.set_bind_group(1, &self.outline_resources.bind_group, &[]);
+
+                for batch in &selected_batches {
+                    if batch.primitive_type != PrimitiveType::TriangleList {
+                        continue; // Only outline triangle meshes
+                    }
+                    let mesh = scene.meshes.get(&batch.mesh_id).unwrap();
+                    mesh.draw_instances(
+                        &self.device,
+                        &mut render_pass,
+                        batch.primitive_type,
+                        &batch.instances,
+                    );
+                }
+            }
+        }
+
         Ok(())
     }
 
-    pub fn render(&mut self, scene: &mut Scene) -> Result<()> {
+    pub fn render(
+        &mut self,
+        scene: &mut Scene,
+        selection: Option<&SelectionManager>,
+    ) -> Result<()> {
         // Prepare all GPU resources before rendering
         self.prepare_scene(scene)?;
 
@@ -1060,7 +1425,7 @@ impl<'a> Renderer<'a> {
                 label: Some("Render Encoder"),
             });
 
-        self.render_scene_to_view(&view, &mut encoder, scene)?;
+        self.render_scene_to_view(&view, &mut encoder, scene, selection)?;
 
         // submit will accept anything that implements IntoIter
         self.queue.submit(std::iter::once(encoder.finish()));

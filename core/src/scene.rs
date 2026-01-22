@@ -1,5 +1,5 @@
 pub mod annotation;
-mod batch;
+pub(crate) mod batch;
 mod instance;
 mod light;
 mod material;
@@ -26,7 +26,6 @@ pub use texture::{Texture, TextureId};
 pub use tree::TreeVisitor;
 
 // Crate-internal exports
-pub(crate) use batch::DrawBatch;
 pub(crate) use instance::InstanceRaw;
 pub(crate) use light::LightsArrayUniform;
 pub(crate) use material::{MaterialGpuResources, MaterialProperties};
@@ -347,31 +346,43 @@ impl Scene {
     /// 1. By material ID (to minimize bind group changes)
     /// 2. By primitive type (to minimize pipeline changes)
     /// 3. By mesh ID (for GPU cache locality)
-    pub(crate) fn collect_draw_batches(&self) -> Vec<DrawBatch> {
+    pub(crate) fn collect_draw_batches(&self) -> Vec<batch::DrawBatch> {
         use std::collections::HashMap;
 
         let instance_transforms = collect_instance_transforms(self);
-        let mut batch_map: HashMap<(MeshId, MaterialId, PrimitiveType), DrawBatch> = HashMap::new();
+        let mut batch_map: HashMap<(MeshId, MaterialId, PrimitiveType), batch::DrawBatch> =
+            HashMap::new();
 
         for inst_transform in instance_transforms {
-            let Some(instance) = self.instances.get(&inst_transform.instance_id) else { continue };
-            let Some(mesh) = self.meshes.get(&instance.mesh) else { continue };
+            let Some(instance) = self.instances.get(&inst_transform.instance_id) else {
+                continue;
+            };
+            let Some(mesh) = self.meshes.get(&instance.mesh) else {
+                continue;
+            };
 
             // Create a separate batch for each primitive type the mesh supports
-            for primitive_type in [PrimitiveType::TriangleList, PrimitiveType::LineList, PrimitiveType::PointList] {
+            for primitive_type in [
+                PrimitiveType::TriangleList,
+                PrimitiveType::LineList,
+                PrimitiveType::PointList,
+            ] {
                 if !mesh.has_primitive_type(primitive_type) {
                     continue;
                 }
 
                 let key = (instance.mesh, instance.material, primitive_type);
-                batch_map.entry(key)
-                    .or_insert_with(|| DrawBatch::new(instance.mesh, instance.material, primitive_type))
+                batch_map
+                    .entry(key)
+                    .or_insert_with(|| {
+                        batch::DrawBatch::new(instance.mesh, instance.material, primitive_type)
+                    })
                     .add_instance(inst_transform.clone());
             }
         }
 
         // Convert to Vec and sort for optimal rendering
-        let mut batches: Vec<DrawBatch> = batch_map.into_values().collect();
+        let mut batches: Vec<batch::DrawBatch> = batch_map.into_values().collect();
         batches.sort_by_key(|b| (b.material_id, b.primitive_type as u8, b.mesh_id));
         batches
     }

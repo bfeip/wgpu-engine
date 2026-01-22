@@ -22,6 +22,7 @@ pub trait TreeVisitor {
 /// Represents an instance with its computed world transform.
 #[derive(Clone)]
 pub(crate) struct InstanceTransform {
+    pub node_id: NodeId,
     pub instance_id: InstanceId,
     pub world_transform: Matrix4<f32>,
     pub normal_matrix: Matrix3<f32>,
@@ -30,9 +31,10 @@ pub(crate) struct InstanceTransform {
 impl InstanceTransform {
     /// Creates a new InstanceTransform with the given world transform.
     /// The normal matrix is computed from the world transform.
-    pub fn new(instance_id: InstanceId, world_transform: Matrix4<f32>) -> Self {
+    pub fn new(node_id: NodeId, instance_id: InstanceId, world_transform: Matrix4<f32>) -> Self {
         let normal_matrix = common::compute_normal_matrix(&world_transform);
         Self {
+            node_id,
             instance_id,
             world_transform,
             normal_matrix,
@@ -138,7 +140,7 @@ impl TreeVisitor for InstanceTransformCollector {
 
         // If this node has an instance, collect it
         if let Some(instance_id) = node.instance() {
-            self.results.push(InstanceTransform::new(instance_id, world_transform));
+            self.results.push(InstanceTransform::new(node.id, instance_id, world_transform));
         }
 
         // Continue traversing children
@@ -177,8 +179,9 @@ mod tests {
     #[test]
     fn test_instance_transform_creation() {
         let transform = Matrix4::from_scale(2.0);
-        let instance_transform = InstanceTransform::new(42, transform);
+        let instance_transform = InstanceTransform::new(1, 42, transform);
 
+        assert_eq!(instance_transform.node_id, 1);
         assert_eq!(instance_transform.instance_id, 42);
         assert_eq!(instance_transform.world_transform, transform);
     }
@@ -186,7 +189,7 @@ mod tests {
     #[test]
     fn test_instance_transform_identity() {
         let identity = Matrix4::identity();
-        let instance_transform = InstanceTransform::new(1, identity);
+        let instance_transform = InstanceTransform::new(1, 1, identity);
 
         // Verify identity transform
         for i in 0..4 {
@@ -214,7 +217,7 @@ mod tests {
     #[test]
     fn test_instance_transform_normal_matrix_computed() {
         let transform = Matrix4::from_scale(2.0);
-        let instance_transform = InstanceTransform::new(1, transform);
+        let instance_transform = InstanceTransform::new(1, 1, transform);
 
         // Normal matrix should be inverse-transpose
         // For uniform scale of 2.0, normal matrix should be 0.5
@@ -226,7 +229,7 @@ mod tests {
     #[test]
     fn test_instance_transform_translation() {
         let transform = Matrix4::from_translation(Vector3::new(5.0, 10.0, 15.0));
-        let instance_transform = InstanceTransform::new(1, transform);
+        let instance_transform = InstanceTransform::new(1, 1, transform);
 
         // Translation should be in the transform
         assert_eq!(instance_transform.world_transform[3][0], 5.0);
@@ -243,7 +246,7 @@ mod tests {
     fn test_instance_transform_rotation() {
         let rotation = Quaternion::from_angle_z(Deg(90.0));
         let transform = Matrix4::from(rotation);
-        let instance_transform = InstanceTransform::new(1, transform);
+        let instance_transform = InstanceTransform::new(1, 1, transform);
 
         // Normal matrix should match rotation (orthogonal matrices)
         // For 90 degree Z rotation: (1,0,0) -> (0,1,0)
@@ -260,7 +263,7 @@ mod tests {
     #[test]
     fn test_instance_transform_non_uniform_scale() {
         let transform = Matrix4::from_nonuniform_scale(2.0, 3.0, 4.0);
-        let instance_transform = InstanceTransform::new(1, transform);
+        let instance_transform = InstanceTransform::new(1, 1, transform);
 
         // Normal matrix should handle non-uniform scale correctly
         // Inverse of diagonal matrix (2,3,4) is (0.5, 0.333..., 0.25)
@@ -272,9 +275,9 @@ mod tests {
     #[test]
     fn test_instance_transform_different_instances_different_ids() {
         let transform = Matrix4::identity();
-        let instance1 = InstanceTransform::new(1, transform);
-        let instance2 = InstanceTransform::new(2, transform);
-        let instance3 = InstanceTransform::new(3, transform);
+        let instance1 = InstanceTransform::new(1, 1, transform);
+        let instance2 = InstanceTransform::new(2, 2, transform);
+        let instance3 = InstanceTransform::new(3, 3, transform);
 
         assert_ne!(instance1.instance_id, instance2.instance_id);
         assert_ne!(instance1.instance_id, instance3.instance_id);
@@ -289,8 +292,9 @@ mod tests {
         let scale = Matrix4::from_scale(2.0);
         let transform = translation * rotation * scale;
 
-        let instance_transform = InstanceTransform::new(42, transform);
+        let instance_transform = InstanceTransform::new(1, 42, transform);
 
+        assert_eq!(instance_transform.node_id, 1);
         assert_eq!(instance_transform.instance_id, 42);
         assert_eq!(instance_transform.world_transform, transform);
 

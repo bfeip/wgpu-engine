@@ -27,6 +27,8 @@ const SHADER_NORMAL_MAPPING: &str = include_str!("shaders/normal_mapping.wesl");
 const SHADER_FRAGMENT_PBR_LIT: &str = include_str!("shaders/fragment_pbr_lit.wesl");
 // IBL shader module
 const SHADER_IBL: &str = include_str!("shaders/ibl.wesl");
+// Outline shader module
+const SHADER_OUTLINE: &str = include_str!("shaders/outline.wesl");
 
 /// Shader generator using WESL compiler to create modular shaders
 pub(crate) struct ShaderGenerator {
@@ -34,6 +36,8 @@ pub(crate) struct ShaderGenerator {
     compiler: Wesl<VirtualResolver<'static>>,
     /// Cache of compiled shader modules keyed by (MaterialProperties, SceneProperties)
     module_cache: HashMap<ShaderCacheKey, wgpu::ShaderModule>,
+    /// Cached outline shader module
+    outline_shader_cache: Option<wgpu::ShaderModule>,
 }
 
 impl ShaderGenerator {
@@ -63,6 +67,8 @@ impl ShaderGenerator {
         resolver.add_module("package::fragment_pbr_lit".parse().unwrap(), SHADER_FRAGMENT_PBR_LIT.into());
         // IBL module
         resolver.add_module("package::ibl".parse().unwrap(), SHADER_IBL.into());
+        // Outline module
+        resolver.add_module("package::outline".parse().unwrap(), SHADER_OUTLINE.into());
 
         // Create compiler with standard extensions enabled, then swap in the virtual resolver
         let compiler = Wesl::new(".").set_custom_resolver(resolver);
@@ -70,6 +76,7 @@ impl ShaderGenerator {
         Self {
             compiler,
             module_cache: HashMap::new(),
+            outline_shader_cache: None,
         }
     }
 
@@ -125,6 +132,29 @@ impl ShaderGenerator {
 
         // Cache and return
         self.module_cache.insert(cache_key, module.clone());
+        Ok(module)
+    }
+
+    /// Generate the outline shader module for selection highlighting.
+    /// The shader is compiled once and cached for subsequent calls.
+    pub fn generate_outline_shader(&mut self, device: &wgpu::Device) -> anyhow::Result<wgpu::ShaderModule> {
+        if let Some(cached) = &self.outline_shader_cache {
+            return Ok(cached.clone());
+        }
+
+        // Compile the outline module with no special features
+        let path: ModulePath = "package::outline".parse()?;
+        let empty_features: [(&str, bool); 0] = [];
+        self.compiler.set_features(empty_features);
+        let result = self.compiler.compile(&path)?;
+        let wgsl = result.to_string();
+
+        let module = device.create_shader_module(ShaderModuleDescriptor {
+            label: Some("Outline Shader"),
+            source: wgpu::ShaderSource::Wgsl(wgsl.into()),
+        });
+
+        self.outline_shader_cache = Some(module.clone());
         Ok(module)
     }
 }

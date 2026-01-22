@@ -1,5 +1,6 @@
 use super::{tree::InstanceTransform, MeshId, PrimitiveType};
 use super::material::MaterialId;
+use std::collections::HashMap;
 
 /// Represents a batch of instances that share the same mesh, material, and primitive type.
 ///
@@ -37,6 +38,52 @@ impl DrawBatch {
     }
 }
 
+/// Partitions batches by a predicate on instances.
+///
+/// Takes a list of batches and splits each batch's instances based on the predicate.
+/// Returns two sets of batches: those where the predicate returned `true` and those
+/// where it returned `false`.
+///
+/// Batches are preserved with their mesh/material/primitive type, but may be split
+/// if instances within a batch have different predicate results.
+///
+/// Empty batches (after partitioning) are not included in the output.
+///
+/// # Example
+/// ```ignore
+/// let (selected, non_selected) = partition_batches(&batches, |inst| {
+///     selection.is_node_selected(inst.node_id)
+/// });
+/// ```
+pub(crate) fn partition_batches<F>(batches: &[DrawBatch], predicate: F) -> (Vec<DrawBatch>, Vec<DrawBatch>)
+where
+    F: Fn(&InstanceTransform) -> bool,
+{
+    type BatchKey = (MeshId, MaterialId, PrimitiveType);
+
+    let mut matched: HashMap<BatchKey, DrawBatch> = HashMap::new();
+    let mut unmatched: HashMap<BatchKey, DrawBatch> = HashMap::new();
+
+    for batch in batches {
+        let key = (batch.mesh_id, batch.material_id, batch.primitive_type);
+
+        for instance in &batch.instances {
+            let target = if predicate(instance) {
+                matched.entry(key).or_insert_with(|| {
+                    DrawBatch::new(batch.mesh_id, batch.material_id, batch.primitive_type)
+                })
+            } else {
+                unmatched.entry(key).or_insert_with(|| {
+                    DrawBatch::new(batch.mesh_id, batch.material_id, batch.primitive_type)
+                })
+            };
+            target.add_instance(instance.clone());
+        }
+    }
+
+    (matched.into_values().collect(), unmatched.into_values().collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -61,7 +108,7 @@ mod tests {
     fn test_draw_batch_add_instance() {
         let mut batch = DrawBatch::new(10, 5, PrimitiveType::TriangleList);
 
-        let instance_transform = InstanceTransform::new(1, Matrix4::identity());
+        let instance_transform = InstanceTransform::new(1, 1, Matrix4::identity());
         batch.add_instance(instance_transform);
 
         assert!(!batch.is_empty());
@@ -75,7 +122,7 @@ mod tests {
 
         // Add 5 instances
         for i in 0..5 {
-            let instance_transform = InstanceTransform::new(i, Matrix4::identity());
+            let instance_transform = InstanceTransform::new(i, i, Matrix4::identity());
             batch.add_instance(instance_transform);
         }
 
@@ -108,13 +155,13 @@ mod tests {
 
         assert_eq!(batch.len(), 0);
 
-        batch.add_instance(InstanceTransform::new(1, Matrix4::identity()));
+        batch.add_instance(InstanceTransform::new(1, 1, Matrix4::identity()));
         assert_eq!(batch.len(), 1);
 
-        batch.add_instance(InstanceTransform::new(2, Matrix4::identity()));
+        batch.add_instance(InstanceTransform::new(2, 2, Matrix4::identity()));
         assert_eq!(batch.len(), 2);
 
-        batch.add_instance(InstanceTransform::new(3, Matrix4::identity()));
+        batch.add_instance(InstanceTransform::new(3, 3, Matrix4::identity()));
         assert_eq!(batch.len(), 3);
     }
 
@@ -126,9 +173,9 @@ mod tests {
         let transform2 = Matrix4::from_scale(2.0);
         let transform3 = Matrix4::from_translation(cgmath::Vector3::new(5.0, 0.0, 0.0));
 
-        batch.add_instance(InstanceTransform::new(1, transform1));
-        batch.add_instance(InstanceTransform::new(2, transform2));
-        batch.add_instance(InstanceTransform::new(3, transform3));
+        batch.add_instance(InstanceTransform::new(1, 1, transform1));
+        batch.add_instance(InstanceTransform::new(2, 2, transform2));
+        batch.add_instance(InstanceTransform::new(3, 3, transform3));
 
         assert_eq!(batch.len(), 3);
 
@@ -144,10 +191,64 @@ mod tests {
 
         // Add 1000 instances
         for i in 0..1000_u32 {
-            batch.add_instance(InstanceTransform::new(i, Matrix4::identity()));
+            batch.add_instance(InstanceTransform::new(i, i, Matrix4::identity()));
         }
 
         assert_eq!(batch.len(), 1000);
         assert!(!batch.is_empty());
+    }
+
+    // ========================================================================
+    // partition_batches Tests
+    // ========================================================================
+
+    #[test]
+    fn test_partition_batches_empty() {
+        let batches: Vec<DrawBatch> = vec![];
+        let (matched, unmatched) = partition_batches(&batches, |_| true);
+        assert!(matched.is_empty());
+        assert!(unmatched.is_empty());
+    }
+
+    #[test]
+    fn test_partition_batches_all_match() {
+        let mut batch = DrawBatch::new(1, 1, PrimitiveType::TriangleList);
+        batch.add_instance(InstanceTransform::new(1, 1, Matrix4::identity()));
+        batch.add_instance(InstanceTransform::new(2, 2, Matrix4::identity()));
+
+        let (matched, unmatched) = partition_batches(&[batch], |_| true);
+        assert_eq!(matched.len(), 1);
+        assert_eq!(matched[0].instances.len(), 2);
+        assert!(unmatched.is_empty());
+    }
+
+    #[test]
+    fn test_partition_batches_none_match() {
+        let mut batch = DrawBatch::new(1, 1, PrimitiveType::TriangleList);
+        batch.add_instance(InstanceTransform::new(1, 1, Matrix4::identity()));
+        batch.add_instance(InstanceTransform::new(2, 2, Matrix4::identity()));
+
+        let (matched, unmatched) = partition_batches(&[batch], |_| false);
+        assert!(matched.is_empty());
+        assert_eq!(unmatched.len(), 1);
+        assert_eq!(unmatched[0].instances.len(), 2);
+    }
+
+    #[test]
+    fn test_partition_batches_split() {
+        let mut batch = DrawBatch::new(1, 1, PrimitiveType::TriangleList);
+        batch.add_instance(InstanceTransform::new(1, 1, Matrix4::identity()));
+        batch.add_instance(InstanceTransform::new(2, 2, Matrix4::identity()));
+        batch.add_instance(InstanceTransform::new(3, 3, Matrix4::identity()));
+
+        // Partition by node_id: even nodes in one group, odd in another
+        let (matched, unmatched) = partition_batches(&[batch], |inst| inst.node_id % 2 == 0);
+
+        assert_eq!(matched.len(), 1);
+        assert_eq!(matched[0].instances.len(), 1); // node 2 only
+        assert_eq!(matched[0].instances[0].node_id, 2);
+
+        assert_eq!(unmatched.len(), 1);
+        assert_eq!(unmatched[0].instances.len(), 2); // nodes 1 and 3
     }
 }

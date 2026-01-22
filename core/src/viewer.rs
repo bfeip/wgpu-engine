@@ -243,7 +243,7 @@ impl<'a> Viewer<'a> {
 
     /// Render the scene using the default rendering path
     pub fn render(&mut self) -> Result<(), anyhow::Error> {
-        self.renderer.render(&mut self.scene)
+        self.renderer.render(&mut self.scene, Some(&self.selection))
     }
 
     /// Render the 3D scene with a custom overlay
@@ -298,7 +298,7 @@ impl<'a> Viewer<'a> {
         // Render 3D scene first
         self.renderer.prepare_scene(&mut self.scene).unwrap();
         self.renderer
-            .render_scene_to_view(&view, &mut encoder, &mut self.scene)?;
+            .render_scene_to_view(&view, &mut encoder, &mut self.scene, Some(&self.selection))?;
 
         // Call user's overlay function
         overlay_fn(
@@ -331,6 +331,6 @@ impl<'a> Viewer<'a> {
         encoder: &mut wgpu::CommandEncoder,
     ) -> Result<(), anyhow::Error> {
         self.renderer
-            .render_scene_to_view(view, encoder, &mut self.scene)
+            .render_scene_to_view(view, encoder, &mut self.scene, Some(&self.selection))
     }
 }

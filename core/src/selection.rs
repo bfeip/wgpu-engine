@@ -8,6 +8,27 @@ use std::collections::HashSet;
 
 use crate::scene::NodeId;
 
+/// Configuration for selection visual feedback.
+#[derive(Debug, Clone)]
+pub struct SelectionConfig {
+    /// Color of the selection outline (RGBA, 0.0-1.0).
+    pub outline_color: [f32; 4],
+    /// Width of the outline in world units (vertex expansion along normals).
+    pub outline_width: f32,
+    /// Whether outline rendering is enabled.
+    pub outline_enabled: bool,
+}
+
+impl Default for SelectionConfig {
+    fn default() -> Self {
+        Self {
+            outline_color: [1.0, 0.6, 0.0, 1.0], // Orange
+            outline_width: 0.02,
+            outline_enabled: true,
+        }
+    }
+}
+
 /// Represents a selectable element in the scene.
 ///
 /// Designed for future expansion to support different selection granularities.
@@ -41,6 +62,8 @@ pub struct SelectionManager {
     selection_order: Vec<SelectionItem>,
     /// The primary/active selection (last selected, or explicitly set)
     primary: Option<SelectionItem>,
+    /// Configuration for selection visual feedback
+    config: SelectionConfig,
 }
 
 impl Default for SelectionManager {
@@ -50,13 +73,24 @@ impl Default for SelectionManager {
 }
 
 impl SelectionManager {
-    /// Creates a new empty selection manager.
+    /// Creates a new empty selection manager with default configuration.
     pub fn new() -> Self {
         Self {
             selected: HashSet::new(),
             selection_order: Vec::new(),
             primary: None,
+            config: SelectionConfig::default(),
         }
+    }
+
+    /// Returns the selection configuration.
+    pub fn config(&self) -> &SelectionConfig {
+        &self.config
+    }
+
+    /// Returns a mutable reference to the selection configuration.
+    pub fn config_mut(&mut self) -> &mut SelectionConfig {
+        &mut self.config
     }
 
     // ========== Query API ==========
