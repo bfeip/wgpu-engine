@@ -17,6 +17,8 @@ pub struct SelectionConfig {
     pub outline_width: f32,
     /// Whether outline rendering is enabled.
     pub outline_enabled: bool,
+    /// Whether debug annotations (pick rays) are drawn on selection.
+    pub debug_annotations: bool,
 }
 
 impl Default for SelectionConfig {
@@ -25,6 +27,7 @@ impl Default for SelectionConfig {
             outline_color: [1.0, 0.6, 0.0, 1.0], // Orange
             outline_width: 3.0,                   // 3 pixels
             outline_enabled: true,
+            debug_annotations: false,
         }
     }
 }
