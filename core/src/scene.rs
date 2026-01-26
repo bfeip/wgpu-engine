@@ -1,5 +1,5 @@
 pub mod annotation;
-pub(crate) mod batch;
+mod batch;
 mod instance;
 mod light;
 mod material;
@@ -30,6 +30,7 @@ pub(crate) use instance::InstanceRaw;
 pub(crate) use light::LightsArrayUniform;
 pub(crate) use material::{MaterialGpuResources, MaterialProperties};
 pub(crate) use texture::GpuTexture;
+pub(crate) use batch::{partition_batches};
 
 use tree::collect_instance_transforms;
 

@@ -8,7 +8,7 @@ use crate::{
     camera::{Camera, CameraUniform},
     ibl::IblResources,
     scene::{
-        batch::partition_batches, GpuTexture, InstanceRaw, LightsArrayUniform,
+        partition_batches, GpuTexture, InstanceRaw, LightsArrayUniform,
         MaterialGpuResources, MaterialProperties, PrimitiveType, Scene, SceneProperties, Texture,
         Vertex,
     },
