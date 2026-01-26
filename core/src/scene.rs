@@ -30,7 +30,7 @@ pub(crate) use instance::InstanceRaw;
 pub(crate) use light::LightsArrayUniform;
 pub(crate) use material::{MaterialGpuResources, MaterialProperties};
 pub(crate) use texture::GpuTexture;
-pub(crate) use batch::{partition_batches};
+pub(crate) use batch::{DrawBatch, partition_batches};
 
 use tree::collect_instance_transforms;
 
@@ -347,11 +347,11 @@ impl Scene {
     /// 1. By material ID (to minimize bind group changes)
     /// 2. By primitive type (to minimize pipeline changes)
     /// 3. By mesh ID (for GPU cache locality)
-    pub(crate) fn collect_draw_batches(&self) -> Vec<batch::DrawBatch> {
+    pub(crate) fn collect_draw_batches(&self) -> Vec<DrawBatch> {
         use std::collections::HashMap;
 
         let instance_transforms = collect_instance_transforms(self);
-        let mut batch_map: HashMap<(MeshId, MaterialId, PrimitiveType), batch::DrawBatch> =
+        let mut batch_map: HashMap<(MeshId, MaterialId, PrimitiveType), DrawBatch> =
             HashMap::new();
 
         for inst_transform in instance_transforms {
@@ -376,14 +376,14 @@ impl Scene {
                 batch_map
                     .entry(key)
                     .or_insert_with(|| {
-                        batch::DrawBatch::new(instance.mesh, instance.material, primitive_type)
+                        DrawBatch::new(instance.mesh, instance.material, primitive_type)
                     })
                     .add_instance(inst_transform.clone());
             }
         }
 
         // Convert to Vec and sort for optimal rendering
-        let mut batches: Vec<batch::DrawBatch> = batch_map.into_values().collect();
+        let mut batches: Vec<DrawBatch> = batch_map.into_values().collect();
         batches.sort_by_key(|b| (b.material_id, b.primitive_type as u8, b.mesh_id));
         batches
     }
