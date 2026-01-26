@@ -8,8 +8,9 @@
   - Materials (including faces, lines, and points)
   - Lights
 - Instance flags and visibility
+- Import / export
+- File format
 - Camera interpolation
-- Highlighting and proper selection
 - Merge event dispatcher and operator manager into something like "interaction manager"
 - egui canvas frame
 - Higher level faces and lines
