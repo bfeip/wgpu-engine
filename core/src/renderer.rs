@@ -94,6 +94,15 @@ struct OutlineResources {
     mask_sampler: wgpu::Sampler,
 }
 
+/// Cache key for render pipelines, combining all properties that require
+/// a distinct compiled pipeline.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct PipelineCacheKey {
+    material_props: MaterialProperties,
+    scene_props: SceneProperties,
+    primitive_type: PrimitiveType,
+}
+
 // =============================================================================
 // Utility Functions
 // =============================================================================
@@ -157,7 +166,7 @@ pub(crate) struct Renderer<'a> {
 
     // Other
     shader_generator: ShaderGenerator,
-    pipeline_cache: HashMap<(MaterialProperties, SceneProperties, PrimitiveType), wgpu::RenderPipeline>,
+    pipeline_cache: HashMap<PipelineCacheKey, wgpu::RenderPipeline>,
     ibl_resources: IblResources,
     outline_resources: OutlineResources,
 }
@@ -586,20 +595,8 @@ impl<'a> Renderer<'a> {
         shader_generator: &mut ShaderGenerator,
     ) -> OutlineResources {
         // Create mask texture (R8Unorm for storing selection mask)
-        let mask_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Outline Mask Texture"),
-            size: wgpu::Extent3d {
-                width: config.width,
-                height: config.height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::R8Unorm,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
+        let mask_texture =
+            Texture::create_mask(device, config.width, config.height, "Outline Mask Texture");
         let mask_view = mask_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         // Create sampler for mask texture
@@ -708,7 +705,7 @@ impl<'a> Renderer<'a> {
                 module: &mask_shader,
                 entry_point: Some("fs_mask"),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::R8Unorm,
+                    format: Texture::MASK_FORMAT,
                     blend: None,
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -1108,11 +1105,11 @@ impl<'a> Renderer<'a> {
 
     fn get_or_create_pipeline(
         &mut self,
-        material_props: MaterialProperties,
-        scene_props: SceneProperties,
-        primitive_type: PrimitiveType,
+        cache_key: PipelineCacheKey,
     ) -> &wgpu::RenderPipeline {
-        let cache_key = (material_props.clone(), scene_props.clone(), primitive_type);
+        let material_props = cache_key.material_props.clone();
+        let scene_props = cache_key.scene_props.clone();
+        let primitive_type = cache_key.primitive_type;
         self.pipeline_cache.entry(cache_key).or_insert_with(|| {
             // Select pipeline layout based on material type and scene properties
             let use_pbr = material_props.has_normal_map || material_props.has_metallic_roughness_texture;
@@ -1208,22 +1205,12 @@ impl<'a> Renderer<'a> {
                 Texture::create_depth_texture(&self.device, &self.config, "depth_texture");
 
             // Recreate mask texture at new size
-            self.outline_resources.mask_texture =
-                self.device.create_texture(&wgpu::TextureDescriptor {
-                    label: Some("Outline Mask Texture"),
-                    size: wgpu::Extent3d {
-                        width: clamped_width,
-                        height: clamped_height,
-                        depth_or_array_layers: 1,
-                    },
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: wgpu::TextureFormat::R8Unorm,
-                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                        | wgpu::TextureUsages::TEXTURE_BINDING,
-                    view_formats: &[],
-                });
+            self.outline_resources.mask_texture = Texture::create_mask(
+                &self.device,
+                clamped_width,
+                clamped_height,
+                "Outline Mask Texture",
+            );
             self.outline_resources.mask_view = self
                 .outline_resources
                 .mask_texture
@@ -1283,18 +1270,15 @@ impl<'a> Renderer<'a> {
         let batches = scene.collect_draw_batches();
 
         // Partition batches by selection state if selection is provided
-        let (selected_batches, has_selection) = if let Some(sel) = selection {
-            if !sel.is_empty() && sel.config().outline_enabled {
-                let (selected, _non_selected) =
+        let selected_batches = selection
+            .filter(|sel| !sel.is_empty() && sel.config().outline_enabled)
+            .map(|sel| {
+                let (selected, _) =
                     partition_batches(&batches, |inst| sel.is_node_selected(inst.node_id));
-                let has_selected = !selected.is_empty();
-                (selected, has_selected)
-            } else {
-                (vec![], false)
-            }
-        } else {
-            (vec![], false)
-        };
+                selected
+            })
+            .unwrap_or_default();
+        let has_selection = !selected_batches.is_empty();
 
         // Update outline uniform if we have a selection
         if has_selection {
@@ -1368,8 +1352,7 @@ impl<'a> Renderer<'a> {
             let scene_props = SceneProperties { has_ibl };
 
             // Track current pipeline key to minimize pipeline changes
-            let mut current_pipeline_key: Option<(MaterialProperties, SceneProperties, PrimitiveType)> =
-                None;
+            let mut current_pipeline_key: Option<PipelineCacheKey> = None;
 
             // Render each batch
             for batch in &batches {
@@ -1381,10 +1364,13 @@ impl<'a> Renderer<'a> {
                 material.bind(&mut render_pass, batch.primitive_type);
 
                 // Only change pipeline if material properties, scene properties, or primitive type changes
-                let pipeline_key = (material_props.clone(), scene_props.clone(), batch.primitive_type);
+                let pipeline_key = PipelineCacheKey {
+                    material_props: material_props.clone(),
+                    scene_props: scene_props.clone(),
+                    primitive_type: batch.primitive_type,
+                };
                 if current_pipeline_key.as_ref() != Some(&pipeline_key) {
-                    let pipeline =
-                        self.get_or_create_pipeline(material_props, scene_props.clone(), batch.primitive_type);
+                    let pipeline = self.get_or_create_pipeline(pipeline_key.clone());
                     render_pass.set_pipeline(pipeline);
                     current_pipeline_key = Some(pipeline_key);
                 }

@@ -71,6 +71,9 @@ impl Texture {
     /// Uses Depth24PlusStencil8 to enable stencil operations (e.g., selection outlines).
     pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24PlusStencil8;
 
+    /// Single-channel format used for mask textures (selection masks, stencil masks, etc.).
+    pub const MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
+
     /// Create a texture from an embedded image.
     ///
     /// The image data is stored in memory. GPU resources are created lazily
@@ -393,5 +396,34 @@ impl Texture {
         });
 
         GpuTexture { _texture: texture, view, sampler }
+    }
+
+    /// Create a single-channel mask texture at the given dimensions.
+    ///
+    /// Mask textures use `R8Unorm` format and are suitable for selection masks,
+    /// stencil operations, or any render-to-texture mask pass. The returned
+    /// texture has `RENDER_ATTACHMENT | TEXTURE_BINDING` usage so it can be
+    /// rendered into and then sampled in a subsequent pass.
+    pub(crate) fn create_mask(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        label: &str,
+    ) -> wgpu::Texture {
+        device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: Self::MASK_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        })
     }
 }
