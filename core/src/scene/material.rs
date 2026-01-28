@@ -18,11 +18,13 @@ bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct MaterialFlags: u32 {
         /// No special flags
-        const NONE = 0b0000;
+        const NONE = 0;
         /// Enable alpha blending (TODO)
-        const ALPHA_BLEND = 0b0001;
+        const ALPHA_BLEND = 1 << 0;
         /// Disable back-face culling (TODO)
-        const DOUBLE_SIDED = 0b0010;
+        const DOUBLE_SIDED = 1 << 1;
+        /// Disables face lighting. Faces will appear at a constant luminance
+        const DO_NOT_LIGHT = 1 << 2;
     }
 }
 
@@ -61,8 +63,6 @@ pub struct MaterialProperties {
     pub has_metallic_roughness_texture: bool,
     /// Whether lighting calculations should be applied
     pub has_lighting: bool,
-    /// Additional rendering flags
-    pub flags: MaterialFlags,
 }
 
 /// The ID of the default material created automatically by the Scene.
@@ -112,7 +112,6 @@ pub struct Material {
     /// Unique identifier for this material
     pub id: MaterialId,
 
-    // PBR textures (optional, for face rendering)
     /// Base color texture (albedo)
     base_color_texture: Option<TextureId>,
     /// Normal map texture
@@ -120,7 +119,6 @@ pub struct Material {
     /// Metallic-roughness texture (G=roughness, B=metallic per glTF spec)
     metallic_roughness_texture: Option<TextureId>,
 
-    // PBR scalar factors (always present, used as multipliers or fallbacks)
     /// Base color factor (multiplied with texture if present)
     base_color_factor: RgbaColor,
     /// Metallic factor (0.0 = dielectric, 1.0 = metal)
@@ -130,13 +128,14 @@ pub struct Material {
     /// Normal map scale
     normal_scale: f32,
 
-    // Line rendering data (no lighting, no PBR)
     /// Line color
     line_color: Option<RgbaColor>,
 
-    // Point rendering data (no lighting, no PBR)
     /// Point color
     point_color: Option<RgbaColor>,
+
+    /// Rendering flags
+    flags: MaterialFlags,
 
     // GPU resources per primitive type (created lazily)
     pub(crate) face_gpu: Option<MaterialGpuResources>,
@@ -165,6 +164,7 @@ impl Material {
             normal_scale: DEFAULT_NORMAL_SCALE,
             line_color: None,
             point_color: None,
+            flags: MaterialFlags::NONE,
             face_gpu: None,
             line_gpu: None,
             point_gpu: None,
@@ -219,6 +219,11 @@ impl Material {
     /// Get the point color.
     pub fn point_color(&self) -> Option<RgbaColor> {
         self.point_color
+    }
+
+    /// Get the flags.
+    pub fn flags(&self) -> MaterialFlags {
+        self.flags
     }
 
     // ========== Builder methods (chainable) ==========
@@ -286,6 +291,11 @@ impl Material {
         self
     }
 
+    pub fn with_flags(mut self, flags: MaterialFlags) -> Self {
+        self.flags = flags;
+        self
+    }
+
     // ========== Mutation methods (set dirty flags) ==========
 
     /// Set the base color texture, marking the material as dirty.
@@ -342,6 +352,10 @@ impl Material {
         self.point_dirty = true;
     }
 
+    pub fn set_flags(&mut self, flags: MaterialFlags) {
+        self.flags = flags;
+    }
+
     // ========== Query methods ==========
 
     /// Get the material properties for a given primitive type.
@@ -349,20 +363,19 @@ impl Material {
     /// This is used by ShaderGenerator and PipelineManager to determine
     /// which shader variant to use.
     pub fn get_properties(&self, primitive_type: PrimitiveType) -> MaterialProperties {
+        let faces_have_lighting = !self.flags.contains(MaterialFlags::DO_NOT_LIGHT);
         match primitive_type {
             PrimitiveType::TriangleList => MaterialProperties {
                 has_base_color_texture: self.base_color_texture.is_some(),
                 has_normal_map: self.normal_texture.is_some(),
                 has_metallic_roughness_texture: self.metallic_roughness_texture.is_some(),
-                has_lighting: true,
-                flags: MaterialFlags::NONE,
+                has_lighting: faces_have_lighting,
             },
             PrimitiveType::LineList | PrimitiveType::PointList => MaterialProperties {
                 has_base_color_texture: false,
                 has_normal_map: false,
                 has_metallic_roughness_texture: false,
                 has_lighting: false,
-                flags: MaterialFlags::NONE,
             },
         }
     }
