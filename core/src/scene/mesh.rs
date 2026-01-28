@@ -284,6 +284,615 @@ impl Mesh {
         Ok(Self::from_raw(vertices, primitives))
     }
 
+    // ========== Primitive geometry constructors ==========
+
+    /// Creates a box (cuboid) mesh centered at the origin.
+    ///
+    /// # Arguments
+    /// * `width` - Size along the X axis
+    /// * `height` - Size along the Y axis
+    /// * `depth` - Size along the Z axis
+    ///
+    /// # Example
+    /// ```
+    /// use wgpu_engine::scene::Mesh;
+    /// let cube = Mesh::box_mesh(1.0, 1.0, 1.0);
+    /// let rectangular = Mesh::box_mesh(2.0, 1.0, 0.5);
+    /// ```
+    pub fn box_mesh(width: f32, height: f32, depth: f32) -> Self {
+        struct Face {
+            normal: [f32; 3],
+            corners: [[f32; 3]; 4],
+        }
+
+        let hw = width / 2.0;
+        let hh = height / 2.0;
+        let hd = depth / 2.0;
+
+        let faces = [
+            Face {
+                normal: [0.0, 0.0, 1.0],
+                corners: [[-hw, -hh, hd], [hw, -hh, hd], [hw, hh, hd], [-hw, hh, hd]],
+            },
+            Face {
+                normal: [0.0, 0.0, -1.0],
+                corners: [[hw, -hh, -hd], [-hw, -hh, -hd], [-hw, hh, -hd], [hw, hh, -hd]],
+            },
+            Face {
+                normal: [0.0, 1.0, 0.0],
+                corners: [[-hw, hh, hd], [hw, hh, hd], [hw, hh, -hd], [-hw, hh, -hd]],
+            },
+            Face {
+                normal: [0.0, -1.0, 0.0],
+                corners: [[-hw, -hh, -hd], [hw, -hh, -hd], [hw, -hh, hd], [-hw, -hh, hd]],
+            },
+            Face {
+                normal: [1.0, 0.0, 0.0],
+                corners: [[hw, -hh, hd], [hw, -hh, -hd], [hw, hh, -hd], [hw, hh, hd]],
+            },
+            Face {
+                normal: [-1.0, 0.0, 0.0],
+                corners: [[-hw, -hh, -hd], [-hw, -hh, hd], [-hw, hh, hd], [-hw, hh, -hd]],
+            },
+        ];
+
+        // UV coordinates for each face corner
+        let uvs: [[f32; 2]; 4] = [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]];
+
+        let mut vertices = Vec::with_capacity(24);
+        let mut indices = Vec::with_capacity(36);
+
+        for face in &faces {
+            let base_index = vertices.len() as MeshIndex;
+
+            for (i, pos) in face.corners.iter().enumerate() {
+                vertices.push(Vertex {
+                    position: *pos,
+                    tex_coords: [uvs[i][0], uvs[i][1], 0.0],
+                    normal: face.normal,
+                });
+            }
+
+            // Two triangles per face
+            indices.extend_from_slice(&[
+                base_index,
+                base_index + 1,
+                base_index + 2,
+                base_index,
+                base_index + 2,
+                base_index + 3,
+            ]);
+        }
+
+        Self::from_raw(
+            vertices,
+            vec![MeshPrimitive {
+                primitive_type: PrimitiveType::TriangleList,
+                indices,
+            }],
+        )
+    }
+
+    /// Creates a cube mesh centered at the origin.
+    ///
+    /// Convenience method equivalent to `Mesh::box_mesh(size, size, size)`.
+    ///
+    /// # Arguments
+    /// * `size` - The length of each edge
+    pub fn cube(size: f32) -> Self {
+        Self::box_mesh(size, size, size)
+    }
+
+    /// Creates a UV sphere mesh centered at the origin.
+    ///
+    /// # Arguments
+    /// * `radius` - Radius of the sphere
+    /// * `segments` - Number of longitudinal segments (minimum 3)
+    /// * `rings` - Number of latitudinal rings (minimum 2)
+    ///
+    /// # Example
+    /// ```
+    /// use wgpu_engine::scene::Mesh;
+    /// let sphere = Mesh::sphere(1.0, 32, 16);
+    /// ```
+    pub fn sphere(radius: f32, segments: u32, rings: u32) -> Self {
+        use std::f32::consts::PI;
+
+        let segments = segments.max(3);
+        let rings = rings.max(2);
+
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+
+        // Generate vertices
+        for ring in 0..=rings {
+            let phi = PI * ring as f32 / rings as f32; // 0 to PI (top to bottom)
+            let sin_phi = phi.sin();
+            let cos_phi = phi.cos();
+            let v = ring as f32 / rings as f32;
+
+            for seg in 0..=segments {
+                let theta = 2.0 * PI * seg as f32 / segments as f32; // 0 to 2PI
+                let sin_theta = theta.sin();
+                let cos_theta = theta.cos();
+                let u = seg as f32 / segments as f32;
+
+                let x = sin_phi * cos_theta;
+                let y = cos_phi;
+                let z = sin_phi * sin_theta;
+
+                vertices.push(Vertex {
+                    position: [x * radius, y * radius, z * radius],
+                    tex_coords: [u, v, 0.0],
+                    normal: [x, y, z],
+                });
+            }
+        }
+
+        // Generate indices
+        let verts_per_ring = segments + 1;
+        for ring in 0..rings {
+            for seg in 0..segments {
+                let current = ring * verts_per_ring + seg;
+                let next = current + verts_per_ring;
+
+                // Skip degenerate triangles at poles
+                if ring != 0 {
+                    indices.push(current as MeshIndex);
+                    indices.push(next as MeshIndex);
+                    indices.push((current + 1) as MeshIndex);
+                }
+                if ring != rings - 1 {
+                    indices.push((current + 1) as MeshIndex);
+                    indices.push(next as MeshIndex);
+                    indices.push((next + 1) as MeshIndex);
+                }
+            }
+        }
+
+        Self::from_raw(
+            vertices,
+            vec![MeshPrimitive {
+                primitive_type: PrimitiveType::TriangleList,
+                indices,
+            }],
+        )
+    }
+
+    /// Creates a cylinder mesh centered at the origin, extending along the Y axis.
+    ///
+    /// # Arguments
+    /// * `radius` - Radius of the cylinder
+    /// * `height` - Height of the cylinder
+    /// * `segments` - Number of segments around the circumference (minimum 3)
+    /// * `capped` - Whether to include top and bottom cap faces
+    ///
+    /// # Example
+    /// ```
+    /// use wgpu_engine::scene::Mesh;
+    /// let cylinder = Mesh::cylinder(0.5, 2.0, 32, true);
+    /// ```
+    pub fn cylinder(radius: f32, height: f32, segments: u32, capped: bool) -> Self {
+        use std::f32::consts::PI;
+
+        let segments = segments.max(3);
+        let half_height = height / 2.0;
+
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+
+        // Side vertices (two rings)
+        for i in 0..=segments {
+            let theta = 2.0 * PI * i as f32 / segments as f32;
+            let cos_theta = theta.cos();
+            let sin_theta = theta.sin();
+            let u = i as f32 / segments as f32;
+
+            let x = radius * cos_theta;
+            let z = radius * sin_theta;
+            let normal = [cos_theta, 0.0, sin_theta];
+
+            // Bottom vertex
+            vertices.push(Vertex {
+                position: [x, -half_height, z],
+                tex_coords: [u, 1.0, 0.0],
+                normal,
+            });
+            // Top vertex
+            vertices.push(Vertex {
+                position: [x, half_height, z],
+                tex_coords: [u, 0.0, 0.0],
+                normal,
+            });
+        }
+
+        // Side indices
+        for i in 0..segments {
+            let base = i * 2;
+            indices.extend_from_slice(&[
+                base as MeshIndex,
+                (base + 1) as MeshIndex,
+                (base + 3) as MeshIndex,
+                base as MeshIndex,
+                (base + 3) as MeshIndex,
+                (base + 2) as MeshIndex,
+            ]);
+        }
+
+        // Caps
+        if capped {
+            // Top cap center
+            let top_center_idx = vertices.len() as MeshIndex;
+            vertices.push(Vertex {
+                position: [0.0, half_height, 0.0],
+                tex_coords: [0.5, 0.5, 0.0],
+                normal: [0.0, 1.0, 0.0],
+            });
+
+            // Top cap ring
+            for i in 0..=segments {
+                let theta = 2.0 * PI * i as f32 / segments as f32;
+                let cos_theta = theta.cos();
+                let sin_theta = theta.sin();
+
+                vertices.push(Vertex {
+                    position: [radius * cos_theta, half_height, radius * sin_theta],
+                    tex_coords: [(cos_theta + 1.0) / 2.0, (sin_theta + 1.0) / 2.0, 0.0],
+                    normal: [0.0, 1.0, 0.0],
+                });
+            }
+
+            // Top cap indices
+            let top_ring_start = top_center_idx + 1;
+            for i in 0..segments as MeshIndex {
+                indices.extend_from_slice(&[
+                    top_center_idx,
+                    top_ring_start + i,
+                    top_ring_start + i + 1,
+                ]);
+            }
+
+            // Bottom cap center
+            let bottom_center_idx = vertices.len() as MeshIndex;
+            vertices.push(Vertex {
+                position: [0.0, -half_height, 0.0],
+                tex_coords: [0.5, 0.5, 0.0],
+                normal: [0.0, -1.0, 0.0],
+            });
+
+            // Bottom cap ring
+            for i in 0..=segments {
+                let theta = 2.0 * PI * i as f32 / segments as f32;
+                let cos_theta = theta.cos();
+                let sin_theta = theta.sin();
+
+                vertices.push(Vertex {
+                    position: [radius * cos_theta, -half_height, radius * sin_theta],
+                    tex_coords: [(cos_theta + 1.0) / 2.0, (1.0 - sin_theta) / 2.0, 0.0],
+                    normal: [0.0, -1.0, 0.0],
+                });
+            }
+
+            // Bottom cap indices (winding reversed)
+            let bottom_ring_start = bottom_center_idx + 1;
+            for i in 0..segments as MeshIndex {
+                indices.extend_from_slice(&[
+                    bottom_center_idx,
+                    bottom_ring_start + i + 1,
+                    bottom_ring_start + i,
+                ]);
+            }
+        }
+
+        Self::from_raw(
+            vertices,
+            vec![MeshPrimitive {
+                primitive_type: PrimitiveType::TriangleList,
+                indices,
+            }],
+        )
+    }
+
+    /// Creates a cone mesh centered at the origin, with the apex pointing up (+Y).
+    ///
+    /// # Arguments
+    /// * `radius` - Radius of the base
+    /// * `height` - Height of the cone
+    /// * `segments` - Number of segments around the circumference (minimum 3)
+    /// * `capped` - Whether to include the bottom cap face
+    ///
+    /// # Example
+    /// ```
+    /// use wgpu_engine::scene::Mesh;
+    /// let cone = Mesh::cone(0.5, 1.0, 32, true);
+    /// ```
+    pub fn cone(radius: f32, height: f32, segments: u32, capped: bool) -> Self {
+        use std::f32::consts::PI;
+
+        let segments = segments.max(3);
+        let half_height = height / 2.0;
+
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+
+        // Calculate the normal slope for the cone sides
+        let slope = radius / height;
+        let normal_y = slope / (1.0 + slope * slope).sqrt();
+        let normal_xz = 1.0 / (1.0 + slope * slope).sqrt();
+
+        // Apex vertex (duplicated for each segment for proper normals)
+        let apex_y = half_height;
+
+        // Side faces
+        for i in 0..=segments {
+            let theta = 2.0 * PI * i as f32 / segments as f32;
+            let cos_theta = theta.cos();
+            let sin_theta = theta.sin();
+
+            let nx = normal_xz * cos_theta;
+            let nz = normal_xz * sin_theta;
+
+            // Base vertex
+            vertices.push(Vertex {
+                position: [radius * cos_theta, -half_height, radius * sin_theta],
+                tex_coords: [i as f32 / segments as f32, 1.0, 0.0],
+                normal: [nx, normal_y, nz],
+            });
+
+            // Apex vertex (with matching normal for this segment)
+            vertices.push(Vertex {
+                position: [0.0, apex_y, 0.0],
+                tex_coords: [i as f32 / segments as f32, 0.0, 0.0],
+                normal: [nx, normal_y, nz],
+            });
+        }
+
+        // Side indices
+        for i in 0..segments {
+            let base = i * 2;
+            indices.extend_from_slice(&[
+                base as MeshIndex,
+                (base + 1) as MeshIndex,
+                (base + 2) as MeshIndex,
+            ]);
+        }
+
+        // Bottom cap
+        if capped {
+            let cap_center_idx = vertices.len() as MeshIndex;
+            vertices.push(Vertex {
+                position: [0.0, -half_height, 0.0],
+                tex_coords: [0.5, 0.5, 0.0],
+                normal: [0.0, -1.0, 0.0],
+            });
+
+            // Cap ring
+            for i in 0..=segments {
+                let theta = 2.0 * PI * i as f32 / segments as f32;
+                let cos_theta = theta.cos();
+                let sin_theta = theta.sin();
+
+                vertices.push(Vertex {
+                    position: [radius * cos_theta, -half_height, radius * sin_theta],
+                    tex_coords: [(cos_theta + 1.0) / 2.0, (1.0 - sin_theta) / 2.0, 0.0],
+                    normal: [0.0, -1.0, 0.0],
+                });
+            }
+
+            // Cap indices (winding reversed)
+            let cap_ring_start = cap_center_idx + 1;
+            for i in 0..segments as MeshIndex {
+                indices.extend_from_slice(&[
+                    cap_center_idx,
+                    cap_ring_start + i + 1,
+                    cap_ring_start + i,
+                ]);
+            }
+        }
+
+        Self::from_raw(
+            vertices,
+            vec![MeshPrimitive {
+                primitive_type: PrimitiveType::TriangleList,
+                indices,
+            }],
+        )
+    }
+
+    /// Creates a torus mesh centered at the origin, lying in the XZ plane.
+    ///
+    /// # Arguments
+    /// * `major_radius` - Distance from the center of the torus to the center of the tube
+    /// * `minor_radius` - Radius of the tube
+    /// * `major_segments` - Number of segments around the main ring (minimum 3)
+    /// * `minor_segments` - Number of segments around the tube cross-section (minimum 3)
+    ///
+    /// # Example
+    /// ```
+    /// use wgpu_engine::scene::Mesh;
+    /// let torus = Mesh::torus(1.0, 0.3, 32, 16);
+    /// ```
+    pub fn torus(major_radius: f32, minor_radius: f32, major_segments: u32, minor_segments: u32) -> Self {
+        use std::f32::consts::PI;
+
+        let major_segments = major_segments.max(3);
+        let minor_segments = minor_segments.max(3);
+
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+
+        for i in 0..=major_segments {
+            let theta = 2.0 * PI * i as f32 / major_segments as f32;
+            let cos_theta = theta.cos();
+            let sin_theta = theta.sin();
+            let u = i as f32 / major_segments as f32;
+
+            for j in 0..=minor_segments {
+                let phi = 2.0 * PI * j as f32 / minor_segments as f32;
+                let cos_phi = phi.cos();
+                let sin_phi = phi.sin();
+                let v = j as f32 / minor_segments as f32;
+
+                // Position on the tube surface
+                let x = (major_radius + minor_radius * cos_phi) * cos_theta;
+                let y = minor_radius * sin_phi;
+                let z = (major_radius + minor_radius * cos_phi) * sin_theta;
+
+                // Normal vector (points from tube center to surface)
+                let nx = cos_phi * cos_theta;
+                let ny = sin_phi;
+                let nz = cos_phi * sin_theta;
+
+                vertices.push(Vertex {
+                    position: [x, y, z],
+                    tex_coords: [u, v, 0.0],
+                    normal: [nx, ny, nz],
+                });
+            }
+        }
+
+        // Generate indices
+        let verts_per_ring = minor_segments + 1;
+        for i in 0..major_segments {
+            for j in 0..minor_segments {
+                let current = i * verts_per_ring + j;
+                let next = (i + 1) * verts_per_ring + j;
+
+                indices.extend_from_slice(&[
+                    current as MeshIndex,
+                    next as MeshIndex,
+                    (current + 1) as MeshIndex,
+                    (current + 1) as MeshIndex,
+                    next as MeshIndex,
+                    (next + 1) as MeshIndex,
+                ]);
+            }
+        }
+
+        Self::from_raw(
+            vertices,
+            vec![MeshPrimitive {
+                primitive_type: PrimitiveType::TriangleList,
+                indices,
+            }],
+        )
+    }
+
+    /// Creates a flat plane mesh in the XZ plane, centered at the origin.
+    ///
+    /// # Arguments
+    /// * `width` - Size along the X axis
+    /// * `depth` - Size along the Z axis
+    /// * `width_segments` - Number of segments along the width (minimum 1)
+    /// * `depth_segments` - Number of segments along the depth (minimum 1)
+    ///
+    /// # Example
+    /// ```
+    /// use wgpu_engine::scene::Mesh;
+    /// let plane = Mesh::plane(10.0, 10.0, 1, 1);
+    /// let detailed_plane = Mesh::plane(10.0, 10.0, 10, 10);
+    /// ```
+    pub fn plane(width: f32, depth: f32, width_segments: u32, depth_segments: u32) -> Self {
+        let width_segments = width_segments.max(1);
+        let depth_segments = depth_segments.max(1);
+
+        let hw = width / 2.0;
+        let hd = depth / 2.0;
+
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+
+        for zi in 0..=depth_segments {
+            let v = zi as f32 / depth_segments as f32;
+            let z = -hd + v * depth;
+
+            for xi in 0..=width_segments {
+                let u = xi as f32 / width_segments as f32;
+                let x = -hw + u * width;
+
+                vertices.push(Vertex {
+                    position: [x, 0.0, z],
+                    tex_coords: [u, v, 0.0],
+                    normal: [0.0, 1.0, 0.0],
+                });
+            }
+        }
+
+        let verts_per_row = width_segments + 1;
+        for zi in 0..depth_segments {
+            for xi in 0..width_segments {
+                let current = zi * verts_per_row + xi;
+                let next = current + verts_per_row;
+
+                indices.extend_from_slice(&[
+                    current as MeshIndex,
+                    next as MeshIndex,
+                    (current + 1) as MeshIndex,
+                    (current + 1) as MeshIndex,
+                    next as MeshIndex,
+                    (next + 1) as MeshIndex,
+                ]);
+            }
+        }
+
+        Self::from_raw(
+            vertices,
+            vec![MeshPrimitive {
+                primitive_type: PrimitiveType::TriangleList,
+                indices,
+            }],
+        )
+    }
+
+    /// Creates a simple quad (two triangles) in the XY plane, facing +Z.
+    ///
+    /// # Arguments
+    /// * `width` - Size along the X axis
+    /// * `height` - Size along the Y axis
+    ///
+    /// # Example
+    /// ```
+    /// use wgpu_engine::scene::Mesh;
+    /// let quad = Mesh::quad(2.0, 1.0);
+    /// ```
+    pub fn quad(width: f32, height: f32) -> Self {
+        let hw = width / 2.0;
+        let hh = height / 2.0;
+
+        let vertices = vec![
+            Vertex {
+                position: [-hw, -hh, 0.0],
+                tex_coords: [0.0, 1.0, 0.0],
+                normal: [0.0, 0.0, 1.0],
+            },
+            Vertex {
+                position: [hw, -hh, 0.0],
+                tex_coords: [1.0, 1.0, 0.0],
+                normal: [0.0, 0.0, 1.0],
+            },
+            Vertex {
+                position: [hw, hh, 0.0],
+                tex_coords: [1.0, 0.0, 0.0],
+                normal: [0.0, 0.0, 1.0],
+            },
+            Vertex {
+                position: [-hw, hh, 0.0],
+                tex_coords: [0.0, 0.0, 0.0],
+                normal: [0.0, 0.0, 1.0],
+            },
+        ];
+
+        let indices = vec![0, 1, 2, 0, 2, 3];
+
+        Self::from_raw(
+            vertices,
+            vec![MeshPrimitive {
+                primitive_type: PrimitiveType::TriangleList,
+                indices,
+            }],
+        )
+    }
+
     // ========== Mutation methods (set dirty flag) ==========
 
     /// Set the mesh's vertex data, marking it as dirty.
