@@ -10,7 +10,7 @@ use winit::{
 use cgmath::Vector3;
 use wgpu_engine::common::RgbaColor;
 use wgpu_engine::egui_support::EguiViewerApp;
-use wgpu_engine::input::{ElementState, Key, NamedKey};
+use wgpu_engine::input::{ElementState, Key};
 use wgpu_engine::load_gltf_scene_from_path;
 use wgpu_engine::operator::BuiltinOperatorId;
 use wgpu_engine::scene::{Light, LightType, Scene, MAX_LIGHTS};
@@ -19,7 +19,6 @@ use wgpu_engine::scene::{Light, LightType, Scene, MAX_LIGHTS};
 enum DebugAction {
     CycleOperator,
     ToggleOrtho,
-    Exit,
 }
 
 /// Application state for the winit event loop with egui integration
@@ -200,11 +199,10 @@ impl<'a> App<'a> {
     }
 
     /// Handle debug key actions
-    fn handle_debug_key_action(&mut self, action: DebugAction, event_loop: &ActiveEventLoop) {
+    fn handle_debug_key_action(&mut self, action: DebugAction, _event_loop: &ActiveEventLoop) {
         match action {
             DebugAction::CycleOperator => self.cycle_operator_mode(),
             DebugAction::ToggleOrtho => self.toggle_ortho(),
-            DebugAction::Exit => event_loop.exit(),
         }
     }
 
@@ -221,7 +219,6 @@ impl<'a> App<'a> {
         match &key_event.logical_key {
             Key::Character('c') => Some(DebugAction::CycleOperator),
             Key::Character('o') => Some(DebugAction::ToggleOrtho),
-            Key::Named(NamedKey::Escape) => Some(DebugAction::Exit),
             _ => None,
         }
     }
