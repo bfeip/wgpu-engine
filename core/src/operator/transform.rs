@@ -12,9 +12,13 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use cgmath::{EuclideanSpace, InnerSpace, Point3, Quaternion, Rotation, Rotation3, Vector3};
+use cgmath::{EuclideanSpace, Point3, Quaternion, Vector3};
 
-use crate::common::RgbaColor;
+use crate::common::{
+    apply_scale, centroid_of_slice, compose_rotation, local_axis_x, local_axis_y, local_axis_z,
+    quaternion_from_axis_angle_safe, rotate_position_about_pivot, scale_position_about_pivot_local,
+    scale_position_about_pivot_world, RgbaColor,
+};
 use crate::event::{CallbackId, Event, EventContext, EventDispatcher, EventKind};
 use crate::input::{ElementState, Key, MouseButton, NamedKey};
 use crate::operator::{Operator, OperatorId};
@@ -157,9 +161,9 @@ impl TransformState {
             AxisConstraint::WorldX => Some(Vector3::unit_x()),
             AxisConstraint::WorldY => Some(Vector3::unit_y()),
             AxisConstraint::WorldZ => Some(Vector3::unit_z()),
-            AxisConstraint::LocalX => Some(self.primary_rotation.rotate_vector(Vector3::unit_x())),
-            AxisConstraint::LocalY => Some(self.primary_rotation.rotate_vector(Vector3::unit_y())),
-            AxisConstraint::LocalZ => Some(self.primary_rotation.rotate_vector(Vector3::unit_z())),
+            AxisConstraint::LocalX => Some(local_axis_x(self.primary_rotation)),
+            AxisConstraint::LocalY => Some(local_axis_y(self.primary_rotation)),
+            AxisConstraint::LocalZ => Some(local_axis_z(self.primary_rotation)),
         }
     }
 
@@ -198,11 +202,7 @@ impl TransformState {
             Some(axis) => axis,
         };
 
-        if axis.magnitude2() > 0.0001 {
-            Quaternion::from_axis_angle(axis.normalize(), cgmath::Rad(angle))
-        } else {
-            Quaternion::new(1.0, 0.0, 0.0, 0.0)
-        }
+        quaternion_from_axis_angle_safe(axis, angle)
     }
 
     /// Compute the scale factor based on mouse movement and constraints.
@@ -262,53 +262,36 @@ impl TransformState {
                 }
                 TransformMode::Rotate => {
                     let rotation = rotation_quat.unwrap();
-                    // Rotate position around pivot
-                    let offset = orig.position - self.pivot_world;
-                    let rotated_offset = rotation.rotate_vector(offset);
-                    node.set_position(self.pivot_world + rotated_offset);
-                    // Also rotate the node's orientation
-                    node.set_rotation(rotation * orig.rotation);
+                    let new_position =
+                        rotate_position_about_pivot(orig.position, self.pivot_world, rotation);
+                    let new_rotation = compose_rotation(orig.rotation, rotation);
+                    node.set_position(new_position);
+                    node.set_rotation(new_rotation);
                 }
                 TransformMode::Scale => {
                     let scale = scale_factor.unwrap();
 
                     // For local axis constraints, we need to scale in local space
                     if self.axis_constraint.is_local() {
-                        // Scale in local space: transform scale vector by node's rotation
-                        let local_scale = Vector3::new(
-                            orig.scale.x * scale.x,
-                            orig.scale.y * scale.y,
-                            orig.scale.z * scale.z,
+                        let new_position = scale_position_about_pivot_local(
+                            orig.position,
+                            self.pivot_world,
+                            scale,
+                            self.primary_rotation,
                         );
-                        node.set_scale(local_scale);
-
-                        // Scale position offset from pivot in local space
-                        let offset = orig.position - self.pivot_world;
-                        let local_offset = self
-                            .primary_rotation
-                            .conjugate()
-                            .rotate_vector(offset);
-                        let scaled_local = Vector3::new(
-                            local_offset.x * scale.x,
-                            local_offset.y * scale.y,
-                            local_offset.z * scale.z,
-                        );
-                        let world_offset = self.primary_rotation.rotate_vector(scaled_local);
-                        node.set_position(self.pivot_world + world_offset);
+                        let new_scale = apply_scale(orig.scale, scale);
+                        node.set_position(new_position);
+                        node.set_scale(new_scale);
                     } else {
                         // Scale in world space
-                        let offset = orig.position - self.pivot_world;
-                        let scaled_offset = Vector3::new(
-                            offset.x * scale.x,
-                            offset.y * scale.y,
-                            offset.z * scale.z,
+                        let new_position = scale_position_about_pivot_world(
+                            orig.position,
+                            self.pivot_world,
+                            scale,
                         );
-                        node.set_position(self.pivot_world + scaled_offset);
-                        node.set_scale(Vector3::new(
-                            orig.scale.x * scale.x,
-                            orig.scale.y * scale.y,
-                            orig.scale.z * scale.z,
-                        ));
+                        let new_scale = apply_scale(orig.scale, scale);
+                        node.set_position(new_position);
+                        node.set_scale(new_scale);
                     }
                 }
             }
@@ -386,10 +369,8 @@ impl TransformOperator {
             return;
         }
 
-        // Store original transforms and compute pivot
-        let mut pivot_sum = Vector3::new(0.0, 0.0, 0.0);
-        let mut count = 0;
-
+        // Store original transforms
+        let mut positions: Vec<Point3<f32>> = Vec::new();
         for node_id in &selected_nodes {
             if let Some(node) = ctx.scene.get_node(*node_id) {
                 state.original_transforms.push(OriginalTransform {
@@ -398,17 +379,16 @@ impl TransformOperator {
                     rotation: node.rotation(),
                     scale: node.scale(),
                 });
-                pivot_sum += node.position().to_vec();
-                count += 1;
+                positions.push(node.position());
             }
         }
 
-        if count == 0 {
+        if positions.is_empty() {
             return;
         }
 
         // Compute pivot as centroid of selected nodes
-        state.pivot_world = Point3::from_vec(pivot_sum / count as f32);
+        state.pivot_world = centroid_of_slice(&positions).unwrap_or(Point3::origin());
 
         // Store primary selection's rotation for local axis transforms
         if let Some(primary) = ctx.selection.primary() {

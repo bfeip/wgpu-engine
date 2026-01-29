@@ -1,5 +1,8 @@
 use super::InstanceId;
-use crate::common::Aabb;
+use crate::common::{
+    Aabb, apply_scale, compose_rotation, local_axes, local_axis_x, local_axis_y, local_axis_z,
+    rotate_position_about_pivot, scale_position_about_pivot_local, scale_position_about_pivot_world,
+};
 use cgmath::{EuclideanSpace, Matrix4, Point3, Quaternion, Vector3};
 use std::cell::Cell;
 
@@ -256,6 +259,81 @@ impl Node {
     /// Marks visibility cache as dirty.
     pub fn mark_visibility_dirty(&self) {
         self.cached_effective_visibility.set(None);
+    }
+
+    // ========== Transform Manipulation Methods ==========
+
+    /// Rotates the node's position and orientation around a world-space pivot point.
+    ///
+    /// # Arguments
+    /// * `pivot` - The world-space pivot point
+    /// * `rotation` - The rotation to apply
+    pub fn rotate_about_pivot(&mut self, pivot: Point3<f32>, rotation: Quaternion<f32>) {
+        let new_position = rotate_position_about_pivot(self.position, pivot, rotation);
+        let new_rotation = compose_rotation(self.rotation, rotation);
+        self.set_position(new_position);
+        self.set_rotation(new_rotation);
+    }
+
+    /// Scales the node's position and scale relative to a world-space pivot point.
+    ///
+    /// # Arguments
+    /// * `pivot` - The world-space pivot point
+    /// * `scale_factor` - The scale factors (x, y, z)
+    pub fn scale_about_pivot(&mut self, pivot: Point3<f32>, scale_factor: Vector3<f32>) {
+        let new_position = scale_position_about_pivot_world(self.position, pivot, scale_factor);
+        let new_scale = apply_scale(self.scale, scale_factor);
+        self.set_position(new_position);
+        self.set_scale(new_scale);
+    }
+
+    /// Scales the node's position and scale relative to a pivot point in local space.
+    ///
+    /// The local space is defined by the given orientation.
+    ///
+    /// # Arguments
+    /// * `pivot` - The world-space pivot point
+    /// * `scale_factor` - The scale factors in local space (x, y, z)
+    /// * `local_orientation` - The orientation defining local space
+    pub fn scale_about_pivot_local(
+        &mut self,
+        pivot: Point3<f32>,
+        scale_factor: Vector3<f32>,
+        local_orientation: Quaternion<f32>,
+    ) {
+        let new_position =
+            scale_position_about_pivot_local(self.position, pivot, scale_factor, local_orientation);
+        let new_scale = apply_scale(self.scale, scale_factor);
+        self.set_position(new_position);
+        self.set_scale(new_scale);
+    }
+
+    /// Translates the node by the given offset.
+    ///
+    /// # Arguments
+    /// * `offset` - The translation offset in world space
+    pub fn translate(&mut self, offset: Vector3<f32>) {
+        self.set_position(self.position + offset);
+    }
+
+    /// Returns the local X axis (right) in world space.
+    pub fn local_x_axis(&self) -> Vector3<f32> {
+        local_axis_x(self.rotation)
+    }
+
+    /// Returns the local Y axis (up) in world space.
+    pub fn local_y_axis(&self) -> Vector3<f32> {
+        local_axis_y(self.rotation)
+    }
+
+    /// Returns the local Z axis (forward) in world space.
+    pub fn local_z_axis(&self) -> Vector3<f32> {
+        local_axis_z(self.rotation)
+    }
+
+    /// Returns all local axes (right, up, forward) in world space.
+    pub fn local_axes(&self) -> (Vector3<f32>, Vector3<f32>, Vector3<f32>) {
+        local_axes(self.rotation)
     }
 }
 
