@@ -5,7 +5,7 @@ use crate::{
     common::RgbaColor,
     event::{Event, EventContext, EventDispatcher, EventKind},
     operator::{
-        BuiltinOperatorId, NavigationOperator, OperatorManager, SelectionOperator, WalkOperator,
+        BuiltinOperatorId, NavigationOperator, OperatorManager, SelectionOperator, TransformOperator, WalkOperator
     },
     renderer::Renderer,
     scene::Scene,
@@ -47,6 +47,10 @@ impl<'a> Viewer<'a> {
         let selection_operator =
             Box::new(SelectionOperator::new(BuiltinOperatorId::Selection.into()));
         operator_manager.push_back(selection_operator, &mut dispatcher);
+
+        let transform_operator =
+            Box::new(TransformOperator::new(BuiltinOperatorId::Transform.into()));
+        operator_manager.push_back(transform_operator, &mut dispatcher);
 
         // Navigation operator for orbit/pan/zoom
         let nav_operator = Box::new(NavigationOperator::new(
