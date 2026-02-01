@@ -28,17 +28,27 @@ struct App<'a> {
     pending_gltf_path: Option<std::path::PathBuf>,
     /// Pending HDR environment path to load
     pending_hdr_path: Option<std::path::PathBuf>,
+    /// Pending scene file path to load
+    pending_scene_load_path: Option<std::path::PathBuf>,
+    /// Pending scene file path to save
+    pending_scene_save_path: Option<std::path::PathBuf>,
 }
 
 impl<'a> App<'a> {
     /// Handle the RedrawRequested event - build UI and render the frame
     fn handle_redraw_requested(&mut self) {
-        // Process any pending file loads
+        // Process any pending file operations
         if self.pending_gltf_path.is_some() {
             self.load_gltf_file();
         }
         if self.pending_hdr_path.is_some() {
             self.load_hdr_file();
+        }
+        if self.pending_scene_load_path.is_some() {
+            self.load_scene_file();
+        }
+        if self.pending_scene_save_path.is_some() {
+            self.save_scene_file();
         }
 
         // Build egui UI and render
@@ -53,8 +63,14 @@ impl<'a> App<'a> {
         }
 
         // Handle UI actions (after releasing viewer_app borrow)
-        if ui_actions.load_file {
+        if ui_actions.load_gltf {
             self.open_gltf_file_dialog();
+        }
+        if ui_actions.load_scene {
+            self.open_scene_file_dialog();
+        }
+        if ui_actions.save_scene {
+            self.save_scene_file_dialog();
         }
         if ui_actions.clear_scene {
             self.clear_scene();
@@ -198,6 +214,67 @@ impl<'a> App<'a> {
         log::info!("Environment cleared");
     }
 
+    /// Open a file dialog to select a scene file to load
+    fn open_scene_file_dialog(&mut self) {
+        let file = rfd::FileDialog::new()
+            .add_filter("WGPU Scene", &["wgsc"])
+            .pick_file();
+
+        if let Some(path) = file {
+            self.pending_scene_load_path = Some(path);
+        }
+    }
+
+    /// Load a scene file
+    fn load_scene_file(&mut self) {
+        let Some(path) = self.pending_scene_load_path.take() else {
+            return;
+        };
+
+        let path_str = path.display().to_string();
+        match Scene::load_from_file(&path) {
+            Ok(scene) => {
+                let viewer = self.viewer_app.as_mut().unwrap().viewer_mut();
+                viewer.set_scene(scene);
+                log::info!("Loaded scene: {}", path_str);
+            }
+            Err(e) => {
+                log::error!("Failed to load scene {}: {}", path_str, e);
+            }
+        }
+    }
+
+    /// Open a file dialog to select where to save the scene
+    fn save_scene_file_dialog(&mut self) {
+        let file = rfd::FileDialog::new()
+            .add_filter("WGPU Scene", &["wgsc"])
+            .set_file_name("scene.wgsc")
+            .save_file();
+
+        if let Some(path) = file {
+            self.pending_scene_save_path = Some(path);
+        }
+    }
+
+    /// Save the scene to a file
+    fn save_scene_file(&mut self) {
+        let Some(path) = self.pending_scene_save_path.take() else {
+            return;
+        };
+
+        let viewer = self.viewer_app.as_mut().unwrap().viewer_mut();
+        let path_str = path.display().to_string();
+
+        match viewer.scene_mut().save_to_file(&path) {
+            Ok(()) => {
+                log::info!("Saved scene: {}", path_str);
+            }
+            Err(e) => {
+                log::error!("Failed to save scene {}: {}", path_str, e);
+            }
+        }
+    }
+
     /// Handle debug key actions
     fn handle_debug_key_action(&mut self, action: DebugAction, _event_loop: &ActiveEventLoop) {
         match action {
@@ -314,6 +391,8 @@ fn main() {
         viewer_app: None,
         pending_gltf_path: None,
         pending_hdr_path: None,
+        pending_scene_load_path: None,
+        pending_scene_save_path: None,
     };
 
     // Run the event loop

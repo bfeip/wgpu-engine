@@ -25,7 +25,9 @@ pub struct VisibilityChange {
 /// Actions requested by the UI that need to be handled by the application.
 #[derive(Default)]
 pub struct UiActions {
-    pub load_file: bool,
+    pub load_gltf: bool,
+    pub load_scene: bool,
+    pub save_scene: bool,
     pub clear_scene: bool,
     pub add_light: Option<LightType>,
     pub load_environment: bool,
@@ -127,10 +129,19 @@ fn build_left_panel(ctx: &egui::Context, viewer: &mut Viewer, actions: &mut UiAc
 fn build_scene_tab(ui: &mut egui::Ui, viewer: &Viewer, actions: &mut UiActions) {
     ui.horizontal(|ui| {
         if ui.button("Load glTF...").clicked() {
-            actions.load_file = true;
+            actions.load_gltf = true;
         }
         if ui.button("Clear").clicked() {
             actions.clear_scene = true;
+        }
+    });
+
+    ui.horizontal(|ui| {
+        if ui.button("Open...").clicked() {
+            actions.load_scene = true;
+        }
+        if ui.button("Save...").clicked() {
+            actions.save_scene = true;
         }
     });
 

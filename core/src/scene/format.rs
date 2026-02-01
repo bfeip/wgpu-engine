@@ -1,0 +1,1667 @@
+//! Scene file format serialization.
+//!
+//! This module provides serialization and deserialization of scenes to a custom
+//! binary format (.wgsc). The format is designed to be:
+//! - Concise: Uses Zstd compression for large data sections
+//! - Flexible: Section-based structure allows adding new data types
+//! - Future-proof: Magic number and version header for compatibility
+//!
+//! # File Structure
+//!
+//! ```text
+//! ┌──────────────────────────────────────────────────────────────┐
+//! │ FIXED HEADER (16 bytes)                                      │
+//! │  [0..4]   Magic: b"WGSC"                                     │
+//! │  [4..6]   Version: u16 (major << 8 | minor)                  │
+//! │  [6..8]   Flags: u16 (reserved)                              │
+//! │  [8..16]  TOC offset: u64                                    │
+//! ├──────────────────────────────────────────────────────────────┤
+//! │ SECTION DATA (variable, Zstd compressed)                     │
+//! ├──────────────────────────────────────────────────────────────┤
+//! │ TABLE OF CONTENTS (at end of file)                           │
+//! └──────────────────────────────────────────────────────────────┘
+//! ```
+
+use std::collections::HashMap;
+use std::io::{Read, Write, Cursor};
+
+use image::GenericImageView;
+
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+use super::{
+    annotation::{
+        Annotation, AnnotationId, AxesAnnotation, BoxAnnotation,
+        GridAnnotation, LineAnnotation, PointsAnnotation, PolylineAnnotation, AnnotationMeta,
+    },
+    instance::Instance,
+    light::Light,
+    material::{Material, MaterialFlags, MaterialId, DEFAULT_MATERIAL_ID},
+    mesh::{Mesh, MeshId, MeshPrimitive, PrimitiveType, Vertex},
+    node::{Node, NodeId, Visibility},
+    texture::{Texture, TextureId},
+    InstanceId, Scene,
+};
+use crate::common::RgbaColor;
+use crate::ibl::EnvironmentMapId;
+
+// ============================================================================
+// Constants
+// ============================================================================
+
+/// Magic number identifying WGSC files: "WGSC" in ASCII
+pub const MAGIC: [u8; 4] = *b"WGSC";
+
+/// Current format version (major.minor encoded as single u16)
+/// major = version >> 8, minor = version & 0xFF
+pub const VERSION: u16 = 0x0001; // 0.1
+
+/// Size of the fixed header in bytes
+pub const HEADER_SIZE: usize = 16;
+
+// ============================================================================
+// Error Types
+// ============================================================================
+
+/// Errors that can occur during scene serialization/deserialization.
+#[derive(Debug, Error)]
+pub enum FormatError {
+    #[error("Invalid magic number")]
+    InvalidMagic,
+
+    #[error("Unsupported version: {0}.{1}")]
+    UnsupportedVersion(u8, u8),
+
+    #[error("Compression error: {0}")]
+    CompressionError(String),
+
+    #[error("Decompression error: {0}")]
+    DecompressionError(String),
+
+    #[error("Serialization error: {0}")]
+    SerializationError(String),
+
+    #[error("Deserialization error: {0}")]
+    DeserializationError(String),
+
+    #[error("IO error: {0}")]
+    IoError(#[from] std::io::Error),
+
+    #[error("Invalid section type: {0}")]
+    InvalidSectionType(u8),
+
+    #[error("Missing required section: {0:?}")]
+    MissingSectionType(SectionType),
+
+    #[error("Texture load error: {0}")]
+    TextureError(String),
+}
+
+// ============================================================================
+// Section Types
+// ============================================================================
+
+/// Identifies the type of data in a section.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum SectionType {
+    /// Scene metadata (name, timestamps, generator info)
+    Metadata = 0,
+    /// Scene graph nodes with hierarchy
+    Nodes = 1,
+    /// Mesh-material instance bindings
+    Instances = 2,
+    /// Material definitions
+    Materials = 3,
+    /// Mesh geometry data
+    Meshes = 4,
+    /// Embedded texture data
+    Textures = 5,
+    /// Light definitions
+    Lights = 6,
+    /// Annotation data
+    Annotations = 7,
+    /// Environment map data
+    EnvironmentMaps = 8,
+}
+
+impl TryFrom<u8> for SectionType {
+    type Error = FormatError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(SectionType::Metadata),
+            1 => Ok(SectionType::Nodes),
+            2 => Ok(SectionType::Instances),
+            3 => Ok(SectionType::Materials),
+            4 => Ok(SectionType::Meshes),
+            5 => Ok(SectionType::Textures),
+            6 => Ok(SectionType::Lights),
+            7 => Ok(SectionType::Annotations),
+            8 => Ok(SectionType::EnvironmentMaps),
+            _ => Err(FormatError::InvalidSectionType(value)),
+        }
+    }
+}
+
+// ============================================================================
+// File Header & TOC
+// ============================================================================
+
+/// Fixed-size file header at the start of every .wgsc file.
+#[derive(Debug, Clone)]
+pub struct FileHeader {
+    /// Magic number (must be MAGIC)
+    pub magic: [u8; 4],
+    /// Format version
+    pub version: u16,
+    /// Reserved flags
+    pub flags: u16,
+    /// Byte offset to the table of contents
+    pub toc_offset: u64,
+}
+
+impl FileHeader {
+    pub fn new(toc_offset: u64) -> Self {
+        Self {
+            magic: MAGIC,
+            version: VERSION,
+            flags: 0,
+            toc_offset,
+        }
+    }
+
+    pub fn write<W: Write>(&self, writer: &mut W) -> Result<(), FormatError> {
+        writer.write_all(&self.magic)?;
+        writer.write_all(&self.version.to_le_bytes())?;
+        writer.write_all(&self.flags.to_le_bytes())?;
+        writer.write_all(&self.toc_offset.to_le_bytes())?;
+        Ok(())
+    }
+
+    pub fn read<R: Read>(reader: &mut R) -> Result<Self, FormatError> {
+        let mut magic = [0u8; 4];
+        reader.read_exact(&mut magic)?;
+
+        if magic != MAGIC {
+            return Err(FormatError::InvalidMagic);
+        }
+
+        let mut version_bytes = [0u8; 2];
+        reader.read_exact(&mut version_bytes)?;
+        let version = u16::from_le_bytes(version_bytes);
+
+        // Check version compatibility (currently only support 0.1)
+        let major = (version >> 8) as u8;
+        let minor = (version & 0xFF) as u8;
+        if major > 0 || (major == 0 && minor > 1) {
+            return Err(FormatError::UnsupportedVersion(major, minor));
+        }
+
+        let mut flags_bytes = [0u8; 2];
+        reader.read_exact(&mut flags_bytes)?;
+        let flags = u16::from_le_bytes(flags_bytes);
+
+        let mut toc_offset_bytes = [0u8; 8];
+        reader.read_exact(&mut toc_offset_bytes)?;
+        let toc_offset = u64::from_le_bytes(toc_offset_bytes);
+
+        Ok(Self {
+            magic,
+            version,
+            flags,
+            toc_offset,
+        })
+    }
+}
+
+/// Entry in the table of contents describing a section.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TocEntry {
+    /// Section type
+    pub section_type: SectionType,
+    /// Byte offset from start of file
+    pub offset: u64,
+    /// Size of compressed data
+    pub compressed_size: u64,
+    /// Size of uncompressed data
+    pub uncompressed_size: u64,
+}
+
+/// Table of contents listing all sections in the file.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TableOfContents {
+    pub entries: Vec<TocEntry>,
+}
+
+impl TableOfContents {
+    pub fn new() -> Self {
+        Self { entries: Vec::new() }
+    }
+
+    pub fn add_entry(&mut self, entry: TocEntry) {
+        self.entries.push(entry);
+    }
+
+    pub fn find(&self, section_type: SectionType) -> Option<&TocEntry> {
+        self.entries.iter().find(|e| e.section_type == section_type)
+    }
+}
+
+impl Default for TableOfContents {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ============================================================================
+// Serializable Data Structures
+// ============================================================================
+
+/// Scene metadata.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializedMetadata {
+    /// Optional scene name
+    pub name: Option<String>,
+    /// Unix timestamp of creation
+    pub created_at: u64,
+    /// Generator string (e.g., "wgpu-engine 0.1.0")
+    pub generator: String,
+    /// Root node IDs (remapped)
+    pub root_nodes: Vec<u32>,
+    /// Active environment map ID (remapped), if any
+    pub active_environment_map: Option<u32>,
+}
+
+/// Serializable node with remapped IDs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializedNode {
+    pub id: u32,
+    pub name: Option<String>,
+    pub position: [f32; 3],
+    pub rotation: [f32; 4], // Quaternion as [x, y, z, w]
+    pub scale: [f32; 3],
+    pub parent_id: Option<u32>,
+    pub children_ids: Vec<u32>,
+    pub instance_id: Option<u32>,
+    pub visible: bool,
+}
+
+/// Serializable instance.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializedInstance {
+    pub id: u32,
+    pub mesh_id: u32,
+    pub material_id: u32,
+}
+
+/// Serializable mesh primitive.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializedPrimitive {
+    /// 0 = TriangleList, 1 = LineList, 2 = PointList
+    pub primitive_type: u8,
+    pub indices: Vec<u16>,
+}
+
+/// Serializable mesh with vertex data.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializedMesh {
+    pub id: u32,
+    /// Raw vertex bytes (36 bytes per vertex)
+    pub vertices: Vec<u8>,
+    pub primitives: Vec<SerializedPrimitive>,
+}
+
+/// Serializable material.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializedMaterial {
+    pub id: u32,
+    pub base_color_texture_id: Option<u32>,
+    pub normal_texture_id: Option<u32>,
+    pub metallic_roughness_texture_id: Option<u32>,
+    pub base_color_factor: [f32; 4],
+    pub metallic_factor: f32,
+    pub roughness_factor: f32,
+    pub normal_scale: f32,
+    pub line_color: Option<[f32; 4]>,
+    pub point_color: Option<[f32; 4]>,
+    /// MaterialFlags as u32 bits
+    pub flags: u32,
+}
+
+/// Texture image format.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum TextureFormat {
+    Png = 0,
+    Jpeg = 1,
+    Raw = 2, // RGBA8 raw data
+}
+
+/// Serializable texture with embedded image data.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializedTexture {
+    pub id: u32,
+    pub format: TextureFormat,
+    pub width: u32,
+    pub height: u32,
+    /// Compressed image bytes (PNG/JPEG) or raw RGBA data
+    pub data: Vec<u8>,
+}
+
+/// Serializable light.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializedLight {
+    /// 0 = Point, 1 = Directional, 2 = Spot
+    pub light_type: u8,
+    pub position: [f32; 3],
+    pub direction: [f32; 3],
+    pub color: [f32; 4],
+    pub intensity: f32,
+    pub range: f32,
+    pub inner_cone_angle: f32,
+    pub outer_cone_angle: f32,
+}
+
+/// Serializable annotation metadata.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializedAnnotationMeta {
+    pub id: u32,
+    pub name: Option<String>,
+    pub visible: bool,
+}
+
+/// Serializable annotation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum SerializedAnnotation {
+    Line {
+        meta: SerializedAnnotationMeta,
+        start: [f32; 3],
+        end: [f32; 3],
+        color: [f32; 4],
+    },
+    Polyline {
+        meta: SerializedAnnotationMeta,
+        points: Vec<[f32; 3]>,
+        color: [f32; 4],
+        closed: bool,
+    },
+    Points {
+        meta: SerializedAnnotationMeta,
+        positions: Vec<[f32; 3]>,
+        color: [f32; 4],
+    },
+    Axes {
+        meta: SerializedAnnotationMeta,
+        origin: [f32; 3],
+        size: f32,
+    },
+    Box {
+        meta: SerializedAnnotationMeta,
+        center: [f32; 3],
+        size: [f32; 3],
+        color: [f32; 4],
+    },
+    Grid {
+        meta: SerializedAnnotationMeta,
+        center: [f32; 3],
+        size: f32,
+        divisions: u32,
+        color: [f32; 4],
+    },
+}
+
+// ============================================================================
+// ID Remapping
+// ============================================================================
+
+/// Maps original runtime IDs to compact sequential IDs for serialization.
+#[derive(Debug, Default)]
+pub struct IdRemapper {
+    pub nodes: HashMap<NodeId, u32>,
+    pub instances: HashMap<InstanceId, u32>,
+    pub meshes: HashMap<MeshId, u32>,
+    pub materials: HashMap<MaterialId, u32>,
+    pub textures: HashMap<TextureId, u32>,
+    pub environment_maps: HashMap<EnvironmentMapId, u32>,
+    pub annotations: HashMap<AnnotationId, u32>,
+}
+
+impl IdRemapper {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Build ID mappings from a scene, assigning sequential IDs starting from 0.
+    pub fn from_scene(scene: &Scene) -> Self {
+        let mut remapper = Self::new();
+
+        // Remap nodes
+        for (idx, &id) in scene.nodes.keys().collect::<Vec<_>>().iter().enumerate() {
+            remapper.nodes.insert(*id, idx as u32);
+        }
+
+        // Remap instances
+        for (idx, &id) in scene.instances.keys().collect::<Vec<_>>().iter().enumerate() {
+            remapper.instances.insert(*id, idx as u32);
+        }
+
+        // Remap meshes
+        for (idx, &id) in scene.meshes.keys().collect::<Vec<_>>().iter().enumerate() {
+            remapper.meshes.insert(*id, idx as u32);
+        }
+
+        // Remap materials (preserve 0 for default material)
+        let mut mat_idx = 0u32;
+        for &id in scene.materials.keys() {
+            if id == DEFAULT_MATERIAL_ID {
+                remapper.materials.insert(id, 0);
+            } else {
+                mat_idx += 1;
+                remapper.materials.insert(id, mat_idx);
+            }
+        }
+
+        // Remap textures
+        for (idx, &id) in scene.textures.keys().collect::<Vec<_>>().iter().enumerate() {
+            remapper.textures.insert(*id, idx as u32);
+        }
+
+        // Remap environment maps
+        for (idx, &id) in scene.environment_maps.keys().collect::<Vec<_>>().iter().enumerate() {
+            remapper.environment_maps.insert(*id, idx as u32);
+        }
+
+        // Remap annotations
+        for (idx, annotation) in scene.annotations.iter().enumerate() {
+            remapper.annotations.insert(annotation.id(), idx as u32);
+        }
+
+        remapper
+    }
+
+    pub fn remap_node(&self, id: NodeId) -> Option<u32> {
+        self.nodes.get(&id).copied()
+    }
+
+    pub fn remap_instance(&self, id: InstanceId) -> Option<u32> {
+        self.instances.get(&id).copied()
+    }
+
+    pub fn remap_mesh(&self, id: MeshId) -> Option<u32> {
+        self.meshes.get(&id).copied()
+    }
+
+    pub fn remap_material(&self, id: MaterialId) -> Option<u32> {
+        self.materials.get(&id).copied()
+    }
+
+    pub fn remap_texture(&self, id: TextureId) -> Option<u32> {
+        self.textures.get(&id).copied()
+    }
+
+    pub fn remap_environment_map(&self, id: EnvironmentMapId) -> Option<u32> {
+        self.environment_maps.get(&id).copied()
+    }
+}
+
+// ============================================================================
+// Conversion: Scene -> Serialized
+// ============================================================================
+
+impl SerializedNode {
+    pub fn from_node(node: &Node, remapper: &IdRemapper) -> Option<Self> {
+        let id = remapper.remap_node(node.id)?;
+
+        let position = node.position();
+        let rotation = node.rotation();
+        let scale = node.scale();
+
+        // cgmath Quaternion: s is scalar (w), v is Vector3 (x, y, z)
+        Some(Self {
+            id,
+            name: node.name.clone(),
+            position: [position.x, position.y, position.z],
+            rotation: [rotation.v.x, rotation.v.y, rotation.v.z, rotation.s],
+            scale: [scale.x, scale.y, scale.z],
+            parent_id: node.parent().and_then(|pid| remapper.remap_node(pid)),
+            children_ids: node
+                .children()
+                .iter()
+                .filter_map(|&cid| remapper.remap_node(cid))
+                .collect(),
+            instance_id: node.instance().and_then(|iid| remapper.remap_instance(iid)),
+            visible: node.visibility() == Visibility::Visible,
+        })
+    }
+}
+
+impl SerializedInstance {
+    pub fn from_instance(instance: &Instance, remapper: &IdRemapper) -> Option<Self> {
+        Some(Self {
+            id: remapper.remap_instance(instance.id)?,
+            mesh_id: remapper.remap_mesh(instance.mesh)?,
+            material_id: remapper.remap_material(instance.material)?,
+        })
+    }
+}
+
+impl SerializedPrimitive {
+    pub fn from_primitive(primitive: &MeshPrimitive) -> Self {
+        let primitive_type = match primitive.primitive_type {
+            PrimitiveType::TriangleList => 0,
+            PrimitiveType::LineList => 1,
+            PrimitiveType::PointList => 2,
+        };
+
+        Self {
+            primitive_type,
+            indices: primitive.indices.clone(),
+        }
+    }
+
+    pub fn to_primitive(&self) -> MeshPrimitive {
+        let primitive_type = match self.primitive_type {
+            0 => PrimitiveType::TriangleList,
+            1 => PrimitiveType::LineList,
+            _ => PrimitiveType::PointList,
+        };
+
+        MeshPrimitive {
+            primitive_type,
+            indices: self.indices.clone(),
+        }
+    }
+}
+
+impl SerializedMesh {
+    pub fn from_mesh(mesh: &Mesh, remapper: &IdRemapper) -> Option<Self> {
+        let id = remapper.remap_mesh(mesh.id)?;
+
+        // Convert vertices to raw bytes
+        let vertices_bytes: Vec<u8> = bytemuck::cast_slice(mesh.vertices()).to_vec();
+
+        let primitives = mesh
+            .primitives()
+            .iter()
+            .map(SerializedPrimitive::from_primitive)
+            .collect();
+
+        Some(Self {
+            id,
+            vertices: vertices_bytes,
+            primitives,
+        })
+    }
+
+    pub fn to_mesh(&self) -> Mesh {
+        // Convert raw bytes back to vertices
+        let vertices: Vec<Vertex> = bytemuck::cast_slice(&self.vertices).to_vec();
+
+        let primitives: Vec<MeshPrimitive> = self
+            .primitives
+            .iter()
+            .map(SerializedPrimitive::to_primitive)
+            .collect();
+
+        let mut mesh = Mesh::from_raw(vertices, primitives);
+        mesh.id = self.id;
+        mesh
+    }
+}
+
+impl SerializedMaterial {
+    pub fn from_material(material: &Material, remapper: &IdRemapper) -> Option<Self> {
+        let id = remapper.remap_material(material.id)?;
+
+        let base_color = material.base_color_factor();
+        let line_color = material.line_color();
+        let point_color = material.point_color();
+
+        Some(Self {
+            id,
+            base_color_texture_id: material
+                .base_color_texture()
+                .and_then(|tid| remapper.remap_texture(tid)),
+            normal_texture_id: material
+                .normal_texture()
+                .and_then(|tid| remapper.remap_texture(tid)),
+            metallic_roughness_texture_id: material
+                .metallic_roughness_texture()
+                .and_then(|tid| remapper.remap_texture(tid)),
+            base_color_factor: [base_color.r, base_color.g, base_color.b, base_color.a],
+            metallic_factor: material.metallic_factor(),
+            roughness_factor: material.roughness_factor(),
+            normal_scale: material.normal_scale(),
+            line_color: line_color.map(|c| [c.r, c.g, c.b, c.a]),
+            point_color: point_color.map(|c| [c.r, c.g, c.b, c.a]),
+            flags: material.flags().bits(),
+        })
+    }
+
+    pub fn to_material(&self) -> Material {
+        let mut material = Material::new()
+            .with_base_color_factor(RgbaColor {
+                r: self.base_color_factor[0],
+                g: self.base_color_factor[1],
+                b: self.base_color_factor[2],
+                a: self.base_color_factor[3],
+            })
+            .with_metallic_factor(self.metallic_factor)
+            .with_roughness_factor(self.roughness_factor)
+            .with_normal_scale(self.normal_scale)
+            .with_flags(MaterialFlags::from_bits_truncate(self.flags));
+
+        // Note: Texture IDs will be patched up after textures are loaded
+        // using the file's IDs directly (they're already sequential)
+
+        if let Some(color) = self.line_color {
+            material = material.with_line_color(RgbaColor {
+                r: color[0],
+                g: color[1],
+                b: color[2],
+                a: color[3],
+            });
+        }
+
+        if let Some(color) = self.point_color {
+            material = material.with_point_color(RgbaColor {
+                r: color[0],
+                g: color[1],
+                b: color[2],
+                a: color[3],
+            });
+        }
+
+        material.id = self.id;
+        material
+    }
+}
+
+impl SerializedLight {
+    pub fn from_light(light: &Light) -> Self {
+        match light {
+            Light::Point {
+                position,
+                color,
+                intensity,
+                range,
+            } => Self {
+                light_type: 0,
+                position: [position.x, position.y, position.z],
+                direction: [0.0, 0.0, 0.0],
+                color: [color.r, color.g, color.b, color.a],
+                intensity: *intensity,
+                range: *range,
+                inner_cone_angle: 0.0,
+                outer_cone_angle: 0.0,
+            },
+            Light::Directional {
+                direction,
+                color,
+                intensity,
+            } => Self {
+                light_type: 1,
+                position: [0.0, 0.0, 0.0],
+                direction: [direction.x, direction.y, direction.z],
+                color: [color.r, color.g, color.b, color.a],
+                intensity: *intensity,
+                range: 0.0,
+                inner_cone_angle: 0.0,
+                outer_cone_angle: 0.0,
+            },
+            Light::Spot {
+                position,
+                direction,
+                color,
+                intensity,
+                range,
+                inner_cone_angle,
+                outer_cone_angle,
+            } => Self {
+                light_type: 2,
+                position: [position.x, position.y, position.z],
+                direction: [direction.x, direction.y, direction.z],
+                color: [color.r, color.g, color.b, color.a],
+                intensity: *intensity,
+                range: *range,
+                inner_cone_angle: *inner_cone_angle,
+                outer_cone_angle: *outer_cone_angle,
+            },
+        }
+    }
+
+    pub fn to_light(&self) -> Light {
+        use cgmath::Vector3;
+
+        let color = RgbaColor {
+            r: self.color[0],
+            g: self.color[1],
+            b: self.color[2],
+            a: self.color[3],
+        };
+
+        match self.light_type {
+            0 => Light::Point {
+                position: Vector3::new(self.position[0], self.position[1], self.position[2]),
+                color,
+                intensity: self.intensity,
+                range: self.range,
+            },
+            1 => Light::Directional {
+                direction: Vector3::new(self.direction[0], self.direction[1], self.direction[2]),
+                color,
+                intensity: self.intensity,
+            },
+            _ => Light::Spot {
+                position: Vector3::new(self.position[0], self.position[1], self.position[2]),
+                direction: Vector3::new(self.direction[0], self.direction[1], self.direction[2]),
+                color,
+                intensity: self.intensity,
+                range: self.range,
+                inner_cone_angle: self.inner_cone_angle,
+                outer_cone_angle: self.outer_cone_angle,
+            },
+        }
+    }
+}
+
+fn rgba_to_array(c: RgbaColor) -> [f32; 4] {
+    [c.r, c.g, c.b, c.a]
+}
+
+fn array_to_rgba(a: [f32; 4]) -> RgbaColor {
+    RgbaColor {
+        r: a[0],
+        g: a[1],
+        b: a[2],
+        a: a[3],
+    }
+}
+
+fn point3_to_array(p: cgmath::Point3<f32>) -> [f32; 3] {
+    [p.x, p.y, p.z]
+}
+
+fn array_to_point3(a: [f32; 3]) -> cgmath::Point3<f32> {
+    cgmath::Point3::new(a[0], a[1], a[2])
+}
+
+fn vec3_to_array(v: cgmath::Vector3<f32>) -> [f32; 3] {
+    [v.x, v.y, v.z]
+}
+
+fn array_to_vec3(a: [f32; 3]) -> cgmath::Vector3<f32> {
+    cgmath::Vector3::new(a[0], a[1], a[2])
+}
+
+impl SerializedAnnotation {
+    pub fn from_annotation(annotation: &Annotation, remapper: &IdRemapper) -> Option<Self> {
+        let make_meta = |meta: &AnnotationMeta| -> Option<SerializedAnnotationMeta> {
+            Some(SerializedAnnotationMeta {
+                id: *remapper.annotations.get(&meta.id)?,
+                name: meta.name.clone(),
+                visible: meta.visible,
+            })
+        };
+
+        match annotation {
+            Annotation::Line(a) => Some(SerializedAnnotation::Line {
+                meta: make_meta(&a.meta)?,
+                start: point3_to_array(a.start),
+                end: point3_to_array(a.end),
+                color: rgba_to_array(a.color),
+            }),
+            Annotation::Polyline(a) => Some(SerializedAnnotation::Polyline {
+                meta: make_meta(&a.meta)?,
+                points: a.points.iter().map(|p| point3_to_array(*p)).collect(),
+                color: rgba_to_array(a.color),
+                closed: a.closed,
+            }),
+            Annotation::Points(a) => Some(SerializedAnnotation::Points {
+                meta: make_meta(&a.meta)?,
+                positions: a.positions.iter().map(|p| point3_to_array(*p)).collect(),
+                color: rgba_to_array(a.color),
+            }),
+            Annotation::Axes(a) => Some(SerializedAnnotation::Axes {
+                meta: make_meta(&a.meta)?,
+                origin: point3_to_array(a.origin),
+                size: a.size,
+            }),
+            Annotation::Box(a) => Some(SerializedAnnotation::Box {
+                meta: make_meta(&a.meta)?,
+                center: point3_to_array(a.center),
+                size: vec3_to_array(a.size),
+                color: rgba_to_array(a.color),
+            }),
+            Annotation::Grid(a) => Some(SerializedAnnotation::Grid {
+                meta: make_meta(&a.meta)?,
+                center: point3_to_array(a.center),
+                size: a.size,
+                divisions: a.divisions,
+                color: rgba_to_array(a.color),
+            }),
+        }
+    }
+
+    pub fn to_annotation(&self) -> Annotation {
+        match self {
+            SerializedAnnotation::Line { meta, start, end, color } => {
+                Annotation::Line(LineAnnotation {
+                    meta: AnnotationMeta {
+                        id: meta.id,
+                        name: meta.name.clone(),
+                        visible: meta.visible,
+                        node_id: None,
+                    },
+                    start: array_to_point3(*start),
+                    end: array_to_point3(*end),
+                    color: array_to_rgba(*color),
+                })
+            }
+            SerializedAnnotation::Polyline { meta, points, color, closed } => {
+                Annotation::Polyline(PolylineAnnotation {
+                    meta: AnnotationMeta {
+                        id: meta.id,
+                        name: meta.name.clone(),
+                        visible: meta.visible,
+                        node_id: None,
+                    },
+                    points: points.iter().map(|p| array_to_point3(*p)).collect(),
+                    color: array_to_rgba(*color),
+                    closed: *closed,
+                })
+            }
+            SerializedAnnotation::Points { meta, positions, color } => {
+                Annotation::Points(PointsAnnotation {
+                    meta: AnnotationMeta {
+                        id: meta.id,
+                        name: meta.name.clone(),
+                        visible: meta.visible,
+                        node_id: None,
+                    },
+                    positions: positions.iter().map(|p| array_to_point3(*p)).collect(),
+                    color: array_to_rgba(*color),
+                })
+            }
+            SerializedAnnotation::Axes { meta, origin, size } => {
+                Annotation::Axes(AxesAnnotation {
+                    meta: AnnotationMeta {
+                        id: meta.id,
+                        name: meta.name.clone(),
+                        visible: meta.visible,
+                        node_id: None,
+                    },
+                    origin: array_to_point3(*origin),
+                    size: *size,
+                })
+            }
+            SerializedAnnotation::Box { meta, center, size, color } => {
+                Annotation::Box(BoxAnnotation {
+                    meta: AnnotationMeta {
+                        id: meta.id,
+                        name: meta.name.clone(),
+                        visible: meta.visible,
+                        node_id: None,
+                    },
+                    center: array_to_point3(*center),
+                    size: array_to_vec3(*size),
+                    color: array_to_rgba(*color),
+                })
+            }
+            SerializedAnnotation::Grid { meta, center, size, divisions, color } => {
+                Annotation::Grid(GridAnnotation {
+                    meta: AnnotationMeta {
+                        id: meta.id,
+                        name: meta.name.clone(),
+                        visible: meta.visible,
+                        node_id: None,
+                    },
+                    center: array_to_point3(*center),
+                    size: *size,
+                    divisions: *divisions,
+                    color: array_to_rgba(*color),
+                })
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Compression Utilities
+// ============================================================================
+
+/// Compress data using Zstd.
+pub fn compress(data: &[u8]) -> Result<Vec<u8>, FormatError> {
+    zstd::encode_all(Cursor::new(data), 3)
+        .map_err(|e| FormatError::CompressionError(e.to_string()))
+}
+
+/// Decompress Zstd-compressed data.
+pub fn decompress(data: &[u8]) -> Result<Vec<u8>, FormatError> {
+    zstd::decode_all(Cursor::new(data))
+        .map_err(|e| FormatError::DecompressionError(e.to_string()))
+}
+
+// ============================================================================
+// Section Writing/Reading
+// ============================================================================
+
+/// Serialize and compress a section, returning the compressed bytes.
+pub fn serialize_section<T: Serialize>(data: &T) -> Result<(Vec<u8>, usize), FormatError> {
+    let uncompressed = bincode::serialize(data)
+        .map_err(|e| FormatError::SerializationError(e.to_string()))?;
+    let uncompressed_size = uncompressed.len();
+    let compressed = compress(&uncompressed)?;
+    Ok((compressed, uncompressed_size))
+}
+
+/// Decompress and deserialize a section.
+pub fn deserialize_section<T: for<'de> Deserialize<'de>>(compressed: &[u8]) -> Result<T, FormatError> {
+    let uncompressed = decompress(compressed)?;
+    bincode::deserialize(&uncompressed)
+        .map_err(|e| FormatError::DeserializationError(e.to_string()))
+}
+
+// ============================================================================
+// Texture Serialization
+// ============================================================================
+
+impl SerializedTexture {
+    /// Creates a SerializedTexture from a Texture.
+    ///
+    /// This loads the texture image (if needed) and encodes it as PNG for embedding.
+    pub fn from_texture(texture: &mut Texture, remapper: &IdRemapper) -> Result<Option<Self>, FormatError> {
+        let Some(id) = remapper.remap_texture(texture.id()) else {
+            return Ok(None);
+        };
+
+        // Load the image
+        let image = texture.get_image()
+            .map_err(|e| FormatError::TextureError(e.to_string()))?;
+
+        let dimensions = image.dimensions();
+
+        // Encode as PNG
+        let rgba = image.to_rgba8();
+        let mut png_data = Vec::new();
+        {
+            use image::codecs::png::PngEncoder;
+            use image::ImageEncoder;
+
+            let encoder = PngEncoder::new(&mut png_data);
+            encoder.write_image(
+                &rgba,
+                dimensions.0,
+                dimensions.1,
+                image::ColorType::Rgba8,
+            ).map_err(|e| FormatError::TextureError(e.to_string()))?;
+        }
+
+        Ok(Some(Self {
+            id,
+            format: TextureFormat::Png,
+            width: dimensions.0,
+            height: dimensions.1,
+            data: png_data,
+        }))
+    }
+
+    /// Converts to a Texture.
+    pub fn to_texture(&self) -> Result<Texture, FormatError> {
+        use image::DynamicImage;
+
+        let image = match self.format {
+            TextureFormat::Png | TextureFormat::Jpeg => {
+                image::load_from_memory(&self.data)
+                    .map_err(|e| FormatError::TextureError(e.to_string()))?
+            }
+            TextureFormat::Raw => {
+                // Raw RGBA8 data
+                let rgba = image::RgbaImage::from_raw(self.width, self.height, self.data.clone())
+                    .ok_or_else(|| FormatError::TextureError("Invalid raw image data".to_string()))?;
+                DynamicImage::ImageRgba8(rgba)
+            }
+        };
+
+        let mut texture = Texture::from_image(image);
+        texture.id = self.id;
+        Ok(texture)
+    }
+}
+
+// ============================================================================
+// Scene Serialization
+// ============================================================================
+
+impl Scene {
+    /// Serializes the scene to bytes in WGSC format.
+    pub fn to_bytes(&mut self) -> Result<Vec<u8>, FormatError> {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let remapper = IdRemapper::from_scene(self);
+        let mut output = Vec::new();
+        let mut toc = TableOfContents::new();
+
+        // Reserve space for header (will be written at the end)
+        output.resize(HEADER_SIZE, 0);
+
+        // ===== Metadata Section =====
+        let metadata = SerializedMetadata {
+            name: None,
+            created_at: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+            generator: format!("wgpu-engine {}", env!("CARGO_PKG_VERSION")),
+            root_nodes: self.root_nodes
+                .iter()
+                .filter_map(|&id| remapper.remap_node(id))
+                .collect(),
+            active_environment_map: self.active_environment_map
+                .and_then(|id| remapper.remap_environment_map(id)),
+        };
+        let offset = output.len() as u64;
+        let (compressed, uncompressed_size) = serialize_section(&metadata)?;
+        toc.add_entry(TocEntry {
+            section_type: SectionType::Metadata,
+            offset,
+            compressed_size: compressed.len() as u64,
+            uncompressed_size: uncompressed_size as u64,
+        });
+        output.extend(compressed);
+
+        // ===== Nodes Section =====
+        let nodes: Vec<SerializedNode> = self.nodes
+            .values()
+            .filter_map(|node| SerializedNode::from_node(node, &remapper))
+            .collect();
+        let offset = output.len() as u64;
+        let (compressed, uncompressed_size) = serialize_section(&nodes)?;
+        toc.add_entry(TocEntry {
+            section_type: SectionType::Nodes,
+            offset,
+            compressed_size: compressed.len() as u64,
+            uncompressed_size: uncompressed_size as u64,
+        });
+        output.extend(compressed);
+
+        // ===== Instances Section =====
+        let instances: Vec<SerializedInstance> = self.instances
+            .values()
+            .filter_map(|inst| SerializedInstance::from_instance(inst, &remapper))
+            .collect();
+        let offset = output.len() as u64;
+        let (compressed, uncompressed_size) = serialize_section(&instances)?;
+        toc.add_entry(TocEntry {
+            section_type: SectionType::Instances,
+            offset,
+            compressed_size: compressed.len() as u64,
+            uncompressed_size: uncompressed_size as u64,
+        });
+        output.extend(compressed);
+
+        // ===== Materials Section =====
+        let materials: Vec<SerializedMaterial> = self.materials
+            .values()
+            .filter_map(|mat| SerializedMaterial::from_material(mat, &remapper))
+            .collect();
+        let offset = output.len() as u64;
+        let (compressed, uncompressed_size) = serialize_section(&materials)?;
+        toc.add_entry(TocEntry {
+            section_type: SectionType::Materials,
+            offset,
+            compressed_size: compressed.len() as u64,
+            uncompressed_size: uncompressed_size as u64,
+        });
+        output.extend(compressed);
+
+        // ===== Meshes Section =====
+        let meshes: Vec<SerializedMesh> = self.meshes
+            .values()
+            .filter_map(|mesh| SerializedMesh::from_mesh(mesh, &remapper))
+            .collect();
+        let offset = output.len() as u64;
+        let (compressed, uncompressed_size) = serialize_section(&meshes)?;
+        toc.add_entry(TocEntry {
+            section_type: SectionType::Meshes,
+            offset,
+            compressed_size: compressed.len() as u64,
+            uncompressed_size: uncompressed_size as u64,
+        });
+        output.extend(compressed);
+
+        // ===== Textures Section =====
+        let mut textures = Vec::new();
+        for texture in self.textures.values_mut() {
+            if let Some(serialized) = SerializedTexture::from_texture(texture, &remapper)? {
+                textures.push(serialized);
+            }
+        }
+        let offset = output.len() as u64;
+        let (compressed, uncompressed_size) = serialize_section(&textures)?;
+        toc.add_entry(TocEntry {
+            section_type: SectionType::Textures,
+            offset,
+            compressed_size: compressed.len() as u64,
+            uncompressed_size: uncompressed_size as u64,
+        });
+        output.extend(compressed);
+
+        // ===== Lights Section =====
+        let lights: Vec<SerializedLight> = self.lights
+            .iter()
+            .map(SerializedLight::from_light)
+            .collect();
+        let offset = output.len() as u64;
+        let (compressed, uncompressed_size) = serialize_section(&lights)?;
+        toc.add_entry(TocEntry {
+            section_type: SectionType::Lights,
+            offset,
+            compressed_size: compressed.len() as u64,
+            uncompressed_size: uncompressed_size as u64,
+        });
+        output.extend(compressed);
+
+        // ===== Annotations Section =====
+        let annotations: Vec<SerializedAnnotation> = self.annotations
+            .iter()
+            .filter_map(|ann| SerializedAnnotation::from_annotation(ann, &remapper))
+            .collect();
+        let offset = output.len() as u64;
+        let (compressed, uncompressed_size) = serialize_section(&annotations)?;
+        toc.add_entry(TocEntry {
+            section_type: SectionType::Annotations,
+            offset,
+            compressed_size: compressed.len() as u64,
+            uncompressed_size: uncompressed_size as u64,
+        });
+        output.extend(compressed);
+
+        // ===== Write TOC =====
+        let toc_offset = output.len() as u64;
+        let (toc_compressed, _) = serialize_section(&toc)?;
+        output.extend(toc_compressed);
+
+        // ===== Write Header =====
+        let header = FileHeader::new(toc_offset);
+        let mut header_bytes = Vec::new();
+        header.write(&mut header_bytes)?;
+        output[..HEADER_SIZE].copy_from_slice(&header_bytes);
+
+        Ok(output)
+    }
+
+    /// Deserializes a scene from WGSC format bytes.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Scene, FormatError> {
+        use cgmath::{Point3, Quaternion, Vector3};
+
+        let mut cursor = Cursor::new(bytes);
+
+        // Read header
+        let header = FileHeader::read(&mut cursor)?;
+
+        // Read TOC
+        cursor.set_position(header.toc_offset);
+        let toc_data = &bytes[header.toc_offset as usize..];
+        let toc: TableOfContents = deserialize_section(toc_data)?;
+
+        // Helper to read a section
+        let read_section = |section_type: SectionType| -> Result<&[u8], FormatError> {
+            let entry = toc.find(section_type)
+                .ok_or(FormatError::MissingSectionType(section_type))?;
+            let start = entry.offset as usize;
+            let end = start + entry.compressed_size as usize;
+            Ok(&bytes[start..end])
+        };
+
+        // Read metadata
+        let metadata: SerializedMetadata = deserialize_section(read_section(SectionType::Metadata)?)?;
+
+        // Read textures first (materials reference them)
+        let serialized_textures: Vec<SerializedTexture> =
+            deserialize_section(read_section(SectionType::Textures)?)?;
+
+        // Read materials
+        let serialized_materials: Vec<SerializedMaterial> =
+            deserialize_section(read_section(SectionType::Materials)?)?;
+
+        // Read meshes
+        let serialized_meshes: Vec<SerializedMesh> =
+            deserialize_section(read_section(SectionType::Meshes)?)?;
+
+        // Read instances
+        let serialized_instances: Vec<SerializedInstance> =
+            deserialize_section(read_section(SectionType::Instances)?)?;
+
+        // Read nodes
+        let serialized_nodes: Vec<SerializedNode> =
+            deserialize_section(read_section(SectionType::Nodes)?)?;
+
+        // Read lights
+        let serialized_lights: Vec<SerializedLight> =
+            deserialize_section(read_section(SectionType::Lights)?)?;
+
+        // Read annotations
+        let serialized_annotations: Vec<SerializedAnnotation> =
+            deserialize_section(read_section(SectionType::Annotations)?)?;
+
+        // ===== Build Scene =====
+        let mut scene = Scene::new();
+
+        // Clear the default material - we'll reload all materials from file
+        scene.materials.clear();
+        scene.next_material_id = 0;
+
+        // Add textures
+        let mut texture_id_map: HashMap<u32, TextureId> = HashMap::new();
+        for st in serialized_textures {
+            let file_id = st.id;
+            let texture = st.to_texture()?;
+            let scene_id = scene.add_texture(texture);
+            texture_id_map.insert(file_id, scene_id);
+        }
+
+        // Add meshes
+        let mut mesh_id_map: HashMap<u32, MeshId> = HashMap::new();
+        for sm in serialized_meshes {
+            let file_id = sm.id;
+            let mesh = sm.to_mesh();
+            let scene_id = scene.add_mesh(mesh);
+            mesh_id_map.insert(file_id, scene_id);
+        }
+
+        // Add materials (with texture ID remapping)
+        let mut material_id_map: HashMap<u32, MaterialId> = HashMap::new();
+        for sm in serialized_materials {
+            let file_id = sm.id;
+            let mut material = sm.to_material();
+
+            // Remap texture IDs
+            if let Some(tex_id) = sm.base_color_texture_id {
+                if let Some(&scene_tex_id) = texture_id_map.get(&tex_id) {
+                    material = material.with_base_color_texture(scene_tex_id);
+                }
+            }
+            if let Some(tex_id) = sm.normal_texture_id {
+                if let Some(&scene_tex_id) = texture_id_map.get(&tex_id) {
+                    material = material.with_normal_texture(scene_tex_id);
+                }
+            }
+            if let Some(tex_id) = sm.metallic_roughness_texture_id {
+                if let Some(&scene_tex_id) = texture_id_map.get(&tex_id) {
+                    material = material.with_metallic_roughness_texture(scene_tex_id);
+                }
+            }
+
+            let scene_id = scene.add_material(material);
+            material_id_map.insert(file_id, scene_id);
+        }
+
+        // Add instances
+        let mut instance_id_map: HashMap<u32, InstanceId> = HashMap::new();
+        for si in serialized_instances {
+            let file_id = si.id;
+            let mesh_id = *mesh_id_map.get(&si.mesh_id).unwrap_or(&0);
+            let material_id = *material_id_map.get(&si.material_id).unwrap_or(&DEFAULT_MATERIAL_ID);
+            let scene_id = scene.add_instance(mesh_id, material_id);
+            instance_id_map.insert(file_id, scene_id);
+        }
+
+        // Sort nodes by ID for consistent ordering
+        let mut sorted_nodes = serialized_nodes.clone();
+        sorted_nodes.sort_by_key(|n| n.id);
+
+        // Build node ID map (file ID -> scene ID)
+        let mut node_id_map: HashMap<u32, NodeId> = HashMap::new();
+
+        // First pass: create all nodes without parent relationships
+        for sn in &sorted_nodes {
+            let position = Point3::new(sn.position[0], sn.position[1], sn.position[2]);
+            let rotation = Quaternion::new(
+                sn.rotation[3], // w (scalar)
+                sn.rotation[0], // x
+                sn.rotation[1], // y
+                sn.rotation[2], // z
+            );
+            let scale = Vector3::new(sn.scale[0], sn.scale[1], sn.scale[2]);
+
+            // Add node without parent first
+            let node_id = scene.add_node(
+                None,
+                sn.name.clone(),
+                position,
+                rotation,
+                scale,
+            ).map_err(|e| FormatError::DeserializationError(e.to_string()))?;
+
+            node_id_map.insert(sn.id, node_id);
+
+            // Set instance if present
+            if let Some(inst_file_id) = sn.instance_id {
+                if let Some(&scene_inst_id) = instance_id_map.get(&inst_file_id) {
+                    scene.get_node_mut(node_id).unwrap().set_instance(Some(scene_inst_id));
+                }
+            }
+
+            // Set visibility
+            if !sn.visible {
+                scene.set_node_visibility(node_id, Visibility::Invisible);
+            }
+        }
+
+        // Second pass: establish parent-child relationships
+        // Clear root_nodes since we'll rebuild it
+        scene.root_nodes.clear();
+
+        for sn in &sorted_nodes {
+            let scene_node_id = *node_id_map.get(&sn.id).unwrap();
+
+            if let Some(parent_file_id) = sn.parent_id {
+                if let Some(&scene_parent_id) = node_id_map.get(&parent_file_id) {
+                    // Set parent relationship
+                    scene.get_node_mut(scene_node_id).unwrap().set_parent(Some(scene_parent_id));
+                    scene.get_node_mut(scene_parent_id).unwrap().add_child(scene_node_id);
+                }
+            }
+        }
+
+        // Rebuild root_nodes from metadata
+        scene.root_nodes = metadata.root_nodes
+            .iter()
+            .filter_map(|&file_id| node_id_map.get(&file_id).copied())
+            .collect();
+
+        // Add lights
+        scene.lights = serialized_lights.iter().map(SerializedLight::to_light).collect();
+
+        // Add annotations
+        for sa in serialized_annotations {
+            let annotation = sa.to_annotation();
+            scene.annotations.insert_with_id(annotation);
+        }
+
+        // Set active environment map
+        scene.active_environment_map = metadata.active_environment_map;
+
+        Ok(scene)
+    }
+
+    /// Saves the scene to a file.
+    pub fn save_to_file(&mut self, path: impl AsRef<std::path::Path>) -> Result<(), FormatError> {
+        let bytes = self.to_bytes()?;
+        std::fs::write(path, bytes)?;
+        Ok(())
+    }
+
+    /// Loads a scene from a file.
+    pub fn load_from_file(path: impl AsRef<std::path::Path>) -> Result<Scene, FormatError> {
+        let bytes = std::fs::read(path)?;
+        Self::from_bytes(&bytes)
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cgmath::{Point3, Quaternion, Vector3};
+
+    /// Creates a simple test scene with various elements.
+    fn create_test_scene() -> Scene {
+        let mut scene = Scene::new();
+
+        // Add a mesh
+        let mesh = Mesh::cube(1.0);
+        let mesh_id = scene.add_mesh(mesh);
+
+        // Add a material
+        let material = Material::new()
+            .with_base_color_factor(RgbaColor::RED)
+            .with_metallic_factor(0.5)
+            .with_roughness_factor(0.3)
+            .with_line_color(RgbaColor::GREEN);
+        let mat_id = scene.add_material(material);
+
+        // Add a node with instance
+        let node_id = scene.add_instance_node(
+            None,
+            mesh_id,
+            mat_id,
+            Some("TestNode".to_string()),
+            Point3::new(1.0, 2.0, 3.0),
+            Quaternion::new(1.0, 0.0, 0.0, 0.0),
+            Vector3::new(2.0, 2.0, 2.0),
+        ).unwrap();
+
+        // Add a child node
+        let _child_id = scene.add_node(
+            Some(node_id),
+            Some("ChildNode".to_string()),
+            Point3::new(0.5, 0.5, 0.5),
+            Quaternion::new(1.0, 0.0, 0.0, 0.0),
+            Vector3::new(1.0, 1.0, 1.0),
+        ).unwrap();
+
+        // Add a light
+        scene.lights.push(Light::point(
+            Vector3::new(5.0, 5.0, 5.0),
+            RgbaColor::WHITE,
+            10.0,
+        ));
+
+        // Add an annotation
+        scene.annotations.add_line(
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(1.0, 1.0, 1.0),
+            RgbaColor::BLUE,
+        );
+
+        scene
+    }
+
+    #[test]
+    fn test_round_trip_basic() {
+        let mut original = create_test_scene();
+
+        // Serialize
+        let bytes = original.to_bytes().expect("Failed to serialize scene");
+
+        // Check magic number
+        assert_eq!(&bytes[0..4], b"WGSC");
+
+        // Deserialize
+        let loaded = Scene::from_bytes(&bytes).expect("Failed to deserialize scene");
+
+        // Verify basic structure
+        assert_eq!(loaded.nodes.len(), original.nodes.len());
+        assert_eq!(loaded.meshes.len(), original.meshes.len());
+        assert_eq!(loaded.materials.len(), original.materials.len());
+        assert_eq!(loaded.instances.len(), original.instances.len());
+        assert_eq!(loaded.lights.len(), original.lights.len());
+        assert_eq!(loaded.root_nodes.len(), original.root_nodes.len());
+    }
+
+    #[test]
+    fn test_round_trip_node_properties() {
+        let mut original = create_test_scene();
+        let bytes = original.to_bytes().expect("Failed to serialize");
+        let loaded = Scene::from_bytes(&bytes).expect("Failed to deserialize");
+
+        // Find the test node by name
+        let original_node = original.nodes.values()
+            .find(|n| n.name.as_deref() == Some("TestNode"))
+            .expect("TestNode not found in original");
+
+        let loaded_node = loaded.nodes.values()
+            .find(|n| n.name.as_deref() == Some("TestNode"))
+            .expect("TestNode not found in loaded");
+
+        // Verify position
+        let orig_pos = original_node.position();
+        let loaded_pos = loaded_node.position();
+        assert!((orig_pos.x - loaded_pos.x).abs() < 1e-6);
+        assert!((orig_pos.y - loaded_pos.y).abs() < 1e-6);
+        assert!((orig_pos.z - loaded_pos.z).abs() < 1e-6);
+
+        // Verify scale
+        let orig_scale = original_node.scale();
+        let loaded_scale = loaded_node.scale();
+        assert!((orig_scale.x - loaded_scale.x).abs() < 1e-6);
+        assert!((orig_scale.y - loaded_scale.y).abs() < 1e-6);
+        assert!((orig_scale.z - loaded_scale.z).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_round_trip_material_properties() {
+        let mut original = create_test_scene();
+        let bytes = original.to_bytes().expect("Failed to serialize");
+        let loaded = Scene::from_bytes(&bytes).expect("Failed to deserialize");
+
+        // Skip the default material (ID 0), find our custom material
+        let original_mat = original.materials.values()
+            .find(|m| m.id != DEFAULT_MATERIAL_ID)
+            .expect("Custom material not found in original");
+
+        let loaded_mat = loaded.materials.values()
+            .find(|m| m.id != DEFAULT_MATERIAL_ID)
+            .expect("Custom material not found in loaded");
+
+        // Verify base color
+        let orig_color = original_mat.base_color_factor();
+        let loaded_color = loaded_mat.base_color_factor();
+        assert!((orig_color.r - loaded_color.r).abs() < 1e-6);
+        assert!((orig_color.g - loaded_color.g).abs() < 1e-6);
+        assert!((orig_color.b - loaded_color.b).abs() < 1e-6);
+
+        // Verify factors
+        assert!((original_mat.metallic_factor() - loaded_mat.metallic_factor()).abs() < 1e-6);
+        assert!((original_mat.roughness_factor() - loaded_mat.roughness_factor()).abs() < 1e-6);
+
+        // Verify line color
+        assert!(original_mat.line_color().is_some());
+        assert!(loaded_mat.line_color().is_some());
+    }
+
+    #[test]
+    fn test_round_trip_mesh_geometry() {
+        let mut original = create_test_scene();
+        let bytes = original.to_bytes().expect("Failed to serialize");
+        let loaded = Scene::from_bytes(&bytes).expect("Failed to deserialize");
+
+        // Get the first mesh from each scene
+        let original_mesh = original.meshes.values().next().expect("No mesh in original");
+        let loaded_mesh = loaded.meshes.values().next().expect("No mesh in loaded");
+
+        // Verify vertex counts match
+        assert_eq!(original_mesh.vertices().len(), loaded_mesh.vertices().len());
+
+        // Verify primitive counts
+        assert_eq!(original_mesh.primitives().len(), loaded_mesh.primitives().len());
+
+        // Verify first few vertices match
+        for (orig_v, loaded_v) in original_mesh.vertices().iter().zip(loaded_mesh.vertices()) {
+            assert!((orig_v.position[0] - loaded_v.position[0]).abs() < 1e-6);
+            assert!((orig_v.position[1] - loaded_v.position[1]).abs() < 1e-6);
+            assert!((orig_v.position[2] - loaded_v.position[2]).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn test_round_trip_hierarchy() {
+        let mut original = create_test_scene();
+        let bytes = original.to_bytes().expect("Failed to serialize");
+        let loaded = Scene::from_bytes(&bytes).expect("Failed to deserialize");
+
+        // Find child node
+        let loaded_child = loaded.nodes.values()
+            .find(|n| n.name.as_deref() == Some("ChildNode"))
+            .expect("ChildNode not found");
+
+        // Verify it has a parent
+        assert!(loaded_child.parent().is_some());
+
+        // Find parent node
+        let loaded_parent = loaded.nodes.values()
+            .find(|n| n.name.as_deref() == Some("TestNode"))
+            .expect("TestNode not found");
+
+        // Verify parent has child
+        assert!(!loaded_parent.children().is_empty());
+    }
+
+    #[test]
+    fn test_round_trip_lights() {
+        let mut original = create_test_scene();
+        let bytes = original.to_bytes().expect("Failed to serialize");
+        let loaded = Scene::from_bytes(&bytes).expect("Failed to deserialize");
+
+        assert_eq!(loaded.lights.len(), 1);
+
+        match &loaded.lights[0] {
+            Light::Point { position, color, intensity, .. } => {
+                assert!((position.x - 5.0).abs() < 1e-6);
+                assert!((position.y - 5.0).abs() < 1e-6);
+                assert!((position.z - 5.0).abs() < 1e-6);
+                assert!((color.r - 1.0).abs() < 1e-6);
+                assert!((*intensity - 10.0).abs() < 1e-6);
+            }
+            _ => panic!("Expected point light"),
+        }
+    }
+
+    #[test]
+    fn test_round_trip_annotations() {
+        let mut original = create_test_scene();
+        let bytes = original.to_bytes().expect("Failed to serialize");
+        let loaded = Scene::from_bytes(&bytes).expect("Failed to deserialize");
+
+        assert_eq!(loaded.annotations.len(), 1);
+
+        let annotation = loaded.annotations.iter().next().unwrap();
+        match annotation {
+            Annotation::Line(line) => {
+                assert!((line.start.x - 0.0).abs() < 1e-6);
+                assert!((line.end.x - 1.0).abs() < 1e-6);
+                assert!((line.color.b - 1.0).abs() < 1e-6); // Blue
+            }
+            _ => panic!("Expected line annotation"),
+        }
+    }
+
+    #[test]
+    fn test_empty_scene_round_trip() {
+        let mut scene = Scene::new();
+        let bytes = scene.to_bytes().expect("Failed to serialize empty scene");
+        let loaded = Scene::from_bytes(&bytes).expect("Failed to deserialize empty scene");
+
+        // Should only have the default material
+        assert_eq!(loaded.materials.len(), 1);
+        assert!(loaded.nodes.is_empty());
+        assert!(loaded.meshes.is_empty());
+        assert!(loaded.instances.is_empty());
+    }
+
+    #[test]
+    fn test_version_in_header() {
+        let mut scene = Scene::new();
+        let bytes = scene.to_bytes().expect("Failed to serialize");
+
+        // Check version bytes (offset 4-5)
+        let version = u16::from_le_bytes([bytes[4], bytes[5]]);
+        assert_eq!(version, VERSION);
+    }
+
+    #[test]
+    fn test_invalid_magic_rejected() {
+        let mut bytes = vec![b'X', b'X', b'X', b'X']; // Wrong magic
+        bytes.extend([0u8; 12]); // Rest of header
+
+        let result = Scene::from_bytes(&bytes);
+        assert!(matches!(result, Err(FormatError::InvalidMagic)));
+    }
+}

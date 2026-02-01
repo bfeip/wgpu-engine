@@ -1,5 +1,6 @@
 pub mod annotation;
 mod batch;
+pub mod format;
 mod instance;
 mod light;
 mod material;

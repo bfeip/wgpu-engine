@@ -599,6 +599,17 @@ impl AnnotationManager {
         self.annotations.remove(&id)
     }
 
+    /// Inserts an annotation with a specific ID (used during deserialization).
+    /// Updates next_id if needed to avoid ID collisions.
+    pub(crate) fn insert_with_id(&mut self, annotation: Annotation) {
+        let id = annotation.id();
+        self.annotations.insert(id, annotation);
+        // Ensure next_id is greater than any inserted ID
+        if id >= self.next_id {
+            self.next_id = id + 1;
+        }
+    }
+
     /// Sets the root node ID (called during reification)
     pub(crate) fn set_root_node(&mut self, node_id: NodeId) {
         self.root_node = Some(node_id);
