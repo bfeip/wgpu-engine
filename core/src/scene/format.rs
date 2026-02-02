@@ -27,6 +27,9 @@ use std::io::{Read, Write, Cursor};
 
 use image::GenericImageView;
 
+#[cfg(not(target_arch = "wasm32"))]
+use rayon::prelude::*;
+
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -96,6 +99,45 @@ pub enum FormatError {
 
     #[error("Texture load error: {0}")]
     TextureError(String),
+}
+
+// ============================================================================
+// Save Options
+// ============================================================================
+
+/// Options for saving scenes.
+#[derive(Clone, Debug)]
+pub struct SaveOptions {
+    /// Zstd compression level (1-22, default 3).
+    /// Lower = faster, larger files. Higher = slower, smaller files.
+    pub compression_level: i32,
+}
+
+impl Default for SaveOptions {
+    fn default() -> Self {
+        Self { compression_level: 3 }
+    }
+}
+
+impl SaveOptions {
+    /// Create options with a specific compression level.
+    ///
+    /// Level 1 is fastest, level 22 is smallest. Default is 3.
+    pub fn with_compression_level(level: i32) -> Self {
+        Self {
+            compression_level: level.clamp(1, 22),
+        }
+    }
+
+    /// Fast compression (level 1) - quick saves, larger files.
+    pub fn fast() -> Self {
+        Self { compression_level: 1 }
+    }
+
+    /// Best compression (level 19) - slow saves, smaller files.
+    pub fn best() -> Self {
+        Self { compression_level: 19 }
+    }
 }
 
 // ============================================================================
@@ -932,10 +974,15 @@ impl SerializedAnnotation {
 // Compression Utilities
 // ============================================================================
 
-/// Compress data using Zstd.
-pub fn compress(data: &[u8]) -> Result<Vec<u8>, FormatError> {
-    zstd::encode_all(Cursor::new(data), 3)
+/// Compress data using Zstd with the specified compression level.
+pub fn compress_with_level(data: &[u8], level: i32) -> Result<Vec<u8>, FormatError> {
+    zstd::encode_all(Cursor::new(data), level)
         .map_err(|e| FormatError::CompressionError(e.to_string()))
+}
+
+/// Compress data using Zstd with default compression level (3).
+pub fn compress(data: &[u8]) -> Result<Vec<u8>, FormatError> {
+    compress_with_level(data, 3)
 }
 
 /// Decompress Zstd-compressed data.
@@ -948,13 +995,18 @@ pub fn decompress(data: &[u8]) -> Result<Vec<u8>, FormatError> {
 // Section Writing/Reading
 // ============================================================================
 
-/// Serialize and compress a section, returning the compressed bytes.
-pub fn serialize_section<T: Serialize>(data: &T) -> Result<(Vec<u8>, usize), FormatError> {
+/// Serialize and compress a section with a specific compression level.
+pub fn serialize_section_with_level<T: Serialize>(data: &T, level: i32) -> Result<(Vec<u8>, usize), FormatError> {
     let uncompressed = bincode::serialize(data)
         .map_err(|e| FormatError::SerializationError(e.to_string()))?;
     let uncompressed_size = uncompressed.len();
-    let compressed = compress(&uncompressed)?;
+    let compressed = compress_with_level(&uncompressed, level)?;
     Ok((compressed, uncompressed_size))
+}
+
+/// Serialize and compress a section, returning the compressed bytes.
+pub fn serialize_section<T: Serialize>(data: &T) -> Result<(Vec<u8>, usize), FormatError> {
+    serialize_section_with_level(data, 3)
 }
 
 /// Decompress and deserialize a section.
@@ -971,13 +1023,36 @@ pub fn deserialize_section<T: for<'de> Deserialize<'de>>(compressed: &[u8]) -> R
 impl SerializedTexture {
     /// Creates a SerializedTexture from a Texture.
     ///
-    /// This loads the texture image (if needed) and encodes it as PNG for embedding.
+    /// If the texture was loaded from a file (PNG/JPEG), reads the original bytes
+    /// to avoid expensive re-encoding. Otherwise, encodes the image as PNG.
     pub fn from_texture(texture: &mut Texture, remapper: &IdRemapper) -> Result<Option<Self>, FormatError> {
         let Some(id) = remapper.remap_texture(texture.id()) else {
             return Ok(None);
         };
 
-        // Load the image
+        // Try to use original file bytes if available (avoids re-encoding)
+        if let Some(path) = texture.source_path() {
+            if let Ok(bytes) = std::fs::read(path) {
+                // Detect format from magic bytes
+                let format = Self::detect_format(&bytes);
+                if let Some(format) = format {
+                    // Get dimensions from the loaded image (or load it)
+                    let image = texture.get_image()
+                        .map_err(|e| FormatError::TextureError(e.to_string()))?;
+                    let dimensions = image.dimensions();
+
+                    return Ok(Some(Self {
+                        id,
+                        format,
+                        width: dimensions.0,
+                        height: dimensions.1,
+                        data: bytes,
+                    }));
+                }
+            }
+        }
+
+        // Fall back to encoding as PNG (for embedded textures or if file read failed)
         let image = texture.get_image()
             .map_err(|e| FormatError::TextureError(e.to_string()))?;
 
@@ -1008,6 +1083,25 @@ impl SerializedTexture {
         }))
     }
 
+    /// Detect image format from magic bytes.
+    fn detect_format(bytes: &[u8]) -> Option<TextureFormat> {
+        if bytes.len() < 8 {
+            return None;
+        }
+
+        // PNG magic: 89 50 4E 47 0D 0A 1A 0A
+        if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) {
+            return Some(TextureFormat::Png);
+        }
+
+        // JPEG magic: FF D8 FF
+        if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+            return Some(TextureFormat::Jpeg);
+        }
+
+        None
+    }
+
     /// Converts to a Texture.
     pub fn to_texture(&self) -> Result<Texture, FormatError> {
         use image::DynamicImage;
@@ -1036,10 +1130,16 @@ impl SerializedTexture {
 // ============================================================================
 
 impl Scene {
-    /// Serializes the scene to bytes in WGSC format.
+    /// Serializes the scene to bytes in WGSC format with default options.
     pub fn to_bytes(&mut self) -> Result<Vec<u8>, FormatError> {
+        self.to_bytes_with_options(&SaveOptions::default())
+    }
+
+    /// Serializes the scene to bytes in WGSC format with custom options.
+    pub fn to_bytes_with_options(&mut self, options: &SaveOptions) -> Result<Vec<u8>, FormatError> {
         use std::time::{SystemTime, UNIX_EPOCH};
 
+        let level = options.compression_level;
         let remapper = IdRemapper::from_scene(self);
         let mut output = Vec::new();
         let mut toc = TableOfContents::new();
@@ -1063,7 +1163,7 @@ impl Scene {
                 .and_then(|id| remapper.remap_environment_map(id)),
         };
         let offset = output.len() as u64;
-        let (compressed, uncompressed_size) = serialize_section(&metadata)?;
+        let (compressed, uncompressed_size) = serialize_section_with_level(&metadata, level)?;
         toc.add_entry(TocEntry {
             section_type: SectionType::Metadata,
             offset,
@@ -1078,7 +1178,7 @@ impl Scene {
             .filter_map(|node| SerializedNode::from_node(node, &remapper))
             .collect();
         let offset = output.len() as u64;
-        let (compressed, uncompressed_size) = serialize_section(&nodes)?;
+        let (compressed, uncompressed_size) = serialize_section_with_level(&nodes, level)?;
         toc.add_entry(TocEntry {
             section_type: SectionType::Nodes,
             offset,
@@ -1093,7 +1193,7 @@ impl Scene {
             .filter_map(|inst| SerializedInstance::from_instance(inst, &remapper))
             .collect();
         let offset = output.len() as u64;
-        let (compressed, uncompressed_size) = serialize_section(&instances)?;
+        let (compressed, uncompressed_size) = serialize_section_with_level(&instances, level)?;
         toc.add_entry(TocEntry {
             section_type: SectionType::Instances,
             offset,
@@ -1108,7 +1208,7 @@ impl Scene {
             .filter_map(|mat| SerializedMaterial::from_material(mat, &remapper))
             .collect();
         let offset = output.len() as u64;
-        let (compressed, uncompressed_size) = serialize_section(&materials)?;
+        let (compressed, uncompressed_size) = serialize_section_with_level(&materials, level)?;
         toc.add_entry(TocEntry {
             section_type: SectionType::Materials,
             offset,
@@ -1123,7 +1223,7 @@ impl Scene {
             .filter_map(|mesh| SerializedMesh::from_mesh(mesh, &remapper))
             .collect();
         let offset = output.len() as u64;
-        let (compressed, uncompressed_size) = serialize_section(&meshes)?;
+        let (compressed, uncompressed_size) = serialize_section_with_level(&meshes, level)?;
         toc.add_entry(TocEntry {
             section_type: SectionType::Meshes,
             offset,
@@ -1140,7 +1240,7 @@ impl Scene {
             }
         }
         let offset = output.len() as u64;
-        let (compressed, uncompressed_size) = serialize_section(&textures)?;
+        let (compressed, uncompressed_size) = serialize_section_with_level(&textures, level)?;
         toc.add_entry(TocEntry {
             section_type: SectionType::Textures,
             offset,
@@ -1155,7 +1255,7 @@ impl Scene {
             .map(SerializedLight::from_light)
             .collect();
         let offset = output.len() as u64;
-        let (compressed, uncompressed_size) = serialize_section(&lights)?;
+        let (compressed, uncompressed_size) = serialize_section_with_level(&lights, level)?;
         toc.add_entry(TocEntry {
             section_type: SectionType::Lights,
             offset,
@@ -1170,7 +1270,7 @@ impl Scene {
             .filter_map(|ann| SerializedAnnotation::from_annotation(ann, &remapper))
             .collect();
         let offset = output.len() as u64;
-        let (compressed, uncompressed_size) = serialize_section(&annotations)?;
+        let (compressed, uncompressed_size) = serialize_section_with_level(&annotations, level)?;
         toc.add_entry(TocEntry {
             section_type: SectionType::Annotations,
             offset,
@@ -1181,7 +1281,7 @@ impl Scene {
 
         // ===== Write TOC =====
         let toc_offset = output.len() as u64;
-        let (toc_compressed, _) = serialize_section(&toc)?;
+        let (toc_compressed, _) = serialize_section_with_level(&toc, level)?;
         output.extend(toc_compressed);
 
         // ===== Write Header =====
@@ -1254,11 +1354,22 @@ impl Scene {
         scene.materials.clear();
         scene.next_material_id = 0;
 
-        // Add textures
+        // Decode textures (parallel on native, sequential on WASM)
+        #[cfg(not(target_arch = "wasm32"))]
+        let decoded_textures: Result<Vec<_>, FormatError> = serialized_textures
+            .par_iter()
+            .map(|st| st.to_texture().map(|tex| (st.id, tex)))
+            .collect();
+
+        #[cfg(target_arch = "wasm32")]
+        let decoded_textures: Result<Vec<_>, FormatError> = serialized_textures
+            .iter()
+            .map(|st| st.to_texture().map(|tex| (st.id, tex)))
+            .collect();
+
+        // Add textures to scene (must be sequential to get correct IDs)
         let mut texture_id_map: HashMap<u32, TextureId> = HashMap::new();
-        for st in serialized_textures {
-            let file_id = st.id;
-            let texture = st.to_texture()?;
+        for (file_id, texture) in decoded_textures? {
             let scene_id = scene.add_texture(texture);
             texture_id_map.insert(file_id, scene_id);
         }
@@ -1388,9 +1499,18 @@ impl Scene {
         Ok(scene)
     }
 
-    /// Saves the scene to a file.
+    /// Saves the scene to a file with default options.
     pub fn save_to_file(&mut self, path: impl AsRef<std::path::Path>) -> Result<(), FormatError> {
-        let bytes = self.to_bytes()?;
+        self.save_to_file_with_options(path, &SaveOptions::default())
+    }
+
+    /// Saves the scene to a file with custom options.
+    pub fn save_to_file_with_options(
+        &mut self,
+        path: impl AsRef<std::path::Path>,
+        options: &SaveOptions,
+    ) -> Result<(), FormatError> {
+        let bytes = self.to_bytes_with_options(options)?;
         std::fs::write(path, bytes)?;
         Ok(())
     }
