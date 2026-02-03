@@ -4,40 +4,89 @@
 //! - File structure and section sizes
 //! - Compression ratios
 //! - Mesh, material, texture, and node statistics
-//!
-//! Usage: cargo run -p scene-info -- <file.wgsc> [--verbose|-v]
 
 use std::collections::HashMap;
 use std::fs;
 use std::io::Cursor;
-use std::path::Path;
+use std::path::PathBuf;
 
+use clap::Parser;
 use wgpu_engine::scene::format::{
     FileHeader, FormatError, SectionType, SerializedAnnotation, SerializedInstance,
     SerializedLight, SerializedMaterial, SerializedMesh, SerializedMetadata, SerializedNode,
     SerializedTexture, TableOfContents, TextureFormat, TocEntry,
 };
 
-fn main() {
-    let args: Vec<String> = std::env::args().collect();
+#[derive(Parser)]
+#[command(name = "scene-info")]
+#[command(about = "Analyze .wgsc scene files and display detailed statistics")]
+#[command(version)]
+struct Cli {
+    /// Path to the .wgsc scene file
+    file: PathBuf,
 
-    if args.len() < 2 {
-        eprintln!("Usage: {} <file.wgsc> [--verbose|-v]", args[0]);
-        std::process::exit(1);
+    /// Show detailed mesh information (vertices, triangles, indices per mesh)
+    #[arg(short, long)]
+    meshes: bool,
+
+    /// Show detailed texture information (format, dimensions, size per texture)
+    #[arg(short, long)]
+    textures: bool,
+
+    /// Show detailed material information (texture references, colors)
+    #[arg(short = 'M', long)]
+    materials: bool,
+
+    /// Show node hierarchy tree
+    #[arg(short, long)]
+    nodes: bool,
+
+    /// Show all detailed information (equivalent to -m -t -M -n)
+    #[arg(short, long)]
+    all: bool,
+
+    /// Hide the section size breakdown table
+    #[arg(long)]
+    no_sections: bool,
+
+    /// Hide the scene contents summary
+    #[arg(long)]
+    no_summary: bool,
+
+    /// Hide the largest textures list
+    #[arg(long)]
+    no_top_textures: bool,
+}
+
+impl Cli {
+    fn show_meshes(&self) -> bool {
+        self.meshes || self.all
     }
 
-    let path = &args[1];
-    let verbose = args.iter().any(|a| a == "--verbose" || a == "-v");
+    fn show_textures(&self) -> bool {
+        self.textures || self.all
+    }
 
-    if let Err(e) = analyze_scene(path, verbose) {
+    fn show_materials(&self) -> bool {
+        self.materials || self.all
+    }
+
+    fn show_nodes(&self) -> bool {
+        self.nodes || self.all
+    }
+}
+
+fn main() {
+    let cli = Cli::parse();
+
+    if let Err(e) = analyze_scene(&cli) {
         eprintln!("Error: {}", e);
         std::process::exit(1);
     }
 }
 
-fn analyze_scene(path: &str, verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let path = Path::new(path);
-    let bytes = fs::read(path)?;
+fn analyze_scene(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
+    let bytes = fs::read(&cli.file)?;
     let file_size = bytes.len() as u64;
 
     // Read header
@@ -48,7 +97,7 @@ fn analyze_scene(path: &str, verbose: bool) -> Result<(), Box<dyn std::error::Er
     let toc = read_toc(&bytes, header.toc_offset)?;
 
     // Print file info
-    let file_name = path.file_name().unwrap_or_default().to_string_lossy();
+    let file_name = cli.file.file_name().unwrap_or_default().to_string_lossy();
     println!("Scene File: {}", file_name);
     println!("File Size: {}", format_bytes(file_size));
     println!();
@@ -62,23 +111,45 @@ fn analyze_scene(path: &str, verbose: bool) -> Result<(), Box<dyn std::error::Er
     println!();
 
     // Print section breakdown
-    print_section_breakdown(&toc, file_size);
+    if !cli.no_sections {
+        print_section_breakdown(&toc, file_size);
+    }
 
     // Read and analyze each section
     let stats = gather_statistics(&bytes, &toc)?;
 
     // Print scene contents summary
-    print_scene_summary(&stats);
+    if !cli.no_summary {
+        print_scene_summary(&stats);
+    }
 
     // Print largest textures
-    if !stats.textures.is_empty() {
+    if !cli.no_top_textures && !stats.textures.is_empty() {
         print_largest_textures(&stats.textures);
     }
 
-    // Verbose output
-    if verbose {
+    // Detailed sections based on flags
+    let show_any_details =
+        cli.show_meshes() || cli.show_textures() || cli.show_materials() || cli.show_nodes();
+
+    if show_any_details {
         println!();
-        print_verbose_details(&stats);
+    }
+
+    if cli.show_meshes() && !stats.meshes.is_empty() {
+        print_mesh_details(&stats.meshes);
+    }
+
+    if cli.show_materials() && !stats.materials.is_empty() {
+        print_material_details(&stats.materials);
+    }
+
+    if cli.show_textures() && !stats.textures.is_empty() {
+        print_texture_details(&stats.textures);
+    }
+
+    if cli.show_nodes() && !stats.nodes.is_empty() {
+        print_node_hierarchy(&stats.nodes);
     }
 
     Ok(())
@@ -86,8 +157,8 @@ fn analyze_scene(path: &str, verbose: bool) -> Result<(), Box<dyn std::error::Er
 
 fn read_toc(bytes: &[u8], toc_offset: u64) -> Result<TableOfContents, FormatError> {
     let toc_data = &bytes[toc_offset as usize..];
-    let decompressed = zstd::decode_all(toc_data)
-        .map_err(|e| FormatError::DecompressionError(e.to_string()))?;
+    let decompressed =
+        zstd::decode_all(toc_data).map_err(|e| FormatError::DecompressionError(e.to_string()))?;
     bincode::deserialize(&decompressed)
         .map_err(|e| FormatError::DeserializationError(e.to_string()))
 }
@@ -100,8 +171,8 @@ fn read_section<T: serde::de::DeserializeOwned>(
     let end = start + entry.compressed_size as usize;
     let compressed = &bytes[start..end];
 
-    let decompressed = zstd::decode_all(compressed)
-        .map_err(|e| FormatError::DecompressionError(e.to_string()))?;
+    let decompressed =
+        zstd::decode_all(compressed).map_err(|e| FormatError::DecompressionError(e.to_string()))?;
 
     bincode::deserialize(&decompressed)
         .map_err(|e| FormatError::DeserializationError(e.to_string()))
@@ -255,7 +326,8 @@ fn compute_max_depth(nodes: &[SerializedNode]) -> usize {
     }
 
     // Build parent map
-    let parent_map: HashMap<u32, Option<u32>> = nodes.iter().map(|n| (n.id, n.parent_id)).collect();
+    let parent_map: HashMap<u32, Option<u32>> =
+        nodes.iter().map(|n| (n.id, n.parent_id)).collect();
 
     let mut max_depth = 0;
     for node in nodes {
@@ -300,113 +372,103 @@ fn print_largest_textures(textures: &[SerializedTexture]) {
     println!();
 }
 
-fn print_verbose_details(stats: &SceneStats) {
-    // Mesh details
-    if !stats.meshes.is_empty() {
-        println!("Mesh Details:");
-        println!(
-            "  {:>4} {:>10} {:>10} {:>10} {:>12}",
-            "ID", "Vertices", "Triangles", "Lines", "Vertex Data"
-        );
-        println!("  {}", "-".repeat(50));
+fn print_mesh_details(meshes: &[SerializedMesh]) {
+    println!("Mesh Details:");
+    println!(
+        "  {:>4} {:>10} {:>10} {:>10} {:>12}",
+        "ID", "Vertices", "Triangles", "Lines", "Vertex Data"
+    );
+    println!("  {}", "-".repeat(50));
 
-        for mesh in &stats.meshes {
-            let vertex_count = mesh.vertices.len() / 36;
-            let mut tri_count = 0;
-            let mut line_count = 0;
-            for prim in &mesh.primitives {
-                match prim.primitive_type {
-                    0 => tri_count += prim.indices.len() / 3,
-                    1 => line_count += prim.indices.len() / 2,
-                    _ => {}
-                }
+    for mesh in meshes {
+        let vertex_count = mesh.vertices.len() / 36;
+        let mut tri_count = 0;
+        let mut line_count = 0;
+        for prim in &mesh.primitives {
+            match prim.primitive_type {
+                0 => tri_count += prim.indices.len() / 3,
+                1 => line_count += prim.indices.len() / 2,
+                _ => {}
             }
-
-            println!(
-                "  {:>4} {:>10} {:>10} {:>10} {:>12}",
-                mesh.id,
-                format_number(vertex_count),
-                format_number(tri_count),
-                format_number(line_count),
-                format_bytes(mesh.vertices.len() as u64)
-            );
         }
-        println!();
-    }
 
-    // Material details
-    if !stats.materials.is_empty() {
-        println!("Material Details:");
         println!(
             "  {:>4} {:>10} {:>10} {:>10} {:>12}",
-            "ID", "Base Tex", "Normal", "MetRough", "Base Color"
+            mesh.id,
+            format_number(vertex_count),
+            format_number(tri_count),
+            format_number(line_count),
+            format_bytes(mesh.vertices.len() as u64)
         );
-        println!("  {}", "-".repeat(56));
-
-        for mat in &stats.materials {
-            let base_tex = mat
-                .base_color_texture_id
-                .map(|id| id.to_string())
-                .unwrap_or_else(|| "-".to_string());
-            let normal_tex = mat
-                .normal_texture_id
-                .map(|id| id.to_string())
-                .unwrap_or_else(|| "-".to_string());
-            let mr_tex = mat
-                .metallic_roughness_texture_id
-                .map(|id| id.to_string())
-                .unwrap_or_else(|| "-".to_string());
-            let base_color = format!(
-                "#{:02X}{:02X}{:02X}",
-                (mat.base_color_factor[0] * 255.0) as u8,
-                (mat.base_color_factor[1] * 255.0) as u8,
-                (mat.base_color_factor[2] * 255.0) as u8,
-            );
-
-            println!(
-                "  {:>4} {:>10} {:>10} {:>10} {:>12}",
-                mat.id, base_tex, normal_tex, mr_tex, base_color
-            );
-        }
-        println!();
     }
-
-    // All textures detail
-    if !stats.textures.is_empty() {
-        println!("Texture Details:");
-        println!(
-            "  {:>4} {:>6} {:>12} {:>12}",
-            "ID", "Format", "Dimensions", "Data Size"
-        );
-        println!("  {}", "-".repeat(40));
-
-        for tex in &stats.textures {
-            let format_name = match tex.format {
-                TextureFormat::Png => "PNG",
-                TextureFormat::Jpeg => "JPEG",
-                TextureFormat::Raw => "Raw",
-            };
-            println!(
-                "  {:>4} {:>6} {:>5}x{:<5} {:>12}",
-                tex.id,
-                format_name,
-                tex.width,
-                tex.height,
-                format_bytes(tex.data.len() as u64)
-            );
-        }
-        println!();
-    }
-
-    // Node hierarchy
-    if !stats.nodes.is_empty() {
-        println!("Node Hierarchy:");
-        print_node_tree(&stats.nodes);
-        println!();
-    }
+    println!();
 }
 
-fn print_node_tree(nodes: &[SerializedNode]) {
+fn print_material_details(materials: &[SerializedMaterial]) {
+    println!("Material Details:");
+    println!(
+        "  {:>4} {:>10} {:>10} {:>10} {:>12}",
+        "ID", "Base Tex", "Normal", "MetRough", "Base Color"
+    );
+    println!("  {}", "-".repeat(56));
+
+    for mat in materials {
+        let base_tex = mat
+            .base_color_texture_id
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| "-".to_string());
+        let normal_tex = mat
+            .normal_texture_id
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| "-".to_string());
+        let mr_tex = mat
+            .metallic_roughness_texture_id
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| "-".to_string());
+        let base_color = format!(
+            "#{:02X}{:02X}{:02X}",
+            (mat.base_color_factor[0] * 255.0) as u8,
+            (mat.base_color_factor[1] * 255.0) as u8,
+            (mat.base_color_factor[2] * 255.0) as u8,
+        );
+
+        println!(
+            "  {:>4} {:>10} {:>10} {:>10} {:>12}",
+            mat.id, base_tex, normal_tex, mr_tex, base_color
+        );
+    }
+    println!();
+}
+
+fn print_texture_details(textures: &[SerializedTexture]) {
+    println!("Texture Details:");
+    println!(
+        "  {:>4} {:>6} {:>12} {:>12}",
+        "ID", "Format", "Dimensions", "Data Size"
+    );
+    println!("  {}", "-".repeat(40));
+
+    for tex in textures {
+        let format_name = match tex.format {
+            TextureFormat::Png => "PNG",
+            TextureFormat::Jpeg => "JPEG",
+            TextureFormat::Raw => "Raw",
+        };
+        println!(
+            "  {:>4} {:>6} {:>5}x{:<5} {:>12}",
+            tex.id,
+            format_name,
+            tex.width,
+            tex.height,
+            format_bytes(tex.data.len() as u64)
+        );
+    }
+    println!();
+}
+
+fn print_node_hierarchy(nodes: &[SerializedNode]) {
+    println!("Node Hierarchy:");
+
     // Find root nodes (no parent)
     let roots: Vec<_> = nodes.iter().filter(|n| n.parent_id.is_none()).collect();
 
@@ -450,6 +512,7 @@ fn print_node_tree(nodes: &[SerializedNode]) {
         let is_last = i == roots.len() - 1;
         print_node(root, &children_map, "", is_last);
     }
+    println!();
 }
 
 fn format_bytes(bytes: u64) -> String {
