@@ -2937,6 +2937,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "scene-info"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "serde",
+ "wgpu-engine",
+ "zstd",
+]
+
+[[package]]
 name = "scoped-tls"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
