@@ -1490,7 +1490,10 @@ impl Scene {
         // Add annotations
         for sa in serialized_annotations {
             let annotation = sa.to_annotation();
-            scene.annotations.insert_with_id(annotation);
+            scene
+                .annotations
+                .insert_with_id(annotation)
+                .map_err(|e| FormatError::DeserializationError(e.to_string()))?;
         }
 
         // Set active environment map
