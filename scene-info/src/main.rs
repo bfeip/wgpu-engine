@@ -49,9 +49,9 @@ struct Cli {
     #[arg(long)]
     no_sections: bool,
 
-    /// Hide the scene contents summary
-    #[arg(long)]
-    no_summary: bool,
+    /// Show the scene contents summary (reads all sections)
+    #[arg(short, long)]
+    summary: bool,
 
 }
 
@@ -112,11 +112,24 @@ fn analyze_scene(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
         print_section_breakdown(&toc, file_size);
     }
 
+    // Determine which sections we need to read
+    let need_summary = cli.summary;
+    let needed = SectionsNeeded {
+        metadata: need_summary,
+        nodes: need_summary || cli.show_nodes(),
+        instances: need_summary,
+        materials: need_summary || cli.show_materials(),
+        meshes: need_summary || cli.show_meshes(),
+        textures: need_summary || cli.show_textures(),
+        lights: need_summary,
+        annotations: need_summary,
+    };
+
     // Read and analyze each section
-    let stats = gather_statistics(&bytes, &toc)?;
+    let stats = gather_statistics(&bytes, &toc, &needed)?;
 
     // Print scene contents summary
-    if !cli.no_summary {
+    if cli.summary {
         print_scene_summary(&stats);
     }
 
@@ -220,7 +233,22 @@ struct SceneStats {
     annotations: Vec<SerializedAnnotation>,
 }
 
-fn gather_statistics(bytes: &[u8], toc: &TableOfContents) -> Result<SceneStats, FormatError> {
+struct SectionsNeeded {
+    metadata: bool,
+    nodes: bool,
+    instances: bool,
+    materials: bool,
+    meshes: bool,
+    textures: bool,
+    lights: bool,
+    annotations: bool,
+}
+
+fn gather_statistics(
+    bytes: &[u8],
+    toc: &TableOfContents,
+    needed: &SectionsNeeded,
+) -> Result<SceneStats, FormatError> {
     let mut stats = SceneStats {
         metadata: None,
         nodes: Vec::new(),
@@ -234,32 +262,32 @@ fn gather_statistics(bytes: &[u8], toc: &TableOfContents) -> Result<SceneStats, 
 
     for entry in &toc.entries {
         match entry.section_type {
-            SectionType::Metadata => {
+            SectionType::Metadata if needed.metadata => {
                 stats.metadata = Some(read_section(bytes, entry)?);
             }
-            SectionType::Nodes => {
+            SectionType::Nodes if needed.nodes => {
                 stats.nodes = read_section(bytes, entry)?;
             }
-            SectionType::Instances => {
+            SectionType::Instances if needed.instances => {
                 stats.instances = read_section(bytes, entry)?;
             }
-            SectionType::Materials => {
+            SectionType::Materials if needed.materials => {
                 stats.materials = read_section(bytes, entry)?;
             }
-            SectionType::Meshes => {
+            SectionType::Meshes if needed.meshes => {
                 stats.meshes = read_section(bytes, entry)?;
             }
-            SectionType::Textures => {
+            SectionType::Textures if needed.textures => {
                 stats.textures = read_section(bytes, entry)?;
             }
-            SectionType::Lights => {
+            SectionType::Lights if needed.lights => {
                 stats.lights = read_section(bytes, entry)?;
             }
-            SectionType::Annotations => {
+            SectionType::Annotations if needed.annotations => {
                 stats.annotations = read_section(bytes, entry)?;
             }
-            SectionType::EnvironmentMaps => {
-                // Skip for now - environment maps handled separately
+            _ => {
+                // Section not needed or not handled
             }
         }
     }
