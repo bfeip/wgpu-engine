@@ -46,7 +46,10 @@ use super::{
     texture::{Texture, TextureId},
     InstanceId, Scene,
 };
-use crate::common::RgbaColor;
+use crate::common::{
+    RgbaColor, array_to_point3, array_to_rgba, array_to_vec3,
+    point3_to_array, rgba_to_array, vec3_to_array
+};
 use crate::ibl::EnvironmentMapId;
 
 // ============================================================================
@@ -476,27 +479,71 @@ impl IdRemapper {
     }
 
     /// Build ID mappings from a scene, assigning sequential IDs starting from 0.
+    ///
+    /// Nodes, instances, meshes, and materials created by annotation reification
+    /// are excluded from the mapping. Annotations are serialized separately and
+    /// their geometry will be re-reified when the scene is loaded.
     pub fn from_scene(scene: &Scene) -> Self {
+        use std::collections::HashSet;
+
         let mut remapper = Self::new();
 
-        // Remap nodes
-        for (idx, &id) in scene.nodes.keys().collect::<Vec<_>>().iter().enumerate() {
-            remapper.nodes.insert(*id, idx as u32);
+        // Collect all annotation-created node IDs (recursively includes children)
+        let mut annotation_node_ids: HashSet<NodeId> = HashSet::new();
+        if let Some(root_id) = scene.annotations.root_node() {
+            Self::collect_subtree_nodes(scene, root_id, &mut annotation_node_ids);
         }
 
-        // Remap instances
-        for (idx, &id) in scene.instances.keys().collect::<Vec<_>>().iter().enumerate() {
-            remapper.instances.insert(*id, idx as u32);
+        // Collect instance IDs from annotation nodes
+        let annotation_instance_ids: HashSet<InstanceId> = annotation_node_ids
+            .iter()
+            .filter_map(|&node_id| scene.nodes.get(&node_id))
+            .filter_map(|node| node.instance())
+            .collect();
+
+        // Collect mesh and material IDs from annotation instances
+        let mut annotation_mesh_ids: HashSet<MeshId> = HashSet::new();
+        let mut annotation_material_ids: HashSet<MaterialId> = HashSet::new();
+        for &instance_id in &annotation_instance_ids {
+            if let Some(instance) = scene.instances.get(&instance_id) {
+                annotation_mesh_ids.insert(instance.mesh);
+                annotation_material_ids.insert(instance.material);
+            }
         }
 
-        // Remap meshes
-        for (idx, &id) in scene.meshes.keys().collect::<Vec<_>>().iter().enumerate() {
-            remapper.meshes.insert(*id, idx as u32);
+        // Remap nodes (excluding annotation nodes)
+        let mut node_idx = 0u32;
+        for &id in scene.nodes.keys() {
+            if !annotation_node_ids.contains(&id) {
+                remapper.nodes.insert(id, node_idx);
+                node_idx += 1;
+            }
         }
 
-        // Remap materials (preserve 0 for default material)
+        // Remap instances (excluding annotation instances)
+        let mut inst_idx = 0u32;
+        for &id in scene.instances.keys() {
+            if !annotation_instance_ids.contains(&id) {
+                remapper.instances.insert(id, inst_idx);
+                inst_idx += 1;
+            }
+        }
+
+        // Remap meshes (excluding annotation meshes)
+        let mut mesh_idx = 0u32;
+        for &id in scene.meshes.keys() {
+            if !annotation_mesh_ids.contains(&id) {
+                remapper.meshes.insert(id, mesh_idx);
+                mesh_idx += 1;
+            }
+        }
+
+        // Remap materials (preserve 0 for default material, exclude annotation materials)
         let mut mat_idx = 0u32;
         for &id in scene.materials.keys() {
+            if annotation_material_ids.contains(&id) {
+                continue;
+            }
             if id == DEFAULT_MATERIAL_ID {
                 remapper.materials.insert(id, 0);
             } else {
@@ -521,6 +568,16 @@ impl IdRemapper {
         }
 
         remapper
+    }
+
+    /// Recursively collects all node IDs in a subtree.
+    fn collect_subtree_nodes(scene: &Scene, node_id: NodeId, collected: &mut std::collections::HashSet<NodeId>) {
+        collected.insert(node_id);
+        if let Some(node) = scene.nodes.get(&node_id) {
+            for &child_id in node.children() {
+                Self::collect_subtree_nodes(scene, child_id, collected);
+            }
+        }
     }
 
     pub fn remap_node(&self, id: NodeId) -> Option<u32> {
@@ -819,35 +876,6 @@ impl SerializedLight {
             },
         }
     }
-}
-
-fn rgba_to_array(c: RgbaColor) -> [f32; 4] {
-    [c.r, c.g, c.b, c.a]
-}
-
-fn array_to_rgba(a: [f32; 4]) -> RgbaColor {
-    RgbaColor {
-        r: a[0],
-        g: a[1],
-        b: a[2],
-        a: a[3],
-    }
-}
-
-fn point3_to_array(p: cgmath::Point3<f32>) -> [f32; 3] {
-    [p.x, p.y, p.z]
-}
-
-fn array_to_point3(a: [f32; 3]) -> cgmath::Point3<f32> {
-    cgmath::Point3::new(a[0], a[1], a[2])
-}
-
-fn vec3_to_array(v: cgmath::Vector3<f32>) -> [f32; 3] {
-    [v.x, v.y, v.z]
-}
-
-fn array_to_vec3(a: [f32; 3]) -> cgmath::Vector3<f32> {
-    cgmath::Vector3::new(a[0], a[1], a[2])
 }
 
 impl SerializedAnnotation {
@@ -1798,5 +1826,67 @@ mod tests {
 
         let result = Scene::from_bytes(&bytes);
         assert!(matches!(result, Err(FormatError::InvalidMagic)));
+    }
+
+    #[test]
+    fn test_reified_annotation_geometry_excluded() {
+        // Create a scene with a mesh and an annotation
+        let mut scene = Scene::new();
+
+        // Add a regular mesh/node
+        let mesh = Mesh::cube(1.0);
+        let mesh_id = scene.add_mesh(mesh);
+        let mat_id = scene.add_material(Material::new());
+        let _node_id = scene.add_instance_node(
+            None,
+            mesh_id,
+            mat_id,
+            Some("RegularNode".to_string()),
+            Point3::new(0.0, 0.0, 0.0),
+            Quaternion::new(1.0, 0.0, 0.0, 0.0),
+            Vector3::new(1.0, 1.0, 1.0),
+        ).unwrap();
+
+        // Add an annotation and reify it (creates mesh, material, instance, node)
+        scene.annotations.add_line(
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(1.0, 1.0, 1.0),
+            RgbaColor::RED,
+        );
+        scene.reify_annotations();
+
+        // Before serialization: we have 2 meshes, 3 nodes
+        // (annotation root + annotation node + regular node)
+        assert!(scene.meshes.len() > 1, "Should have annotation mesh");
+        assert!(scene.nodes.len() > 1, "Should have annotation nodes");
+
+        // Serialize
+        let bytes = scene.to_bytes().expect("Failed to serialize");
+
+        // Deserialize
+        let loaded = Scene::from_bytes(&bytes).expect("Failed to deserialize");
+
+        // After deserialization: annotation geometry should NOT be present
+        // Only the regular mesh/material/instance/node should be serialized
+        assert_eq!(loaded.meshes.len(), 1, "Only regular mesh should be serialized");
+        assert_eq!(loaded.instances.len(), 1, "Only regular instance should be serialized");
+        assert_eq!(loaded.nodes.len(), 1, "Only regular node should be serialized");
+
+        // But annotation data should still be present
+        assert_eq!(loaded.annotations.len(), 1, "Annotation data should be preserved");
+
+        // Annotation should not be reified yet (node_id should be None)
+        let annotation = loaded.annotations.iter().next().unwrap();
+        assert!(!annotation.is_reified(), "Annotation should not be reified after load");
+
+        // Verify the regular node is present
+        let regular_node = loaded.nodes.values()
+            .find(|n| n.name.as_deref() == Some("RegularNode"))
+            .expect("RegularNode not found");
+        assert!(regular_node.instance().is_some());
+
+        // Now we can re-reify the annotations
+        let reified_count = loaded.annotations.unreified_count();
+        assert_eq!(reified_count, 1, "Should have 1 unreified annotation");
     }
 }

@@ -101,6 +101,35 @@ pub fn decompose_matrix(matrix: &Matrix4<f32>) -> (Point3<f32>, Quaternion<f32>,
     (translation, rotation, scale)
 }
 
+pub fn rgba_to_array(c: RgbaColor) -> [f32; 4] {
+    [c.r, c.g, c.b, c.a]
+}
+
+pub fn array_to_rgba(a: [f32; 4]) -> RgbaColor {
+    RgbaColor {
+        r: a[0],
+        g: a[1],
+        b: a[2],
+        a: a[3],
+    }
+}
+
+pub fn point3_to_array(p: cgmath::Point3<f32>) -> [f32; 3] {
+    [p.x, p.y, p.z]
+}
+
+pub fn array_to_point3(a: [f32; 3]) -> cgmath::Point3<f32> {
+    cgmath::Point3::new(a[0], a[1], a[2])
+}
+
+pub fn vec3_to_array(v: cgmath::Vector3<f32>) -> [f32; 3] {
+    [v.x, v.y, v.z]
+}
+
+pub fn array_to_vec3(a: [f32; 3]) -> cgmath::Vector3<f32> {
+    cgmath::Vector3::new(a[0], a[1], a[2])
+}
+
 
 #[cfg(test)]
 mod tests {
