@@ -27,6 +27,7 @@ use std::io::{Read, Write, Cursor};
 
 use image::GenericImageView;
 
+use image::codecs::png::{CompressionType, FilterType};
 #[cfg(not(target_arch = "wasm32"))]
 use rayon::prelude::*;
 
@@ -1055,7 +1056,11 @@ impl SerializedTexture {
             use image::codecs::png::PngEncoder;
             use image::ImageEncoder;
 
-            let encoder = PngEncoder::new(&mut png_data);
+            let encoder = PngEncoder::new_with_quality(
+                &mut png_data,
+                CompressionType::Best,
+                FilterType::Adaptive
+            );
             encoder.write_image(
                 &rgba,
                 dimensions.0,
@@ -1075,21 +1080,11 @@ impl SerializedTexture {
 
     /// Detect image format from magic bytes.
     fn detect_format(bytes: &[u8]) -> Option<TextureFormat> {
-        if bytes.len() < 8 {
-            return None;
+        match image::guess_format(bytes) {
+            Ok(image::ImageFormat::Png) => Some(TextureFormat::Png),
+            Ok(image::ImageFormat::Jpeg) => Some(TextureFormat::Jpeg),
+            _ => None,
         }
-
-        // PNG magic: 89 50 4E 47 0D 0A 1A 0A
-        if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) {
-            return Some(TextureFormat::Png);
-        }
-
-        // JPEG magic: FF D8 FF
-        if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
-            return Some(TextureFormat::Jpeg);
-        }
-
-        None
     }
 
     /// Converts to a Texture.
