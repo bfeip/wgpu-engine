@@ -1014,14 +1014,31 @@ impl SerializedAnnotation {
 impl SerializedTexture {
     /// Creates a SerializedTexture from a Texture.
     ///
-    /// If the texture was loaded from a file (PNG/JPEG), reads the original bytes
-    /// to avoid expensive re-encoding. Otherwise, encodes the image as PNG.
+    /// Uses original compressed bytes when available (from glTF embedded images or file paths),
+    /// avoiding expensive re-encoding. Falls back to PNG encoding otherwise.
     pub fn from_texture(texture: &mut Texture, remapper: &IdRemapper) -> Result<Option<Self>, FormatError> {
         let Some(id) = remapper.remap_texture(texture.id()) else {
             return Ok(None);
         };
 
-        // Try to use original file bytes if available (avoids re-encoding)
+        // Priority 1: Use preserved original bytes (from glTF embedded images)
+        // Extract and clone data first to release the immutable borrow
+        let original = texture.original_bytes().map(|(bytes, format)| (bytes.to_vec(), format));
+        if let Some((data, format)) = original {
+            let image = texture.get_image()
+                .map_err(|e| FormatError::TextureError(e.to_string()))?;
+            let dimensions = image.dimensions();
+
+            return Ok(Some(Self {
+                id,
+                format,
+                width: dimensions.0,
+                height: dimensions.1,
+                data,
+            }));
+        }
+
+        // Priority 2: Read original file bytes if texture has a source path
         if let Some(path) = texture.source_path() {
             if let Ok(bytes) = std::fs::read(path) {
                 // Detect format from magic bytes
@@ -1043,7 +1060,7 @@ impl SerializedTexture {
             }
         }
 
-        // Fall back to encoding as PNG (for embedded textures or if file read failed)
+        // Priority 3: Fall back to encoding as PNG
         let image = texture.get_image()
             .map_err(|e| FormatError::TextureError(e.to_string()))?;
 

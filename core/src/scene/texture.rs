@@ -12,8 +12,13 @@ pub type TextureId = u32;
 /// The `CachedPath` variant allows releasing image data from memory after GPU upload
 /// while retaining the ability to reload it if needed.
 pub enum TextureSource {
-    /// Image data embedded in memory (always available)
-    Embedded(DynamicImage),
+    /// Image data embedded in memory (always available).
+    /// Optionally includes original compressed bytes (PNG/JPEG) for efficient serialization.
+    Embedded {
+        image: DynamicImage,
+        /// Original compressed bytes preserved from loading (e.g., from glTF).
+        original_bytes: Option<(Vec<u8>, super::format::TextureFormat)>,
+    },
     /// Path to load image from (image loaded on demand)
     Path(PathBuf),
     /// Image was loaded from path, with optional cached data.
@@ -84,7 +89,7 @@ impl Texture {
         let dimensions = Some(image.dimensions());
         Self {
             id: 0, // Assigned by Scene
-            source: TextureSource::Embedded(image),
+            source: TextureSource::Embedded { image, original_bytes: None },
             dimensions,
             gpu: None,
             dirty: true,
@@ -103,6 +108,33 @@ impl Texture {
             id: 0, // Assigned by Scene
             source: TextureSource::Path(path.into()),
             dimensions: None,
+            gpu: None,
+            dirty: true,
+        }
+    }
+
+    /// Create a texture from an embedded image with original compressed bytes preserved.
+    ///
+    /// This is used when loading from formats like glTF that embed compressed images.
+    /// The original bytes are preserved for efficient serialization (avoids re-encoding).
+    ///
+    /// # Arguments
+    /// * `image` - The decoded image data
+    /// * `original_bytes` - The original compressed bytes (PNG or JPEG)
+    /// * `format` - The format of the original bytes
+    pub fn from_image_with_original_bytes(
+        image: DynamicImage,
+        original_bytes: Vec<u8>,
+        format: super::format::TextureFormat,
+    ) -> Self {
+        let dimensions = Some(image.dimensions());
+        Self {
+            id: 0,
+            source: TextureSource::Embedded {
+                image,
+                original_bytes: Some((original_bytes, format)),
+            },
+            dimensions,
             gpu: None,
             dirty: true,
         }
@@ -133,7 +165,7 @@ impl Texture {
 
         // Now we can return a reference
         match &self.source {
-            TextureSource::Embedded(img) => Ok(img),
+            TextureSource::Embedded { image, .. } => Ok(image),
             TextureSource::CachedPath { image: Some(img), .. } => Ok(img),
             _ => unreachable!("ensure_image_loaded should have loaded the image"),
         }
@@ -142,7 +174,7 @@ impl Texture {
     /// Ensure the image is loaded into memory.
     fn ensure_image_loaded(&mut self) -> Result<()> {
         match &self.source {
-            TextureSource::Embedded(_) => Ok(()),
+            TextureSource::Embedded { .. } => Ok(()),
             TextureSource::CachedPath { image: Some(_), .. } => Ok(()),
             TextureSource::Path(_) | TextureSource::CachedPath { image: None, .. } => {
                 // Need to load the image
@@ -278,7 +310,7 @@ impl Texture {
     /// on the next render.
     pub fn set_image(&mut self, image: DynamicImage) {
         self.dimensions = Some(image.dimensions());
-        self.source = TextureSource::Embedded(image);
+        self.source = TextureSource::Embedded { image, original_bytes: None };
         self.dirty = true;
     }
 
@@ -287,7 +319,21 @@ impl Texture {
         match &self.source {
             TextureSource::Path(path) => Some(path),
             TextureSource::CachedPath { path, .. } => Some(path),
-            TextureSource::Embedded(_) => None,
+            TextureSource::Embedded { .. } => None,
+        }
+    }
+
+    /// Get the original compressed bytes if available.
+    ///
+    /// Returns the original PNG/JPEG bytes if this texture was created with
+    /// `from_image_with_original_bytes`. This is used for efficient serialization
+    /// to avoid re-encoding the image.
+    pub fn original_bytes(&self) -> Option<(&[u8], super::format::TextureFormat)> {
+        match &self.source {
+            TextureSource::Embedded { original_bytes: Some((bytes, format)), .. } => {
+                Some((bytes.as_slice(), *format))
+            }
+            _ => None,
         }
     }
 

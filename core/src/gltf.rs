@@ -148,36 +148,102 @@ fn get_material_for_primitive(
     }
 }
 
-/// Loads an image from glTF image data and adds it as a texture to the scene.
-fn load_gltf_texture(
-    gltf_image: &gltf::image::Data,
-    scene: &mut Scene,
-) -> anyhow::Result<crate::scene::TextureId> {
-    let dynamic_image = match gltf_image.format {
-        gltf::image::Format::R8G8B8A8 => {
-            image::DynamicImage::ImageRgba8(
-                image::RgbaImage::from_raw(
-                    gltf_image.width,
-                    gltf_image.height,
-                    gltf_image.pixels.clone()
-                ).ok_or_else(|| anyhow::anyhow!("Failed to create image from glTF data"))?
-            )
-        }
-        gltf::image::Format::R8G8B8 => {
-            image::DynamicImage::ImageRgb8(
-                image::RgbImage::from_raw(
-                    gltf_image.width,
-                    gltf_image.height,
-                    gltf_image.pixels.clone()
-                ).ok_or_else(|| anyhow::anyhow!("Failed to create image from glTF data"))?
-            )
-        }
-        _ => {
-            return Err(anyhow::anyhow!("Unsupported glTF image format: {:?}", gltf_image.format));
-        }
+/// Tries to resolve an external URI image to a file path.
+fn resolve_image_path(
+    image_index: usize,
+    document: &gltf::Document,
+    base_path: Option<&Path>,
+) -> Option<std::path::PathBuf> {
+    let base = base_path?;
+    let img = document.images().nth(image_index)?;
+    let gltf::image::Source::Uri { uri, .. } = img.source() else { return None };
+
+    // Skip data: URIs - those are embedded
+    if uri.starts_with("data:") {
+        return None;
+    }
+
+    let path = base.join(uri);
+    path.exists().then_some(path)
+}
+
+/// Extracts original compressed bytes from a glTF buffer view.
+fn extract_embedded_image_bytes(
+    image_index: usize,
+    document: &gltf::Document,
+    buffers: &[gltf::buffer::Data],
+) -> Option<(Vec<u8>, crate::scene::format::TextureFormat)> {
+    use crate::scene::format::TextureFormat;
+
+    let img = document.images().nth(image_index)?;
+    let gltf::image::Source::View { view, mime_type } = img.source() else { return None };
+
+    let format = match mime_type {
+        "image/png" => TextureFormat::Png,
+        "image/jpeg" => TextureFormat::Jpeg,
+        _ => return None,
     };
 
-    let texture = Texture::from_image(dynamic_image);
+    let buffer_data = buffers.get(view.buffer().index())?;
+    let start = view.offset();
+    let end = start + view.length();
+    let bytes = buffer_data.get(start..end)?.to_vec();
+
+    Some((bytes, format))
+}
+
+/// Decodes glTF image pixel data into a DynamicImage.
+fn decode_gltf_image(gltf_image: &gltf::image::Data) -> anyhow::Result<image::DynamicImage> {
+    match gltf_image.format {
+        gltf::image::Format::R8G8B8A8 => {
+            let img = image::RgbaImage::from_raw(
+                gltf_image.width,
+                gltf_image.height,
+                gltf_image.pixels.clone(),
+            )
+            .ok_or_else(|| anyhow::anyhow!("Failed to create RGBA image from glTF data"))?;
+            Ok(image::DynamicImage::ImageRgba8(img))
+        }
+        gltf::image::Format::R8G8B8 => {
+            let img = image::RgbImage::from_raw(
+                gltf_image.width,
+                gltf_image.height,
+                gltf_image.pixels.clone(),
+            )
+            .ok_or_else(|| anyhow::anyhow!("Failed to create RGB image from glTF data"))?;
+            Ok(image::DynamicImage::ImageRgb8(img))
+        }
+        _ => Err(anyhow::anyhow!("Unsupported glTF image format: {:?}", gltf_image.format)),
+    }
+}
+
+/// Loads an image from glTF image data and adds it as a texture to the scene.
+///
+/// Preserves original compressed bytes when loading from embedded buffer views,
+/// or uses path-based textures for external URI references.
+fn load_gltf_texture(
+    gltf_image: &gltf::image::Data,
+    image_index: usize,
+    document: &gltf::Document,
+    buffers: &[gltf::buffer::Data],
+    base_path: Option<&Path>,
+    scene: &mut Scene,
+) -> anyhow::Result<crate::scene::TextureId> {
+    // For external files, use path-based texture (lazy loading, preserves original format)
+    if let Some(path) = resolve_image_path(image_index, document, base_path) {
+        let texture = Texture::from_path(path);
+        return Ok(scene.add_texture(texture));
+    }
+
+    // Decode the image from glTF pixel data
+    let dynamic_image = decode_gltf_image(gltf_image)?;
+
+    // For embedded images, try to preserve original compressed bytes
+    let texture = match extract_embedded_image_bytes(image_index, document, buffers) {
+        Some((bytes, format)) => Texture::from_image_with_original_bytes(dynamic_image, bytes, format),
+        None => Texture::from_image(dynamic_image),
+    };
+
     Ok(scene.add_texture(texture))
 }
 
@@ -188,6 +254,9 @@ fn load_gltf_texture(
 fn load_material(
     gltf_material: &gltf::Material,
     images: &[gltf::image::Data],
+    document: &gltf::Document,
+    buffers: &[gltf::buffer::Data],
+    base_path: Option<&Path>,
     scene: &mut Scene,
 ) -> anyhow::Result<MaterialId> {
     let pbr = gltf_material.pbr_metallic_roughness();
@@ -207,7 +276,7 @@ fn load_material(
     // Base color texture (optional)
     if let Some(tex_info) = pbr.base_color_texture() {
         let image_index = tex_info.texture().source().index();
-        let texture_id = load_gltf_texture(&images[image_index], scene)?;
+        let texture_id = load_gltf_texture(&images[image_index], image_index, document, buffers, base_path, scene)?;
         material = material.with_base_color_texture(texture_id);
     }
 
@@ -220,14 +289,14 @@ fn load_material(
     // glTF packs roughness in G channel and metallic in B channel
     if let Some(tex_info) = pbr.metallic_roughness_texture() {
         let image_index = tex_info.texture().source().index();
-        let texture_id = load_gltf_texture(&images[image_index], scene)?;
+        let texture_id = load_gltf_texture(&images[image_index], image_index, document, buffers, base_path, scene)?;
         material = material.with_metallic_roughness_texture(texture_id);
     }
 
     // Normal map (from material, not from PBR extension)
     if let Some(normal_tex) = gltf_material.normal_texture() {
         let image_index = normal_tex.texture().source().index();
-        let texture_id = load_gltf_texture(&images[image_index], scene)?;
+        let texture_id = load_gltf_texture(&images[image_index], image_index, document, buffers, base_path, scene)?;
         material = material
             .with_normal_texture(texture_id)
             .with_normal_scale(normal_tex.scale());
@@ -377,8 +446,10 @@ pub fn load_gltf_scene_from_path<P: AsRef<Path>>(
     path: P,
     aspect: f32,
 ) -> anyhow::Result<GltfLoadResult> {
+    let path = path.as_ref();
+    let base_path = path.parent().map(|p| p.to_path_buf());
     let (document, buffers, images) = gltf::import(path)?;
-    load_gltf_from_data(document, buffers, images, aspect)
+    load_gltf_from_data(document, buffers, images, base_path.as_deref(), aspect)
 }
 
 /// Loads a glTF scene from a byte slice.
@@ -396,7 +467,7 @@ pub fn load_gltf_scene_from_slice(
     aspect: f32,
 ) -> anyhow::Result<GltfLoadResult> {
     let (document, buffers, images) = gltf::import_slice(data)?;
-    load_gltf_from_data(document, buffers, images, aspect)
+    load_gltf_from_data(document, buffers, images, None, aspect)
 }
 
 /// Internal helper to load a glTF scene from parsed data.
@@ -404,6 +475,7 @@ fn load_gltf_from_data(
     document: gltf::Document,
     buffers: Vec<gltf::buffer::Data>,
     images: Vec<gltf::image::Data>,
+    base_path: Option<&Path>,
     aspect: f32,
 ) -> anyhow::Result<GltfLoadResult> {
     use std::collections::HashMap;
@@ -414,7 +486,7 @@ fn load_gltf_from_data(
     // Load all materials first (they'll be added to scene.materials)
     let mut material_map: Vec<MaterialId> = Vec::new();
     for material in document.materials() {
-        let mat_id = load_material(&material, &images, &mut scene)?;
+        let mat_id = load_material(&material, &images, &document, &buffers, base_path, &mut scene)?;
         material_map.push(mat_id);
     }
 
