@@ -1075,7 +1075,7 @@ impl SerializedTexture {
 
             let encoder = PngEncoder::new_with_quality(
                 &mut png_data,
-                CompressionType::Best,
+                CompressionType::Default,
                 FilterType::Adaptive
             );
             encoder.write_image(
