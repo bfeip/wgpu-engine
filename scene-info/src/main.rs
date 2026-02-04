@@ -53,9 +53,6 @@ struct Cli {
     #[arg(long)]
     no_summary: bool,
 
-    /// Hide the largest textures list
-    #[arg(long)]
-    no_top_textures: bool,
 }
 
 impl Cli {
@@ -123,9 +120,14 @@ fn analyze_scene(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
         print_scene_summary(&stats);
     }
 
-    // Print largest textures
-    if !cli.no_top_textures && !stats.textures.is_empty() {
+    // Print largest textures (when --textures flag is set)
+    if cli.show_textures() && !stats.textures.is_empty() {
         print_largest_textures(&stats.textures);
+    }
+
+    // Print largest meshes (when --meshes flag is set)
+    if cli.show_meshes() && !stats.meshes.is_empty() {
+        print_largest_meshes(&stats.meshes);
     }
 
     // Detailed sections based on flags
@@ -367,6 +369,41 @@ fn print_largest_textures(textures: &[SerializedTexture]) {
             tex.width,
             tex.height,
             format_bytes(tex.data.len() as u64)
+        );
+    }
+    println!();
+}
+
+fn print_largest_meshes(meshes: &[SerializedMesh]) {
+    println!("Largest Meshes:");
+    println!(
+        "  {:>4} {:>10} {:>10} {:>10} {:>12}",
+        "ID", "Vertices", "Triangles", "Lines", "Size"
+    );
+    println!("  {}", "-".repeat(50));
+
+    let mut sorted: Vec<_> = meshes.iter().collect();
+    sorted.sort_by(|a, b| b.size().cmp(&a.size()));
+
+    for (i, mesh) in sorted.iter().take(5).enumerate() {
+        let vertex_count = mesh.vertices.len() / 36;
+        let mut tri_count = 0;
+        let mut line_count = 0;
+        for prim in &mesh.primitives {
+            match prim.primitive_type {
+                0 => tri_count += prim.indices.len() / 3,
+                1 => line_count += prim.indices.len() / 2,
+                _ => {}
+            }
+        }
+
+        println!(
+            "  {:>4} {:>10} {:>10} {:>10} {:>12}",
+            mesh.id,
+            format_number(vertex_count),
+            format_number(tri_count),
+            format_number(line_count),
+            format_bytes(mesh.size() as u64)
         );
     }
     println!();

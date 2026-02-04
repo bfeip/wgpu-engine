@@ -615,6 +615,10 @@ impl SerializedPrimitive {
             indices: self.indices.clone(),
         }
     }
+
+    pub fn size(&self) -> usize {
+        self.indices.len() * size_of::<u16>()
+    }
 }
 
 impl SerializedMesh {
@@ -650,6 +654,14 @@ impl SerializedMesh {
         let mut mesh = Mesh::from_raw(vertices, primitives);
         mesh.id = self.id;
         mesh
+    }
+
+    pub fn size(&self) -> usize {
+        let vertices_size = self.vertices.len();
+        let primitives_size = self.primitives.iter().map(|primitive| {
+            primitive.size()
+        }).sum::<usize>();
+        vertices_size + primitives_size
     }
 }
 
