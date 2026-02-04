@@ -1010,56 +1010,6 @@ impl SerializedAnnotation {
     }
 }
 
-// ============================================================================
-// Compression Utilities
-// ============================================================================
-
-/// Compress data using Zstd with the specified compression level.
-pub fn compress_with_level(data: &[u8], level: i32) -> Result<Vec<u8>, FormatError> {
-    zstd::encode_all(Cursor::new(data), level)
-        .map_err(|e| FormatError::CompressionError(e.to_string()))
-}
-
-/// Compress data using Zstd with default compression level (3).
-pub fn compress(data: &[u8]) -> Result<Vec<u8>, FormatError> {
-    compress_with_level(data, 3)
-}
-
-/// Decompress Zstd-compressed data.
-pub fn decompress(data: &[u8]) -> Result<Vec<u8>, FormatError> {
-    zstd::decode_all(Cursor::new(data))
-        .map_err(|e| FormatError::DecompressionError(e.to_string()))
-}
-
-// ============================================================================
-// Section Writing/Reading
-// ============================================================================
-
-/// Serialize and compress a section with a specific compression level.
-pub fn serialize_section_with_level<T: Serialize>(data: &T, level: i32) -> Result<(Vec<u8>, usize), FormatError> {
-    let uncompressed = bincode::serialize(data)
-        .map_err(|e| FormatError::SerializationError(e.to_string()))?;
-    let uncompressed_size = uncompressed.len();
-    let compressed = compress_with_level(&uncompressed, level)?;
-    Ok((compressed, uncompressed_size))
-}
-
-/// Serialize and compress a section, returning the compressed bytes.
-pub fn serialize_section<T: Serialize>(data: &T) -> Result<(Vec<u8>, usize), FormatError> {
-    serialize_section_with_level(data, 3)
-}
-
-/// Decompress and deserialize a section.
-pub fn deserialize_section<T: for<'de> Deserialize<'de>>(compressed: &[u8]) -> Result<T, FormatError> {
-    let uncompressed = decompress(compressed)?;
-    bincode::deserialize(&uncompressed)
-        .map_err(|e| FormatError::DeserializationError(e.to_string()))
-}
-
-// ============================================================================
-// Texture Serialization
-// ============================================================================
-
 impl SerializedTexture {
     /// Creates a SerializedTexture from a Texture.
     ///
@@ -1163,6 +1113,52 @@ impl SerializedTexture {
         texture.id = self.id;
         Ok(texture)
     }
+}
+
+// ============================================================================
+// Compression Utilities
+// ============================================================================
+
+/// Compress data using Zstd with the specified compression level.
+pub fn compress_with_level(data: &[u8], level: i32) -> Result<Vec<u8>, FormatError> {
+    zstd::encode_all(Cursor::new(data), level)
+        .map_err(|e| FormatError::CompressionError(e.to_string()))
+}
+
+/// Compress data using Zstd with default compression level (3).
+pub fn compress(data: &[u8]) -> Result<Vec<u8>, FormatError> {
+    compress_with_level(data, 3)
+}
+
+/// Decompress Zstd-compressed data.
+pub fn decompress(data: &[u8]) -> Result<Vec<u8>, FormatError> {
+    zstd::decode_all(Cursor::new(data))
+        .map_err(|e| FormatError::DecompressionError(e.to_string()))
+}
+
+// ============================================================================
+// Section Writing/Reading
+// ============================================================================
+
+/// Serialize and compress a section with a specific compression level.
+pub fn serialize_section_with_level<T: Serialize>(data: &T, level: i32) -> Result<(Vec<u8>, usize), FormatError> {
+    let uncompressed = bincode::serialize(data)
+        .map_err(|e| FormatError::SerializationError(e.to_string()))?;
+    let uncompressed_size = uncompressed.len();
+    let compressed = compress_with_level(&uncompressed, level)?;
+    Ok((compressed, uncompressed_size))
+}
+
+/// Serialize and compress a section, returning the compressed bytes.
+pub fn serialize_section<T: Serialize>(data: &T) -> Result<(Vec<u8>, usize), FormatError> {
+    serialize_section_with_level(data, 3)
+}
+
+/// Decompress and deserialize a section.
+pub fn deserialize_section<T: for<'de> Deserialize<'de>>(compressed: &[u8]) -> Result<T, FormatError> {
+    let uncompressed = decompress(compressed)?;
+    bincode::deserialize(&uncompressed)
+        .map_err(|e| FormatError::DeserializationError(e.to_string()))
 }
 
 // ============================================================================
