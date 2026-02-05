@@ -1,3 +1,4 @@
+mod gpu_resources;
 mod outline;
 mod pipeline;
 mod prepare;
@@ -20,6 +21,7 @@ use crate::{
     shaders::ShaderGenerator,
 };
 
+use gpu_resources::GpuResourceManager;
 use outline::{OutlineResources, OutlineUniform};
 use types::{
     clamp_surface_size, CameraResources, DefaultTextures, LightResources,
@@ -48,6 +50,10 @@ pub(crate) struct Renderer<'a> {
     pipeline_cache: HashMap<PipelineCacheKey, wgpu::RenderPipeline>,
     ibl_resources: IblResources,
     outline_resources: OutlineResources,
+
+    // Scene GPU resource tracking (for future use)
+    #[allow(dead_code)]
+    gpu_resources: GpuResourceManager,
 }
 
 impl<'a> Renderer<'a> {
@@ -165,6 +171,7 @@ impl<'a> Renderer<'a> {
             pipeline_cache: HashMap::new(),
             ibl_resources,
             outline_resources,
+            gpu_resources: GpuResourceManager::new(),
         }
     }
 

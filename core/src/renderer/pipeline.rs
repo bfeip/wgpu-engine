@@ -1,7 +1,7 @@
-use crate::scene::{InstanceRaw, PrimitiveType, Texture, Vertex};
+use crate::scene::{PrimitiveType, Texture};
 
 use super::Renderer;
-use super::types::PipelineCacheKey;
+use super::types::{instance_buffer_layout, vertex_buffer_layout, PipelineCacheKey};
 
 impl<'a> Renderer<'a> {
     pub(super) fn get_or_create_pipeline(
@@ -43,7 +43,7 @@ impl<'a> Renderer<'a> {
                     vertex: wgpu::VertexState {
                         module: &shader,
                         entry_point: Some("vs_main"),
-                        buffers: &[Vertex::desc(), InstanceRaw::desc()],
+                        buffers: &[vertex_buffer_layout(), instance_buffer_layout()],
                         compilation_options: wgpu::PipelineCompilationOptions::default(),
                     },
                     fragment: Some(wgpu::FragmentState {

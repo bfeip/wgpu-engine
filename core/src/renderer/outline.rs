@@ -1,9 +1,11 @@
 use wgpu::util::DeviceExt;
 
 use crate::{
-    scene::{InstanceRaw, Texture, Vertex},
+    scene::Texture,
     shaders::ShaderGenerator,
 };
+
+use super::types::{instance_buffer_layout, vertex_buffer_layout};
 
 /// GPU uniform data for screen-space outline rendering.
 /// Must match the layout in outline_screenspace.wesl.
@@ -148,7 +150,7 @@ impl OutlineResources {
             vertex: wgpu::VertexState {
                 module: &mask_shader,
                 entry_point: Some("vs_mask"),
-                buffers: &[Vertex::desc(), InstanceRaw::desc()],
+                buffers: &[vertex_buffer_layout(), instance_buffer_layout()],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {

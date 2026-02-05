@@ -142,10 +142,13 @@ pub struct Material {
     pub(crate) line_gpu: Option<MaterialGpuResources>,
     pub(crate) point_gpu: Option<MaterialGpuResources>,
 
-    // Dirty flags per primitive type
-    face_dirty: bool,
-    line_dirty: bool,
-    point_dirty: bool,
+    // Generation counters per primitive type (for GPU sync tracking)
+    face_generation: u64,
+    line_generation: u64,
+    point_generation: u64,
+    face_synced_generation: u64,
+    line_synced_generation: u64,
+    point_synced_generation: u64,
 }
 
 impl Material {
@@ -168,9 +171,12 @@ impl Material {
             face_gpu: None,
             line_gpu: None,
             point_gpu: None,
-            face_dirty: true,
-            line_dirty: true,
-            point_dirty: true,
+            face_generation: 1,
+            line_generation: 1,
+            point_generation: 1,
+            face_synced_generation: 0,
+            line_synced_generation: 0,
+            point_synced_generation: 0,
         }
     }
 
@@ -231,63 +237,63 @@ impl Material {
     /// Set the base color texture.
     pub fn with_base_color_texture(mut self, texture_id: TextureId) -> Self {
         self.base_color_texture = Some(texture_id);
-        self.face_dirty = true;
+        self.face_generation += 1;
         self
     }
 
     /// Set the normal map texture.
     pub fn with_normal_texture(mut self, texture_id: TextureId) -> Self {
         self.normal_texture = Some(texture_id);
-        self.face_dirty = true;
+        self.face_generation += 1;
         self
     }
 
     /// Set the metallic-roughness texture.
     pub fn with_metallic_roughness_texture(mut self, texture_id: TextureId) -> Self {
         self.metallic_roughness_texture = Some(texture_id);
-        self.face_dirty = true;
+        self.face_generation += 1;
         self
     }
 
     /// Set the base color factor (multiplied with texture if present).
     pub fn with_base_color_factor(mut self, color: RgbaColor) -> Self {
         self.base_color_factor = color;
-        self.face_dirty = true;
+        self.face_generation += 1;
         self
     }
 
     /// Set the metallic factor (0.0 = dielectric, 1.0 = metal).
     pub fn with_metallic_factor(mut self, metallic: f32) -> Self {
         self.metallic_factor = metallic;
-        self.face_dirty = true;
+        self.face_generation += 1;
         self
     }
 
     /// Set the roughness factor (0.0 = smooth, 1.0 = rough).
     pub fn with_roughness_factor(mut self, roughness: f32) -> Self {
         self.roughness_factor = roughness;
-        self.face_dirty = true;
+        self.face_generation += 1;
         self
     }
 
     /// Set the normal map scale.
     pub fn with_normal_scale(mut self, scale: f32) -> Self {
         self.normal_scale = scale;
-        self.face_dirty = true;
+        self.face_generation += 1;
         self
     }
 
     /// Set the line color.
     pub fn with_line_color(mut self, color: RgbaColor) -> Self {
         self.line_color = Some(color);
-        self.line_dirty = true;
+        self.line_generation += 1;
         self
     }
 
     /// Set the point color.
     pub fn with_point_color(mut self, color: RgbaColor) -> Self {
         self.point_color = Some(color);
-        self.point_dirty = true;
+        self.point_generation += 1;
         self
     }
 
@@ -296,60 +302,60 @@ impl Material {
         self
     }
 
-    // ========== Mutation methods (set dirty flags) ==========
+    // ========== Mutation methods (increment generation) ==========
 
-    /// Set the base color texture, marking the material as dirty.
+    /// Set the base color texture, incrementing the face generation.
     pub fn set_base_color_texture(&mut self, texture_id: TextureId) {
         self.base_color_texture = Some(texture_id);
-        self.face_dirty = true;
+        self.face_generation += 1;
     }
 
     /// Set the base color factor, marking the material as dirty.
     pub fn set_base_color_factor(&mut self, color: RgbaColor) {
         self.base_color_factor = color;
-        self.face_dirty = true;
+        self.face_generation += 1;
     }
 
     /// Set the normal map texture, marking the material as dirty.
     pub fn set_normal_texture(&mut self, texture_id: TextureId) {
         self.normal_texture = Some(texture_id);
-        self.face_dirty = true;
+        self.face_generation += 1;
     }
 
     /// Set the metallic-roughness texture, marking the material as dirty.
     pub fn set_metallic_roughness_texture(&mut self, texture_id: TextureId) {
         self.metallic_roughness_texture = Some(texture_id);
-        self.face_dirty = true;
+        self.face_generation += 1;
     }
 
     /// Set the metallic factor, marking the material as dirty.
     pub fn set_metallic_factor(&mut self, metallic: f32) {
         self.metallic_factor = metallic;
-        self.face_dirty = true;
+        self.face_generation += 1;
     }
 
     /// Set the roughness factor, marking the material as dirty.
     pub fn set_roughness_factor(&mut self, roughness: f32) {
         self.roughness_factor = roughness;
-        self.face_dirty = true;
+        self.face_generation += 1;
     }
 
     /// Set the normal map scale, marking the material as dirty.
     pub fn set_normal_scale(&mut self, scale: f32) {
         self.normal_scale = scale;
-        self.face_dirty = true;
+        self.face_generation += 1;
     }
 
     /// Set the line color, marking the material as dirty.
     pub fn set_line_color(&mut self, color: RgbaColor) {
         self.line_color = Some(color);
-        self.line_dirty = true;
+        self.line_generation += 1;
     }
 
     /// Set the point color, marking the material as dirty.
     pub fn set_point_color(&mut self, color: RgbaColor) {
         self.point_color = Some(color);
-        self.point_dirty = true;
+        self.point_generation += 1;
     }
 
     pub fn set_flags(&mut self, flags: MaterialFlags) {
@@ -357,6 +363,18 @@ impl Material {
     }
 
     // ========== Query methods ==========
+
+    /// Returns the generation counter for a primitive type.
+    ///
+    /// This value increments on any mutation to the material data for that primitive type.
+    /// Used by renderers to track when GPU resources need updating.
+    pub fn generation(&self, primitive_type: PrimitiveType) -> u64 {
+        match primitive_type {
+            PrimitiveType::TriangleList => self.face_generation,
+            PrimitiveType::LineList => self.line_generation,
+            PrimitiveType::PointList => self.point_generation,
+        }
+    }
 
     /// Get the material properties for a given primitive type.
     ///
@@ -411,13 +429,13 @@ impl Material {
     pub(crate) fn needs_gpu_resources(&self, primitive_type: PrimitiveType) -> bool {
         match primitive_type {
             PrimitiveType::TriangleList => {
-                self.face_gpu.is_none() || self.face_dirty
+                self.face_gpu.is_none() || self.face_generation != self.face_synced_generation
             }
             PrimitiveType::LineList => {
-                self.line_gpu.is_none() || self.line_dirty
+                self.line_gpu.is_none() || self.line_generation != self.line_synced_generation
             }
             PrimitiveType::PointList => {
-                self.point_gpu.is_none() || self.point_dirty
+                self.point_gpu.is_none() || self.point_generation != self.point_synced_generation
             }
         }
     }
@@ -456,12 +474,12 @@ impl Material {
         pass.set_bind_group(2, &gpu.bind_group, &[]);
     }
 
-    /// Mark dirty flags as clean for a primitive type.
+    /// Mark generation as synced for a primitive type.
     pub(crate) fn mark_clean(&mut self, primitive_type: PrimitiveType) {
         match primitive_type {
-            PrimitiveType::TriangleList => self.face_dirty = false,
-            PrimitiveType::LineList => self.line_dirty = false,
-            PrimitiveType::PointList => self.point_dirty = false,
+            PrimitiveType::TriangleList => self.face_synced_generation = self.face_generation,
+            PrimitiveType::LineList => self.line_synced_generation = self.line_generation,
+            PrimitiveType::PointList => self.point_synced_generation = self.point_generation,
         }
     }
 

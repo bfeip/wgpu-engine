@@ -21,7 +21,7 @@ use crate::ibl::{EnvironmentMap, EnvironmentMapId};
 pub use instance::{Instance, InstanceId};
 pub use light::{Light, LightType, MAX_LIGHTS};
 pub use material::{Material, MaterialId, DEFAULT_MATERIAL_ID};
-pub use mesh::{Mesh, MeshDescriptor, MeshId, MeshPrimitive, ObjMesh, PrimitiveType, Vertex};
+pub use mesh::{Mesh, MeshDescriptor, MeshId, MeshIndex, MeshPrimitive, ObjMesh, PrimitiveType, Vertex};
 pub use node::{EffectiveVisibility, Node, NodeId, Visibility};
 pub use texture::{Texture, TextureId};
 pub use tree::TreeVisitor;
@@ -32,6 +32,7 @@ pub(crate) use light::LightsArrayUniform;
 pub(crate) use material::{MaterialGpuResources, MaterialProperties};
 pub(crate) use texture::GpuTexture;
 pub(crate) use batch::{DrawBatch, partition_batches};
+pub(crate) use tree::InstanceTransform;
 
 use tree::collect_instance_transforms;
 

@@ -67,8 +67,10 @@ pub struct Texture {
     dimensions: Option<(u32, u32)>,
     /// GPU resources (created lazily)
     gpu: Option<GpuTexture>,
-    /// True if source data changed since last GPU upload
-    dirty: bool,
+    /// Generation counter - increments on any mutation (for GPU sync tracking)
+    generation: u64,
+    /// Generation when GPU resources were last synced
+    synced_generation: u64,
 }
 
 impl Texture {
@@ -92,7 +94,8 @@ impl Texture {
             source: TextureSource::Embedded { image, original_bytes: None },
             dimensions,
             gpu: None,
-            dirty: true,
+            generation: 1,
+            synced_generation: 0,
         }
     }
 
@@ -109,7 +112,8 @@ impl Texture {
             source: TextureSource::Path(path.into()),
             dimensions: None,
             gpu: None,
-            dirty: true,
+            generation: 1,
+            synced_generation: 0,
         }
     }
 
@@ -136,7 +140,8 @@ impl Texture {
             },
             dimensions,
             gpu: None,
-            dirty: true,
+            generation: 1,
+            synced_generation: 0,
         }
     }
 
@@ -199,7 +204,15 @@ impl Texture {
 
     /// Check if GPU resources need to be created or updated.
     pub(crate) fn needs_gpu_upload(&self) -> bool {
-        self.gpu.is_none() || self.dirty
+        self.gpu.is_none() || self.generation != self.synced_generation
+    }
+
+    /// Returns the current generation counter.
+    ///
+    /// This value increments on any mutation to the texture data.
+    /// Used by renderers to track when GPU resources need updating.
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
     /// Create or update GPU resources for this texture.
@@ -272,7 +285,7 @@ impl Texture {
         });
 
         self.gpu = Some(GpuTexture { _texture: texture, view, sampler });
-        self.dirty = false;
+        self.synced_generation = self.generation;
 
         Ok(())
     }
@@ -306,12 +319,12 @@ impl Texture {
 
     /// Replace the texture's image data.
     ///
-    /// This marks the texture as dirty, so GPU resources will be updated
+    /// This increments the generation counter, so GPU resources will be updated
     /// on the next render.
     pub fn set_image(&mut self, image: DynamicImage) {
         self.dimensions = Some(image.dimensions());
         self.source = TextureSource::Embedded { image, original_bytes: None };
-        self.dirty = true;
+        self.generation += 1;
     }
 
     /// Get the source path if this texture was created from a path.

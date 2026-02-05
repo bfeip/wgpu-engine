@@ -180,8 +180,10 @@ pub struct Mesh {
     primitives: Vec<MeshPrimitive>,
     /// GPU resources (created lazily)
     gpu: Option<MeshGpuResources>,
-    /// True if vertex/primitive data changed since last GPU upload
-    dirty: bool,
+    /// Generation counter - increments on any mutation (for GPU sync tracking)
+    generation: u64,
+    /// Generation when GPU resources were last synced
+    synced_generation: u64,
     /// Cached local-space axis-aligned bounding box
     cached_bounding: Cell<Option<Aabb>>,
 }
@@ -194,7 +196,8 @@ impl Mesh {
             vertices: Vec::new(),
             primitives: Vec::new(),
             gpu: None,
-            dirty: true,
+            generation: 1, // Start at 1 so initial sync triggers upload
+            synced_generation: 0,
             cached_bounding: Cell::new(None),
         }
     }
@@ -210,7 +213,8 @@ impl Mesh {
             vertices,
             primitives,
             gpu: None,
-            dirty: true,
+            generation: 1,
+            synced_generation: 0,
             cached_bounding: Cell::new(None),
         }
     }
@@ -893,39 +897,47 @@ impl Mesh {
         )
     }
 
-    // ========== Mutation methods (set dirty flag) ==========
+    // ========== Mutation methods (increment generation) ==========
 
-    /// Set the mesh's vertex data, marking it as dirty.
+    /// Set the mesh's vertex data, incrementing the generation counter.
     pub fn set_vertices(&mut self, vertices: Vec<Vertex>) {
         self.vertices = vertices;
-        self.dirty = true;
+        self.generation += 1;
         self.cached_bounding.set(None);
     }
 
-    /// Set the mesh's primitive data, marking it as dirty.
+    /// Set the mesh's primitive data, incrementing the generation counter.
     pub fn set_primitives(&mut self, primitives: Vec<MeshPrimitive>) {
         self.primitives = primitives;
-        self.dirty = true;
+        self.generation += 1;
     }
 
-    /// Add vertices to the mesh, marking it as dirty.
+    /// Add vertices to the mesh, incrementing the generation counter.
     pub fn add_vertices(&mut self, vertices: &[Vertex]) {
         self.vertices.extend_from_slice(vertices);
-        self.dirty = true;
+        self.generation += 1;
         self.cached_bounding.set(None);
     }
 
-    /// Add a primitive to the mesh, marking it as dirty.
+    /// Add a primitive to the mesh, incrementing the generation counter.
     pub fn add_primitive(&mut self, primitive: MeshPrimitive) {
         self.primitives.push(primitive);
-        self.dirty = true;
+        self.generation += 1;
+    }
+
+    /// Returns the current generation counter.
+    ///
+    /// This value increments on any mutation to the mesh data.
+    /// Used by renderers to track when GPU resources need updating.
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
     // ========== GPU resource management ==========
 
     /// Check if GPU resources need to be created or updated.
     pub(crate) fn needs_gpu_upload(&self) -> bool {
-        self.gpu.is_none() || self.dirty
+        self.gpu.is_none() || self.generation != self.synced_generation
     }
 
     /// Create or update GPU resources for this mesh.
@@ -988,7 +1000,7 @@ impl Mesh {
             line_index_buffer,
             point_index_buffer,
         });
-        self.dirty = false;
+        self.synced_generation = self.generation;
     }
 
     /// Get the GPU resources for this mesh.
