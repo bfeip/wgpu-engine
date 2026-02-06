@@ -2,8 +2,10 @@ use wgpu::util::DeviceExt;
 
 use crate::{
     camera::{Camera, CameraUniform},
-    scene::{GpuTexture, InstanceRaw, LightsArrayUniform, MaterialProperties, PrimitiveType, SceneProperties, Texture, Vertex},
+    scene::{InstanceRaw, LightsArrayUniform, MaterialProperties, PrimitiveType, SceneProperties, Vertex},
 };
+
+use super::gpu_resources::GpuTexture;
 
 // Vertex shader attribute locations
 pub(crate) enum VertexShaderLocations {
@@ -410,14 +412,16 @@ impl DefaultTextures {
         queue: &wgpu::Queue,
         config: &wgpu::SurfaceConfiguration,
     ) -> DefaultTextures {
-        let depth = Texture::create_depth_texture(device, config, "depth_texture");
-        let white = Texture::create_solid_color_texture(
+        use super::gpu_resources::{create_depth_texture, create_solid_color_texture};
+
+        let depth = create_depth_texture(device, config, "depth_texture");
+        let white = create_solid_color_texture(
             device,
             queue,
             [255, 255, 255, 255],
             "default_white_texture",
         );
-        let normal = Texture::create_solid_color_texture(
+        let normal = create_solid_color_texture(
             device,
             queue,
             [128, 128, 255, 255], // Neutral normal (0.5, 0.5, 1.0) in tangent space

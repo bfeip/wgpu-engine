@@ -2,12 +2,8 @@ use std::{cell::Cell, fs::File, io::BufReader, path::Path};
 
 use anyhow::{Context, Result};
 use cgmath::Point3;
-use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
-use crate::{
-    common::{Aabb, ConvexPolyhedron, Ray},
-    renderer::VertexShaderLocations,
-};
+use crate::common::{Aabb, ConvexPolyhedron, Ray};
 
 /// Unique identifier for a mesh in the scene.
 pub type MeshId = u32;
@@ -71,36 +67,6 @@ pub struct Vertex {
     pub normal: [f32; 3],
 }
 
-impl Vertex {
-    /// Returns the vertex buffer layout descriptor for the rendering pipeline.
-    ///
-    /// This describes how vertex data is laid out in GPU memory and maps to shader locations
-    /// defined in `VertexShaderLocations`.
-    pub(crate) fn desc() -> wgpu::VertexBufferLayout<'static> {
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[
-                wgpu::VertexAttribute {
-                    offset: 0,
-                    shader_location: VertexShaderLocations::VertexPosition as u32,
-                    format: wgpu::VertexFormat::Float32x3,
-                },
-                wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
-                    shader_location: VertexShaderLocations::TextureCoords as u32,
-                    format: wgpu::VertexFormat::Float32x3,
-                },
-                wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 3 * 2]>() as wgpu::BufferAddress,
-                    shader_location: VertexShaderLocations::VertexNormal as u32,
-                    format: wgpu::VertexFormat::Float32x3,
-                },
-            ],
-        }
-    }
-}
-
 /// Source data for loading a Wavefront OBJ mesh.
 ///
 /// OBJ meshes can be loaded from either in-memory bytes or a file path.
@@ -127,20 +93,6 @@ pub enum MeshDescriptor<'a> {
         /// Primitives (triangle lists, line lists, etc.) referencing the vertices
         primitives: Vec<MeshPrimitive>,
     },
-}
-
-/// GPU resources for a mesh (vertex and index buffers).
-///
-/// These are created lazily when the mesh is first needed for rendering.
-pub(crate) struct MeshGpuResources {
-    /// GPU vertex buffer
-    pub vertex_buffer: wgpu::Buffer,
-    /// GPU index buffer for triangle primitives
-    pub triangle_index_buffer: wgpu::Buffer,
-    /// GPU index buffer for line primitives
-    pub line_index_buffer: wgpu::Buffer,
-    /// GPU index buffer for point primitives
-    pub point_index_buffer: wgpu::Buffer,
 }
 
 /// A mesh composed of vertices and primitives
@@ -178,12 +130,8 @@ pub struct Mesh {
     vertices: Vec<Vertex>,
     /// CPU-side primitive data (index lists grouped by type)
     primitives: Vec<MeshPrimitive>,
-    /// GPU resources (created lazily)
-    gpu: Option<MeshGpuResources>,
     /// Generation counter - increments on any mutation (for GPU sync tracking)
     generation: u64,
-    /// Generation when GPU resources were last synced
-    synced_generation: u64,
     /// Cached local-space axis-aligned bounding box
     cached_bounding: Cell<Option<Aabb>>,
 }
@@ -195,9 +143,7 @@ impl Mesh {
             id: 0, // Assigned by Scene
             vertices: Vec::new(),
             primitives: Vec::new(),
-            gpu: None,
             generation: 1, // Start at 1 so initial sync triggers upload
-            synced_generation: 0,
             cached_bounding: Cell::new(None),
         }
     }
@@ -212,9 +158,7 @@ impl Mesh {
             id: 0, // Assigned by Scene
             vertices,
             primitives,
-            gpu: None,
             generation: 1,
-            synced_generation: 0,
             cached_bounding: Cell::new(None),
         }
     }
@@ -933,87 +877,6 @@ impl Mesh {
         self.generation
     }
 
-    // ========== GPU resource management ==========
-
-    /// Check if GPU resources need to be created or updated.
-    pub(crate) fn needs_gpu_upload(&self) -> bool {
-        self.gpu.is_none() || self.generation != self.synced_generation
-    }
-
-    /// Create or update GPU resources for this mesh.
-    ///
-    /// This method is called automatically by `Renderer::prepare_scene()` before rendering.
-    /// After this call, `gpu()` can be used to access the GPU resources.
-    pub(crate) fn ensure_gpu_resources(&mut self, device: &wgpu::Device) {
-        if !self.needs_gpu_upload() {
-            return;
-        }
-
-        // Create vertex buffer
-        let vertex_buffer = if self.vertices.is_empty() {
-            device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("Mesh Vertex Buffer"),
-                size: 0,
-                usage: wgpu::BufferUsages::VERTEX,
-                mapped_at_creation: false,
-            })
-        } else {
-            device.create_buffer_init(&BufferInitDescriptor {
-                label: Some("Mesh Vertex Buffer"),
-                contents: bytemuck::cast_slice(&self.vertices),
-                usage: wgpu::BufferUsages::VERTEX,
-            })
-        };
-
-        // Helper to create index buffer for a specific primitive type
-        let create_index_buffer = |prim_type: PrimitiveType, label: &str| -> wgpu::Buffer {
-            let indices: Vec<MeshIndex> = self
-                .primitives
-                .iter()
-                .filter(|p| p.primitive_type == prim_type)
-                .flat_map(|p| p.indices.iter().copied())
-                .collect();
-
-            if indices.is_empty() {
-                device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some(label),
-                    size: 0,
-                    usage: wgpu::BufferUsages::INDEX,
-                    mapped_at_creation: false,
-                })
-            } else {
-                device.create_buffer_init(&BufferInitDescriptor {
-                    label: Some(label),
-                    contents: bytemuck::cast_slice(&indices),
-                    usage: wgpu::BufferUsages::INDEX,
-                })
-            }
-        };
-
-        let triangle_index_buffer = create_index_buffer(PrimitiveType::TriangleList, "Triangle Index Buffer");
-        let line_index_buffer = create_index_buffer(PrimitiveType::LineList, "Line Index Buffer");
-        let point_index_buffer = create_index_buffer(PrimitiveType::PointList, "Point Index Buffer");
-
-        self.gpu = Some(MeshGpuResources {
-            vertex_buffer,
-            triangle_index_buffer,
-            line_index_buffer,
-            point_index_buffer,
-        });
-        self.synced_generation = self.generation;
-    }
-
-    /// Get the GPU resources for this mesh.
-    ///
-    /// # Panics
-    /// Panics if GPU resources haven't been initialized yet.
-    /// Call `ensure_gpu_resources()` first, or use `has_gpu_resources()` to check.
-    pub(crate) fn gpu(&self) -> &MeshGpuResources {
-        self.gpu
-            .as_ref()
-            .expect("Mesh GPU resources not initialized. Call ensure_gpu_resources() first.")
-    }
-
     // ========== Query methods ==========
 
     /// Returns a reference to the mesh's vertex data.
@@ -1170,61 +1033,6 @@ impl Mesh {
                 fully_contained: all_fully_contained,
             })
         }
-    }
-
-    // ========== Drawing ==========
-
-    /// Draws instances of this mesh using pre-computed transforms.
-    ///
-    /// # Panics
-    /// Debug assert if GPU resources are out of date or uninitialized
-    pub(crate) fn draw_instances(
-        &self,
-        device: &wgpu::Device,
-        pass: &mut wgpu::RenderPass,
-        primitive_type: PrimitiveType,
-        instance_transforms: &[super::tree::InstanceTransform],
-    ) {
-        use super::InstanceRaw;
-
-        debug_assert!(!self.needs_gpu_upload(), "Mesh not up to date");
-        let gpu = self.gpu();
-
-        // Convert InstanceTransforms to InstanceRaw for the GPU
-        let instance_raws: Vec<InstanceRaw> = instance_transforms
-            .iter()
-            .map(|inst_transform| InstanceRaw {
-                transform: inst_transform.world_transform.into(),
-                normal_mat: inst_transform.normal_matrix.into(),
-            })
-            .collect();
-
-        // Create instance buffer
-        // TODO: Very wasteful to re-create this every time.
-        let instance_buffer = device.create_buffer_init(&BufferInitDescriptor {
-            label: Some("Instance Buffer"),
-            contents: bytemuck::cast_slice(&instance_raws),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-
-        // Select the appropriate index buffer based on primitive type
-        let (index_buffer, n_indices) = match primitive_type {
-            PrimitiveType::TriangleList => (&gpu.triangle_index_buffer, self.index_count(PrimitiveType::TriangleList)),
-            PrimitiveType::LineList => (&gpu.line_index_buffer, self.index_count(PrimitiveType::LineList)),
-            PrimitiveType::PointList => (&gpu.point_index_buffer, self.index_count(PrimitiveType::PointList)),
-        };
-
-        // Skip drawing if there are no indices for this primitive type
-        if n_indices == 0 {
-            return;
-        }
-
-        // Draw
-        let n_instances = instance_transforms.len() as u32;
-        pass.set_vertex_buffer(0, gpu.vertex_buffer.slice(..));
-        pass.set_vertex_buffer(1, instance_buffer.slice(..));
-        pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-        pass.draw_indexed(0..n_indices, 0, 0..n_instances);
     }
 }
 

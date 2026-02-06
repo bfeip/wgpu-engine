@@ -1,10 +1,8 @@
 use wgpu::util::DeviceExt;
 
-use crate::{
-    scene::Texture,
-    shaders::ShaderGenerator,
-};
+use crate::shaders::ShaderGenerator;
 
+use super::gpu_resources::{create_mask_texture, DEPTH_FORMAT, MASK_FORMAT};
 use super::types::{instance_buffer_layout, vertex_buffer_layout};
 
 /// GPU uniform data for screen-space outline rendering.
@@ -48,7 +46,7 @@ impl OutlineResources {
     ) -> OutlineResources {
         // Create mask texture (R8Unorm for storing selection mask)
         let mask_texture =
-            Texture::create_mask(device, config.width, config.height, "Outline Mask Texture");
+            create_mask_texture(device, config.width, config.height, "Outline Mask Texture");
         let mask_view = mask_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         // Create sampler for mask texture
@@ -157,7 +155,7 @@ impl OutlineResources {
                 module: &mask_shader,
                 entry_point: Some("fs_mask"),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: Texture::MASK_FORMAT,
+                    format: MASK_FORMAT,
                     blend: None,
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -173,7 +171,7 @@ impl OutlineResources {
                 conservative: false,
             },
             depth_stencil: Some(wgpu::DepthStencilState {
-                format: Texture::DEPTH_FORMAT,
+                format: DEPTH_FORMAT,
                 depth_write_enabled: false,
                 depth_compare: wgpu::CompareFunction::LessEqual,
                 stencil: wgpu::StencilState::default(),

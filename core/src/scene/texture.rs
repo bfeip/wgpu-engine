@@ -29,15 +29,6 @@ pub enum TextureSource {
     },
 }
 
-/// GPU resources for a texture.
-///
-/// These are created lazily when the texture is first needed for rendering.
-pub(crate) struct GpuTexture {
-    pub _texture: wgpu::Texture,
-    pub view: wgpu::TextureView,
-    pub sampler: wgpu::Sampler,
-}
-
 /// A texture that can exist without GPU resources.
 ///
 /// Textures store their source data (embedded image or file path) and lazily
@@ -65,21 +56,11 @@ pub struct Texture {
     source: TextureSource,
     /// Cached dimensions (set after first image load)
     dimensions: Option<(u32, u32)>,
-    /// GPU resources (created lazily)
-    gpu: Option<GpuTexture>,
     /// Generation counter - increments on any mutation (for GPU sync tracking)
     generation: u64,
-    /// Generation when GPU resources were last synced
-    synced_generation: u64,
 }
 
 impl Texture {
-    /// Depth-stencil texture format used for depth and stencil buffers.
-    pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
-
-    /// Single-channel format used for mask textures (selection masks, stencil masks, etc.).
-    pub const MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
-
     /// Create a texture from an embedded image.
     ///
     /// The image data is stored in memory. GPU resources are created lazily
@@ -93,9 +74,7 @@ impl Texture {
             id: 0, // Assigned by Scene
             source: TextureSource::Embedded { image, original_bytes: None },
             dimensions,
-            gpu: None,
             generation: 1,
-            synced_generation: 0,
         }
     }
 
@@ -111,9 +90,7 @@ impl Texture {
             id: 0, // Assigned by Scene
             source: TextureSource::Path(path.into()),
             dimensions: None,
-            gpu: None,
             generation: 1,
-            synced_generation: 0,
         }
     }
 
@@ -139,9 +116,7 @@ impl Texture {
                 original_bytes: Some((original_bytes, format)),
             },
             dimensions,
-            gpu: None,
             generation: 1,
-            synced_generation: 0,
         }
     }
 
@@ -202,103 +177,12 @@ impl Texture {
         }
     }
 
-    /// Check if GPU resources need to be created or updated.
-    pub(crate) fn needs_gpu_upload(&self) -> bool {
-        self.gpu.is_none() || self.generation != self.synced_generation
-    }
-
     /// Returns the current generation counter.
     ///
     /// This value increments on any mutation to the texture data.
     /// Used by renderers to track when GPU resources need updating.
     pub fn generation(&self) -> u64 {
         self.generation
-    }
-
-    /// Create or update GPU resources for this texture.
-    ///
-    /// This method is called automatically by `Renderer::prepare_scene()` before rendering.
-    /// After this call, `gpu()` can be used to access the GPU resources.
-    ///
-    /// # Arguments
-    /// * `device` - The wgpu device for creating GPU resources
-    /// * `queue` - The wgpu queue for uploading texture data
-    ///
-    /// # Errors
-    /// Returns an error if the texture image cannot be loaded.
-    pub(crate) fn ensure_gpu_resources(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-    ) -> Result<()> {
-        if !self.needs_gpu_upload() {
-            return Ok(());
-        }
-
-        // Get or load the image
-        let img = self.get_image()?;
-        let rgba = img.to_rgba8();
-        let dimensions = img.dimensions();
-
-        let size = wgpu::Extent3d {
-            width: dimensions.0,
-            height: dimensions.1,
-            depth_or_array_layers: 1,
-        };
-
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Texture"),
-            size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                aspect: wgpu::TextureAspect::All,
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-            },
-            &rgba,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(4 * dimensions.0),
-                rows_per_image: Some(dimensions.1),
-            },
-            size,
-        );
-
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
-
-        self.gpu = Some(GpuTexture { _texture: texture, view, sampler });
-        self.synced_generation = self.generation;
-
-        Ok(())
-    }
-
-    /// Get the GPU resources for this texture.
-    ///
-    /// # Panics
-    /// Panics if GPU resources haven't been initialized yet.
-    /// Call `ensure_gpu_resources()` first, or use `has_gpu_resources()` to check.
-    pub(crate) fn gpu(&self) -> &GpuTexture {
-        self.gpu
-            .as_ref()
-            .expect("Texture GPU resources not initialized. Call ensure_gpu_resources() first.")
     }
 
     /// Release cached image data to free memory.
@@ -348,140 +232,5 @@ impl Texture {
             }
             _ => None,
         }
-    }
-
-    /// Create a 1x1 solid color texture for use as a default texture.
-    ///
-    /// This is used for materials when a specific texture is not provided.
-    /// The texture is created immediately with GPU resources.
-    ///
-    /// # Arguments
-    /// * `device` - The wgpu device for creating GPU resources
-    /// * `queue` - The wgpu queue for uploading texture data
-    /// * `color` - RGBA color values (0-255)
-    /// * `label` - Debug label for the texture
-    pub(crate) fn create_solid_color_texture(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        color: [u8; 4],
-        label: &str,
-    ) -> GpuTexture {
-        let size = wgpu::Extent3d {
-            width: 1,
-            height: 1,
-            depth_or_array_layers: 1,
-        };
-
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some(label),
-            size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                aspect: wgpu::TextureAspect::All,
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-            },
-            &color,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(4),
-                rows_per_image: Some(1),
-            },
-            size,
-        );
-
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
-
-        GpuTexture { _texture: texture, view, sampler }
-    }
-
-    /// Create a depth texture for use as a depth buffer.
-    ///
-    /// Unlike regular textures, depth textures are always created immediately
-    /// with GPU resources since they are internal rendering resources.
-    pub(crate) fn create_depth_texture(
-        device: &wgpu::Device,
-        config: &wgpu::SurfaceConfiguration,
-        label: &str,
-    ) -> GpuTexture {
-        let size = wgpu::Extent3d {
-            width: config.width.max(1),
-            height: config.height.max(1),
-            depth_or_array_layers: 1,
-        };
-        let desc = wgpu::TextureDescriptor {
-            label: Some(label),
-            size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: Self::DEPTH_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        };
-        let texture = device.create_texture(&desc);
-
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            compare: Some(wgpu::CompareFunction::LessEqual),
-            lod_min_clamp: 0.0,
-            lod_max_clamp: 100.0,
-            ..Default::default()
-        });
-
-        GpuTexture { _texture: texture, view, sampler }
-    }
-
-    /// Create a single-channel mask texture at the given dimensions.
-    ///
-    /// Mask textures use `R8Unorm` format and are suitable for selection masks,
-    /// stencil operations, or any render-to-texture mask pass. The returned
-    /// texture has `RENDER_ATTACHMENT | TEXTURE_BINDING` usage so it can be
-    /// rendered into and then sampled in a subsequent pass.
-    pub(crate) fn create_mask(
-        device: &wgpu::Device,
-        width: u32,
-        height: u32,
-        label: &str,
-    ) -> wgpu::Texture {
-        device.create_texture(&wgpu::TextureDescriptor {
-            label: Some(label),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: Self::MASK_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        })
     }
 }

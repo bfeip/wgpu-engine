@@ -2,10 +2,9 @@ use anyhow::Result;
 use bytemuck::bytes_of;
 use wgpu::util::DeviceExt;
 
-use crate::scene::{
-    GpuTexture, MaterialGpuResources, PrimitiveType, Scene,
-};
+use crate::scene::{PrimitiveType, Scene};
 
+use super::gpu_resources::MaterialGpuResources;
 use super::Renderer;
 
 impl<'a> Renderer<'a> {
@@ -23,9 +22,7 @@ impl<'a> Renderer<'a> {
 
         // 1. Prepare all textures first (materials depend on them)
         for texture in scene.textures.values_mut() {
-            if texture.needs_gpu_upload() {
-                texture.ensure_gpu_resources(&self.device, &self.queue)?;
-            }
+            self.gpu_resources.ensure_texture(texture, &self.device, &self.queue)?;
         }
 
         // 2. Prepare all materials
@@ -41,7 +38,10 @@ impl<'a> Renderer<'a> {
                 let needs_update = scene
                     .materials
                     .get(&mat_id)
-                    .map(|m| m.needs_gpu_resources(prim_type) && m.has_primitive_data(prim_type))
+                    .map(|m| {
+                        m.has_primitive_data(prim_type)
+                            && self.gpu_resources.material_needs_upload(mat_id, prim_type, m.generation(prim_type))
+                    })
                     .unwrap_or(false);
 
                 if needs_update {
@@ -51,10 +51,8 @@ impl<'a> Renderer<'a> {
         }
 
         // 3. Prepare all meshes
-        for mesh in scene.meshes.values_mut() {
-            if mesh.needs_gpu_upload() {
-                mesh.ensure_gpu_resources(&self.device);
-            }
+        for mesh in scene.meshes.values() {
+            self.gpu_resources.ensure_mesh(mesh, &self.device);
         }
 
         // 4. Process environment maps for IBL
@@ -70,20 +68,17 @@ impl<'a> Renderer<'a> {
         Ok(())
     }
 
-    /// Resolve a texture from the scene, falling back to a default texture if not found.
+    /// Resolve a texture from the GPU resource manager, falling back to a default texture if not found.
     fn resolve_texture_or_default<'b>(
         &'b self,
-        scene: &'b Scene,
         texture_id: Option<u32>,
-        default: &'b GpuTexture,
+        default: &'b super::gpu_resources::GpuTexture,
         name: &str,
     ) -> Result<(&'b wgpu::TextureView, &'b wgpu::Sampler)> {
         if let Some(tex_id) = texture_id {
-            let tex = scene
-                .textures
-                .get(&tex_id)
-                .ok_or_else(|| anyhow::anyhow!("{} texture {} not found", name, tex_id))?;
-            let gpu = tex.gpu();
+            let gpu = self.gpu_resources
+                .get_texture(tex_id)
+                .ok_or_else(|| anyhow::anyhow!("{} texture {} not found in GPU resources", name, tex_id))?;
             Ok((&gpu.view, &gpu.sampler))
         } else {
             Ok((&default.view, &default.sampler))
@@ -121,7 +116,7 @@ impl<'a> Renderer<'a> {
 
     /// Prepare GPU resources for a specific material primitive type.
     fn prepare_material_primitive(
-        &self,
+        &mut self,
         scene: &mut Scene,
         material_id: u32,
         primitive_type: PrimitiveType,
@@ -134,7 +129,7 @@ impl<'a> Renderer<'a> {
     }
 
     /// Prepare GPU resources for triangle (face) rendering.
-    fn prepare_triangle_material(&self, scene: &mut Scene, material_id: u32) -> Result<()> {
+    fn prepare_triangle_material(&mut self, scene: &mut Scene, material_id: u32) -> Result<()> {
         let material = scene.materials.get(&material_id).unwrap();
         let use_pbr =
             material.normal_texture().is_some() || material.metallic_roughness_texture().is_some();
@@ -149,7 +144,7 @@ impl<'a> Renderer<'a> {
     }
 
     /// Prepare GPU resources for PBR material (normal/metallic-roughness textures).
-    fn prepare_pbr_material(&self, scene: &mut Scene, material_id: u32) -> Result<()> {
+    fn prepare_pbr_material(&mut self, scene: &mut Scene, material_id: u32) -> Result<()> {
         let material = scene.materials.get(&material_id).unwrap();
 
         let pbr_uniform = material.build_pbr_uniform();
@@ -162,19 +157,16 @@ impl<'a> Renderer<'a> {
             });
 
         let (base_color_view, base_color_sampler) = self.resolve_texture_or_default(
-            scene,
             material.base_color_texture(),
             &self.default_textures.white,
             "Base color",
         )?;
         let (normal_view, normal_sampler) = self.resolve_texture_or_default(
-            scene,
             material.normal_texture(),
             &self.default_textures.normal,
             "Normal",
         )?;
         let (mr_view, mr_sampler) = self.resolve_texture_or_default(
-            scene,
             material.metallic_roughness_texture(),
             &self.default_textures.white,
             "Metallic-roughness",
@@ -215,31 +207,31 @@ impl<'a> Renderer<'a> {
             ],
         });
 
-        let material = scene.materials.get_mut(&material_id).unwrap();
-        material.set_gpu(
+        let generation = scene.materials.get(&material_id).unwrap().generation(PrimitiveType::TriangleList);
+        self.gpu_resources.set_material(
+            material_id,
             PrimitiveType::TriangleList,
             MaterialGpuResources {
                 bind_group,
                 _buffer: Some(buffer),
             },
+            generation,
         );
-        material.mark_clean(PrimitiveType::TriangleList);
         Ok(())
     }
 
     /// Prepare GPU resources for texture-only material (base color texture, no PBR).
-    fn prepare_textured_material(&self, scene: &mut Scene, material_id: u32) -> Result<()> {
+    fn prepare_textured_material(&mut self, scene: &mut Scene, material_id: u32) -> Result<()> {
         let material = scene.materials.get(&material_id).unwrap();
         let texture_id = material.base_color_texture().unwrap();
 
-        let texture = scene.textures.get(&texture_id).ok_or_else(|| {
+        let gpu_tex = self.gpu_resources.get_texture(texture_id).ok_or_else(|| {
             anyhow::anyhow!(
-                "Texture {} not found for material {}",
+                "Texture {} GPU resources not found for material {}",
                 texture_id,
                 material_id
             )
         })?;
-        let gpu_tex = texture.gpu();
 
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Material Base Color Texture Bind Group"),
@@ -256,54 +248,52 @@ impl<'a> Renderer<'a> {
             ],
         });
 
-        let material = scene.materials.get_mut(&material_id).unwrap();
-        material.set_gpu(
+        let generation = scene.materials.get(&material_id).unwrap().generation(PrimitiveType::TriangleList);
+        self.gpu_resources.set_material(
+            material_id,
             PrimitiveType::TriangleList,
             MaterialGpuResources {
                 bind_group,
                 _buffer: None,
             },
+            generation,
         );
-        material.mark_clean(PrimitiveType::TriangleList);
         Ok(())
     }
 
     /// Prepare GPU resources for color-only material (base_color_factor, no textures).
-    fn prepare_colored_material(&self, scene: &mut Scene, material_id: u32) -> Result<()> {
+    fn prepare_colored_material(&mut self, scene: &mut Scene, material_id: u32) -> Result<()> {
         let material = scene.materials.get(&material_id).unwrap();
         let gpu_resources =
             self.create_color_material_resources(&material.base_color_factor(), "Base Color Factor");
+        let generation = material.generation(PrimitiveType::TriangleList);
 
-        let material = scene.materials.get_mut(&material_id).unwrap();
-        material.set_gpu(PrimitiveType::TriangleList, gpu_resources);
-        material.mark_clean(PrimitiveType::TriangleList);
+        self.gpu_resources.set_material(material_id, PrimitiveType::TriangleList, gpu_resources, generation);
         Ok(())
     }
 
     /// Prepare GPU resources for line rendering.
-    fn prepare_line_material(&self, scene: &mut Scene, material_id: u32) -> Result<()> {
+    fn prepare_line_material(&mut self, scene: &mut Scene, material_id: u32) -> Result<()> {
         let material = scene.materials.get(&material_id).unwrap();
 
         if let Some(color) = material.line_color() {
             let gpu_resources = self.create_color_material_resources(&color, "Line Color");
+            let generation = material.generation(PrimitiveType::LineList);
 
-            let material = scene.materials.get_mut(&material_id).unwrap();
-            material.set_gpu(PrimitiveType::LineList, gpu_resources);
-            material.mark_clean(PrimitiveType::LineList);
+            self.gpu_resources.set_material(material_id, PrimitiveType::LineList, gpu_resources, generation);
         }
         Ok(())
     }
 
     /// Prepare GPU resources for point rendering.
-    fn prepare_point_material(&self, scene: &mut Scene, material_id: u32) -> Result<()> {
+    fn prepare_point_material(&mut self, scene: &mut Scene, material_id: u32) -> Result<()> {
         let material = scene.materials.get(&material_id).unwrap();
 
         if let Some(color) = material.point_color() {
             let gpu_resources = self.create_color_material_resources(&color, "Point Color");
+            let generation = material.generation(PrimitiveType::PointList);
 
-            let material = scene.materials.get_mut(&material_id).unwrap();
-            material.set_gpu(PrimitiveType::PointList, gpu_resources);
-            material.mark_clean(PrimitiveType::PointList);
+            self.gpu_resources.set_material(material_id, PrimitiveType::PointList, gpu_resources, generation);
         }
         Ok(())
     }

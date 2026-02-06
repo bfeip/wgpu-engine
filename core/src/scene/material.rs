@@ -77,12 +77,6 @@ pub const DEFAULT_MATERIAL_ID: MaterialId = 0;
 /// (ID 0 is reserved for the default material).
 pub type MaterialId = u32;
 
-/// GPU resources for a single primitive type (face, line, or point)
-pub(crate) struct MaterialGpuResources {
-    pub bind_group: wgpu::BindGroup,
-    pub _buffer: Option<wgpu::Buffer>, // For color materials
-}
-
 /// Material that can be rendered as faces, lines, or points.
 ///
 /// Supports physically-based rendering for faces with base color, normal maps,
@@ -137,18 +131,10 @@ pub struct Material {
     /// Rendering flags
     flags: MaterialFlags,
 
-    // GPU resources per primitive type (created lazily)
-    pub(crate) face_gpu: Option<MaterialGpuResources>,
-    pub(crate) line_gpu: Option<MaterialGpuResources>,
-    pub(crate) point_gpu: Option<MaterialGpuResources>,
-
     // Generation counters per primitive type (for GPU sync tracking)
     face_generation: u64,
     line_generation: u64,
     point_generation: u64,
-    face_synced_generation: u64,
-    line_synced_generation: u64,
-    point_synced_generation: u64,
 }
 
 impl Material {
@@ -168,15 +154,9 @@ impl Material {
             line_color: None,
             point_color: None,
             flags: MaterialFlags::NONE,
-            face_gpu: None,
-            line_gpu: None,
-            point_gpu: None,
             face_generation: 1,
             line_generation: 1,
             point_generation: 1,
-            face_synced_generation: 0,
-            line_synced_generation: 0,
-            point_synced_generation: 0,
         }
     }
 
@@ -425,21 +405,6 @@ impl Material {
         }
     }
 
-    /// Check if GPU resources need to be created or updated for a primitive type.
-    pub(crate) fn needs_gpu_resources(&self, primitive_type: PrimitiveType) -> bool {
-        match primitive_type {
-            PrimitiveType::TriangleList => {
-                self.face_gpu.is_none() || self.face_generation != self.face_synced_generation
-            }
-            PrimitiveType::LineList => {
-                self.line_gpu.is_none() || self.line_generation != self.line_synced_generation
-            }
-            PrimitiveType::PointList => {
-                self.point_gpu.is_none() || self.point_generation != self.point_synced_generation
-            }
-        }
-    }
-
     /// Check if the material has data for a given primitive type.
     ///
     /// For faces, PBR materials always have data (at minimum the base_color_factor).
@@ -449,46 +414,6 @@ impl Material {
             PrimitiveType::TriangleList => true,
             PrimitiveType::LineList => self.line_color.is_some(),
             PrimitiveType::PointList => self.point_color.is_some(),
-        }
-    }
-
-    /// Get the GPU resources for a primitive type.
-    ///
-    /// Returns `None` if GPU resources haven't been created yet.
-    pub(crate) fn get_gpu(&self, primitive_type: PrimitiveType) -> Option<&MaterialGpuResources> {
-        match primitive_type {
-            PrimitiveType::TriangleList => self.face_gpu.as_ref(),
-            PrimitiveType::LineList => self.line_gpu.as_ref(),
-            PrimitiveType::PointList => self.point_gpu.as_ref(),
-        }
-    }
-
-    /// Bind this material's resources for the given primitive type.
-    ///
-    /// # Panics
-    /// Panics if GPU resources haven't been initialized for this primitive type.
-    pub(crate) fn bind(&self, pass: &mut wgpu::RenderPass, primitive_type: PrimitiveType) {
-        debug_assert!(!self.needs_gpu_resources(primitive_type), "Material resources out of date");
-        let gpu = self.get_gpu(primitive_type)
-            .expect("Material GPU resources not initialized");
-        pass.set_bind_group(2, &gpu.bind_group, &[]);
-    }
-
-    /// Mark generation as synced for a primitive type.
-    pub(crate) fn mark_clean(&mut self, primitive_type: PrimitiveType) {
-        match primitive_type {
-            PrimitiveType::TriangleList => self.face_synced_generation = self.face_generation,
-            PrimitiveType::LineList => self.line_synced_generation = self.line_generation,
-            PrimitiveType::PointList => self.point_synced_generation = self.point_generation,
-        }
-    }
-
-    /// Set GPU resources for a primitive type.
-    pub(crate) fn set_gpu(&mut self, primitive_type: PrimitiveType, gpu: MaterialGpuResources) {
-        match primitive_type {
-            PrimitiveType::TriangleList => self.face_gpu = Some(gpu),
-            PrimitiveType::LineList => self.line_gpu = Some(gpu),
-            PrimitiveType::PointList => self.point_gpu = Some(gpu),
         }
     }
 }

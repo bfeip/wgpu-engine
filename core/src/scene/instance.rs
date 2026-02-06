@@ -1,5 +1,3 @@
-use std::mem::size_of;
-
 use super::material::MaterialId;
 use super::mesh::MeshId;
 
@@ -32,57 +30,9 @@ pub(crate) struct InstanceRaw {
     pub normal_mat: [[f32; 3]; 3]
 }
 
-impl InstanceRaw {
-    pub fn desc() -> wgpu::VertexBufferLayout<'static> {
-        use crate::renderer::VertexShaderLocations as VSL;
-
-        wgpu::VertexBufferLayout {
-            array_stride: size_of::<Self>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Instance,
-            attributes: &[
-                wgpu::VertexAttribute {
-                    offset: 0,
-                    shader_location: VSL::InstanceTransformRow0 as u32,
-                    format: wgpu::VertexFormat::Float32x4
-                },
-                wgpu::VertexAttribute {
-                    offset: size_of::<[f32; 4*1]>() as wgpu::BufferAddress,
-                    shader_location: VSL::InstanceTransformRow1 as u32,
-                    format: wgpu::VertexFormat::Float32x4
-                },
-                wgpu::VertexAttribute {
-                    offset: size_of::<[f32; 4*2]>() as wgpu::BufferAddress,
-                    shader_location: VSL::InstanceTransformRow2 as u32,
-                    format: wgpu::VertexFormat::Float32x4
-                },
-                wgpu::VertexAttribute {
-                    offset: size_of::<[f32; 4*3]>() as wgpu::BufferAddress,
-                    shader_location: VSL::InstanceTransformRow3 as u32,
-                    format: wgpu::VertexFormat::Float32x4
-                },
-
-                wgpu::VertexAttribute {
-                    offset: size_of::<[f32; 4*4]>() as wgpu::BufferAddress,
-                    shader_location: VSL::InstanceNormalRow0 as u32,
-                    format: wgpu::VertexFormat::Float32x3
-                },
-                wgpu::VertexAttribute {
-                    offset: size_of::<[f32; (4*4) + (3*1)]>() as wgpu::BufferAddress,
-                    shader_location: VSL::InstanceNormalRow1 as u32,
-                    format: wgpu::VertexFormat::Float32x3
-                },
-                wgpu::VertexAttribute {
-                    offset: size_of::<[f32; (4*4) + (3*2)]>() as wgpu::BufferAddress,
-                    shader_location: VSL::InstanceNormalRow2 as u32,
-                    format: wgpu::VertexFormat::Float32x3
-                },
-            ]
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use std::mem::size_of;
     use super::*;
     use cgmath::{Matrix4, Matrix3, Vector3, SquareMatrix};
     use crate::common;
@@ -288,34 +238,5 @@ mod tests {
 
         assert_eq!(offset_of!(InstanceRaw, transform), 0);
         assert_eq!(offset_of!(InstanceRaw, normal_mat), 64);
-    }
-
-    #[test]
-    fn test_instance_raw_vertex_buffer_layout() {
-        let layout = InstanceRaw::desc();
-
-        // Verify basic layout properties
-        assert_eq!(layout.array_stride, 100);
-        assert_eq!(layout.step_mode, wgpu::VertexStepMode::Instance);
-        assert_eq!(layout.attributes.len(), 7); // 4 for transform + 3 for normal
-
-        // Verify transform attributes
-        assert_eq!(layout.attributes[0].offset, 0);
-        assert_eq!(layout.attributes[1].offset, 16);
-        assert_eq!(layout.attributes[2].offset, 32);
-        assert_eq!(layout.attributes[3].offset, 48);
-
-        // Verify normal matrix attributes
-        assert_eq!(layout.attributes[4].offset, 64);
-        assert_eq!(layout.attributes[5].offset, 76);
-        assert_eq!(layout.attributes[6].offset, 88);
-
-        // Verify formats
-        for i in 0..4 {
-            assert_eq!(layout.attributes[i].format, wgpu::VertexFormat::Float32x4);
-        }
-        for i in 4..7 {
-            assert_eq!(layout.attributes[i].format, wgpu::VertexFormat::Float32x3);
-        }
     }
 }

@@ -4,8 +4,6 @@ mod pipeline;
 mod prepare;
 mod types;
 
-pub(crate) use types::VertexShaderLocations;
-
 use std::collections::HashMap;
 
 use anyhow::Result;
@@ -15,13 +13,13 @@ use crate::{
     camera::Camera,
     ibl::IblResources,
     scene::{
-        partition_batches, LightsArrayUniform, PrimitiveType, Scene, SceneProperties, Texture,
+        partition_batches, LightsArrayUniform, PrimitiveType, Scene, SceneProperties,
     },
     selection::SelectionManager,
     shaders::ShaderGenerator,
 };
 
-use gpu_resources::GpuResourceManager;
+use gpu_resources::{create_depth_texture, create_mask_texture, GpuResourceManager};
 use outline::{OutlineResources, OutlineUniform};
 use types::{
     clamp_surface_size, CameraResources, DefaultTextures, LightResources,
@@ -201,10 +199,10 @@ impl<'a> Renderer<'a> {
             self.camera_resources.camera.aspect = width as f32 / height as f32;
 
             self.default_textures.depth =
-                Texture::create_depth_texture(&self.device, &self.config, "depth_texture");
+                create_depth_texture(&self.device, &self.config, "depth_texture");
 
             // Recreate mask texture at new size
-            self.outline_resources.mask_texture = Texture::create_mask(
+            self.outline_resources.mask_texture = create_mask_texture(
                 &self.device,
                 clamped_width,
                 clamped_height,
@@ -360,7 +358,10 @@ impl<'a> Renderer<'a> {
                 let material_props = material.get_properties(batch.primitive_type);
 
                 // Bind material for this batch
-                material.bind(&mut render_pass, batch.primitive_type);
+                let material_gpu = self.gpu_resources
+                    .get_material(batch.material_id, batch.primitive_type)
+                    .expect("Material GPU resources not initialized");
+                render_pass.set_bind_group(2, &material_gpu.bind_group, &[]);
 
                 // Only change pipeline if material properties, scene properties, or primitive type changes
                 let pipeline_key = PipelineCacheKey {
@@ -375,11 +376,15 @@ impl<'a> Renderer<'a> {
                 }
 
                 // Draw all instances in this batch
-                mesh.draw_instances(
+                let gpu_mesh = self.gpu_resources.get_mesh(batch.mesh_id)
+                    .expect("Mesh GPU resources not initialized");
+                gpu_resources::draw_mesh_instances(
                     &self.device,
                     &mut render_pass,
+                    gpu_mesh,
                     batch.primitive_type,
                     &batch.instances,
+                    mesh.index_count(batch.primitive_type),
                 );
             }
         }
@@ -421,11 +426,15 @@ impl<'a> Renderer<'a> {
                         continue; // Only outline triangle meshes
                     }
                     let mesh = scene.meshes.get(&batch.mesh_id).unwrap();
-                    mesh.draw_instances(
+                    let gpu_mesh = self.gpu_resources.get_mesh(batch.mesh_id)
+                        .expect("Mesh GPU resources not initialized");
+                    gpu_resources::draw_mesh_instances(
                         &self.device,
                         &mut render_pass,
+                        gpu_mesh,
                         batch.primitive_type,
                         &batch.instances,
+                        mesh.index_count(batch.primitive_type),
                     );
                 }
             }
