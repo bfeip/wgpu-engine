@@ -51,7 +51,7 @@ pub enum TextureSource {
 /// ```
 pub struct Texture {
     /// Unique identifier (assigned by Scene)
-    pub(crate) id: TextureId,
+    pub id: TextureId,
     /// Source data for the texture
     source: TextureSource,
     /// Cached dimensions (set after first image load)

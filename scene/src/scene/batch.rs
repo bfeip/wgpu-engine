@@ -6,7 +6,7 @@ use std::collections::HashMap;
 ///
 /// Batching allows us to minimize draw calls and state changes by grouping
 /// instances that can be rendered together.
-pub(crate) struct DrawBatch {
+pub struct DrawBatch {
     pub mesh_id: MeshId,
     pub material_id: MaterialId,
     pub primitive_type: PrimitiveType,
@@ -55,7 +55,7 @@ impl DrawBatch {
 ///     selection.is_node_selected(inst.node_id)
 /// });
 /// ```
-pub(crate) fn partition_batches<F>(batches: &[DrawBatch], predicate: F) -> (Vec<DrawBatch>, Vec<DrawBatch>)
+pub fn partition_batches<F>(batches: &[DrawBatch], predicate: F) -> (Vec<DrawBatch>, Vec<DrawBatch>)
 where
     F: Fn(&InstanceTransform) -> bool,
 {

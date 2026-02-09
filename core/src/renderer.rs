@@ -10,7 +10,7 @@ use anyhow::Result;
 use bytemuck::bytes_of;
 
 use crate::{
-    camera::Camera,
+    camera::{Camera, CameraExt},
     ibl::IblResources,
     scene::{
         partition_batches, LightsArrayUniform, PrimitiveType, Scene, SceneProperties,

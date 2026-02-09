@@ -141,7 +141,7 @@ impl Light {
     }
 
     /// Converts the light to a GPU-compatible uniform structure.
-    pub(crate) fn to_uniform(&self) -> LightUniform {
+    pub fn to_uniform(&self) -> LightUniform {
         match self {
             Light::Point {
                 position,
@@ -222,7 +222,7 @@ impl Light {
 /// | 60     | 4    | _padding2      | Alignment padding                  |
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-pub(crate) struct LightUniform {
+pub struct LightUniform {
     light_type: u32,
     range: f32,
     inner_cone_cos: f32,
@@ -246,7 +246,7 @@ pub(crate) struct LightUniform {
 /// | 16     | 64 * 8   | lights      |
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-pub(crate) struct LightsArrayUniform {
+pub struct LightsArrayUniform {
     pub light_count: u32,
     _padding: [u32; 3],
     pub lights: [LightUniform; MAX_LIGHTS],

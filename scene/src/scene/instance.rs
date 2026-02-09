@@ -25,7 +25,7 @@ impl Instance {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-pub(crate) struct InstanceRaw {
+pub struct InstanceRaw {
     pub transform: [[f32; 4]; 4],
     pub normal_mat: [[f32; 3]; 3]
 }

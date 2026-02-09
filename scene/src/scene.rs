@@ -1,5 +1,6 @@
 pub mod annotation;
 mod batch;
+pub mod environment;
 pub mod format;
 mod instance;
 mod light;
@@ -15,9 +16,9 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use annotation::{Annotation, AnnotationId, AnnotationManager};
-use crate::ibl::{EnvironmentMap, EnvironmentMapId};
 
 // Public API exports
+pub use environment::{EnvironmentMap, EnvironmentMapId, EnvironmentSource};
 pub use instance::{Instance, InstanceId};
 pub use light::{Light, LightType, MAX_LIGHTS};
 pub use material::{Material, MaterialId, DEFAULT_MATERIAL_ID};
@@ -26,14 +27,12 @@ pub use node::{EffectiveVisibility, Node, NodeId, Visibility};
 pub use texture::{Texture, TextureId};
 pub use tree::TreeVisitor;
 
-// Crate-internal exports
-pub(crate) use instance::InstanceRaw;
-pub(crate) use light::LightsArrayUniform;
-pub(crate) use material::MaterialProperties;
-pub(crate) use batch::{DrawBatch, partition_batches};
-pub(crate) use tree::InstanceTransform;
-
-use tree::collect_instance_transforms;
+// Items used by core crate for rendering
+pub use instance::InstanceRaw;
+pub use light::{LightUniform, LightsArrayUniform};
+pub use material::{MaterialProperties, PbrUniform};
+pub use batch::{DrawBatch, partition_batches};
+pub use tree::{InstanceTransform, collect_instance_transforms};
 
 use crate::common::{Aabb, RgbaColor};
 
@@ -42,7 +41,7 @@ use crate::common::{Aabb, RgbaColor};
 /// Unlike MaterialProperties which describe individual materials,
 /// SceneProperties describes scene-wide rendering features.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
-pub(crate) struct SceneProperties {
+pub struct SceneProperties {
     /// Whether image-based lighting is active (environment map present)
     pub has_ibl: bool,
 }
@@ -348,7 +347,7 @@ impl Scene {
     /// 1. By material ID (to minimize bind group changes)
     /// 2. By primitive type (to minimize pipeline changes)
     /// 3. By mesh ID (for GPU cache locality)
-    pub(crate) fn collect_draw_batches(&self) -> Vec<DrawBatch> {
+    pub fn collect_draw_batches(&self) -> Vec<DrawBatch> {
         use std::collections::HashMap;
 
         let instance_transforms = collect_instance_transforms(self);

@@ -51,7 +51,7 @@ use crate::common::{
     RgbaColor, array_to_point3, array_to_rgba, array_to_vec3,
     point3_to_array, rgba_to_array, vec3_to_array
 };
-use crate::ibl::EnvironmentMapId;
+use super::environment::EnvironmentMapId;
 
 // ============================================================================
 // Constants

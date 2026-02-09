@@ -4057,7 +4057,27 @@ dependencies = [
  "web-time",
  "wesl",
  "wgpu",
+ "wgpu-engine-scene",
  "winit",
+ "zstd",
+]
+
+[[package]]
+name = "wgpu-engine-scene"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bincode",
+ "bitflags 2.10.0",
+ "bytemuck",
+ "cgmath",
+ "gltf",
+ "image 0.24.9",
+ "log",
+ "obj-rs",
+ "rayon",
+ "serde",
+ "thiserror 2.0.17",
  "zstd",
 ]
 

@@ -61,7 +61,7 @@ impl Ray {
         screen_y: f32,
         screen_width: u32,
         screen_height: u32,
-        camera: &crate::camera::Camera,
+        camera: &crate::Camera,
     ) -> Self {
         // Unproject points at near and far planes
         let world_near = camera.unproject_point_screen(

@@ -1,10 +1,8 @@
 use std::path::Path;
-use crate::{
-    camera::Camera,
-    scene::{
-        Material, Texture, Mesh, MeshId, MeshPrimitive, PrimitiveType, Scene, Vertex,
-        MaterialId, DEFAULT_MATERIAL_ID,
-    },
+use crate::camera::Camera;
+use crate::scene::{
+    Material, Texture, Mesh, MeshId, MeshPrimitive, PrimitiveType, Scene, Vertex,
+    MaterialId, DEFAULT_MATERIAL_ID,
 };
 
 /// A loaded primitive from a glTF mesh, containing the scene mesh ID and its material ID.

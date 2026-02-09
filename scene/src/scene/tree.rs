@@ -21,7 +21,7 @@ pub trait TreeVisitor {
 
 /// Represents an instance with its computed world transform.
 #[derive(Clone)]
-pub(crate) struct InstanceTransform {
+pub struct InstanceTransform {
     pub node_id: NodeId,
     pub instance_id: InstanceId,
     pub world_transform: Matrix4<f32>,
@@ -155,7 +155,7 @@ impl TreeVisitor for InstanceTransformCollector {
 }
 
 /// Walks the entire scene tree and collects all instances with their world transforms.
-pub(super) fn collect_instance_transforms(scene: &Scene) -> Vec<InstanceTransform> {
+pub fn collect_instance_transforms(scene: &Scene) -> Vec<InstanceTransform> {
     let mut visitor = InstanceTransformCollector::new();
 
     // Process each root node
