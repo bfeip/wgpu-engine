@@ -2,8 +2,7 @@ use wgpu::util::DeviceExt;
 
 use crate::shaders::ShaderGenerator;
 
-use super::gpu_resources::{create_mask_texture, DEPTH_FORMAT, MASK_FORMAT};
-use super::types::{instance_buffer_layout, vertex_buffer_layout};
+use super::gpu_resources::{create_mask_texture, instance_buffer_layout, vertex_buffer_layout, DEPTH_FORMAT, MASK_FORMAT};
 
 /// GPU uniform data for screen-space outline rendering.
 /// Must match the layout in outline_screenspace.wesl.

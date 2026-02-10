@@ -3,7 +3,6 @@ mod gpu_resources;
 mod outline;
 mod pipeline;
 mod prepare;
-mod types;
 
 use std::collections::HashMap;
 
@@ -21,14 +20,11 @@ use crate::{
 use batching::{collect_draw_batches, partition_batches};
 
 use gpu_resources::{
-    create_depth_texture, create_mask_texture, CameraUniform, GpuResourceManager,
-    LightsArrayUniform,
-};
-use outline::{OutlineResources, OutlineUniform};
-use types::{
-    clamp_surface_size, CameraResources, DefaultTextures, LightResources,
+    clamp_surface_size, create_depth_texture, create_mask_texture, CameraResources, CameraUniform,
+    DefaultTextures, GpuResourceManager, LightResources, LightsArrayUniform,
     MaterialBindGroupLayouts, MaterialPipelineLayouts, PipelineCacheKey,
 };
+use outline::{OutlineResources, OutlineUniform};
 
 pub(crate) struct Renderer<'a> {
     // Core GPU resources

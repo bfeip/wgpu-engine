@@ -1,8 +1,7 @@
 use crate::scene::PrimitiveType;
 
-use super::gpu_resources::DEPTH_FORMAT;
+use super::gpu_resources::{instance_buffer_layout, vertex_buffer_layout, DEPTH_FORMAT, PipelineCacheKey};
 use super::Renderer;
-use super::types::{instance_buffer_layout, vertex_buffer_layout, PipelineCacheKey};
 
 impl<'a> Renderer<'a> {
     pub(super) fn get_or_create_pipeline(
