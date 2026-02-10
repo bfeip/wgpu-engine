@@ -4,7 +4,7 @@ use wgpu::util::DeviceExt;
 
 use crate::scene::{PrimitiveType, Scene};
 
-use super::gpu_resources::MaterialGpuResources;
+use super::gpu_resources::{MaterialGpuResources, PbrUniform};
 use super::Renderer;
 
 impl<'a> Renderer<'a> {
@@ -147,7 +147,7 @@ impl<'a> Renderer<'a> {
     fn prepare_pbr_material(&mut self, scene: &mut Scene, material_id: u32) -> Result<()> {
         let material = scene.materials.get(&material_id).unwrap();
 
-        let pbr_uniform = material.build_pbr_uniform();
+        let pbr_uniform = PbrUniform::from_material(material);
         let buffer = self
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {

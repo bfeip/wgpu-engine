@@ -35,8 +35,7 @@ enum InitState {
     /// Async initialization in progress
     Initializing {
         /// Keep window alive during initialization
-        #[allow(dead_code)]
-        window: Arc<Window>,
+        _window: Arc<Window>,
     },
     /// Fully initialized and ready
     Ready(EguiViewerApp<'static>),
@@ -122,7 +121,7 @@ impl App {
         );
 
         self.state = InitState::Initializing {
-            window: Arc::clone(&window),
+            _window: Arc::clone(&window),
         };
 
         let proxy = self.proxy.clone();

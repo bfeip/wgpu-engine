@@ -1,5 +1,4 @@
 use bitflags::bitflags;
-use bytemuck::{Pod, Zeroable};
 
 use crate::common::RgbaColor;
 
@@ -26,26 +25,6 @@ bitflags! {
         /// Disables face lighting. Faces will appear at a constant luminance
         const DO_NOT_LIGHT = 1 << 2;
     }
-}
-
-/// PBR material parameters for GPU uniform buffer.
-///
-/// This struct is sent to the shader and contains all scalar factors
-/// plus flags indicating which textures are present.
-#[repr(C)]
-#[derive(Debug, Copy, Clone, Pod, Zeroable)]
-pub struct PbrUniform {
-    pub base_color_factor: [f32; 4],
-    pub metallic_factor: f32,
-    pub roughness_factor: f32,
-    pub normal_scale: f32,
-    pub texture_flags: u32,
-}
-
-impl PbrUniform {
-    pub const FLAG_HAS_BASE_COLOR_TEXTURE: u32 = 1 << 0;
-    pub const FLAG_HAS_NORMAL_TEXTURE: u32 = 1 << 1;
-    pub const FLAG_HAS_METALLIC_ROUGHNESS_TEXTURE: u32 = 1 << 2;
 }
 
 /// Material properties that determine shader generation and rendering behavior.
@@ -375,33 +354,6 @@ impl Material {
                 has_metallic_roughness_texture: false,
                 has_lighting: false,
             },
-        }
-    }
-
-    /// Build the PBR uniform for GPU upload.
-    pub fn build_pbr_uniform(&self) -> PbrUniform {
-        let mut texture_flags = 0u32;
-        if self.base_color_texture.is_some() {
-            texture_flags |= PbrUniform::FLAG_HAS_BASE_COLOR_TEXTURE;
-        }
-        if self.normal_texture.is_some() {
-            texture_flags |= PbrUniform::FLAG_HAS_NORMAL_TEXTURE;
-        }
-        if self.metallic_roughness_texture.is_some() {
-            texture_flags |= PbrUniform::FLAG_HAS_METALLIC_ROUGHNESS_TEXTURE;
-        }
-
-        PbrUniform {
-            base_color_factor: [
-                self.base_color_factor.r,
-                self.base_color_factor.g,
-                self.base_color_factor.b,
-                self.base_color_factor.a,
-            ],
-            metallic_factor: self.metallic_factor,
-            roughness_factor: self.roughness_factor,
-            normal_scale: self.normal_scale,
-            texture_flags,
         }
     }
 

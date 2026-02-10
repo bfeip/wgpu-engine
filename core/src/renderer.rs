@@ -13,13 +13,13 @@ use crate::{
     camera::{Camera, CameraExt},
     ibl::IblResources,
     scene::{
-        partition_batches, LightsArrayUniform, PrimitiveType, Scene, SceneProperties,
+        partition_batches, PrimitiveType, Scene, SceneProperties,
     },
     selection::SelectionManager,
     shaders::ShaderGenerator,
 };
 
-use gpu_resources::{create_depth_texture, create_mask_texture, GpuResourceManager};
+use gpu_resources::{create_depth_texture, create_mask_texture, GpuResourceManager, LightsArrayUniform};
 use outline::{OutlineResources, OutlineUniform};
 use types::{
     clamp_surface_size, CameraResources, DefaultTextures, LightResources,
@@ -50,7 +50,6 @@ pub(crate) struct Renderer<'a> {
     outline_resources: OutlineResources,
 
     // Scene GPU resource tracking (for future use)
-    #[allow(dead_code)]
     gpu_resources: GpuResourceManager,
 }
 

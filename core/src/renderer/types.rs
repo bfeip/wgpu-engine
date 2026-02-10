@@ -2,10 +2,10 @@ use wgpu::util::DeviceExt;
 
 use crate::{
     camera::{Camera, CameraUniform},
-    scene::{LightsArrayUniform, MaterialProperties, PrimitiveType, SceneProperties, Vertex},
+    scene::{MaterialProperties, PrimitiveType, SceneProperties, Vertex},
 };
 
-use super::gpu_resources::{GpuInstance, GpuTexture};
+use super::gpu_resources::{GpuInstance, GpuTexture, LightsArrayUniform};
 
 // Vertex shader attribute locations
 pub(crate) enum VertexShaderLocations {
