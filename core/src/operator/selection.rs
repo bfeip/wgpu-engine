@@ -1,4 +1,4 @@
-use crate::common::{Ray, RgbaColor};
+use crate::common::RgbaColor;
 use crate::event::{CallbackId, Event, EventContext, EventDispatcher, EventKind};
 use crate::geom_query::{RayPickResult, pick_all_from_ray};
 use crate::operator::{Operator, OperatorId};
@@ -25,12 +25,11 @@ impl SelectionOperator {
     /// Performs selection at the given position and prints results to console.
     fn perform_selection(cursor_x: f32, cursor_y: f32, ctx: &mut EventContext) {
         // Create ray from screen point
-        let ray = Ray::from_screen_point(
+        let ray = ctx.renderer.camera().ray_from_screen_point(
             cursor_x,
             cursor_y,
             ctx.renderer.size.0,
             ctx.renderer.size.1,
-            ctx.renderer.camera(),
         );
 
         // Calculate camera distance for miss visualization
@@ -108,7 +107,7 @@ impl Operator for SelectionOperator {
 /// - Yellow ray to a bounding-box hit (geometry miss)
 /// - Red ray into the void on a complete miss
 fn draw_debug_annotations(
-    ray: &Ray,
+    ray: &crate::common::Ray,
     ray_origin: Point3<f32>,
     camera_distance: f32,
     results: &[RayPickResult],

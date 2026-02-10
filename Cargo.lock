@@ -4063,6 +4063,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "wgpu-engine-common"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "cgmath",
+]
+
+[[package]]
 name = "wgpu-engine-scene"
 version = "0.1.0"
 dependencies = [
@@ -4078,6 +4086,7 @@ dependencies = [
  "rayon",
  "serde",
  "thiserror 2.0.17",
+ "wgpu-engine-common",
  "zstd",
 ]
 

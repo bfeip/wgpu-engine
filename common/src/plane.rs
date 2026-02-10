@@ -1,6 +1,6 @@
 use cgmath::{EuclideanSpace, InnerSpace, Matrix, Matrix4, Point3, SquareMatrix, Vector3, Vector4};
 
-use super::EPSILON;
+use crate::EPSILON;
 
 /// A plane in 3D space defined by a normal and distance from origin.
 ///

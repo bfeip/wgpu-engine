@@ -1,6 +1,6 @@
 use cgmath::{Matrix4, Point3};
 
-use super::{EPSILON, ray::Ray};
+use crate::{EPSILON, ray::Ray};
 
 /// An axis-aligned bounding box (AABB) in 3D space.
 #[derive(Debug, Copy, Clone)]

@@ -1,6 +1,6 @@
 use cgmath::{InnerSpace, Matrix4, Point3, Vector3};
 
-use super::EPSILON;
+use crate::EPSILON;
 
 /// A ray in 3D space, defined by an origin point and a direction vector.
 #[derive(Debug, Copy, Clone)]
@@ -38,55 +38,6 @@ impl Ray {
         Self {
             origin: new_origin,
             direction: new_direction.normalize(),
-        }
-    }
-
-    /// Creates a ray from a screen-space point, unprojecting it to world space.
-    ///
-    /// The ray originates at the camera's eye position and points through the specified
-    /// screen pixel into the 3D world. This is useful for mouse picking and selection.
-    ///
-    /// # Arguments
-    /// * `screen_x` - X coordinate in screen space (0 = left edge)
-    /// * `screen_y` - Y coordinate in screen space (0 = top edge)
-    /// * `screen_width` - Width of the screen/viewport in pixels
-    /// * `screen_height` - Height of the screen/viewport in pixels
-    /// * `camera` - Camera to use for unprojection
-    ///
-    /// # Returns
-    /// A ray originating at the camera's eye position, pointing through the screen point
-    /// into the 3D world.
-    pub fn from_screen_point(
-        screen_x: f32,
-        screen_y: f32,
-        screen_width: u32,
-        screen_height: u32,
-        camera: &crate::Camera,
-    ) -> Self {
-        // Unproject points at near and far planes
-        let world_near = camera.unproject_point_screen(
-            screen_x,
-            screen_y,
-            0.0, // Near plane
-            screen_width,
-            screen_height,
-        ).expect("Camera view-projection matrix should be invertible");
-
-        let world_far = camera.unproject_point_screen(
-            screen_x,
-            screen_y,
-            1.0, // Far plane
-            screen_width,
-            screen_height,
-        ).expect("Camera view-projection matrix should be invertible");
-
-        // Create ray from camera eye through the unprojected points
-        // Direction is from near point to far point
-        let direction = (world_far - world_near).normalize();
-
-        Self {
-            origin: world_near,
-            direction,
         }
     }
 
@@ -248,7 +199,7 @@ mod tests {
 
         // Origin should be transformed
         assert!(transformed.origin.x.abs() < 0.01); // ~0 after rotation
-        assert!((transformed.origin.y - 7.0).abs() < 0.01); // 5 + 2*1*sin(90�) = 7
+        assert!((transformed.origin.y - 7.0).abs() < 0.01); // 5 + 2*1*sin(90) = 7
 
         // Direction should be rotated and normalized
         assert!((transformed.direction.magnitude() - 1.0).abs() < EPSILON);
@@ -372,7 +323,7 @@ mod tests {
         let (_t, u, v) = result.unwrap();
         let w = 1.0 - u - v;
 
-        // At center: u H 1/3, v H 1/3, w H 1/3
+        // At center: u ≈ 1/3, v ≈ 1/3, w ≈ 1/3
         assert!((u - 1.0/3.0).abs() < 0.01);
         assert!((v - 1.0/3.0).abs() < 0.01);
         assert!((w - 1.0/3.0).abs() < 0.01);

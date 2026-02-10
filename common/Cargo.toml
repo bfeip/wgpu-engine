@@ -1,0 +1,8 @@
+[package]
+name = "wgpu-engine-common"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bytemuck = { version = "1.16", features = ["derive"] }
+cgmath = "0.18"

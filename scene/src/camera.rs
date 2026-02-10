@@ -219,6 +219,51 @@ impl Camera {
         cgmath::Point3::new(screen_x, screen_y, screen_z)
     }
 
+    /// Creates a ray from a screen-space point, unprojecting it to world space.
+    ///
+    /// The ray originates at the near plane and points through the specified
+    /// screen pixel into the 3D world. This is useful for mouse picking and selection.
+    ///
+    /// # Arguments
+    /// * `screen_x` - X coordinate in screen space (0 = left edge)
+    /// * `screen_y` - Y coordinate in screen space (0 = top edge)
+    /// * `screen_width` - Width of the screen/viewport in pixels
+    /// * `screen_height` - Height of the screen/viewport in pixels
+    ///
+    /// # Returns
+    /// A ray originating at the near plane, pointing through the screen point
+    /// into the 3D world.
+    pub fn ray_from_screen_point(
+        &self,
+        screen_x: f32,
+        screen_y: f32,
+        screen_width: u32,
+        screen_height: u32,
+    ) -> crate::common::Ray {
+        // Unproject points at near and far planes
+        let world_near = self.unproject_point_screen(
+            screen_x,
+            screen_y,
+            0.0, // Near plane
+            screen_width,
+            screen_height,
+        ).expect("Camera view-projection matrix should be invertible");
+
+        let world_far = self.unproject_point_screen(
+            screen_x,
+            screen_y,
+            1.0, // Far plane
+            screen_width,
+            screen_height,
+        ).expect("Camera view-projection matrix should be invertible");
+
+        // Direction is from near point to far point
+        use cgmath::InnerSpace;
+        let direction = (world_far - world_near).normalize();
+
+        crate::common::Ray::new(world_near, direction)
+    }
+
     /// Unprojects a screen-space pixel coordinate to a point in world space.
     ///
     /// # Arguments

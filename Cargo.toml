@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["core", "scene", "gltf-viewer", "scene-info"]
+members = ["core", "scene", "common", "gltf-viewer", "scene-info"]
 default-members = ["core"]
 
 

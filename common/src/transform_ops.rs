@@ -7,7 +7,7 @@
 
 use cgmath::{EuclideanSpace, InnerSpace, Point3, Quaternion, Rotation, Rotation3, Vector3};
 
-use super::EPSILON;
+use crate::EPSILON;
 
 // =============================================================================
 // Pivot-Based Transforms

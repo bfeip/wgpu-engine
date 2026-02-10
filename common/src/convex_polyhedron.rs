@@ -1,6 +1,6 @@
 use cgmath::{InnerSpace, Matrix4, Point3, Vector3};
 
-use super::{Aabb, Plane, Ray, EPSILON};
+use crate::{Aabb, Plane, Ray, EPSILON};
 
 /// A convex polyhedron defined as the intersection of half-spaces (planes).
 ///
