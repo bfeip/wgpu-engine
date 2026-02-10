@@ -10,9 +10,51 @@ use image::GenericImageView;
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
 use crate::scene::{
-    InstanceTransform, Light, LightType, Material, MaterialId, Mesh, MeshId,
+    Camera, InstanceTransform, Light, LightType, Material, MaterialId, Mesh, MeshId,
     MeshIndex, PrimitiveType, Texture, TextureId, MAX_LIGHTS,
 };
+
+/// GPU uniform buffer layout for camera data.
+///
+/// Contains the view-projection matrix and eye position, uploaded to
+/// bind group 0 for use by shaders.
+#[repr(C)]
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct CameraUniform {
+    /// Combined view-projection matrix (64 bytes, 4x4 f32).
+    view_proj: [[f32; 4]; 4],
+    /// Camera eye position in world space (for view direction calculation in PBR).
+    eye_position: [f32; 3],
+    /// Padding for 16-byte alignment.
+    _padding: u32,
+}
+
+impl CameraUniform {
+    /// Creates a `CameraUniform` from a scene `Camera`.
+    pub fn from_camera(camera: &Camera) -> Self {
+        Self {
+            view_proj: camera.build_view_projection_matrix().into(),
+            eye_position: [camera.eye.x, camera.eye.y, camera.eye.z],
+            _padding: 0,
+        }
+    }
+
+    /// Creates a new camera uniform initialized to identity matrix and origin.
+    pub fn new() -> Self {
+        use cgmath::SquareMatrix;
+        Self {
+            view_proj: cgmath::Matrix4::identity().into(),
+            eye_position: [0.0, 0.0, 0.0],
+            _padding: 0,
+        }
+    }
+
+    /// Updates the uniform from the given camera.
+    pub fn update_view_proj(&mut self, camera: &Camera) {
+        self.view_proj = camera.build_view_projection_matrix().into();
+        self.eye_position = [camera.eye.x, camera.eye.y, camera.eye.z];
+    }
+}
 
 /// GPU-ready instance data for instanced rendering.
 ///

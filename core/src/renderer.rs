@@ -10,7 +10,7 @@ use anyhow::Result;
 use bytemuck::bytes_of;
 
 use crate::{
-    camera::{Camera, CameraExt},
+    camera::Camera,
     ibl::IblResources,
     scene::{
         partition_batches, PrimitiveType, Scene, SceneProperties,
@@ -19,7 +19,10 @@ use crate::{
     shaders::ShaderGenerator,
 };
 
-use gpu_resources::{create_depth_texture, create_mask_texture, GpuResourceManager, LightsArrayUniform};
+use gpu_resources::{
+    create_depth_texture, create_mask_texture, CameraUniform, GpuResourceManager,
+    LightsArrayUniform,
+};
 use outline::{OutlineResources, OutlineUniform};
 use types::{
     clamp_surface_size, CameraResources, DefaultTextures, LightResources,
@@ -251,7 +254,7 @@ impl<'a> Renderer<'a> {
     ) -> Result<()> {
         // Update camera uniform
         // TODO: only when needed
-        let camera_uniform_slice = &[self.camera_resources.camera.to_uniform()];
+        let camera_uniform_slice = &[CameraUniform::from_camera(&self.camera_resources.camera)];
         let camera_buffer_contents: &[u8] = bytemuck::cast_slice(camera_uniform_slice);
         self.queue
             .write_buffer(&self.camera_resources.buffer, 0, camera_buffer_contents);
