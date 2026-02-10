@@ -208,12 +208,12 @@ impl Node {
 
     /// Gets the cached world transform if valid
     /// You probably want [crate::Scene::nodes_transform]
-    pub(super) fn cached_world_transform(&self) -> Option<Matrix4<f32>> {
+    pub fn cached_world_transform(&self) -> Option<Matrix4<f32>> {
         self.cached_world_transform.get()
     }
 
     /// Sets the cached world transform
-    pub(super) fn set_cached_world_transform(&self, transform: Matrix4<f32>) {
+    pub fn set_cached_world_transform(&self, transform: Matrix4<f32>) {
         self.cached_world_transform.set(Some(transform));
     }
 

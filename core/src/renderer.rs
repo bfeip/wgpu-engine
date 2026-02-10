@@ -1,3 +1,4 @@
+mod batching;
 mod gpu_resources;
 mod outline;
 mod pipeline;
@@ -12,12 +13,12 @@ use bytemuck::bytes_of;
 use crate::{
     camera::Camera,
     ibl::IblResources,
-    scene::{
-        partition_batches, PrimitiveType, Scene, SceneProperties,
-    },
+    scene::{PrimitiveType, Scene, SceneProperties},
     selection::SelectionManager,
     shaders::ShaderGenerator,
 };
+
+use batching::{collect_draw_batches, partition_batches};
 
 use gpu_resources::{
     create_depth_texture, create_mask_texture, CameraUniform, GpuResourceManager,
@@ -266,7 +267,7 @@ impl<'a> Renderer<'a> {
             .write_buffer(&self.lights.buffer, 0, bytes_of(&lights_uniform));
 
         // Collect all instances into batches grouped by mesh and material
-        let batches = scene.collect_draw_batches();
+        let batches = collect_draw_batches(scene);
 
         // Partition batches by selection state if selection is provided
         let selected_batches = selection

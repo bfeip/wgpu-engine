@@ -10,9 +10,10 @@ use image::GenericImageView;
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
 use crate::scene::{
-    Camera, InstanceTransform, Light, LightType, Material, MaterialId, Mesh, MeshId,
+    Camera, Light, LightType, Material, MaterialId, Mesh, MeshId,
     MeshIndex, PrimitiveType, Texture, TextureId, MAX_LIGHTS,
 };
+use super::batching::InstanceTransform;
 
 /// GPU uniform buffer layout for camera data.
 ///
