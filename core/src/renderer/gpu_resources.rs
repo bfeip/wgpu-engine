@@ -9,7 +9,20 @@ use anyhow::Result;
 use image::GenericImageView;
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
-use crate::scene::{InstanceRaw, InstanceTransform, MaterialId, Mesh, MeshId, MeshIndex, PrimitiveType, Texture, TextureId};
+use crate::scene::{
+    InstanceTransform, MaterialId, Mesh, MeshId,
+    MeshIndex, PrimitiveType, Texture, TextureId
+};
+
+/// GPU-ready instance data for instanced rendering.
+///
+/// Contains a world transform matrix and normal matrix packed for the GPU.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuInstance {
+    pub transform: [[f32; 4]; 4],
+    pub normal_mat: [[f32; 3]; 3],
+}
 
 /// GPU resources for a mesh (vertex and index buffers).
 pub(crate) struct MeshGpuResources {
@@ -383,10 +396,10 @@ pub(crate) fn draw_mesh_instances(
     instance_transforms: &[InstanceTransform],
     index_count: u32,
 ) {
-    // Convert InstanceTransforms to InstanceRaw for the GPU
-    let instance_raws: Vec<InstanceRaw> = instance_transforms
+    // Convert InstanceTransforms to GpuInstance for the GPU
+    let instance_raws: Vec<GpuInstance> = instance_transforms
         .iter()
-        .map(|inst_transform| InstanceRaw {
+        .map(|inst_transform| GpuInstance {
             transform: inst_transform.world_transform.into(),
             normal_mat: inst_transform.normal_matrix.into(),
         })

@@ -36,7 +36,6 @@ pub use texture::{Texture, TextureId};
 pub use tree::TreeVisitor;
 
 // Items used by core crate for rendering
-pub use instance::InstanceRaw;
 pub use light::{LightUniform, LightsArrayUniform};
 pub use material::{MaterialProperties, PbrUniform};
 pub use batch::{DrawBatch, partition_batches};

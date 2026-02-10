@@ -2,10 +2,10 @@ use wgpu::util::DeviceExt;
 
 use crate::{
     camera::{Camera, CameraUniform},
-    scene::{InstanceRaw, LightsArrayUniform, MaterialProperties, PrimitiveType, SceneProperties, Vertex},
+    scene::{LightsArrayUniform, MaterialProperties, PrimitiveType, SceneProperties, Vertex},
 };
 
-use super::gpu_resources::GpuTexture;
+use super::gpu_resources::{GpuInstance, GpuTexture};
 
 // Vertex shader attribute locations
 pub(crate) enum VertexShaderLocations {
@@ -48,14 +48,14 @@ pub(crate) fn vertex_buffer_layout() -> wgpu::VertexBufferLayout<'static> {
     }
 }
 
-/// Returns the instance buffer layout for InstanceRaw structs.
+/// Returns the instance buffer layout for GpuInstance structs.
 ///
 /// This describes how instance data is laid out in GPU memory for instanced rendering.
 pub(crate) fn instance_buffer_layout() -> wgpu::VertexBufferLayout<'static> {
     use VertexShaderLocations as VSL;
 
     wgpu::VertexBufferLayout {
-        array_stride: std::mem::size_of::<InstanceRaw>() as wgpu::BufferAddress,
+        array_stride: std::mem::size_of::<GpuInstance>() as wgpu::BufferAddress,
         step_mode: wgpu::VertexStepMode::Instance,
         attributes: &[
             wgpu::VertexAttribute {
