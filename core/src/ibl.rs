@@ -21,7 +21,7 @@ pub(crate) use irradiance::IrradiancePipeline;
 pub(crate) use prefilter::PrefilterPipeline;
 
 // Re-export EnvironmentMap types from scene crate
-pub use wgpu_engine_scene::scene::environment::{EnvironmentMap, EnvironmentMapId, EnvironmentSource};
+pub use wgpu_engine_scene::environment::{EnvironmentMap, EnvironmentMapId, EnvironmentSource};
 
 /// Size of the environment cubemap (per face).
 pub const ENVIRONMENT_CUBEMAP_SIZE: u32 = 512;

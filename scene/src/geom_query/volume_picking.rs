@@ -1,7 +1,7 @@
 use cgmath::Matrix4;
 
 use crate::common::{Aabb, ConvexPolyhedron};
-use crate::scene::{InstanceId, Mesh, NodeId, Scene};
+use crate::{InstanceId, Mesh, NodeId, Scene};
 
 use super::pick_query::{pick_all, PickQuery};
 

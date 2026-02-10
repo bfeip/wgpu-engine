@@ -1,6 +1,6 @@
 use std::path::Path;
 use crate::camera::Camera;
-use crate::scene::{
+use crate::{
     Material, Texture, Mesh, MeshId, MeshPrimitive, PrimitiveType, Scene, Vertex,
     MaterialId, DEFAULT_MATERIAL_ID,
 };
@@ -170,8 +170,8 @@ fn extract_embedded_image_bytes(
     image_index: usize,
     document: &gltf::Document,
     buffers: &[gltf::buffer::Data],
-) -> Option<(Vec<u8>, crate::scene::format::TextureFormat)> {
-    use crate::scene::format::TextureFormat;
+) -> Option<(Vec<u8>, crate::format::TextureFormat)> {
+    use crate::format::TextureFormat;
 
     let img = document.images().nth(image_index)?;
     let gltf::image::Source::View { view, mime_type } = img.source() else { return None };
@@ -226,7 +226,7 @@ fn load_gltf_texture(
     buffers: &[gltf::buffer::Data],
     base_path: Option<&Path>,
     scene: &mut Scene,
-) -> anyhow::Result<crate::scene::TextureId> {
+) -> anyhow::Result<crate::TextureId> {
     // For external files, use path-based texture (lazy loading, preserves original format)
     if let Some(path) = resolve_image_path(image_index, document, base_path) {
         let texture = Texture::from_path(path);
@@ -538,7 +538,7 @@ fn load_gltf_from_data(
     // Load the scene hierarchy
     if let Some(gltf_scene) = document.default_scene().or_else(|| document.scenes().next()) {
         // Map from glTF node index to our NodeId
-        let mut node_map: HashMap<usize, crate::scene::NodeId> = HashMap::new();
+        let mut node_map: HashMap<usize, crate::NodeId> = HashMap::new();
 
         // Process all root nodes
         for gltf_node in gltf_scene.nodes() {
@@ -564,10 +564,10 @@ fn load_gltf_from_data(
 /// Recursively loads a glTF node and its children.
 fn load_node_recursive(
     gltf_node: &gltf::Node,
-    parent: Option<crate::scene::NodeId>,
-    scene: &mut crate::scene::Scene,
+    parent: Option<crate::NodeId>,
+    scene: &mut crate::Scene,
     mesh_map: &[Vec<LoadedPrimitive>],
-    node_map: &mut std::collections::HashMap<usize, crate::scene::NodeId>,
+    node_map: &mut std::collections::HashMap<usize, crate::NodeId>,
 ) -> anyhow::Result<()> {
 
     // Decompose transform

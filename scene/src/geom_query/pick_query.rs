@@ -1,7 +1,7 @@
 use cgmath::{Matrix4, SquareMatrix};
 
 use crate::common::Aabb;
-use crate::scene::{InstanceId, Mesh, NodeId, Scene};
+use crate::{InstanceId, Mesh, NodeId, Scene};
 
 /// A query that can pick objects by traversing the scene tree.
 ///

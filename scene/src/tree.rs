@@ -1,4 +1,4 @@
-use crate::{common, scene::Node};
+use crate::{common, Node};
 use super::{InstanceId, NodeId, Scene};
 
 use cgmath::{Matrix3, Matrix4, SquareMatrix};
@@ -132,7 +132,7 @@ impl TreeVisitor for InstanceTransformCollector {
         self.needs_recompute_stack.push(needs_recompute);
 
         // Check visibility
-        use crate::scene::node::Visibility;
+        use crate::node::Visibility;
         if node.visibility() == Visibility::Invisible {
             // Skip this node and its children (they're all invisible due to propagation)
             return false;

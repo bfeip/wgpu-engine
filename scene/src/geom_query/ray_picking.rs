@@ -1,7 +1,7 @@
 use cgmath::{InnerSpace, Matrix4, Point3};
 
 use crate::common::{Aabb, Ray};
-use crate::scene::{InstanceId, Mesh, NodeId, Scene};
+use crate::{InstanceId, Mesh, NodeId, Scene};
 
 use super::pick_query::{pick_all, PickQuery};
 
