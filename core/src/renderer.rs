@@ -63,12 +63,11 @@ impl<'a> Renderer<'a> {
         let size = clamp_surface_size(width, height);
 
         // The instance is a handle to our GPU
-        // Backends::all => Vulkan + Metal + DX12 + Browser WebGPU
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             #[cfg(not(target_arch = "wasm32"))]
             backends: wgpu::Backends::PRIMARY,
             #[cfg(target_arch = "wasm32")]
-            backends: wgpu::Backends::GL,
+            backends: wgpu::Backends::BROWSER_WEBGPU | wgpu::Backends::GL,
             ..Default::default()
         });
 
@@ -83,12 +82,24 @@ impl<'a> Renderer<'a> {
             .await
             .unwrap();
 
+        // Detect which backend the adapter is using
+        let is_gl_backend = adapter.get_info().backend == wgpu::Backend::Gl;
+        let has_compute = !is_gl_backend;
+
+        if cfg!(target_arch = "wasm32") {
+            if is_gl_backend {
+                log::warn!("WebGPU not available, falling back to WebGL.");
+            } else {
+                log::info!("Using WebGPU backend.");
+            }
+        }
+
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 required_features: wgpu::Features::empty(),
-                // WebGL doesn't support all of wgpu's features, so if
-                // we're building for the web, we'll have to disable some.
-                required_limits: if cfg!(target_arch = "wasm32") {
+                // WebGL doesn't support all of wgpu's features, so use
+                // downlevel limits when running on the GL backend.
+                required_limits: if is_gl_backend {
                     wgpu::Limits::downlevel_webgl2_defaults()
                 } else {
                     wgpu::Limits::default()
@@ -135,7 +146,7 @@ impl<'a> Renderer<'a> {
         let camera_resources =
             CameraResources::new(&device, config.width as f32 / config.height as f32);
         let lights = LightResources::new(&device);
-        let ibl_resources = IblResources::new(&device, &queue);
+        let ibl_resources = IblResources::new(&device, &queue, has_compute);
         let pipelines = MaterialPipelineLayouts::new(
             &device,
             &camera_resources.bind_group_layout,
