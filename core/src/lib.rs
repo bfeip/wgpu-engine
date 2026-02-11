@@ -23,6 +23,9 @@ mod viewer;
 pub use selection::{SelectionItem, SelectionManager};
 pub use viewer::Viewer;
 
+#[cfg(target_arch = "wasm32")]
+pub mod web;
+
 // Optional integrations
 #[cfg(feature = "winit-support")]
 pub mod winit_support;
