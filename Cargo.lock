@@ -3045,6 +3045,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "scene-converter"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "wgpu-engine-scene",
+]
+
+[[package]]
 name = "scene-info"
 version = "0.1.0"
 dependencies = [
