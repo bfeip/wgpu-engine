@@ -4,3 +4,5 @@ CLAUDE.md
 .vscode/settings.json
 
 gltf-viewer/dist
+web-demo/node_modules
+web-demo/pkg
