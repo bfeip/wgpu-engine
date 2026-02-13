@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
-use image::GenericImageView;
+use image::{imageops::FilterType, GenericImageView};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
 use crate::camera::Camera;
@@ -547,7 +547,25 @@ fn create_texture_gpu_resources(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
 ) -> Result<GpuTexture> {
+    let texture_id = texture.id();
     let img = texture.get_image()?;
+    let dimensions = img.dimensions();
+
+    // Resize if texture exceeds device limits (e.g. WebGL max 2048px)
+    let max_dim = device.limits().max_texture_dimension_2d;
+    let img = if dimensions.0 > max_dim || dimensions.1 > max_dim {
+        log::info!(
+            "Texture {} ({}x{}) exceeds max dimension {}; resizing",
+            texture_id,
+            dimensions.0,
+            dimensions.1,
+            max_dim,
+        );
+        std::borrow::Cow::Owned(img.resize(max_dim, max_dim, FilterType::Triangle))
+    } else {
+        std::borrow::Cow::Borrowed(img)
+    };
+
     let rgba = img.to_rgba8();
     let dimensions = img.dimensions();
 
