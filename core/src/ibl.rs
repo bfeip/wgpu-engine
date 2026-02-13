@@ -12,7 +12,7 @@ mod hdr_loader;
 mod irradiance;
 mod prefilter;
 
-pub use hdr_loader::{load_hdr_from_path, HdrImage};
+pub use hdr_loader::{load_hdr_from_bytes, load_hdr_from_path, HdrImage};
 
 pub(crate) use brdf_lut::{BrdfLut, BrdfLutPipeline};
 pub(crate) use cubemap::GpuCubemap;
@@ -200,6 +200,7 @@ impl IblResources {
         // Load HDR image from source
         let hdr_image = match &env_map.source {
             EnvironmentSource::EquirectangularPath(path) => load_hdr_from_path(path)?,
+            EnvironmentSource::EquirectangularHdr(bytes) => load_hdr_from_bytes(bytes)?,
         };
 
         // The unwraps below are safe: has_compute is true so pipelines were initialized

@@ -27,6 +27,11 @@ pub fn load_hdr_from_path(path: impl AsRef<Path>) -> Result<HdrImage> {
     load_hdr_from_reader(reader)
 }
 
+/// Load an HDR image from raw .hdr file bytes.
+pub fn load_hdr_from_bytes(bytes: &[u8]) -> Result<HdrImage> {
+    load_hdr_from_reader(std::io::Cursor::new(bytes))
+}
+
 /// Load an HDR image from a reader.
 pub fn load_hdr_from_reader<R: BufRead>(mut reader: R) -> Result<HdrImage> {
     // Parse header

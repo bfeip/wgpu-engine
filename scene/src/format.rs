@@ -458,6 +458,19 @@ pub enum SerializedAnnotation {
     },
 }
 
+/// Serializable environment map with embedded HDR data.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SerializedEnvironmentMap {
+    /// Remapped environment map ID.
+    pub id: u32,
+    /// Raw .hdr file bytes.
+    pub hdr_data: Vec<u8>,
+    /// Intensity multiplier.
+    pub intensity: f32,
+    /// Rotation around Y axis in radians.
+    pub rotation: f32,
+}
+
 // ============================================================================
 // ID Remapping
 // ============================================================================
@@ -1327,6 +1340,37 @@ impl Scene {
         });
         output.extend(compressed);
 
+        // ===== Environment Maps Section =====
+        if !self.environment_maps.is_empty() {
+            let mut env_maps = Vec::new();
+            for (&id, env_map) in &self.environment_maps {
+                let remapped_id = remapper.remap_environment_map(id).unwrap_or(0);
+                let hdr_data = match &env_map.source {
+                    super::environment::EnvironmentSource::EquirectangularPath(path) => {
+                        std::fs::read(path).map_err(|e| FormatError::IoError(e))?
+                    }
+                    super::environment::EnvironmentSource::EquirectangularHdr(data) => {
+                        data.clone()
+                    }
+                };
+                env_maps.push(SerializedEnvironmentMap {
+                    id: remapped_id,
+                    hdr_data,
+                    intensity: env_map.intensity,
+                    rotation: env_map.rotation,
+                });
+            }
+            let offset = output.len() as u64;
+            let (compressed, uncompressed_size) = serialize_section_with_level(&env_maps, level)?;
+            toc.add_entry(TocEntry {
+                section_type: SectionType::EnvironmentMaps,
+                offset,
+                compressed_size: compressed.len() as u64,
+                uncompressed_size: uncompressed_size as u64,
+            });
+            output.extend(compressed);
+        }
+
         // ===== Write TOC =====
         let toc_offset = output.len() as u64;
         let (toc_compressed, _) = serialize_section_with_level(&toc, level)?;
@@ -1394,6 +1438,16 @@ impl Scene {
         // Read annotations
         let serialized_annotations: Vec<SerializedAnnotation> =
             deserialize_section(read_section(SectionType::Annotations)?)?;
+
+        // Read environment maps (optional for backward compatibility with older files)
+        let serialized_env_maps: Vec<SerializedEnvironmentMap> =
+            if let Some(entry) = toc.find(SectionType::EnvironmentMaps) {
+                let start = entry.offset as usize;
+                let end = start + entry.compressed_size as usize;
+                deserialize_section(&bytes[start..end])?
+            } else {
+                Vec::new()
+            };
 
         // ===== Build Scene =====
         let mut scene = Scene::new();
@@ -1544,8 +1598,20 @@ impl Scene {
                 .map_err(|e| FormatError::DeserializationError(e.to_string()))?;
         }
 
-        // Set active environment map
-        scene.active_environment_map = metadata.active_environment_map;
+        // Add environment maps
+        let mut env_map_id_map: HashMap<u32, EnvironmentMapId> = HashMap::new();
+        for sem in serialized_env_maps {
+            let scene_id = scene.add_environment_map_from_hdr_data(sem.hdr_data);
+            if let Some(em) = scene.get_environment_map_mut(scene_id) {
+                em.intensity = sem.intensity;
+                em.rotation = sem.rotation;
+            }
+            env_map_id_map.insert(sem.id, scene_id);
+        }
+
+        // Set active environment map (remap from file ID to scene ID)
+        scene.active_environment_map = metadata.active_environment_map
+            .and_then(|file_id| env_map_id_map.get(&file_id).copied());
 
         Ok(scene)
     }

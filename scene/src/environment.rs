@@ -8,6 +8,8 @@ pub type EnvironmentMapId = u32;
 pub enum EnvironmentSource {
     /// Equirectangular HDR image loaded from a file path.
     EquirectangularPath(PathBuf),
+    /// Equirectangular HDR image stored as raw .hdr file bytes.
+    EquirectangularHdr(Vec<u8>),
 }
 
 /// An environment map used for image-based lighting.
@@ -37,6 +39,19 @@ impl EnvironmentMap {
         Self {
             id,
             source: EnvironmentSource::EquirectangularPath(path.into()),
+            intensity: 1.0,
+            rotation: 0.0,
+            dirty: true,
+        }
+    }
+
+    /// Create an environment map from in-memory HDR data.
+    ///
+    /// The HDR data will be processed into IBL maps when the environment is first used.
+    pub fn from_hdr_data(id: EnvironmentMapId, data: Vec<u8>) -> Self {
+        Self {
+            id,
+            source: EnvironmentSource::EquirectangularHdr(data),
             intensity: 1.0,
             rotation: 0.0,
             dirty: true,

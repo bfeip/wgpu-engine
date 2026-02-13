@@ -301,6 +301,26 @@ impl Scene {
         id
     }
 
+    /// Creates and adds an environment map from in-memory HDR data.
+    ///
+    /// The HDR data will be processed into IBL maps when first rendered.
+    ///
+    /// # Arguments
+    /// * `data` - Raw .hdr file bytes
+    ///
+    /// # Returns
+    /// The unique ID assigned to this environment map
+    pub fn add_environment_map_from_hdr_data(
+        &mut self,
+        data: Vec<u8>,
+    ) -> EnvironmentMapId {
+        let id = self.next_environment_map_id;
+        let env_map = EnvironmentMap::from_hdr_data(id, data);
+        self.next_environment_map_id += 1;
+        self.environment_maps.insert(id, env_map);
+        id
+    }
+
     /// Gets a reference to an environment map by ID.
     pub fn get_environment_map(&self, id: EnvironmentMapId) -> Option<&EnvironmentMap> {
         self.environment_maps.get(&id)

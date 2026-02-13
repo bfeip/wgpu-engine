@@ -110,6 +110,18 @@ impl WebViewer {
         }
     }
 
+    /// Load a scene from .wgsc format bytes.
+    /// The scene and camera will be set automatically.
+    pub fn load_scene(&mut self, data: &[u8]) -> Result<(), JsValue> {
+        let scene = crate::Scene::from_bytes(data)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let aspect = self.viewer.camera().aspect;
+        let camera = camera_for_scene(&scene, aspect);
+        self.viewer.set_scene(scene);
+        self.viewer.set_camera(camera);
+        Ok(())
+    }
+
     /// Clear the current scene.
     pub fn clear_scene(&mut self) {
         self.viewer.set_scene(crate::Scene::new());
