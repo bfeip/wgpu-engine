@@ -115,11 +115,16 @@ pub struct SaveOptions {
     /// Zstd compression level (1-22, default 3).
     /// Lower = faster, larger files. Higher = slower, smaller files.
     pub compression_level: i32,
+    /// Fallback texture format when original bytes are unavailable (default: JPEG).
+    pub texture_format: TextureFormat,
 }
 
 impl Default for SaveOptions {
     fn default() -> Self {
-        Self { compression_level: 3 }
+        Self {
+            compression_level: 3,
+            texture_format: TextureFormat::Jpeg,
+        }
     }
 }
 
@@ -130,17 +135,24 @@ impl SaveOptions {
     pub fn with_compression_level(level: i32) -> Self {
         Self {
             compression_level: level.clamp(1, 22),
+            ..Default::default()
         }
     }
 
     /// Fast compression (level 1) - quick saves, larger files.
     pub fn fast() -> Self {
-        Self { compression_level: 1 }
+        Self {
+            compression_level: 1,
+            ..Default::default()
+        }
     }
 
     /// Best compression (level 19) - slow saves, smaller files.
     pub fn best() -> Self {
-        Self { compression_level: 19 }
+        Self {
+            compression_level: 19,
+            ..Default::default()
+        }
     }
 }
 
@@ -1028,8 +1040,12 @@ impl SerializedTexture {
     /// Creates a SerializedTexture from a Texture.
     ///
     /// Uses original compressed bytes when available (from glTF embedded images or file paths),
-    /// avoiding expensive re-encoding. Falls back to PNG encoding otherwise.
-    pub fn from_texture(texture: &mut Texture, remapper: &IdRemapper) -> Result<Option<Self>, FormatError> {
+    /// avoiding expensive re-encoding. Falls back to `fallback_format` encoding otherwise.
+    pub fn from_texture(
+        texture: &mut Texture,
+        remapper: &IdRemapper,
+        fallback_format: TextureFormat,
+    ) -> Result<Option<Self>, FormatError> {
         let Some(id) = remapper.remap_texture(texture.id()) else {
             return Ok(None);
         };
@@ -1073,38 +1089,56 @@ impl SerializedTexture {
             }
         }
 
-        // Priority 3: Fall back to encoding as PNG
+        // Priority 3: Fall back to encoding with the configured format
         let image = texture.get_image()
             .map_err(|e| FormatError::TextureError(e.to_string()))?;
-
         let dimensions = image.dimensions();
 
-        // Encode as PNG
-        let rgba = image.to_rgba8();
-        let mut png_data = Vec::new();
-        {
-            use image::codecs::png::PngEncoder;
-            use image::ImageEncoder;
+        let (format, data) = match fallback_format {
+            TextureFormat::Jpeg => {
+                use image::codecs::jpeg::JpegEncoder;
+                use image::ImageEncoder;
 
-            let encoder = PngEncoder::new_with_quality(
-                &mut png_data,
-                CompressionType::Default,
-                FilterType::Adaptive
-            );
-            encoder.write_image(
-                &rgba,
-                dimensions.0,
-                dimensions.1,
-                image::ColorType::Rgba8,
-            ).map_err(|e| FormatError::TextureError(e.to_string()))?;
-        }
+                let rgb = image.to_rgb8();
+                let mut buf = Vec::new();
+                JpegEncoder::new_with_quality(&mut buf, 90)
+                    .write_image(
+                        &rgb,
+                        dimensions.0,
+                        dimensions.1,
+                        image::ColorType::Rgb8,
+                    )
+                    .map_err(|e| FormatError::TextureError(e.to_string()))?;
+                (TextureFormat::Jpeg, buf)
+            }
+            _ => {
+                use image::codecs::png::PngEncoder;
+                use image::ImageEncoder;
+
+                let rgba = image.to_rgba8();
+                let mut buf = Vec::new();
+                PngEncoder::new_with_quality(
+                    &mut buf,
+                    CompressionType::Best,
+                    FilterType::Adaptive,
+                )
+                .write_image(
+                    &rgba,
+                    dimensions.0,
+                    dimensions.1,
+                    image::ColorType::Rgba8,
+                )
+                .map_err(|e| FormatError::TextureError(e.to_string()))?;
+                (TextureFormat::Png, buf)
+            }
+        };
 
         Ok(Some(Self {
             id,
-            format: TextureFormat::Png,
+            format,
             width: dimensions.0,
             height: dimensions.1,
-            data: png_data,
+            data,
         }))
     }
 
@@ -1296,7 +1330,7 @@ impl Scene {
         // ===== Textures Section =====
         let mut textures = Vec::new();
         for texture in self.textures.values_mut() {
-            if let Some(serialized) = SerializedTexture::from_texture(texture, &remapper)? {
+            if let Some(serialized) = SerializedTexture::from_texture(texture, &remapper, options.texture_format)? {
                 textures.push(serialized);
             }
         }
