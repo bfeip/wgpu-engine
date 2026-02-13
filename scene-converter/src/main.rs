@@ -2,9 +2,13 @@ use std::path::PathBuf;
 
 use anyhow::{bail, Result};
 use clap::Parser;
+use image::imageops::FilterType;
+use image::GenericImageView;
 use wgpu_engine_scene::format::SaveOptions;
 use wgpu_engine_scene::gltf::load_gltf_scene_from_path;
 use wgpu_engine_scene::Scene;
+
+const MAX_TEXTURE_DIMENSION: u32 = 2048;
 
 #[derive(Parser)]
 #[command(name = "scene-converter")]
@@ -30,6 +34,10 @@ struct Cli {
     /// Use best compression (level 19)
     #[arg(long)]
     best: bool,
+
+    /// Don't resize textures larger than 2048px
+    #[arg(long)]
+    no_texture_resize: bool,
 }
 
 fn main() -> Result<()> {
@@ -80,6 +88,20 @@ fn main() -> Result<()> {
     }
     if let Some(id) = first_env_id {
         scene.set_active_environment_map(Some(id));
+    }
+
+    // Resize large textures
+    if !cli.no_texture_resize {
+        for texture in scene.textures.values_mut() {
+            let id = texture.id();
+            let img = texture.get_image()?;
+            let (w, h) = img.dimensions();
+            if w > MAX_TEXTURE_DIMENSION || h > MAX_TEXTURE_DIMENSION {
+                eprintln!("  Resizing texture {} ({}x{} -> fit {}px)", id, w, h, MAX_TEXTURE_DIMENSION);
+                let resized = img.resize(MAX_TEXTURE_DIMENSION, MAX_TEXTURE_DIMENSION, FilterType::Lanczos3);
+                texture.set_image(resized);
+            }
+        }
     }
 
     print_stats(&scene);
