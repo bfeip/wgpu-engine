@@ -3,12 +3,20 @@ import type { WebViewer } from "../../pkg/wgpu_engine";
 
 interface ViewerProps {
   onReady?: (viewer: WebViewer) => void;
+  onLoadProgress?: (pct: number, phase: number) => void;
+  onLoadComplete?: (success: boolean) => void;
 }
 
-export function Viewer({ onReady }: ViewerProps) {
+export function Viewer({ onReady, onLoadProgress, onLoadComplete }: ViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const viewerRef = useRef<WebViewer | null>(null);
+
+  // Keep callbacks in a ref so the rAF loop always sees the latest
+  const callbacksRef = useRef({ onLoadProgress, onLoadComplete });
+  useEffect(() => {
+    callbacksRef.current = { onLoadProgress, onLoadComplete };
+  });
 
   useEffect(() => {
     let animationId = 0;
@@ -40,8 +48,32 @@ export function Viewer({ onReady }: ViewerProps) {
       viewerRef.current = viewer;
       onReady?.(viewer);
 
+      // Track last reported values to avoid redundant React updates
+      let lastPct = -1;
+      let lastPhase = -1;
+
       // Render loop
       function animate() {
+        // Poll async load status
+        const status = viewer.poll_load();
+        if (status === 0) {
+          const pct = viewer.load_progress_pct();
+          const phase = viewer.load_phase();
+          if (pct !== lastPct || phase !== lastPhase) {
+            lastPct = pct;
+            lastPhase = phase;
+            callbacksRef.current.onLoadProgress?.(pct, phase);
+          }
+        } else if (status === 1) {
+          lastPct = -1;
+          lastPhase = -1;
+          callbacksRef.current.onLoadComplete?.(true);
+        } else if (status === 2) {
+          lastPct = -1;
+          lastPhase = -1;
+          callbacksRef.current.onLoadComplete?.(false);
+        }
+
         viewer.update_and_render();
         animationId = requestAnimationFrame(animate);
       }

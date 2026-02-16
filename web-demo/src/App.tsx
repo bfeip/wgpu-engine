@@ -1,11 +1,13 @@
 import { useCallback, useRef, useState } from "react";
 import { Viewer } from "./components/Viewer";
+import { LoadingOverlay } from "./components/LoadingOverlay";
 import type { WebViewer } from "../pkg/wgpu_engine";
 import "./App.css";
 
 export function App() {
   const viewerRef = useRef<WebViewer | null>(null);
   const [sceneInfo, setSceneInfo] = useState({ nodes: 0, meshes: 0 });
+  const [loading, setLoading] = useState<{ pct: number; phase: number } | null>(null);
 
   const handleViewerReady = useCallback(async (viewer: WebViewer) => {
     viewerRef.current = viewer;
@@ -13,14 +15,28 @@ export function App() {
       const resp = await fetch("/default-scene.wgsc");
       if (resp.ok) {
         const data = new Uint8Array(await resp.arrayBuffer());
-        viewer.load_scene(data);
+        viewer.start_load(data);
+        setLoading({ pct: 0, phase: 0 });
+      }
+    } catch (e) {
+      console.warn("Failed to load default scene:", e);
+    }
+  }, []);
+
+  const handleLoadProgress = useCallback((pct: number, phase: number) => {
+    setLoading({ pct, phase });
+  }, []);
+
+  const handleLoadComplete = useCallback((success: boolean) => {
+    setLoading(null);
+    if (success) {
+      const viewer = viewerRef.current;
+      if (viewer) {
         setSceneInfo({
           nodes: viewer.node_count(),
           meshes: viewer.mesh_count(),
         });
       }
-    } catch (e) {
-      console.warn("Failed to load default scene:", e);
     }
   }, []);
 
@@ -35,19 +51,8 @@ export function App() {
       const file = input.files?.[0];
       if (!file) return;
       const data = new Uint8Array(await file.arrayBuffer());
-      try {
-        if (file.name.endsWith(".wgsc")) {
-          viewer.load_scene(data);
-        } else {
-          viewer.load_gltf(data);
-        }
-        setSceneInfo({
-          nodes: viewer.node_count(),
-          meshes: viewer.mesh_count(),
-        });
-      } catch (e) {
-        console.error("Failed to load file:", e);
-      }
+      viewer.start_load(data);
+      setLoading({ pct: 0, phase: 0 });
     };
     input.click();
   }, []);
@@ -78,7 +83,14 @@ export function App() {
           </div>
         )}
       </div>
-      <Viewer onReady={handleViewerReady} />
+      <div className="viewer-area">
+        <Viewer
+          onReady={handleViewerReady}
+          onLoadProgress={handleLoadProgress}
+          onLoadComplete={handleLoadComplete}
+        />
+        {loading && <LoadingOverlay pct={loading.pct} phase={loading.phase} />}
+      </div>
     </div>
   );
 }
