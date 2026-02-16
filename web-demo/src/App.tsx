@@ -77,14 +77,6 @@ export function App() {
             <p>Meshes: {sceneInfo.meshes}</p>
           </div>
         )}
-
-        <div className="help">
-          <h2>Controls</h2>
-          <p>Left drag: Orbit</p>
-          <p>Right drag: Pan</p>
-          <p>Scroll: Zoom</p>
-          <p>WASD: Walk</p>
-        </div>
       </div>
       <Viewer onReady={handleViewerReady} />
     </div>
