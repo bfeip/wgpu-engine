@@ -3,11 +3,13 @@ use web_sys::HtmlCanvasElement;
 
 use crate::event::Event;
 use crate::input::{ElementState, Key, KeyEvent, MouseButton, MouseScrollDelta, NamedKey, PhysicalKey};
+use crate::loader::LoadHandle;
 use crate::viewer::Viewer;
 
 #[wasm_bindgen]
 pub struct WebViewer {
     viewer: Viewer<'static>,
+    pending_load: Option<LoadHandle>,
 }
 
 #[wasm_bindgen]
@@ -23,7 +25,10 @@ impl WebViewer {
         console_log::init_with_level(log::Level::Info).ok();
 
         let viewer = Viewer::from_canvas(canvas).await;
-        Ok(WebViewer { viewer })
+        Ok(WebViewer {
+            viewer,
+            pending_load: None,
+        })
     }
 
     /// Call once per frame from requestAnimationFrame.
@@ -93,33 +98,94 @@ impl WebViewer {
         });
     }
 
+    /// Begin an async scene load. Format is auto-detected from magic bytes.
+    /// Cancels any in-flight load. Poll with `poll_load()` each frame.
+    pub fn start_load(&mut self, data: &[u8]) {
+        use crate::loader::{LoadOptions, SceneSource};
+        let aspect = self.viewer.camera().aspect;
+        self.pending_load = Some(crate::loader::load_async(
+            SceneSource::Bytes(data.to_vec()),
+            LoadOptions { aspect },
+        ));
+    }
+
+    /// Poll the in-flight load.
+    /// Returns: -1 = no load, 0 = in progress, 1 = success (scene applied), 2 = error.
+    pub fn poll_load(&mut self) -> i32 {
+        let Some(ref handle) = self.pending_load else {
+            return -1;
+        };
+
+        if !handle.is_done() {
+            return 0;
+        }
+
+        let handle = self.pending_load.take().unwrap();
+        match handle.try_recv() {
+            Some(Ok(result)) => {
+                self.viewer.set_scene(result.scene);
+                let camera = result.camera.unwrap_or_else(|| {
+                    camera_for_scene(self.viewer.scene(), self.viewer.camera().aspect)
+                });
+                self.viewer.set_camera(camera);
+                1
+            }
+            Some(Err(e)) => {
+                log::error!("Load failed: {}", e);
+                2
+            }
+            None => {
+                log::error!("Load handle done but no result available");
+                2
+            }
+        }
+    }
+
+    /// Current load progress percentage (0-100). Returns 0 if no load active.
+    pub fn load_progress_pct(&self) -> u8 {
+        self.pending_load
+            .as_ref()
+            .map(|h| h.progress().progress_pct())
+            .unwrap_or(0)
+    }
+
+    /// Current load phase as u8 (maps to LoadPhase enum). Returns 0 if no load active.
+    pub fn load_phase(&self) -> u8 {
+        self.pending_load
+            .as_ref()
+            .map(|h| h.progress().phase() as u8)
+            .unwrap_or(0)
+    }
+
+    /// Load a scene synchronously from raw bytes. Format (glTF or WGSC) is auto-detected.
+    /// The scene and camera will be set automatically.
+    pub fn load(&mut self, data: &[u8]) -> Result<(), JsValue> {
+        use crate::loader::{LoadOptions, SceneSource};
+        let aspect = self.viewer.camera().aspect;
+        let result = crate::loader::load_sync(
+            SceneSource::Bytes(data.to_vec()),
+            LoadOptions { aspect },
+        )
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        self.viewer.set_scene(result.scene);
+        let camera = result.camera.unwrap_or_else(|| {
+            camera_for_scene(self.viewer.scene(), aspect)
+        });
+        self.viewer.set_camera(camera);
+        Ok(())
+    }
+
     /// Load a glTF/glb model from raw bytes.
     /// The scene and camera will be set automatically.
     pub fn load_gltf(&mut self, data: &[u8]) -> Result<(), JsValue> {
-        let aspect = self.viewer.camera().aspect;
-        match crate::load_gltf_scene_from_slice(data, aspect) {
-            Ok(result) => {
-                self.viewer.set_scene(result.scene);
-                let camera = result.camera.unwrap_or_else(|| {
-                    camera_for_scene(self.viewer.scene(), aspect)
-                });
-                self.viewer.set_camera(camera);
-                Ok(())
-            }
-            Err(e) => Err(JsValue::from_str(&e.to_string())),
-        }
+        self.load(data)
     }
 
     /// Load a scene from .wgsc format bytes.
     /// The scene and camera will be set automatically.
     pub fn load_scene(&mut self, data: &[u8]) -> Result<(), JsValue> {
-        let scene = crate::Scene::from_bytes(data)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
-        let aspect = self.viewer.camera().aspect;
-        let camera = camera_for_scene(&scene, aspect);
-        self.viewer.set_scene(scene);
-        self.viewer.set_camera(camera);
-        Ok(())
+        self.load(data)
     }
 
     /// Clear the current scene.

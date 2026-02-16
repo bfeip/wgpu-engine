@@ -468,36 +468,73 @@ pub fn load_gltf_scene_from_slice(
     load_gltf_from_data(document, buffers, images, None, aspect)
 }
 
-/// Internal helper to load a glTF scene from parsed data.
-fn load_gltf_from_data(
-    document: gltf::Document,
-    buffers: Vec<gltf::buffer::Data>,
-    images: Vec<gltf::image::Data>,
-    base_path: Option<&Path>,
-    aspect: f32,
-) -> anyhow::Result<GltfLoadResult> {
-    use std::collections::HashMap;
-    use cgmath::SquareMatrix;
+/// Parsed glTF data, ready for asset loading. Produced by [`parse_gltf`].
+pub struct ParsedGltf {
+    pub document: gltf::Document,
+    pub buffers: Vec<gltf::buffer::Data>,
+    pub images: Vec<gltf::image::Data>,
+    pub base_path: Option<std::path::PathBuf>,
+}
 
-    let mut scene = Scene::new();
+/// Phase 1: Parse glTF from bytes.
+///
+/// Validates the file and decodes embedded images. This is typically the most
+/// expensive phase for glTF files with embedded textures.
+pub fn parse_gltf(data: &[u8]) -> anyhow::Result<ParsedGltf> {
+    let (document, buffers, images) = gltf::import_slice(data)?;
+    Ok(ParsedGltf {
+        document,
+        buffers,
+        images,
+        base_path: None,
+    })
+}
 
-    // Load all materials first (they'll be added to scene.materials)
+/// Phase 1 (path variant): Parse glTF from a file path.
+///
+/// Like [`parse_gltf`] but resolves external texture references relative to
+/// the file's directory.
+pub fn parse_gltf_from_path(path: &Path) -> anyhow::Result<ParsedGltf> {
+    let base_path = path.parent().map(|p| p.to_path_buf());
+    let (document, buffers, images) = gltf::import(path)?;
+    Ok(ParsedGltf {
+        document,
+        buffers,
+        images,
+        base_path,
+    })
+}
+
+/// Phase 2: Load materials, textures, and meshes from parsed glTF data into a scene.
+///
+/// Creates all materials (with their textures) and meshes, returning the maps
+/// needed by [`build_gltf_scene`] to wire up the node hierarchy.
+pub fn load_gltf_assets(
+    parsed: &ParsedGltf,
+    scene: &mut Scene,
+) -> anyhow::Result<(Vec<MaterialId>, GltfMeshMap)> {
+    let base_path = parsed.base_path.as_deref();
+
+    // Load all materials (which also loads their textures)
     let mut material_map: Vec<MaterialId> = Vec::new();
-    for material in document.materials() {
-        let mat_id = load_material(&material, &images, &document, &buffers, base_path, &mut scene)?;
+    for material in parsed.document.materials() {
+        let mat_id = load_material(
+            &material,
+            &parsed.images,
+            &parsed.document,
+            &parsed.buffers,
+            base_path,
+            scene,
+        )?;
         material_map.push(mat_id);
     }
 
-    // Maps glTF mesh index -> list of (scene mesh, material) pairs
-    // We need this structure because glTF nodes reference mesh indices, and each glTF mesh
-    // can contain multiple primitives. We load each primitive as a separate scene mesh.
+    // Load all meshes
     let mut mesh_map: GltfMeshMap = Vec::new();
-
-    for mesh in document.meshes() {
+    for mesh in parsed.document.meshes() {
         let mut primitives_data = Vec::new();
 
         for (_prim_idx, primitive) in mesh.primitives().enumerate() {
-            // Map glTF primitive mode to our PrimitiveType
             let Some(primitive_type) = map_primitive_mode(primitive.mode()) else {
                 log::warn!(
                     "Skipping unsupported primitive mode {:?} in mesh {}",
@@ -507,9 +544,8 @@ fn load_gltf_from_data(
                 continue;
             };
 
-            // Load vertex and index data
-            let vertices = load_vertices(&primitive, &buffers)?;
-            let indices = load_indices(&primitive, &buffers)?;
+            let vertices = load_vertices(&primitive, &parsed.buffers)?;
+            let indices = load_indices(&primitive, &parsed.buffers)?;
 
             let primitives = vec![MeshPrimitive {
                 primitive_type,
@@ -519,12 +555,8 @@ fn load_gltf_from_data(
             let mesh_obj = Mesh::from_raw(vertices, primitives);
             let mesh_id = scene.add_mesh(mesh_obj);
 
-            // Create appropriate material for this primitive type
-            let material_id = get_material_for_primitive(
-                &primitive,
-                primitive_type,
-                &material_map,
-            );
+            let material_id =
+                get_material_for_primitive(&primitive, primitive_type, &material_map);
 
             primitives_data.push((mesh_id, material_id));
         }
@@ -532,19 +564,34 @@ fn load_gltf_from_data(
         mesh_map.push(primitives_data);
     }
 
-    // Search for a camera in the scene
+    Ok((material_map, mesh_map))
+}
+
+/// Phase 3: Build the scene hierarchy (nodes, camera, lights) from parsed glTF.
+///
+/// Requires the mesh map from [`load_gltf_assets`]. Returns the camera if one
+/// was defined in the glTF file.
+pub fn build_gltf_scene(
+    parsed: &ParsedGltf,
+    scene: &mut Scene,
+    mesh_map: &GltfMeshMap,
+    aspect: f32,
+) -> anyhow::Result<Option<Camera>> {
+    use std::collections::HashMap;
+    use cgmath::SquareMatrix;
+
     let mut camera: Option<Camera> = None;
 
-    // Load the scene hierarchy
-    if let Some(gltf_scene) = document.default_scene().or_else(|| document.scenes().next()) {
-        // Map from glTF node index to our NodeId
+    if let Some(gltf_scene) = parsed
+        .document
+        .default_scene()
+        .or_else(|| parsed.document.scenes().next())
+    {
         let mut node_map: HashMap<usize, crate::NodeId> = HashMap::new();
 
-        // Process all root nodes
         for gltf_node in gltf_scene.nodes() {
-            load_node_recursive(&gltf_node, None, &mut scene, &mesh_map, &mut node_map)?;
+            load_node_recursive(&gltf_node, None, scene, mesh_map, &mut node_map)?;
 
-            // Search for camera if we haven't found one yet
             if camera.is_none() {
                 camera = find_camera_recursive(
                     &gltf_node,
@@ -555,8 +602,29 @@ fn load_gltf_from_data(
         }
     }
 
-    // Add default lights if the glTF scene doesn't define any
     scene.set_default_lights();
+
+    Ok(camera)
+}
+
+/// Internal helper to load a glTF scene from parsed data.
+fn load_gltf_from_data(
+    document: gltf::Document,
+    buffers: Vec<gltf::buffer::Data>,
+    images: Vec<gltf::image::Data>,
+    base_path: Option<&Path>,
+    aspect: f32,
+) -> anyhow::Result<GltfLoadResult> {
+    let parsed = ParsedGltf {
+        document,
+        buffers,
+        images,
+        base_path: base_path.map(|p| p.to_path_buf()),
+    };
+
+    let mut scene = Scene::new();
+    let (_material_map, mesh_map) = load_gltf_assets(&parsed, &mut scene)?;
+    let camera = build_gltf_scene(&parsed, &mut scene, &mesh_map, aspect)?;
 
     Ok(GltfLoadResult { scene, camera })
 }

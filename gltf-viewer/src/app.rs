@@ -12,6 +12,7 @@ use wgpu_engine::egui_support::EguiViewerApp;
 use wgpu_engine::input::{ElementState, Key, NamedKey};
 #[cfg(target_arch = "wasm32")]
 use wgpu_engine::input::{ElementState, Key};
+use wgpu_engine::loader::{LoadHandle, LoadOptions, SceneSource};
 use wgpu_engine::scene::Scene;
 
 use crate::ui;
@@ -57,13 +58,8 @@ pub struct App {
     state: InitState,
     proxy: EventLoopProxy<AppEvent>,
 
-    /// Pending file path to load (native only)
-    #[cfg(not(target_arch = "wasm32"))]
-    pending_gltf_path: Option<std::path::PathBuf>,
-
-    /// Pending file data to load (web only)
-    #[cfg(target_arch = "wasm32")]
-    pending_gltf_data: Option<Vec<u8>>,
+    /// In-progress async scene load, if any.
+    pending_load: Option<LoadHandle>,
 }
 
 impl App {
@@ -71,10 +67,7 @@ impl App {
         Self {
             state: InitState::Uninitialized,
             proxy,
-            #[cfg(not(target_arch = "wasm32"))]
-            pending_gltf_path: None,
-            #[cfg(target_arch = "wasm32")]
-            pending_gltf_data: None,
+            pending_load: None,
         }
     }
 
@@ -174,17 +167,45 @@ impl App {
         }
     }
 
-    /// Process any pending glTF load
+    /// Poll the in-progress async load, applying the result when ready.
     fn process_pending_load(&mut self) {
-        #[cfg(not(target_arch = "wasm32"))]
-        if let Some(path) = self.pending_gltf_path.take() {
-            self.load_gltf_from_path(&path);
-        }
+        let Some(ref handle) = self.pending_load else {
+            return;
+        };
 
-        #[cfg(target_arch = "wasm32")]
-        if let Some(data) = self.pending_gltf_data.take() {
-            self.load_gltf_from_bytes(&data);
+        let Some(result) = handle.try_recv() else {
+            return;
+        };
+
+        // Load is done — take the handle out of pending
+        self.pending_load = None;
+
+        let InitState::Ready(ref mut viewer_app) = self.state else {
+            return;
+        };
+
+        match result {
+            Ok(loaded) => {
+                Self::apply_load_result(viewer_app.viewer_mut(), loaded);
+                log::info!("Scene loaded successfully");
+            }
+            Err(e) => {
+                log::error!("Failed to load scene: {}", e);
+            }
         }
+    }
+
+    /// Kick off an async load from the given source.
+    fn start_load(&mut self, source: SceneSource) {
+        let InitState::Ready(ref viewer_app) = self.state else {
+            return;
+        };
+        let size = viewer_app.viewer().size();
+        let aspect = size.0 as f32 / size.1 as f32;
+        self.pending_load = Some(wgpu_engine::loader::load_async(
+            source,
+            LoadOptions { aspect },
+        ));
     }
 
     /// Open platform-specific file dialog
@@ -192,11 +213,11 @@ impl App {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let file = rfd::FileDialog::new()
-                .add_filter("glTF", &["gltf", "glb"])
+                .add_filter("Scene files", &["gltf", "glb", "wgsc"])
                 .pick_file();
 
             if let Some(path) = file {
-                self.pending_gltf_path = Some(path);
+                self.start_load(SceneSource::Path(path));
             }
         }
 
@@ -206,60 +227,14 @@ impl App {
         }
     }
 
-    /// Load glTF from file path (native only)
-    #[cfg(not(target_arch = "wasm32"))]
-    fn load_gltf_from_path(&mut self, path: &std::path::Path) {
-        let InitState::Ready(ref mut viewer_app) = self.state else {
-            return;
-        };
-
-        let viewer = viewer_app.viewer_mut();
-        let aspect = {
-            let size = viewer.size();
-            size.0 as f32 / size.1 as f32
-        };
-
-        let path_str = path.display().to_string();
-        match wgpu_engine::load_gltf_scene_from_path(path, aspect) {
-            Ok(result) => {
-                Self::apply_gltf_result(viewer, result);
-                log::info!("Loaded glTF: {}", path_str);
-            }
-            Err(e) => {
-                log::error!("Failed to load glTF {}: {}", path_str, e);
-            }
-        }
-    }
-
-    /// Load glTF from bytes (used on web platform)
-    #[allow(dead_code)] // Only used on wasm32
-    fn load_gltf_from_bytes(&mut self, data: &[u8]) {
-        let InitState::Ready(ref mut viewer_app) = self.state else {
-            return;
-        };
-
-        let viewer = viewer_app.viewer_mut();
-        let aspect = {
-            let size = viewer.size();
-            size.0 as f32 / size.1 as f32
-        };
-
-        match wgpu_engine::load_gltf_scene_from_slice(data, aspect) {
-            Ok(result) => {
-                Self::apply_gltf_result(viewer, result);
-                log::info!("Loaded glTF from bytes");
-            }
-            Err(e) => {
-                log::error!("Failed to load glTF: {}", e);
-            }
-        }
-    }
-
-    /// Apply a loaded glTF result to the viewer.
+    /// Apply a loaded scene result to the viewer.
     ///
-    /// Sets the scene and camera. If the glTF file doesn't define a camera,
+    /// Sets the scene and camera. If the file doesn't define a camera,
     /// computes a default camera that fits the scene bounds.
-    fn apply_gltf_result(viewer: &mut wgpu_engine::Viewer, result: wgpu_engine::GltfLoadResult) {
+    fn apply_load_result(
+        viewer: &mut wgpu_engine::Viewer,
+        result: wgpu_engine::loader::SceneLoadResult,
+    ) {
         viewer.set_scene(result.scene);
 
         let camera = result.camera.unwrap_or_else(|| {
@@ -326,7 +301,7 @@ impl App {
             .dyn_into()
             .unwrap();
         input.set_type("file");
-        input.set_accept(".gltf,.glb");
+        input.set_accept(".gltf,.glb,.wgsc");
         input.set_id("gltf-file-input");
         let _ = input.style().set_property("display", "none");
 
@@ -455,7 +430,7 @@ impl ApplicationHandler<AppEvent> for App {
             }
             #[cfg(target_arch = "wasm32")]
             AppEvent::FileLoaded(data) => {
-                self.pending_gltf_data = Some(data);
+                self.start_load(SceneSource::Bytes(data));
                 if let InitState::Ready(ref app) = self.state {
                     app.request_redraw();
                 }

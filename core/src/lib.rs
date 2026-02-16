@@ -8,6 +8,7 @@ pub use wgpu_engine_scene::gltf;
 pub use wgpu_engine_scene::camera;
 pub use wgpu_engine_scene::{Camera, EnvironmentMap, EnvironmentMapId, Scene};
 pub use wgpu_engine_scene::gltf::{load_gltf_scene_from_path, load_gltf_scene_from_slice, GltfLoadResult};
+pub use wgpu_engine_scene::loader;
 
 // Core modules
 pub mod event;

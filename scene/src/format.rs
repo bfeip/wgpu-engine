@@ -486,7 +486,7 @@ pub enum SerializedAnnotation {
 
 /// Serializable environment map with embedded HDR data.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct SerializedEnvironmentMap {
+pub struct SerializedEnvironmentMap {
     /// Remapped environment map ID.
     pub id: u32,
     /// Raw .hdr file bytes.
@@ -1236,6 +1236,298 @@ pub fn deserialize_section<T: for<'de> Deserialize<'de>>(compressed: &[u8]) -> R
 }
 
 // ============================================================================
+// Phased Deserialization
+// ============================================================================
+
+/// All deserialized sections from a WGSC file, prior to texture decoding
+/// and scene assembly. Produced by [`parse_wgsc`], consumed by
+/// [`decode_wgsc_textures`] and [`assemble_wgsc_scene`].
+pub struct WgscSections {
+    pub metadata: SerializedMetadata,
+    pub textures: Vec<SerializedTexture>,
+    pub materials: Vec<SerializedMaterial>,
+    pub meshes: Vec<SerializedMesh>,
+    pub instances: Vec<SerializedInstance>,
+    pub nodes: Vec<SerializedNode>,
+    pub lights: Vec<SerializedLight>,
+    pub annotations: Vec<SerializedAnnotation>,
+    pub environment_maps: Vec<SerializedEnvironmentMap>,
+}
+
+/// Phase 1: Parse WGSC header, TOC, and decompress/deserialize all sections.
+///
+/// This is relatively fast (decompression + bincode deserialization).
+/// The heavy texture image decoding happens in [`decode_wgsc_textures`].
+pub fn parse_wgsc(bytes: &[u8]) -> Result<WgscSections, FormatError> {
+    let mut cursor = Cursor::new(bytes);
+    let header = FileHeader::read(&mut cursor)?;
+
+    let toc_data = &bytes[header.toc_offset as usize..];
+    let toc: TableOfContents = deserialize_section(toc_data)?;
+
+    let read_section = |section_type: SectionType| -> Result<&[u8], FormatError> {
+        let entry = toc
+            .find(section_type)
+            .ok_or(FormatError::MissingSectionType(section_type))?;
+        let start = entry.offset as usize;
+        let end = start + entry.compressed_size as usize;
+        Ok(&bytes[start..end])
+    };
+
+    let metadata: SerializedMetadata =
+        deserialize_section(read_section(SectionType::Metadata)?)?;
+    let textures: Vec<SerializedTexture> =
+        deserialize_section(read_section(SectionType::Textures)?)?;
+    let materials: Vec<SerializedMaterial> =
+        deserialize_section(read_section(SectionType::Materials)?)?;
+    let meshes: Vec<SerializedMesh> =
+        deserialize_section(read_section(SectionType::Meshes)?)?;
+    let instances: Vec<SerializedInstance> =
+        deserialize_section(read_section(SectionType::Instances)?)?;
+    let nodes: Vec<SerializedNode> =
+        deserialize_section(read_section(SectionType::Nodes)?)?;
+    let lights: Vec<SerializedLight> =
+        deserialize_section(read_section(SectionType::Lights)?)?;
+    let annotations: Vec<SerializedAnnotation> =
+        deserialize_section(read_section(SectionType::Annotations)?)?;
+    let environment_maps: Vec<SerializedEnvironmentMap> =
+        if let Some(entry) = toc.find(SectionType::EnvironmentMaps) {
+            let start = entry.offset as usize;
+            let end = start + entry.compressed_size as usize;
+            deserialize_section(&bytes[start..end])?
+        } else {
+            Vec::new()
+        };
+
+    Ok(WgscSections {
+        metadata,
+        textures,
+        materials,
+        meshes,
+        instances,
+        nodes,
+        lights,
+        annotations,
+        environment_maps,
+    })
+}
+
+/// A single decoded texture with its file-local ID, ready for scene insertion.
+pub struct DecodedTexture {
+    pub file_id: u32,
+    pub texture: Texture,
+}
+
+/// Phase 2: Decode serialized textures into images.
+///
+/// On native this uses rayon for parallelism. On WASM it decodes sequentially.
+/// This is typically the most expensive phase of loading.
+pub fn decode_wgsc_textures(
+    serialized: &[SerializedTexture],
+) -> Result<Vec<DecodedTexture>, FormatError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        serialized
+            .par_iter()
+            .map(|st| {
+                st.to_texture()
+                    .map(|tex| DecodedTexture { file_id: st.id, texture: tex })
+            })
+            .collect()
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        serialized
+            .iter()
+            .map(|st| {
+                st.to_texture()
+                    .map(|tex| DecodedTexture { file_id: st.id, texture: tex })
+            })
+            .collect()
+    }
+}
+
+/// Decode a single serialized texture. Useful for per-item progress reporting
+/// and WASM chunked yielding.
+pub fn decode_wgsc_texture(
+    serialized: &SerializedTexture,
+) -> Result<DecodedTexture, FormatError> {
+    serialized
+        .to_texture()
+        .map(|tex| DecodedTexture { file_id: serialized.id, texture: tex })
+}
+
+/// Phase 3: Assemble a [`Scene`] from parsed sections and decoded textures.
+///
+/// This is fast — it's just inserting data into hashmaps and linking nodes.
+pub fn assemble_wgsc_scene(
+    sections: WgscSections,
+    decoded_textures: Vec<DecodedTexture>,
+) -> Result<Scene, FormatError> {
+    use cgmath::{Point3, Quaternion, Vector3};
+
+    let mut scene = Scene::new();
+    scene.materials.clear();
+    scene.next_material_id = 0;
+
+    // Add textures
+    let mut texture_id_map: HashMap<u32, TextureId> = HashMap::new();
+    for dt in decoded_textures {
+        let scene_id = scene.add_texture(dt.texture);
+        texture_id_map.insert(dt.file_id, scene_id);
+    }
+
+    // Add meshes
+    let mut mesh_id_map: HashMap<u32, MeshId> = HashMap::new();
+    for sm in sections.meshes {
+        let file_id = sm.id;
+        let mesh = sm.to_mesh();
+        let scene_id = scene.add_mesh(mesh);
+        mesh_id_map.insert(file_id, scene_id);
+    }
+
+    // Add materials (with texture ID remapping)
+    let mut material_id_map: HashMap<u32, MaterialId> = HashMap::new();
+    for sm in sections.materials {
+        let file_id = sm.id;
+        let mut material = sm.to_material();
+
+        if let Some(tex_id) = sm.base_color_texture_id {
+            if let Some(&scene_tex_id) = texture_id_map.get(&tex_id) {
+                material = material.with_base_color_texture(scene_tex_id);
+            }
+        }
+        if let Some(tex_id) = sm.normal_texture_id {
+            if let Some(&scene_tex_id) = texture_id_map.get(&tex_id) {
+                material = material.with_normal_texture(scene_tex_id);
+            }
+        }
+        if let Some(tex_id) = sm.metallic_roughness_texture_id {
+            if let Some(&scene_tex_id) = texture_id_map.get(&tex_id) {
+                material = material.with_metallic_roughness_texture(scene_tex_id);
+            }
+        }
+
+        let scene_id = scene.add_material(material);
+        material_id_map.insert(file_id, scene_id);
+    }
+
+    // Add instances
+    let mut instance_id_map: HashMap<u32, InstanceId> = HashMap::new();
+    for si in sections.instances {
+        let file_id = si.id;
+        let mesh_id = *mesh_id_map.get(&si.mesh_id).unwrap_or(&0);
+        let material_id = *material_id_map
+            .get(&si.material_id)
+            .unwrap_or(&DEFAULT_MATERIAL_ID);
+        let scene_id = scene.add_instance(mesh_id, material_id);
+        instance_id_map.insert(file_id, scene_id);
+    }
+
+    // Sort nodes by ID for consistent ordering
+    let mut sorted_nodes = sections.nodes;
+    sorted_nodes.sort_by_key(|n| n.id);
+
+    // Build node ID map (file ID -> scene ID)
+    let mut node_id_map: HashMap<u32, NodeId> = HashMap::new();
+
+    // First pass: create all nodes without parent relationships
+    for sn in &sorted_nodes {
+        let position = Point3::new(sn.position[0], sn.position[1], sn.position[2]);
+        let rotation = Quaternion::new(
+            sn.rotation[3], // w (scalar)
+            sn.rotation[0], // x
+            sn.rotation[1], // y
+            sn.rotation[2], // z
+        );
+        let scale = Vector3::new(sn.scale[0], sn.scale[1], sn.scale[2]);
+
+        let node_id = scene
+            .add_node(None, sn.name.clone(), position, rotation, scale)
+            .map_err(|e| FormatError::DeserializationError(e.to_string()))?;
+
+        node_id_map.insert(sn.id, node_id);
+
+        if let Some(inst_file_id) = sn.instance_id {
+            if let Some(&scene_inst_id) = instance_id_map.get(&inst_file_id) {
+                scene
+                    .get_node_mut(node_id)
+                    .unwrap()
+                    .set_instance(Some(scene_inst_id));
+            }
+        }
+
+        if !sn.visible {
+            scene.set_node_visibility(node_id, Visibility::Invisible);
+        }
+    }
+
+    // Second pass: establish parent-child relationships
+    scene.root_nodes.clear();
+
+    for sn in &sorted_nodes {
+        let scene_node_id = *node_id_map.get(&sn.id).unwrap();
+
+        if let Some(parent_file_id) = sn.parent_id {
+            if let Some(&scene_parent_id) = node_id_map.get(&parent_file_id) {
+                scene
+                    .get_node_mut(scene_node_id)
+                    .unwrap()
+                    .set_parent(Some(scene_parent_id));
+                scene
+                    .get_node_mut(scene_parent_id)
+                    .unwrap()
+                    .add_child(scene_node_id);
+            }
+        }
+    }
+
+    // Rebuild root_nodes from metadata
+    scene.root_nodes = sections
+        .metadata
+        .root_nodes
+        .iter()
+        .filter_map(|&file_id| node_id_map.get(&file_id).copied())
+        .collect();
+
+    // Add lights
+    scene.lights = sections
+        .lights
+        .iter()
+        .map(SerializedLight::to_light)
+        .collect();
+
+    // Add annotations
+    for sa in sections.annotations {
+        let annotation = sa.to_annotation();
+        scene
+            .annotations
+            .insert_with_id(annotation)
+            .map_err(|e| FormatError::DeserializationError(e.to_string()))?;
+    }
+
+    // Add environment maps
+    let mut env_map_id_map: HashMap<u32, EnvironmentMapId> = HashMap::new();
+    for sem in sections.environment_maps {
+        let scene_id = scene.add_environment_map_from_hdr_data(sem.hdr_data);
+        if let Some(em) = scene.get_environment_map_mut(scene_id) {
+            em.intensity = sem.intensity;
+            em.rotation = sem.rotation;
+        }
+        env_map_id_map.insert(sem.id, scene_id);
+    }
+
+    // Set active environment map
+    scene.active_environment_map = sections
+        .metadata
+        .active_environment_map
+        .and_then(|file_id| env_map_id_map.get(&file_id).copied());
+
+    Ok(scene)
+}
+
+// ============================================================================
 // Scene Serialization
 // ============================================================================
 
@@ -1441,234 +1733,14 @@ impl Scene {
     }
 
     /// Deserializes a scene from WGSC format bytes.
+    ///
+    /// This is a convenience method that calls [`parse_wgsc`],
+    /// [`decode_wgsc_textures`], and [`assemble_wgsc_scene`] sequentially.
+    /// For progress reporting or async loading, call those phases individually.
     pub fn from_bytes(bytes: &[u8]) -> Result<Scene, FormatError> {
-        use cgmath::{Point3, Quaternion, Vector3};
-
-        let mut cursor = Cursor::new(bytes);
-
-        // Read header
-        let header = FileHeader::read(&mut cursor)?;
-
-        // Read TOC
-        cursor.set_position(header.toc_offset);
-        let toc_data = &bytes[header.toc_offset as usize..];
-        let toc: TableOfContents = deserialize_section(toc_data)?;
-
-        // Helper to read a section
-        let read_section = |section_type: SectionType| -> Result<&[u8], FormatError> {
-            let entry = toc.find(section_type)
-                .ok_or(FormatError::MissingSectionType(section_type))?;
-            let start = entry.offset as usize;
-            let end = start + entry.compressed_size as usize;
-            Ok(&bytes[start..end])
-        };
-
-        // Read metadata
-        let metadata: SerializedMetadata = deserialize_section(read_section(SectionType::Metadata)?)?;
-
-        // Read textures first (materials reference them)
-        let serialized_textures: Vec<SerializedTexture> =
-            deserialize_section(read_section(SectionType::Textures)?)?;
-
-        // Read materials
-        let serialized_materials: Vec<SerializedMaterial> =
-            deserialize_section(read_section(SectionType::Materials)?)?;
-
-        // Read meshes
-        let serialized_meshes: Vec<SerializedMesh> =
-            deserialize_section(read_section(SectionType::Meshes)?)?;
-
-        // Read instances
-        let serialized_instances: Vec<SerializedInstance> =
-            deserialize_section(read_section(SectionType::Instances)?)?;
-
-        // Read nodes
-        let serialized_nodes: Vec<SerializedNode> =
-            deserialize_section(read_section(SectionType::Nodes)?)?;
-
-        // Read lights
-        let serialized_lights: Vec<SerializedLight> =
-            deserialize_section(read_section(SectionType::Lights)?)?;
-
-        // Read annotations
-        let serialized_annotations: Vec<SerializedAnnotation> =
-            deserialize_section(read_section(SectionType::Annotations)?)?;
-
-        // Read environment maps (optional for backward compatibility with older files)
-        let serialized_env_maps: Vec<SerializedEnvironmentMap> =
-            if let Some(entry) = toc.find(SectionType::EnvironmentMaps) {
-                let start = entry.offset as usize;
-                let end = start + entry.compressed_size as usize;
-                deserialize_section(&bytes[start..end])?
-            } else {
-                Vec::new()
-            };
-
-        // ===== Build Scene =====
-        let mut scene = Scene::new();
-
-        // Clear the default material - we'll reload all materials from file
-        scene.materials.clear();
-        scene.next_material_id = 0;
-
-        // Decode textures (parallel on native, sequential on WASM)
-        #[cfg(not(target_arch = "wasm32"))]
-        let decoded_textures: Result<Vec<_>, FormatError> = serialized_textures
-            .par_iter()
-            .map(|st| st.to_texture().map(|tex| (st.id, tex)))
-            .collect();
-
-        #[cfg(target_arch = "wasm32")]
-        let decoded_textures: Result<Vec<_>, FormatError> = serialized_textures
-            .iter()
-            .map(|st| st.to_texture().map(|tex| (st.id, tex)))
-            .collect();
-
-        // Add textures to scene (must be sequential to get correct IDs)
-        let mut texture_id_map: HashMap<u32, TextureId> = HashMap::new();
-        for (file_id, texture) in decoded_textures? {
-            let scene_id = scene.add_texture(texture);
-            texture_id_map.insert(file_id, scene_id);
-        }
-
-        // Add meshes
-        let mut mesh_id_map: HashMap<u32, MeshId> = HashMap::new();
-        for sm in serialized_meshes {
-            let file_id = sm.id;
-            let mesh = sm.to_mesh();
-            let scene_id = scene.add_mesh(mesh);
-            mesh_id_map.insert(file_id, scene_id);
-        }
-
-        // Add materials (with texture ID remapping)
-        let mut material_id_map: HashMap<u32, MaterialId> = HashMap::new();
-        for sm in serialized_materials {
-            let file_id = sm.id;
-            let mut material = sm.to_material();
-
-            // Remap texture IDs
-            if let Some(tex_id) = sm.base_color_texture_id {
-                if let Some(&scene_tex_id) = texture_id_map.get(&tex_id) {
-                    material = material.with_base_color_texture(scene_tex_id);
-                }
-            }
-            if let Some(tex_id) = sm.normal_texture_id {
-                if let Some(&scene_tex_id) = texture_id_map.get(&tex_id) {
-                    material = material.with_normal_texture(scene_tex_id);
-                }
-            }
-            if let Some(tex_id) = sm.metallic_roughness_texture_id {
-                if let Some(&scene_tex_id) = texture_id_map.get(&tex_id) {
-                    material = material.with_metallic_roughness_texture(scene_tex_id);
-                }
-            }
-
-            let scene_id = scene.add_material(material);
-            material_id_map.insert(file_id, scene_id);
-        }
-
-        // Add instances
-        let mut instance_id_map: HashMap<u32, InstanceId> = HashMap::new();
-        for si in serialized_instances {
-            let file_id = si.id;
-            let mesh_id = *mesh_id_map.get(&si.mesh_id).unwrap_or(&0);
-            let material_id = *material_id_map.get(&si.material_id).unwrap_or(&DEFAULT_MATERIAL_ID);
-            let scene_id = scene.add_instance(mesh_id, material_id);
-            instance_id_map.insert(file_id, scene_id);
-        }
-
-        // Sort nodes by ID for consistent ordering
-        let mut sorted_nodes = serialized_nodes.clone();
-        sorted_nodes.sort_by_key(|n| n.id);
-
-        // Build node ID map (file ID -> scene ID)
-        let mut node_id_map: HashMap<u32, NodeId> = HashMap::new();
-
-        // First pass: create all nodes without parent relationships
-        for sn in &sorted_nodes {
-            let position = Point3::new(sn.position[0], sn.position[1], sn.position[2]);
-            let rotation = Quaternion::new(
-                sn.rotation[3], // w (scalar)
-                sn.rotation[0], // x
-                sn.rotation[1], // y
-                sn.rotation[2], // z
-            );
-            let scale = Vector3::new(sn.scale[0], sn.scale[1], sn.scale[2]);
-
-            // Add node without parent first
-            let node_id = scene.add_node(
-                None,
-                sn.name.clone(),
-                position,
-                rotation,
-                scale,
-            ).map_err(|e| FormatError::DeserializationError(e.to_string()))?;
-
-            node_id_map.insert(sn.id, node_id);
-
-            // Set instance if present
-            if let Some(inst_file_id) = sn.instance_id {
-                if let Some(&scene_inst_id) = instance_id_map.get(&inst_file_id) {
-                    scene.get_node_mut(node_id).unwrap().set_instance(Some(scene_inst_id));
-                }
-            }
-
-            // Set visibility
-            if !sn.visible {
-                scene.set_node_visibility(node_id, Visibility::Invisible);
-            }
-        }
-
-        // Second pass: establish parent-child relationships
-        // Clear root_nodes since we'll rebuild it
-        scene.root_nodes.clear();
-
-        for sn in &sorted_nodes {
-            let scene_node_id = *node_id_map.get(&sn.id).unwrap();
-
-            if let Some(parent_file_id) = sn.parent_id {
-                if let Some(&scene_parent_id) = node_id_map.get(&parent_file_id) {
-                    // Set parent relationship
-                    scene.get_node_mut(scene_node_id).unwrap().set_parent(Some(scene_parent_id));
-                    scene.get_node_mut(scene_parent_id).unwrap().add_child(scene_node_id);
-                }
-            }
-        }
-
-        // Rebuild root_nodes from metadata
-        scene.root_nodes = metadata.root_nodes
-            .iter()
-            .filter_map(|&file_id| node_id_map.get(&file_id).copied())
-            .collect();
-
-        // Add lights
-        scene.lights = serialized_lights.iter().map(SerializedLight::to_light).collect();
-
-        // Add annotations
-        for sa in serialized_annotations {
-            let annotation = sa.to_annotation();
-            scene
-                .annotations
-                .insert_with_id(annotation)
-                .map_err(|e| FormatError::DeserializationError(e.to_string()))?;
-        }
-
-        // Add environment maps
-        let mut env_map_id_map: HashMap<u32, EnvironmentMapId> = HashMap::new();
-        for sem in serialized_env_maps {
-            let scene_id = scene.add_environment_map_from_hdr_data(sem.hdr_data);
-            if let Some(em) = scene.get_environment_map_mut(scene_id) {
-                em.intensity = sem.intensity;
-                em.rotation = sem.rotation;
-            }
-            env_map_id_map.insert(sem.id, scene_id);
-        }
-
-        // Set active environment map (remap from file ID to scene ID)
-        scene.active_environment_map = metadata.active_environment_map
-            .and_then(|file_id| env_map_id_map.get(&file_id).copied());
-
-        Ok(scene)
+        let sections = parse_wgsc(bytes)?;
+        let textures = decode_wgsc_textures(&sections.textures)?;
+        assemble_wgsc_scene(sections, textures)
     }
 
     /// Saves the scene to a file with default options.
