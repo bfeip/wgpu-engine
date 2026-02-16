@@ -70,7 +70,7 @@ impl WebViewer {
     /// Forward a wheel event. `delta_x` and `delta_y` are in pixels.
     pub fn on_wheel(&mut self, delta_x: f32, delta_y: f32) {
         self.viewer.handle_event(&Event::MouseWheel {
-            delta: MouseScrollDelta::PixelDelta(delta_x, delta_y),
+            delta: MouseScrollDelta::PixelDelta(delta_x, -delta_y),
         });
     }
 

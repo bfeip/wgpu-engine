@@ -212,7 +212,7 @@ impl Operator for NavigationOperator {
                 // Extract the scroll amount (positive = zoom in, negative = zoom out)
                 let scroll_amount = match delta {
                     MouseScrollDelta::LineDelta(_, y) => *y,
-                    MouseScrollDelta::PixelDelta(_x, y) => (*y / 10.0) as f32, // Scale pixel delta
+                    MouseScrollDelta::PixelDelta(_x, y) => *y / 100.0,
                 };
 
                 s.init_from_camera(ctx.renderer.camera());
