@@ -58,12 +58,6 @@ impl<'a> Viewer<'a> {
         ));
         operator_manager.push_back(nav_operator, &mut dispatcher);
 
-        // Walk operator for WASD movement
-        let walk_operator = Box::new(WalkOperator::new(
-            BuiltinOperatorId::Walk.into(),
-        ));
-        operator_manager.push_back(walk_operator, &mut dispatcher);
-
         // Create viewer
         let mut viewer = Self {
             renderer,
