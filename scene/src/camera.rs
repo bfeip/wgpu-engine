@@ -144,9 +144,9 @@ impl Camera {
 
         // Adjust near/far planes to encompass the scene
         // Near plane: at least 1/1000th of the distance, but not less than 0.001
-        // Far plane: at least twice the distance plus the bounding radius
+        // Far plane: generous enough for significant zoom-out (up to ~100x model radius)
         self.znear = (distance * 0.001).max(0.001);
-        self.zfar = (distance + bounding_radius) * 2.0;
+        self.zfar = (distance + bounding_radius) * 50.0;
     }
 
     /// Projects a 3D world-space point to normalized device coordinates (NDC).
