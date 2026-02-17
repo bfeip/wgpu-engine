@@ -1,9 +1,9 @@
 import { useEffect, useRef } from "react";
-import type { WebViewer } from "../../pkg/wgpu_engine";
+import { LoadStatus, WebLoadPhase, type WebViewer } from "../../pkg/wgpu_engine";
 
 interface ViewerProps {
   onReady?: (viewer: WebViewer) => void;
-  onLoadProgress?: (pct: number, phase: number) => void;
+  onLoadProgress?: (pct: number, phase: WebLoadPhase) => void;
   onLoadComplete?: (success: boolean) => void;
 }
 
@@ -56,7 +56,7 @@ export function Viewer({ onReady, onLoadProgress, onLoadComplete }: ViewerProps)
       function animate() {
         // Poll async load status
         const status = viewer.poll_load();
-        if (status === 0) {
+        if (status === LoadStatus.InProgress) {
           const pct = viewer.load_progress_pct();
           const phase = viewer.load_phase();
           if (pct !== lastPct || phase !== lastPhase) {
@@ -64,11 +64,11 @@ export function Viewer({ onReady, onLoadProgress, onLoadComplete }: ViewerProps)
             lastPhase = phase;
             callbacksRef.current.onLoadProgress?.(pct, phase);
           }
-        } else if (status === 1) {
+        } else if (status === LoadStatus.Success) {
           lastPct = -1;
           lastPhase = -1;
           callbacksRef.current.onLoadComplete?.(true);
-        } else if (status === 2) {
+        } else if (status === LoadStatus.Error) {
           lastPct = -1;
           lastPhase = -1;
           callbacksRef.current.onLoadComplete?.(false);
@@ -77,6 +77,7 @@ export function Viewer({ onReady, onLoadProgress, onLoadComplete }: ViewerProps)
         viewer.update_and_render();
         animationId = requestAnimationFrame(animate);
       }
+      
       animationId = requestAnimationFrame(animate);
     }
 

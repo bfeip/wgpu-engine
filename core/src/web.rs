@@ -1,3 +1,20 @@
+//! Simplified JavaScript-facing API via `wasm-bindgen`.
+//!
+//! [`WebViewer`] exposes a subset of the native [`Viewer`] API that is compatible
+//! with `wasm-bindgen`'s type constraints. It covers scene loading, input forwarding,
+//! and the render loop — enough for embedding a 3D viewer in a JS/TS web app.
+//!
+//! This wrapper exists because [`Viewer`] cannot be directly exported to JavaScript:
+//! it carries a lifetime parameter (`Viewer<'a>`) for GPU surface ownership, uses
+//! `cgmath` math types throughout, and relies on trait-object callbacks for its event
+//! system — none of which are compatible with `wasm-bindgen`.
+//!
+//! For full-featured web applications that need access to the complete engine API
+//! (scene graph manipulation, camera control, selection, operators, etc.), write the
+//! application in Rust using [`Viewer`] directly and compile to WebAssembly. Use
+//! `#[wasm_bindgen]` at your own application boundary to expose only the JS interop
+//! your app requires.
+
 use wasm_bindgen::prelude::*;
 use web_sys::HtmlCanvasElement;
 
@@ -5,6 +22,41 @@ use crate::event::Event;
 use crate::input::{ElementState, Key, KeyEvent, MouseButton, MouseScrollDelta, NamedKey, PhysicalKey};
 use crate::loader::LoadHandle;
 use crate::viewer::Viewer;
+
+#[wasm_bindgen]
+pub enum LoadStatus {
+    NoLoad = -1,
+    InProgress = 0,
+    Success = 1,
+    Error = 2,
+}
+
+#[wasm_bindgen]
+pub enum WebLoadPhase {
+    Pending = 0,
+    Reading = 1,
+    Parsing = 2,
+    DecodingTextures = 3,
+    BuildingMeshes = 4,
+    Assembling = 5,
+    Complete = 6,
+    Failed = 7,
+}
+
+impl From<crate::scene::LoadPhase> for WebLoadPhase {
+    fn from(phase: crate::scene::LoadPhase) -> Self {
+        match phase {
+            crate::scene::LoadPhase::Pending => Self::Pending,
+            crate::scene::LoadPhase::Reading => Self::Reading,
+            crate::scene::LoadPhase::Parsing => Self::Parsing,
+            crate::scene::LoadPhase::DecodingTextures => Self::DecodingTextures,
+            crate::scene::LoadPhase::BuildingMeshes => Self::BuildingMeshes,
+            crate::scene::LoadPhase::Assembling => Self::Assembling,
+            crate::scene::LoadPhase::Complete => Self::Complete,
+            crate::scene::LoadPhase::Failed => Self::Failed,
+        }
+    }
+}
 
 #[wasm_bindgen]
 pub struct WebViewer {
@@ -32,7 +84,7 @@ impl WebViewer {
     }
 
     /// Call once per frame from requestAnimationFrame.
-    /// Updates delta time and renders the scene.
+    /// Updates and renders the scene.
     pub fn update_and_render(&mut self) {
         self.viewer.update();
         if let Err(e) = self.viewer.render() {
@@ -110,14 +162,13 @@ impl WebViewer {
     }
 
     /// Poll the in-flight load.
-    /// Returns: -1 = no load, 0 = in progress, 1 = success (scene applied), 2 = error.
-    pub fn poll_load(&mut self) -> i32 {
+    pub fn poll_load(&mut self) -> LoadStatus {
         let Some(ref handle) = self.pending_load else {
-            return -1;
+            return LoadStatus::NoLoad;
         };
 
         if !handle.is_done() {
-            return 0;
+            return LoadStatus::InProgress;
         }
 
         let handle = self.pending_load.take().unwrap();
@@ -128,15 +179,15 @@ impl WebViewer {
                     camera_for_scene(self.viewer.scene(), self.viewer.camera().aspect)
                 });
                 self.viewer.set_camera(camera);
-                1
+                LoadStatus::Success
             }
             Some(Err(e)) => {
                 log::error!("Load failed: {}", e);
-                2
+                LoadStatus::Error
             }
             None => {
                 log::error!("Load handle done but no result available");
-                2
+                LoadStatus::Error
             }
         }
     }
@@ -149,12 +200,12 @@ impl WebViewer {
             .unwrap_or(0)
     }
 
-    /// Current load phase as u8 (maps to LoadPhase enum). Returns 0 if no load active.
-    pub fn load_phase(&self) -> u8 {
+    /// Current load phase. Returns `Pending` if no load active.
+    pub fn load_phase(&self) -> WebLoadPhase {
         self.pending_load
             .as_ref()
-            .map(|h| h.progress().phase() as u8)
-            .unwrap_or(0)
+            .map(|h| WebLoadPhase::from(h.progress().phase()))
+            .unwrap_or(WebLoadPhase::Pending)
     }
 
     /// Load a scene synchronously from raw bytes. Format (glTF or WGSC) is auto-detected.

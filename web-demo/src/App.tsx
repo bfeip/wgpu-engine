@@ -1,13 +1,13 @@
 import { useCallback, useRef, useState } from "react";
 import { Viewer } from "./components/Viewer";
 import { LoadingOverlay } from "./components/LoadingOverlay";
-import type { WebViewer } from "../pkg/wgpu_engine";
+import { WebLoadPhase, type WebViewer } from "../pkg/wgpu_engine";
 import "./App.css";
 
 export function App() {
   const viewerRef = useRef<WebViewer | null>(null);
   const [sceneInfo, setSceneInfo] = useState({ nodes: 0, meshes: 0 });
-  const [loading, setLoading] = useState<{ pct: number; phase: number } | null>(null);
+  const [loading, setLoading] = useState<{ pct: number; phase: WebLoadPhase } | null>(null);
 
   const handleViewerReady = useCallback(async (viewer: WebViewer) => {
     viewerRef.current = viewer;
@@ -16,14 +16,14 @@ export function App() {
       if (resp.ok) {
         const data = new Uint8Array(await resp.arrayBuffer());
         viewer.start_load(data);
-        setLoading({ pct: 0, phase: 0 });
+        setLoading({ pct: 0, phase: WebLoadPhase.Pending });
       }
     } catch (e) {
       console.warn("Failed to load default scene:", e);
     }
   }, []);
 
-  const handleLoadProgress = useCallback((pct: number, phase: number) => {
+  const handleLoadProgress = useCallback((pct: number, phase: WebLoadPhase) => {
     setLoading({ pct, phase });
   }, []);
 

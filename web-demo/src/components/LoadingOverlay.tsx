@@ -1,17 +1,19 @@
+import { WebLoadPhase } from "../../pkg/wgpu_engine";
+
 interface LoadingOverlayProps {
   pct: number;
-  phase: number;
+  phase: WebLoadPhase;
 }
 
-const PHASE_LABELS: Record<number, string> = {
-  0: "Preparing\u2026",
-  1: "Reading file\u2026",
-  2: "Parsing\u2026",
-  3: "Decoding textures\u2026",
-  4: "Building meshes\u2026",
-  5: "Assembling scene\u2026",
-  6: "Complete",
-  7: "Failed",
+const PHASE_LABELS: Record<WebLoadPhase, string> = {
+  [WebLoadPhase.Pending]: "Preparing\u2026",
+  [WebLoadPhase.Reading]: "Reading file\u2026",
+  [WebLoadPhase.Parsing]: "Parsing\u2026",
+  [WebLoadPhase.DecodingTextures]: "Decoding textures\u2026",
+  [WebLoadPhase.BuildingMeshes]: "Building meshes\u2026",
+  [WebLoadPhase.Assembling]: "Assembling scene\u2026",
+  [WebLoadPhase.Complete]: "Complete",
+  [WebLoadPhase.Failed]: "Failed",
 };
 
 export function LoadingOverlay({ pct, phase }: LoadingOverlayProps) {
