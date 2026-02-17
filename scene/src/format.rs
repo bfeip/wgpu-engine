@@ -111,15 +111,15 @@ pub enum FormatError {
 
 /// Controls the compression/quality tradeoff for saving scenes.
 ///
-/// Affects both zstd data compression and JPEG texture quality.
+/// Affects zstd data compression, JPEG texture quality, and PNG compression.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CompressionLevel {
-    /// Fastest compression, larger files. Zstd level 1, JPEG quality 80.
+    /// Fastest compression, larger files. Zstd level 1, JPEG quality 80, PNG fast.
     Fast,
-    /// Balanced compression (default). Zstd level 3, JPEG quality 90.
+    /// Balanced compression (default). Zstd level 3, JPEG quality 90, PNG default.
     #[default]
     Default,
-    /// Best compression, smaller files. Zstd level 19, JPEG quality 95.
+    /// Best compression, smaller files. Zstd level 19, JPEG quality 95, PNG best.
     Best,
 }
 
@@ -139,6 +139,15 @@ impl CompressionLevel {
             Self::Fast => 80,
             Self::Default => 90,
             Self::Best => 95,
+        }
+    }
+
+    /// PNG compression type for fallback texture encoding.
+    pub fn png_compression(self) -> CompressionType {
+        match self {
+            Self::Fast => CompressionType::Fast,
+            Self::Default => CompressionType::Default,
+            Self::Best => CompressionType::Best,
         }
     }
 }
@@ -1125,7 +1134,7 @@ impl SerializedTexture {
                 let mut buf = Vec::new();
                 PngEncoder::new_with_quality(
                     &mut buf,
-                    CompressionType::Best,
+                    compression.png_compression(),
                     FilterType::Adaptive,
                 )
                 .write_image(
