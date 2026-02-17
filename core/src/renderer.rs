@@ -62,14 +62,20 @@ impl<'a> Renderer<'a> {
     {
         let size = clamp_surface_size(width, height);
 
-        // The instance is a handle to our GPU
+        // On native simply get whatever the best backend is
+        #[cfg(not(target_arch = "wasm32"))]
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            #[cfg(not(target_arch = "wasm32"))]
             backends: wgpu::Backends::PRIMARY,
-            #[cfg(target_arch = "wasm32")]
-            backends: wgpu::Backends::BROWSER_WEBGPU | wgpu::Backends::GL,
             ..Default::default()
         });
+        // On web we check if WebGPU is supported, since support is still
+        // experimental on some browsers. If WebGPU is available, we want it,
+        // otherwise fall back to WebGL.
+        #[cfg(target_arch = "wasm32")]
+        let instance = wgpu::util::new_instance_with_webgpu_detection(&wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::BROWSER_WEBGPU | wgpu::Backends::GL,
+            ..Default::default()
+        }).await;
 
         let surface = instance.create_surface(target).unwrap();
 
@@ -88,7 +94,7 @@ impl<'a> Renderer<'a> {
 
         if cfg!(target_arch = "wasm32") {
             if is_gl_backend {
-                log::warn!("WebGPU not available, falling back to WebGL.");
+                log::info!("WebGPU not available, falling back to WebGL.");
             } else {
                 log::info!("Using WebGPU backend.");
             }

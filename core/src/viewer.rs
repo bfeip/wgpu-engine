@@ -5,7 +5,7 @@ use crate::{
     common::RgbaColor,
     event::{Event, EventContext, EventDispatcher, EventKind},
     operator::{
-        BuiltinOperatorId, NavigationOperator, OperatorManager, SelectionOperator, TransformOperator, WalkOperator
+        BuiltinOperatorId, NavigationOperator, OperatorManager, SelectionOperator, TransformOperator
     },
     renderer::Renderer,
     scene::Scene,
