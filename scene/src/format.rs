@@ -109,12 +109,45 @@ pub enum FormatError {
 // Save Options
 // ============================================================================
 
+/// Controls the compression/quality tradeoff for saving scenes.
+///
+/// Affects both zstd data compression and JPEG texture quality.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CompressionLevel {
+    /// Fastest compression, larger files. Zstd level 1, JPEG quality 80.
+    Fast,
+    /// Balanced compression (default). Zstd level 3, JPEG quality 90.
+    #[default]
+    Default,
+    /// Best compression, smaller files. Zstd level 19, JPEG quality 95.
+    Best,
+}
+
+impl CompressionLevel {
+    /// Zstd compression level for data sections.
+    pub fn zstd_level(self) -> i32 {
+        match self {
+            Self::Fast => 1,
+            Self::Default => 3,
+            Self::Best => 19,
+        }
+    }
+
+    /// JPEG quality (1-100) for fallback texture encoding.
+    pub fn jpeg_quality(self) -> u8 {
+        match self {
+            Self::Fast => 80,
+            Self::Default => 90,
+            Self::Best => 95,
+        }
+    }
+}
+
 /// Options for saving scenes.
 #[derive(Clone, Debug)]
 pub struct SaveOptions {
-    /// Zstd compression level (1-22, default 3).
-    /// Lower = faster, larger files. Higher = slower, smaller files.
-    pub compression_level: i32,
+    /// Compression level for data and textures.
+    pub compression: CompressionLevel,
     /// Fallback texture format when original bytes are unavailable (default: JPEG).
     pub texture_format: TextureFormat,
 }
@@ -122,36 +155,8 @@ pub struct SaveOptions {
 impl Default for SaveOptions {
     fn default() -> Self {
         Self {
-            compression_level: 3,
+            compression: CompressionLevel::Default,
             texture_format: TextureFormat::Jpeg,
-        }
-    }
-}
-
-impl SaveOptions {
-    /// Create options with a specific compression level.
-    ///
-    /// Level 1 is fastest, level 22 is smallest. Default is 3.
-    pub fn with_compression_level(level: i32) -> Self {
-        Self {
-            compression_level: level.clamp(1, 22),
-            ..Default::default()
-        }
-    }
-
-    /// Fast compression (level 1) - quick saves, larger files.
-    pub fn fast() -> Self {
-        Self {
-            compression_level: 1,
-            ..Default::default()
-        }
-    }
-
-    /// Best compression (level 19) - slow saves, smaller files.
-    pub fn best() -> Self {
-        Self {
-            compression_level: 19,
-            ..Default::default()
         }
     }
 }
@@ -1045,6 +1050,7 @@ impl SerializedTexture {
         texture: &mut Texture,
         remapper: &IdRemapper,
         fallback_format: TextureFormat,
+        compression: CompressionLevel,
     ) -> Result<Option<Self>, FormatError> {
         let Some(id) = remapper.remap_texture(texture.id()) else {
             return Ok(None);
@@ -1101,7 +1107,7 @@ impl SerializedTexture {
 
                 let rgb = image.to_rgb8();
                 let mut buf = Vec::new();
-                JpegEncoder::new_with_quality(&mut buf, 90)
+                JpegEncoder::new_with_quality(&mut buf, compression.jpeg_quality())
                     .write_image(
                         &rgb,
                         dimensions.0,
@@ -1234,7 +1240,7 @@ impl Scene {
     pub fn to_bytes_with_options(&mut self, options: &SaveOptions) -> Result<Vec<u8>, FormatError> {
         use std::time::{SystemTime, UNIX_EPOCH};
 
-        let level = options.compression_level;
+        let level = options.compression.zstd_level();
         let remapper = IdRemapper::from_scene(self);
         let mut output = Vec::new();
         let mut toc = TableOfContents::new();
@@ -1330,7 +1336,13 @@ impl Scene {
         // ===== Textures Section =====
         let mut textures = Vec::new();
         for texture in self.textures.values_mut() {
-            if let Some(serialized) = SerializedTexture::from_texture(texture, &remapper, options.texture_format)? {
+            let serialized = SerializedTexture::from_texture(
+                texture,
+                &remapper,
+                options.texture_format,
+                options.compression,
+            )?;
+            if let Some(serialized) = serialized {
                 textures.push(serialized);
             }
         }

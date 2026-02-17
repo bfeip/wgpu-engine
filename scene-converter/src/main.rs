@@ -1,14 +1,31 @@
 use std::path::PathBuf;
 
 use anyhow::{bail, Result};
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use image::imageops::FilterType;
 use image::GenericImageView;
-use wgpu_engine_scene::format::SaveOptions;
+use wgpu_engine_scene::format::{CompressionLevel, SaveOptions};
 use wgpu_engine_scene::gltf::load_gltf_scene_from_path;
 use wgpu_engine_scene::Scene;
 
 const MAX_TEXTURE_DIMENSION: u32 = 2048;
+
+#[derive(Clone, Copy, ValueEnum)]
+enum CliCompressionLevel {
+    Fast,
+    Default,
+    Best,
+}
+
+impl From<CliCompressionLevel> for CompressionLevel {
+    fn from(cli: CliCompressionLevel) -> Self {
+        match cli {
+            CliCompressionLevel::Fast => CompressionLevel::Fast,
+            CliCompressionLevel::Default => CompressionLevel::Default,
+            CliCompressionLevel::Best => CompressionLevel::Best,
+        }
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "scene-converter")]
@@ -23,17 +40,9 @@ struct Cli {
     #[arg(short, long)]
     output: Option<PathBuf>,
 
-    /// Compression level (1-22, default 3). Lower = faster, higher = smaller.
-    #[arg(short, long)]
-    compression: Option<i32>,
-
-    /// Use fastest compression (level 1)
-    #[arg(long)]
-    fast: bool,
-
-    /// Use best compression (level 19)
-    #[arg(long)]
-    best: bool,
+    /// Compression level: fast, default, or best
+    #[arg(short, long, default_value = "default")]
+    compression: CliCompressionLevel,
 
     /// Don't resize textures larger than 2048px
     #[arg(long)]
@@ -43,12 +52,9 @@ struct Cli {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let options = if cli.fast {
-        SaveOptions::fast()
-    } else if cli.best {
-        SaveOptions::best()
-    } else {
-        SaveOptions::with_compression_level(cli.compression.unwrap_or(3))
+    let options = SaveOptions {
+        compression: cli.compression.into(),
+        ..Default::default()
     };
 
     // Classify inputs by extension
