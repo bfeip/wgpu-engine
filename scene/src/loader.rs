@@ -25,7 +25,7 @@
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use thiserror::Error;
 
@@ -139,21 +139,67 @@ pub enum LoadError {
     UnknownFormat,
 }
 
+/// Phase weight table: maps each `LoadPhase` discriminant to a relative weight.
+///
+/// Indexed by `LoadPhase as usize`. The sum of weights determines how overall
+/// percentage is distributed across phases. Only phases with non-zero weights
+/// contribute to progress.
+type PhaseWeights = Vec<u8>;
+
+/// Weights for WGSC loading: Reading(10) + Parsing(10) + DecodingTextures(60) + Assembling(20).
+const WGSC_WEIGHTS: [u8; 8] = weights(&[
+    (LoadPhase::Reading, 10),
+    (LoadPhase::Parsing, 10),
+    (LoadPhase::DecodingTextures, 60),
+    (LoadPhase::Assembling, 20),
+]);
+
+/// Weights for glTF loading: Reading(10) + Parsing(10) + DecodingTextures(50) + Assembling(30).
+const GLTF_WEIGHTS: [u8; 8] = weights(&[
+    (LoadPhase::Reading, 10),
+    (LoadPhase::Parsing, 10),
+    (LoadPhase::DecodingTextures, 50),
+    (LoadPhase::Assembling, 30),
+]);
+
+/// Weights for save operations: Parsing/serializing(60) + Assembling/writing(40).
+const SAVE_WEIGHTS: [u8; 8] = weights(&[
+    (LoadPhase::Parsing, 60),
+    (LoadPhase::Assembling, 40),
+]);
+
+/// Build a weight table from (phase, weight) pairs at compile time.
+const fn weights(pairs: &[(LoadPhase, u8)]) -> [u8; 8] {
+    let mut w = [0u8; 8];
+    let mut i = 0;
+    while i < pairs.len() {
+        w[pairs[i].0 as u8 as usize] = pairs[i].1;
+        i += 1;
+    }
+    w
+}
+
 /// Shared progress state, readable from any thread.
+///
+/// Overall progress percentage is derived automatically from the current phase,
+/// item progress within that phase, and a weight table. Callers just call
+/// [`enter_phase`](Self::enter_phase) and [`complete_item`](Self::complete_item);
+/// no manual percentage math is needed.
+#[derive(Clone)]
 pub struct LoadProgress {
     phase: Arc<AtomicU8>,
-    progress_pct: Arc<AtomicU8>,
     items_total: Arc<AtomicU32>,
     items_complete: Arc<AtomicU32>,
+    weights: Arc<Mutex<PhaseWeights>>,
 }
 
 impl LoadProgress {
     fn new() -> Self {
         Self {
             phase: Arc::new(AtomicU8::new(LoadPhase::Pending as u8)),
-            progress_pct: Arc::new(AtomicU8::new(0)),
             items_total: Arc::new(AtomicU32::new(0)),
             items_complete: Arc::new(AtomicU32::new(0)),
+            weights: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -162,9 +208,44 @@ impl LoadProgress {
         LoadPhase::from_u8(self.phase.load(Ordering::Relaxed))
     }
 
-    /// Overall progress percentage (0-100).
+    /// Overall progress percentage (0–100), derived from the weight table.
+    ///
+    /// Completed phases contribute their full weight. The current phase
+    /// contributes proportionally to item progress (or 0% if no items are set,
+    /// since monolithic phases jump from 0% to 100% when the next phase starts).
     pub fn progress_pct(&self) -> u8 {
-        self.progress_pct.load(Ordering::Relaxed)
+        let w = self.weights.lock().unwrap();
+        let phase = self.phase.load(Ordering::Relaxed) as usize;
+
+        // Terminal states
+        if phase == LoadPhase::Complete as usize {
+            return 100;
+        }
+        if phase == LoadPhase::Failed as usize {
+            return 0;
+        }
+
+        let total_weight: u16 = w.iter().map(|&x| x as u16).sum();
+        if total_weight == 0 {
+            return 0;
+        }
+
+        // Sum weights of all completed phases (discriminants below current)
+        let completed_weight: u16 = w.iter().take(phase).map(|&x| x as u16).sum();
+
+        // Fractional progress within current phase from items
+        let items_total = self.items_total.load(Ordering::Relaxed);
+        let items_complete = self.items_complete.load(Ordering::Relaxed);
+        let current_weight = w.get(phase).copied().unwrap_or(0) as f32;
+        let phase_fraction = if items_total > 0 {
+            items_complete as f32 / items_total as f32
+        } else {
+            0.0
+        };
+
+        let pct = (completed_weight as f32 + current_weight * phase_fraction) * 100.0
+            / total_weight as f32;
+        (pct as u8).min(100)
     }
 
     /// Total number of items in the current phase (e.g., textures to decode).
@@ -177,24 +258,27 @@ impl LoadProgress {
         self.items_complete.load(Ordering::Relaxed)
     }
 
-    fn set_phase(&self, phase: LoadPhase, pct: u8) {
+    /// Bind a weight table for this operation.
+    fn set_weights(&self, weights: &[u8]) {
+        *self.weights.lock().unwrap() = weights.to_vec();
+    }
+
+    /// Enter a new phase. Resets item counters.
+    fn enter_phase(&self, phase: LoadPhase) {
+        self.items_total.store(0, Ordering::Relaxed);
+        self.items_complete.store(0, Ordering::Relaxed);
         self.phase.store(phase as u8, Ordering::Relaxed);
-        self.progress_pct.store(pct, Ordering::Relaxed);
     }
 
-    #[allow(dead_code)]
-    fn set_items(&self, total: u32, complete: u32) {
+    /// Set the total number of items for the current phase.
+    fn set_item_count(&self, total: u32) {
         self.items_total.store(total, Ordering::Relaxed);
-        self.items_complete.store(complete, Ordering::Relaxed);
+        self.items_complete.store(0, Ordering::Relaxed);
     }
 
-    fn clone_arcs(&self) -> Self {
-        Self {
-            phase: Arc::clone(&self.phase),
-            progress_pct: Arc::clone(&self.progress_pct),
-            items_total: Arc::clone(&self.items_total),
-            items_complete: Arc::clone(&self.items_complete),
-        }
+    /// Mark one more item complete in the current phase.
+    fn complete_item(&self) {
+        self.items_complete.fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -216,7 +300,7 @@ impl LoadHandle {
     /// Returns `Some(result)` if loading has completed, `None` if still in progress.
     ///
     /// Consumes the result on first successful call. Subsequent calls return `None`.
-    pub fn try_recv(&self) -> Option<LoadResult> {
+    pub fn try_get(&self) -> Option<LoadResult> {
         #[cfg(not(target_arch = "wasm32"))]
         {
             self.receiver.try_recv().ok()
@@ -293,7 +377,7 @@ fn load_sync_with_progress(
     options: &LoadOptions,
     progress: &LoadProgress,
 ) -> LoadResult {
-    progress.set_phase(LoadPhase::Reading, 0);
+    progress.enter_phase(LoadPhase::Reading);
 
     let (bytes, path_hint) = match source {
         SceneSource::Path(ref path) => {
@@ -303,8 +387,6 @@ fn load_sync_with_progress(
         SceneSource::Bytes(b) => (b, None),
     };
 
-    progress.set_phase(LoadPhase::Parsing, 5);
-
     let format = detect_format_from_bytes(&bytes).or_else(|_| {
         path_hint
             .as_ref()
@@ -313,35 +395,36 @@ fn load_sync_with_progress(
     })?;
 
     match format {
-        DetectedFormat::Wgsc => load_wgsc_phased(&bytes, progress),
-        DetectedFormat::Gltf => load_gltf_phased(&bytes, options, progress),
+        DetectedFormat::Wgsc => {
+            progress.set_weights(&WGSC_WEIGHTS);
+            load_wgsc_phased(&bytes, progress)
+        }
+        DetectedFormat::Gltf => {
+            progress.set_weights(&GLTF_WEIGHTS);
+            load_gltf_phased(&bytes, options, progress)
+        }
     }
 }
 
 fn load_wgsc_phased(bytes: &[u8], progress: &LoadProgress) -> LoadResult {
     use crate::format::{assemble_wgsc_scene, decode_wgsc_texture, parse_wgsc};
 
-    progress.set_phase(LoadPhase::Parsing, 10);
+    progress.enter_phase(LoadPhase::Parsing);
     let sections = parse_wgsc(bytes)?;
 
-    progress.set_phase(LoadPhase::DecodingTextures, 20);
-    let total = sections.textures.len() as u32;
-    progress.set_items(total, 0);
+    progress.enter_phase(LoadPhase::DecodingTextures);
+    progress.set_item_count(sections.textures.len() as u32);
 
-    let mut decoded = Vec::with_capacity(total as usize);
-    for (i, st) in sections.textures.iter().enumerate() {
+    let mut decoded = Vec::with_capacity(sections.textures.len());
+    for st in &sections.textures {
         decoded.push(decode_wgsc_texture(st)?);
-        let complete = (i + 1) as u32;
-        progress.set_items(total, complete);
-        // Scale progress: textures span 20%–80%
-        let pct = 20 + (60 * complete / total.max(1)) as u8;
-        progress.progress_pct.store(pct, Ordering::Relaxed);
+        progress.complete_item();
     }
 
-    progress.set_phase(LoadPhase::Assembling, 80);
+    progress.enter_phase(LoadPhase::Assembling);
     let scene = assemble_wgsc_scene(sections, decoded)?;
 
-    progress.set_phase(LoadPhase::Complete, 100);
+    progress.enter_phase(LoadPhase::Complete);
     Ok(SceneLoadResult {
         scene,
         camera: None,
@@ -352,19 +435,19 @@ fn load_wgsc_phased(bytes: &[u8], progress: &LoadProgress) -> LoadResult {
 fn load_gltf_phased(bytes: &[u8], options: &LoadOptions, progress: &LoadProgress) -> LoadResult {
     use crate::gltf::{build_gltf_scene, load_gltf_assets, parse_gltf};
 
-    progress.set_phase(LoadPhase::Parsing, 10);
+    progress.enter_phase(LoadPhase::Parsing);
     let parsed = parse_gltf(bytes).map_err(|e| LoadError::Gltf(e.to_string()))?;
 
-    progress.set_phase(LoadPhase::DecodingTextures, 30);
+    progress.enter_phase(LoadPhase::DecodingTextures);
     let mut scene = Scene::new();
     let (_material_map, mesh_map) = load_gltf_assets(&parsed, &mut scene)
         .map_err(|e| LoadError::Gltf(e.to_string()))?;
 
-    progress.set_phase(LoadPhase::Assembling, 80);
+    progress.enter_phase(LoadPhase::Assembling);
     let camera = build_gltf_scene(&parsed, &mut scene, &mesh_map, options.aspect)
         .map_err(|e| LoadError::Gltf(e.to_string()))?;
 
-    progress.set_phase(LoadPhase::Complete, 100);
+    progress.enter_phase(LoadPhase::Complete);
     Ok(SceneLoadResult {
         scene,
         camera,
@@ -385,7 +468,7 @@ fn load_gltf_phased(bytes: &[u8], options: &LoadOptions, progress: &LoadProgress
 #[cfg(not(target_arch = "wasm32"))]
 pub fn load_async(source: SceneSource, options: LoadOptions) -> LoadHandle {
     let progress = LoadProgress::new();
-    let progress_clone = progress.clone_arcs();
+    let progress_clone = progress.clone();
     let done = Arc::new(AtomicBool::new(false));
     let done_clone = Arc::clone(&done);
     let (tx, rx) = std::sync::mpsc::channel();
@@ -393,7 +476,7 @@ pub fn load_async(source: SceneSource, options: LoadOptions) -> LoadHandle {
     std::thread::spawn(move || {
         let result = load_sync_with_progress(source, &options, &progress_clone);
         if result.is_err() {
-            progress_clone.set_phase(LoadPhase::Failed, 0);
+            progress_clone.enter_phase(LoadPhase::Failed);
         }
         done_clone.store(true, Ordering::Release);
         let _ = tx.send(result);
@@ -422,7 +505,7 @@ pub fn load_async(source: SceneSource, options: LoadOptions) -> LoadHandle {
     use std::rc::Rc;
 
     let progress = LoadProgress::new();
-    let progress_clone = progress.clone_arcs();
+    let progress_clone = progress.clone();
     let done = Arc::new(AtomicBool::new(false));
     let done_clone = Arc::clone(&done);
     let result_cell: LoadResultCell = Rc::new(RefCell::new(None));
@@ -431,7 +514,7 @@ pub fn load_async(source: SceneSource, options: LoadOptions) -> LoadHandle {
     wasm_bindgen_futures::spawn_local(async move {
         let result = load_chunked_wasm(source, &options, &progress_clone).await;
         if result.is_err() {
-            progress_clone.set_phase(LoadPhase::Failed, 0);
+            progress_clone.enter_phase(LoadPhase::Failed);
         }
         done_clone.store(true, Ordering::Release);
         *result_clone.borrow_mut() = Some(result);
@@ -475,7 +558,7 @@ async fn load_chunked_wasm(
     options: &LoadOptions,
     progress: &LoadProgress,
 ) -> LoadResult {
-    progress.set_phase(LoadPhase::Reading, 0);
+    progress.enter_phase(LoadPhase::Reading);
 
     let (bytes, path_hint) = match source {
         SceneSource::Path(ref path) => {
@@ -487,7 +570,6 @@ async fn load_chunked_wasm(
         SceneSource::Bytes(b) => (b, None),
     };
 
-    progress.set_phase(LoadPhase::Parsing, 5);
     yield_to_event_loop().await;
 
     let format = detect_format_from_bytes(&bytes).or_else(|_| {
@@ -498,8 +580,14 @@ async fn load_chunked_wasm(
     })?;
 
     match format {
-        DetectedFormat::Wgsc => load_wgsc_chunked(&bytes, progress).await,
-        DetectedFormat::Gltf => load_gltf_chunked(&bytes, options, progress).await,
+        DetectedFormat::Wgsc => {
+            progress.set_weights(&WGSC_WEIGHTS);
+            load_wgsc_chunked(&bytes, progress).await
+        }
+        DetectedFormat::Gltf => {
+            progress.set_weights(&GLTF_WEIGHTS);
+            load_gltf_chunked(&bytes, options, progress).await
+        }
     }
 }
 
@@ -507,30 +595,26 @@ async fn load_chunked_wasm(
 async fn load_wgsc_chunked(bytes: &[u8], progress: &LoadProgress) -> LoadResult {
     use crate::format::{assemble_wgsc_scene, decode_wgsc_texture, parse_wgsc};
 
-    progress.set_phase(LoadPhase::Parsing, 10);
+    progress.enter_phase(LoadPhase::Parsing);
     let sections = parse_wgsc(bytes)?;
     yield_to_event_loop().await;
 
-    progress.set_phase(LoadPhase::DecodingTextures, 20);
-    let total = sections.textures.len() as u32;
-    progress.set_items(total, 0);
+    progress.enter_phase(LoadPhase::DecodingTextures);
+    progress.set_item_count(sections.textures.len() as u32);
 
-    let mut decoded = Vec::with_capacity(total as usize);
-    for (i, st) in sections.textures.iter().enumerate() {
+    let mut decoded = Vec::with_capacity(sections.textures.len());
+    for st in &sections.textures {
         decoded.push(decode_wgsc_texture(st)?);
-        let complete = (i + 1) as u32;
-        progress.set_items(total, complete);
-        let pct = 20 + (60 * complete / total.max(1)) as u8;
-        progress.progress_pct.store(pct, Ordering::Relaxed);
+        progress.complete_item();
         yield_to_event_loop().await;
     }
 
-    progress.set_phase(LoadPhase::Assembling, 80);
+    progress.enter_phase(LoadPhase::Assembling);
     yield_to_event_loop().await;
 
     let scene = assemble_wgsc_scene(sections, decoded)?;
 
-    progress.set_phase(LoadPhase::Complete, 100);
+    progress.enter_phase(LoadPhase::Complete);
     Ok(SceneLoadResult {
         scene,
         camera: None,
@@ -546,21 +630,21 @@ async fn load_gltf_chunked(
 ) -> LoadResult {
     use crate::gltf::{build_gltf_scene, load_gltf_assets, parse_gltf};
 
-    progress.set_phase(LoadPhase::Parsing, 10);
+    progress.enter_phase(LoadPhase::Parsing);
     let parsed = parse_gltf(bytes).map_err(|e| LoadError::Gltf(e.to_string()))?;
     yield_to_event_loop().await;
 
-    progress.set_phase(LoadPhase::DecodingTextures, 30);
+    progress.enter_phase(LoadPhase::DecodingTextures);
     let mut scene = Scene::new();
     let (_material_map, mesh_map) =
         load_gltf_assets(&parsed, &mut scene).map_err(|e| LoadError::Gltf(e.to_string()))?;
     yield_to_event_loop().await;
 
-    progress.set_phase(LoadPhase::Assembling, 80);
+    progress.enter_phase(LoadPhase::Assembling);
     let camera = build_gltf_scene(&parsed, &mut scene, &mesh_map, options.aspect)
         .map_err(|e| LoadError::Gltf(e.to_string()))?;
 
-    progress.set_phase(LoadPhase::Complete, 100);
+    progress.enter_phase(LoadPhase::Complete);
     Ok(SceneLoadResult {
         scene,
         camera,
@@ -652,20 +736,21 @@ fn save_sync_with_progress(
     options: &crate::format::SaveOptions,
     progress: &LoadProgress,
 ) -> SaveResult {
-    progress.set_phase(LoadPhase::Parsing, 10); // "Parsing" = serializing in export context
+    progress.set_weights(&SAVE_WEIGHTS);
+    progress.enter_phase(LoadPhase::Parsing); // "Parsing" = serializing in export context
     let bytes = scene
         .to_bytes_with_options(options)
         .map_err(LoadError::Format)?;
 
-    progress.set_phase(LoadPhase::Assembling, 80);
+    progress.enter_phase(LoadPhase::Assembling);
     match dest {
         SaveDestination::Path(path) => {
             std::fs::write(path, &bytes)?;
-            progress.set_phase(LoadPhase::Complete, 100);
+            progress.enter_phase(LoadPhase::Complete);
             Ok(None)
         }
         SaveDestination::Bytes => {
-            progress.set_phase(LoadPhase::Complete, 100);
+            progress.enter_phase(LoadPhase::Complete);
             Ok(Some(bytes))
         }
     }
@@ -688,7 +773,7 @@ pub fn save_async(
     options: crate::format::SaveOptions,
 ) -> SaveHandle {
     let progress = LoadProgress::new();
-    let progress_clone = progress.clone_arcs();
+    let progress_clone = progress.clone();
     let done = Arc::new(AtomicBool::new(false));
     let done_clone = Arc::clone(&done);
     let (tx, rx) = std::sync::mpsc::channel();
@@ -696,7 +781,7 @@ pub fn save_async(
     std::thread::spawn(move || {
         let result = save_sync_with_progress(&mut scene, dest, &options, &progress_clone);
         if result.is_err() {
-            progress_clone.set_phase(LoadPhase::Failed, 0);
+            progress_clone.enter_phase(LoadPhase::Failed);
         }
         done_clone.store(true, Ordering::Release);
         let _ = tx.send(result);
@@ -729,7 +814,7 @@ pub fn save_async(
     use std::rc::Rc;
 
     let progress = LoadProgress::new();
-    let progress_clone = progress.clone_arcs();
+    let progress_clone = progress.clone();
     let done = Arc::new(AtomicBool::new(false));
     let done_clone = Arc::clone(&done);
     let result_cell: SaveResultCell = Rc::new(RefCell::new(None));
@@ -738,7 +823,7 @@ pub fn save_async(
     wasm_bindgen_futures::spawn_local(async move {
         let result = save_sync_with_progress(&mut scene, dest, &options, &progress_clone);
         if result.is_err() {
-            progress_clone.set_phase(LoadPhase::Failed, 0);
+            progress_clone.enter_phase(LoadPhase::Failed);
         }
         done_clone.store(true, Ordering::Release);
         *result_clone.borrow_mut() = Some(result);
@@ -856,13 +941,38 @@ mod tests {
     #[test]
     fn test_load_progress_updates() {
         let progress = LoadProgress::new();
-        progress.set_phase(LoadPhase::DecodingTextures, 50);
-        progress.set_items(10, 3);
+        // Simulate a WGSC load: Reading(10) + Parsing(10) + DecodingTextures(60) + Assembling(20)
+        progress.set_weights(&WGSC_WEIGHTS);
 
-        assert_eq!(progress.phase(), LoadPhase::DecodingTextures);
-        assert_eq!(progress.progress_pct(), 50);
+        progress.enter_phase(LoadPhase::Reading);
+        assert_eq!(progress.phase(), LoadPhase::Reading);
+        assert_eq!(progress.progress_pct(), 0);
+
+        progress.enter_phase(LoadPhase::Parsing);
+        assert_eq!(progress.phase(), LoadPhase::Parsing);
+        // Reading(10) complete out of total 100 → 10%
+        assert_eq!(progress.progress_pct(), 10);
+
+        progress.enter_phase(LoadPhase::DecodingTextures);
+        progress.set_item_count(10);
         assert_eq!(progress.items_total(), 10);
+        assert_eq!(progress.items_complete(), 0);
+        // Reading(10) + Parsing(10) complete → 20%
+        assert_eq!(progress.progress_pct(), 20);
+
+        // Complete 3 of 10 items → 20% + 60% * 3/10 = 38%
+        for _ in 0..3 {
+            progress.complete_item();
+        }
         assert_eq!(progress.items_complete(), 3);
+        assert_eq!(progress.progress_pct(), 38);
+
+        progress.enter_phase(LoadPhase::Assembling);
+        // Reading(10) + Parsing(10) + DecodingTextures(60) complete → 80%
+        assert_eq!(progress.progress_pct(), 80);
+
+        progress.enter_phase(LoadPhase::Complete);
+        assert_eq!(progress.progress_pct(), 100);
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -873,7 +983,7 @@ mod tests {
 
         // Poll until done (in a real app this would be each frame)
         loop {
-            if let Some(result) = handle.try_recv() {
+            if let Some(result) = handle.try_get() {
                 let result = result.unwrap();
                 assert_eq!(result.format, DetectedFormat::Wgsc);
                 assert_eq!(result.scene.meshes.len(), 1);
@@ -891,7 +1001,7 @@ mod tests {
         let handle = load_async(SceneSource::Bytes(bytes), LoadOptions::default());
 
         loop {
-            if let Some(result) = handle.try_recv() {
+            if let Some(result) = handle.try_get() {
                 assert!(result.is_err());
                 break;
             }

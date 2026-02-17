@@ -173,7 +173,7 @@ impl App {
             return;
         };
 
-        let Some(result) = handle.try_recv() else {
+        let Some(result) = handle.try_get() else {
             return;
         };
 
