@@ -241,7 +241,7 @@ impl WebViewer {
 
     /// Clear the current scene.
     pub fn clear_scene(&mut self) {
-        self.viewer.set_scene(crate::Scene::new());
+        self.viewer.clear_scene();
     }
 
     /// Get the number of root nodes in the scene.

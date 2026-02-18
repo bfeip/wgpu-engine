@@ -349,6 +349,17 @@ impl GpuResourceManager {
         }
     }
 
+    /// Clear all scene-specific GPU resources.
+    ///
+    /// This must be called when the scene is cleared or replaced to prevent
+    /// stale GPU buffers from being reused when new scene objects reuse the
+    /// same IDs with matching generation numbers.
+    pub fn clear_scene_resources(&mut self) {
+        self.meshes.clear();
+        self.textures.clear();
+        self.materials.clear();
+    }
+
     /// Check if a mesh needs GPU resource upload.
     pub fn mesh_needs_upload(&self, mesh_id: MeshId, current_generation: u64) -> bool {
         match self.meshes.get(&mesh_id) {

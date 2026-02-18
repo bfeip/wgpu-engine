@@ -203,6 +203,14 @@ impl<'a> Renderer<'a> {
         &mut self.camera_resources.camera
     }
 
+    /// Clear all scene-specific GPU resources.
+    ///
+    /// Call this when the scene is cleared or replaced to ensure stale GPU
+    /// buffers (vertex data, textures, material bind groups) are not reused.
+    pub(crate) fn clear_gpu_resources(&mut self) {
+        self.gpu_resources.clear_scene_resources();
+    }
+
     pub fn resize(&mut self, new_size: (u32, u32)) {
         let (width, height) = new_size;
         if width > 0 && height > 0 {

@@ -184,9 +184,28 @@ impl<'a> Viewer<'a> {
         &mut self.scene
     }
 
-    /// Set the scene to a new value
+    /// Set the scene to a new value.
+    ///
+    /// This clears all scene-specific GPU resources and selection state
+    /// to prevent stale data from persisting across scene changes.
     pub fn set_scene(&mut self, scene: Scene) {
         self.scene = scene;
+        self.selection.clear();
+        self.renderer.clear_gpu_resources();
+    }
+
+    /// Clear the scene, removing all geometry, materials, textures, and
+    /// associated GPU resources.
+    ///
+    /// This is the recommended way to reset the viewer before loading
+    /// new content. It clears:
+    /// - All scene nodes, instances, meshes, materials (except default), textures
+    /// - All cached GPU resources (vertex buffers, texture views, material bind groups)
+    /// - The current selection
+    pub fn clear_scene(&mut self) {
+        self.scene.clear();
+        self.selection.clear();
+        self.renderer.clear_gpu_resources();
     }
 
     /// Get a reference to the selection manager
