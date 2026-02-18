@@ -530,7 +530,7 @@ where
 }
 
 // ============================================================================
-// Async Loading — Native
+// Async Loading
 // ============================================================================
 
 /// Start loading a scene asynchronously.
@@ -539,30 +539,21 @@ where
 /// with yield points between loading phases.
 ///
 /// Returns a [`LoadHandle`] to poll for completion and progress.
-#[cfg(not(target_arch = "wasm32"))]
 pub fn load_async(source: SceneSource, options: LoadOptions) -> LoadHandle {
-    spawn_async(LoadProgress::new(), move |progress| {
-        load_sync_with_progress(source, &options, progress)
-    })
-}
-
-// ============================================================================
-// Async Loading — WASM
-// ============================================================================
-
-/// Start loading a scene asynchronously.
-///
-/// On native, spawns a background thread. On WASM, schedules as a microtask
-/// with yield points between loading phases.
-///
-/// Returns a [`LoadHandle`] to poll for completion and progress.
-#[cfg(target_arch = "wasm32")]
-pub fn load_async(source: SceneSource, options: LoadOptions) -> LoadHandle {
-    let progress = LoadProgress::new();
-    let p = progress.clone();
-    spawn_async_wasm(progress, async move {
-        load_chunked_wasm(source, &options, &p).await
-    })
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        spawn_async(LoadProgress::new(), move |progress| {
+            load_sync_with_progress(source, &options, progress)
+        })
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let progress = LoadProgress::new();
+        let p = progress.clone();
+        spawn_async_wasm(progress, async move {
+            load_chunked_wasm(source, &options, &p).await
+        })
+    }
 }
 
 /// Yield to the browser event loop. Allows the page to process events
@@ -746,7 +737,7 @@ fn save_sync_with_progress(
 }
 
 // ============================================================================
-// Async Export — Native
+// Async Export
 // ============================================================================
 
 /// Start saving a scene asynchronously.
@@ -755,38 +746,25 @@ fn save_sync_with_progress(
 ///
 /// Note: The scene is moved into the background task. If you need the scene
 /// afterward, clone it first.
-#[cfg(not(target_arch = "wasm32"))]
 pub fn save_async(
     mut scene: Scene,
     dest: SaveDestination,
     options: crate::format::SaveOptions,
 ) -> SaveHandle {
-    spawn_async(LoadProgress::new(), move |progress| {
-        save_sync_with_progress(&mut scene, dest, &options, progress)
-    })
-}
-
-// ============================================================================
-// Async Export — WASM
-// ============================================================================
-
-/// Start saving a scene asynchronously.
-///
-/// On native, spawns a background thread. On WASM, schedules as a microtask.
-///
-/// Note: The scene is moved into the background task. If you need the scene
-/// afterward, clone it first.
-#[cfg(target_arch = "wasm32")]
-pub fn save_async(
-    mut scene: Scene,
-    dest: SaveDestination,
-    options: crate::format::SaveOptions,
-) -> SaveHandle {
-    let progress = LoadProgress::new();
-    let p = progress.clone();
-    spawn_async_wasm(progress, async move {
-        save_sync_with_progress(&mut scene, dest, &options, &p)
-    })
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        spawn_async(LoadProgress::new(), move |progress| {
+            save_sync_with_progress(&mut scene, dest, &options, progress)
+        })
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let progress = LoadProgress::new();
+        let p = progress.clone();
+        spawn_async_wasm(progress, async move {
+            save_sync_with_progress(&mut scene, dest, &options, &p)
+        })
+    }
 }
 
 // ============================================================================
