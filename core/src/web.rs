@@ -22,6 +22,7 @@ use crate::event::Event;
 use crate::input::{ElementState, Key, KeyEvent, MouseButton, MouseScrollDelta, NamedKey, PhysicalKey};
 use crate::loader::LoadHandle;
 use crate::viewer::Viewer;
+use crate::scene::loader;
 
 #[wasm_bindgen]
 pub enum LoadStatus {
@@ -43,17 +44,17 @@ pub enum WebLoadPhase {
     Failed = 7,
 }
 
-impl From<crate::scene::LoadPhase> for WebLoadPhase {
-    fn from(phase: crate::scene::LoadPhase) -> Self {
+impl From<loader::LoadPhase> for WebLoadPhase {
+    fn from(phase: loader::LoadPhase) -> Self {
         match phase {
-            crate::scene::LoadPhase::Pending => Self::Pending,
-            crate::scene::LoadPhase::Reading => Self::Reading,
-            crate::scene::LoadPhase::Parsing => Self::Parsing,
-            crate::scene::LoadPhase::DecodingTextures => Self::DecodingTextures,
-            crate::scene::LoadPhase::BuildingMeshes => Self::BuildingMeshes,
-            crate::scene::LoadPhase::Assembling => Self::Assembling,
-            crate::scene::LoadPhase::Complete => Self::Complete,
-            crate::scene::LoadPhase::Failed => Self::Failed,
+            loader::LoadPhase::Pending => Self::Pending,
+            loader::LoadPhase::Reading => Self::Reading,
+            loader::LoadPhase::Parsing => Self::Parsing,
+            loader::LoadPhase::DecodingTextures => Self::DecodingTextures,
+            loader::LoadPhase::BuildingMeshes => Self::BuildingMeshes,
+            loader::LoadPhase::Assembling => Self::Assembling,
+            loader::LoadPhase::Complete => Self::Complete,
+            loader::LoadPhase::Failed => Self::Failed,
         }
     }
 }
@@ -172,7 +173,7 @@ impl WebViewer {
         }
 
         let handle = self.pending_load.take().unwrap();
-        match handle.try_recv() {
+        match handle.try_get() {
             Some(Ok(result)) => {
                 self.viewer.set_scene(result.scene);
                 let camera = result.camera.unwrap_or_else(|| {
