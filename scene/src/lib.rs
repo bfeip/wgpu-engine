@@ -118,10 +118,13 @@ pub struct Scene {
 impl Scene {
     /// Creates a new empty scene with a default material.
     ///
-    /// The scene is initialized with one default material (ID 0) that has:
+    /// The scene is initialized with one default material at a sentinel ID
+    /// (`DEFAULT_MATERIAL_ID`) that has:
     /// - Face color: Magenta (for debugging unassigned faces)
     /// - Line color: Black
     /// - Point color: Black
+    ///
+    /// User materials are assigned sequential IDs starting from 0.
     pub fn new() -> Self {
         let mut scene = Self {
             meshes: HashMap::new(),
@@ -147,15 +150,21 @@ impl Scene {
             next_environment_map_id: 0,
         };
 
-        // Create default material (ID 0)
-        scene.add_material(
-            Material::new()
-                .with_base_color_factor(RgbaColor::MAGENTA) // For debugging unassigned faces
-                .with_line_color(RgbaColor::BLACK)
-                .with_point_color(RgbaColor::BLACK),
-        );
+        // Insert default material at the sentinel ID (not via add_material,
+        // which assigns sequential user IDs starting from 0)
+        scene.insert_default_material();
 
         scene
+    }
+
+    /// Insert (or re-insert) the default material at the sentinel ID.
+    fn insert_default_material(&mut self) {
+        let mut default_mat = Material::new()
+            .with_base_color_factor(RgbaColor::MAGENTA) // For debugging unassigned faces
+            .with_line_color(RgbaColor::BLACK)
+            .with_point_color(RgbaColor::BLACK);
+        default_mat.id = DEFAULT_MATERIAL_ID;
+        self.materials.insert(DEFAULT_MATERIAL_ID, default_mat);
     }
 
     // ========== Mesh API ==========
@@ -550,20 +559,21 @@ impl Scene {
         self.textures.clear();
         self.environment_maps.clear();
         self.active_environment_map = None;
-
-        // Clear annotations (they're part of Scene now)
         self.annotations.clear();
 
-        // Keep only the default material (ID 0), remove all others
-        self.materials.retain(|&id, _| id == DEFAULT_MATERIAL_ID);
+        // Reset all materials and re-insert a fresh default material.
+        // We clear + re-insert rather than retain because the material at
+        // DEFAULT_MATERIAL_ID may have been replaced by a format loader.
+        self.materials.clear();
+        self.insert_default_material();
 
-        // Reset ID counters (but keep material counter since default material exists)
+        // Reset all ID counters
         self.next_node_id = 0;
         self.next_instance_id = 0;
         self.next_mesh_id = 0;
+        self.next_material_id = 0;
         self.next_texture_id = 0;
         self.next_environment_map_id = 0;
-        // Don't reset next_material_id since we keep the default material
     }
 
     /// Clears scene geometry but preserves annotation data.
@@ -583,13 +593,15 @@ impl Scene {
         // Mark annotations as unreified (their nodes no longer exist)
         self.annotations.mark_all_unreified();
 
-        // Keep only the default material (ID 0), remove all others
-        self.materials.retain(|&id, _| id == DEFAULT_MATERIAL_ID);
+        // Reset all materials and re-insert a fresh default material
+        self.materials.clear();
+        self.insert_default_material();
 
-        // Reset ID counters (but keep material counter since default material exists)
+        // Reset all ID counters
         self.next_node_id = 0;
         self.next_instance_id = 0;
         self.next_mesh_id = 0;
+        self.next_material_id = 0;
         self.next_texture_id = 0;
         self.next_environment_map_id = 0;
     }

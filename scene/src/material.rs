@@ -46,14 +46,15 @@ pub struct MaterialProperties {
 
 /// The ID of the default material created automatically by the Scene.
 ///
-/// This material is always available with ID 0 and provides fallback
-/// rendering for faces (magenta), lines (black), and points (black).
-pub const DEFAULT_MATERIAL_ID: MaterialId = 0;
+/// This material is always available at a sentinel ID (`u32::MAX`) and provides
+/// fallback rendering for faces (magenta), lines (black), and points (black).
+/// Using `u32::MAX` ensures it never collides with user-assigned material IDs
+/// which are assigned sequentially starting from 0.
+pub const DEFAULT_MATERIAL_ID: MaterialId = u32::MAX;
 
 /// Unique identifier for materials.
 ///
-/// Material IDs are assigned sequentially by the Scene starting from 1
-/// (ID 0 is reserved for the default material).
+/// Material IDs are assigned sequentially by the Scene starting from 0.
 pub type MaterialId = u32;
 
 /// Material that can be rendered as faces, lines, or points.

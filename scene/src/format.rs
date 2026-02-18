@@ -578,18 +578,18 @@ impl IdRemapper {
             }
         }
 
-        // Remap materials (preserve 0 for default material, exclude annotation materials)
+        // Remap materials (exclude annotation materials)
+        // The default material gets a sentinel file ID (u32::MAX) so instances
+        // can reference it, but its data is not serialized (Scene::new() recreates it).
+        // User materials get sequential file IDs starting from 0.
+        remapper.materials.insert(DEFAULT_MATERIAL_ID, u32::MAX);
         let mut mat_idx = 0u32;
         for &id in scene.materials.keys() {
-            if annotation_material_ids.contains(&id) {
+            if id == DEFAULT_MATERIAL_ID || annotation_material_ids.contains(&id) {
                 continue;
             }
-            if id == DEFAULT_MATERIAL_ID {
-                remapper.materials.insert(id, 0);
-            } else {
-                mat_idx += 1;
-                remapper.materials.insert(id, mat_idx);
-            }
+            remapper.materials.insert(id, mat_idx);
+            mat_idx += 1;
         }
 
         // Remap textures
@@ -1368,8 +1368,6 @@ pub fn assemble_wgsc_scene(
     use cgmath::{Point3, Quaternion, Vector3};
 
     let mut scene = Scene::new();
-    scene.materials.clear();
-    scene.next_material_id = 0;
 
     // Add textures
     let mut texture_id_map: HashMap<u32, TextureId> = HashMap::new();
@@ -1412,6 +1410,11 @@ pub fn assemble_wgsc_scene(
         let scene_id = scene.add_material(material);
         material_id_map.insert(file_id, scene_id);
     }
+
+    // Map the sentinel file ID (u32::MAX) → DEFAULT_MATERIAL_ID for new files.
+    // For old files that serialized the default material at file ID 0, the loaded
+    // material becomes a regular user material (harmless duplicate of the default).
+    material_id_map.insert(u32::MAX, DEFAULT_MATERIAL_ID);
 
     // Add instances
     let mut instance_id_map: HashMap<u32, InstanceId> = HashMap::new();
@@ -1605,8 +1608,10 @@ impl Scene {
         output.extend(compressed);
 
         // ===== Materials Section =====
+        // Skip the default material (it's always recreated by Scene::new())
         let materials: Vec<SerializedMaterial> = self.materials
             .values()
+            .filter(|mat| mat.id != DEFAULT_MATERIAL_ID)
             .filter_map(|mat| SerializedMaterial::from_material(mat, &remapper))
             .collect();
         let offset = output.len() as u64;
