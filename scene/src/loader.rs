@@ -40,14 +40,6 @@ use crate::Scene;
 /// The result type produced by a completed load operation.
 type LoadResult = Result<SceneLoadResult, LoadError>;
 
-/// Receiver for the native async load result.
-#[cfg(not(target_arch = "wasm32"))]
-type LoadReceiver = std::sync::mpsc::Receiver<LoadResult>;
-
-/// Shared cell for the WASM async load result.
-#[cfg(target_arch = "wasm32")]
-type LoadResultCell = std::rc::Rc<std::cell::RefCell<Option<LoadResult>>>;
-
 // ============================================================================
 // Types
 // ============================================================================
@@ -282,25 +274,25 @@ impl LoadProgress {
     }
 }
 
-/// Handle to a loading operation in progress.
+/// Handle to an async operation in progress.
 ///
-/// Poll this each frame with [`try_recv`](LoadHandle::try_recv) to check for
-/// completion, and read [`progress`](LoadHandle::progress) to display a
+/// Poll each frame with [`try_get`](AsyncHandle::try_get) to check for
+/// completion, and read [`progress`](AsyncHandle::progress) to display a
 /// progress bar.
-pub struct LoadHandle {
+pub struct AsyncHandle<T> {
     progress: LoadProgress,
     done: Arc<AtomicBool>,
     #[cfg(not(target_arch = "wasm32"))]
-    receiver: LoadReceiver,
+    receiver: std::sync::mpsc::Receiver<T>,
     #[cfg(target_arch = "wasm32")]
-    result: LoadResultCell,
+    result: std::rc::Rc<std::cell::RefCell<Option<T>>>,
 }
 
-impl LoadHandle {
-    /// Returns `Some(result)` if loading has completed, `None` if still in progress.
+impl<T> AsyncHandle<T> {
+    /// Returns `Some(result)` if the operation has completed, `None` if still in progress.
     ///
     /// Consumes the result on first successful call. Subsequent calls return `None`.
-    pub fn try_get(&self) -> Option<LoadResult> {
+    pub fn try_get(&self) -> Option<T> {
         #[cfg(not(target_arch = "wasm32"))]
         {
             self.receiver.try_recv().ok()
@@ -317,11 +309,17 @@ impl LoadHandle {
         &self.progress
     }
 
-    /// Returns true if loading has completed (success or failure).
+    /// Returns true if the operation has completed (success or failure).
     pub fn is_done(&self) -> bool {
         self.done.load(Ordering::Acquire)
     }
 }
+
+/// Handle to a loading operation in progress.
+pub type LoadHandle = AsyncHandle<LoadResult>;
+
+/// Handle to a save operation in progress.
+pub type SaveHandle = AsyncHandle<SaveResult>;
 
 // ============================================================================
 // Format Detection
@@ -456,6 +454,82 @@ fn load_gltf_phased(bytes: &[u8], options: &LoadOptions, progress: &LoadProgress
 }
 
 // ============================================================================
+// Async Helpers
+// ============================================================================
+
+/// Spawn a sync closure on a background thread, returning a handle to poll for the result.
+///
+/// Sets the progress phase to [`LoadPhase::Failed`] automatically if the closure
+/// returns an `Err`.
+#[cfg(not(target_arch = "wasm32"))]
+fn spawn_async<T, E>(
+    progress: LoadProgress,
+    f: impl FnOnce(&LoadProgress) -> Result<T, E> + Send + 'static,
+) -> AsyncHandle<Result<T, E>>
+where
+    T: Send + 'static,
+    E: Send + 'static,
+{
+    let progress_clone = progress.clone();
+    let done = Arc::new(AtomicBool::new(false));
+    let done_clone = Arc::clone(&done);
+    let (tx, rx) = std::sync::mpsc::channel();
+
+    std::thread::spawn(move || {
+        let result = f(&progress_clone);
+        if result.is_err() {
+            progress_clone.enter_phase(LoadPhase::Failed);
+        }
+        done_clone.store(true, Ordering::Release);
+        let _ = tx.send(result);
+    });
+
+    AsyncHandle {
+        progress,
+        done,
+        receiver: rx,
+    }
+}
+
+/// Spawn a future as a WASM microtask, returning a handle to poll for the result.
+///
+/// Sets the progress phase to [`LoadPhase::Failed`] automatically if the future
+/// resolves to an `Err`.
+#[cfg(target_arch = "wasm32")]
+fn spawn_async_wasm<T, E>(
+    progress: LoadProgress,
+    fut: impl std::future::Future<Output = Result<T, E>> + 'static,
+) -> AsyncHandle<Result<T, E>>
+where
+    T: 'static,
+    E: 'static,
+{
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let progress_clone = progress.clone();
+    let done = Arc::new(AtomicBool::new(false));
+    let done_clone = Arc::clone(&done);
+    let result_cell: Rc<RefCell<Option<Result<T, E>>>> = Rc::new(RefCell::new(None));
+    let result_clone = Rc::clone(&result_cell);
+
+    wasm_bindgen_futures::spawn_local(async move {
+        let result = fut.await;
+        if result.is_err() {
+            progress_clone.enter_phase(LoadPhase::Failed);
+        }
+        done_clone.store(true, Ordering::Release);
+        *result_clone.borrow_mut() = Some(result);
+    });
+
+    AsyncHandle {
+        progress,
+        done,
+        result: result_cell,
+    }
+}
+
+// ============================================================================
 // Async Loading — Native
 // ============================================================================
 
@@ -467,26 +541,9 @@ fn load_gltf_phased(bytes: &[u8], options: &LoadOptions, progress: &LoadProgress
 /// Returns a [`LoadHandle`] to poll for completion and progress.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn load_async(source: SceneSource, options: LoadOptions) -> LoadHandle {
-    let progress = LoadProgress::new();
-    let progress_clone = progress.clone();
-    let done = Arc::new(AtomicBool::new(false));
-    let done_clone = Arc::clone(&done);
-    let (tx, rx) = std::sync::mpsc::channel();
-
-    std::thread::spawn(move || {
-        let result = load_sync_with_progress(source, &options, &progress_clone);
-        if result.is_err() {
-            progress_clone.enter_phase(LoadPhase::Failed);
-        }
-        done_clone.store(true, Ordering::Release);
-        let _ = tx.send(result);
-    });
-
-    LoadHandle {
-        progress,
-        done,
-        receiver: rx,
-    }
+    spawn_async(LoadProgress::new(), move |progress| {
+        load_sync_with_progress(source, &options, progress)
+    })
 }
 
 // ============================================================================
@@ -501,30 +558,11 @@ pub fn load_async(source: SceneSource, options: LoadOptions) -> LoadHandle {
 /// Returns a [`LoadHandle`] to poll for completion and progress.
 #[cfg(target_arch = "wasm32")]
 pub fn load_async(source: SceneSource, options: LoadOptions) -> LoadHandle {
-    use std::cell::RefCell;
-    use std::rc::Rc;
-
     let progress = LoadProgress::new();
-    let progress_clone = progress.clone();
-    let done = Arc::new(AtomicBool::new(false));
-    let done_clone = Arc::clone(&done);
-    let result_cell: LoadResultCell = Rc::new(RefCell::new(None));
-    let result_clone = Rc::clone(&result_cell);
-
-    wasm_bindgen_futures::spawn_local(async move {
-        let result = load_chunked_wasm(source, &options, &progress_clone).await;
-        if result.is_err() {
-            progress_clone.enter_phase(LoadPhase::Failed);
-        }
-        done_clone.store(true, Ordering::Release);
-        *result_clone.borrow_mut() = Some(result);
-    });
-
-    LoadHandle {
-        progress,
-        done,
-        result: result_cell,
-    }
+    let p = progress.clone();
+    spawn_async_wasm(progress, async move {
+        load_chunked_wasm(source, &options, &p).await
+    })
 }
 
 /// Yield to the browser event loop. Allows the page to process events
@@ -667,55 +705,6 @@ pub enum SaveDestination {
 /// The result type produced by a completed save operation.
 type SaveResult = Result<Option<Vec<u8>>, LoadError>;
 
-/// Receiver for the native async save result.
-#[cfg(not(target_arch = "wasm32"))]
-type SaveReceiver = std::sync::mpsc::Receiver<SaveResult>;
-
-/// Shared cell for the WASM async save result.
-#[cfg(target_arch = "wasm32")]
-type SaveResultCell = std::rc::Rc<std::cell::RefCell<Option<SaveResult>>>;
-
-/// Handle to a save operation in progress.
-///
-/// Poll this each frame with [`try_recv`](SaveHandle::try_recv) to check for
-/// completion.
-pub struct SaveHandle {
-    progress: LoadProgress,
-    done: Arc<AtomicBool>,
-    #[cfg(not(target_arch = "wasm32"))]
-    receiver: SaveReceiver,
-    #[cfg(target_arch = "wasm32")]
-    result: SaveResultCell,
-}
-
-impl SaveHandle {
-    /// Returns `Some(result)` if saving has completed, `None` if still in progress.
-    ///
-    /// The inner `Option<Vec<u8>>` is `Some` when saving to bytes
-    /// ([`SaveDestination::Bytes`]), `None` when saving to a file.
-    pub fn try_get(&self) -> Option<SaveResult> {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.receiver.try_recv().ok()
-        }
-
-        #[cfg(target_arch = "wasm32")]
-        {
-            self.result.borrow_mut().take()
-        }
-    }
-
-    /// Returns the shared progress state.
-    pub fn progress(&self) -> &LoadProgress {
-        &self.progress
-    }
-
-    /// Returns true if saving has completed (success or failure).
-    pub fn is_done(&self) -> bool {
-        self.done.load(Ordering::Acquire)
-    }
-}
-
 // ============================================================================
 // Sync Export
 // ============================================================================
@@ -772,26 +761,9 @@ pub fn save_async(
     dest: SaveDestination,
     options: crate::format::SaveOptions,
 ) -> SaveHandle {
-    let progress = LoadProgress::new();
-    let progress_clone = progress.clone();
-    let done = Arc::new(AtomicBool::new(false));
-    let done_clone = Arc::clone(&done);
-    let (tx, rx) = std::sync::mpsc::channel();
-
-    std::thread::spawn(move || {
-        let result = save_sync_with_progress(&mut scene, dest, &options, &progress_clone);
-        if result.is_err() {
-            progress_clone.enter_phase(LoadPhase::Failed);
-        }
-        done_clone.store(true, Ordering::Release);
-        let _ = tx.send(result);
-    });
-
-    SaveHandle {
-        progress,
-        done,
-        receiver: rx,
-    }
+    spawn_async(LoadProgress::new(), move |progress| {
+        save_sync_with_progress(&mut scene, dest, &options, progress)
+    })
 }
 
 // ============================================================================
@@ -810,30 +782,11 @@ pub fn save_async(
     dest: SaveDestination,
     options: crate::format::SaveOptions,
 ) -> SaveHandle {
-    use std::cell::RefCell;
-    use std::rc::Rc;
-
     let progress = LoadProgress::new();
-    let progress_clone = progress.clone();
-    let done = Arc::new(AtomicBool::new(false));
-    let done_clone = Arc::clone(&done);
-    let result_cell: SaveResultCell = Rc::new(RefCell::new(None));
-    let result_clone = Rc::clone(&result_cell);
-
-    wasm_bindgen_futures::spawn_local(async move {
-        let result = save_sync_with_progress(&mut scene, dest, &options, &progress_clone);
-        if result.is_err() {
-            progress_clone.enter_phase(LoadPhase::Failed);
-        }
-        done_clone.store(true, Ordering::Release);
-        *result_clone.borrow_mut() = Some(result);
-    });
-
-    SaveHandle {
-        progress,
-        done,
-        result: result_cell,
-    }
+    let p = progress.clone();
+    spawn_async_wasm(progress, async move {
+        save_sync_with_progress(&mut scene, dest, &options, &p)
+    })
 }
 
 // ============================================================================
