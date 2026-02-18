@@ -81,6 +81,7 @@ pub type MaterialId = u32;
 /// //         .with_metallic_factor(0.0)
 /// //         .with_roughness_factor(0.5);
 /// ```
+#[derive(Clone)]
 pub struct Material {
     /// Unique identifier for this material
     pub id: MaterialId,

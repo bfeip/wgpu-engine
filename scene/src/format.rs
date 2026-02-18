@@ -1056,7 +1056,7 @@ impl SerializedTexture {
     /// Uses original compressed bytes when available (from glTF embedded images or file paths),
     /// avoiding expensive re-encoding. Falls back to `fallback_format` encoding otherwise.
     pub fn from_texture(
-        texture: &mut Texture,
+        texture: &Texture,
         remapper: &IdRemapper,
         fallback_format: TextureFormat,
         compression: CompressionLevel,
@@ -1533,12 +1533,12 @@ pub fn assemble_wgsc_scene(
 
 impl Scene {
     /// Serializes the scene to bytes in WGSC format with default options.
-    pub fn to_bytes(&mut self) -> Result<Vec<u8>, FormatError> {
+    pub fn to_bytes(&self) -> Result<Vec<u8>, FormatError> {
         self.to_bytes_with_options(&SaveOptions::default())
     }
 
     /// Serializes the scene to bytes in WGSC format with custom options.
-    pub fn to_bytes_with_options(&mut self, options: &SaveOptions) -> Result<Vec<u8>, FormatError> {
+    pub fn to_bytes_with_options(&self, options: &SaveOptions) -> Result<Vec<u8>, FormatError> {
         use std::time::{SystemTime, UNIX_EPOCH};
 
         let level = options.compression.zstd_level();
@@ -1636,7 +1636,7 @@ impl Scene {
 
         // ===== Textures Section =====
         let mut textures = Vec::new();
-        for texture in self.textures.values_mut() {
+        for texture in self.textures.values() {
             let serialized = SerializedTexture::from_texture(
                 texture,
                 &remapper,
@@ -1744,13 +1744,13 @@ impl Scene {
     }
 
     /// Saves the scene to a file with default options.
-    pub fn save_to_file(&mut self, path: impl AsRef<std::path::Path>) -> Result<(), FormatError> {
+    pub fn save_to_file(&self, path: impl AsRef<std::path::Path>) -> Result<(), FormatError> {
         self.save_to_file_with_options(path, &SaveOptions::default())
     }
 
     /// Saves the scene to a file with custom options.
     pub fn save_to_file_with_options(
-        &mut self,
+        &self,
         path: impl AsRef<std::path::Path>,
         options: &SaveOptions,
     ) -> Result<(), FormatError> {
@@ -1830,7 +1830,7 @@ mod tests {
 
     #[test]
     fn test_round_trip_basic() {
-        let mut original = create_test_scene();
+        let original = create_test_scene();
 
         // Serialize
         let bytes = original.to_bytes().expect("Failed to serialize scene");
@@ -1852,7 +1852,7 @@ mod tests {
 
     #[test]
     fn test_round_trip_node_properties() {
-        let mut original = create_test_scene();
+        let original = create_test_scene();
         let bytes = original.to_bytes().expect("Failed to serialize");
         let loaded = Scene::from_bytes(&bytes).expect("Failed to deserialize");
 
@@ -1883,7 +1883,7 @@ mod tests {
     #[test]
     #[ignore = "Fails unpredictably, possibly due to multithreaded serialization"]
     fn test_round_trip_material_properties() {
-        let mut original = create_test_scene();
+        let original = create_test_scene();
         let bytes = original.to_bytes().expect("Failed to serialize");
         let loaded = Scene::from_bytes(&bytes).expect("Failed to deserialize");
 
@@ -1914,7 +1914,7 @@ mod tests {
 
     #[test]
     fn test_round_trip_mesh_geometry() {
-        let mut original = create_test_scene();
+        let original = create_test_scene();
         let bytes = original.to_bytes().expect("Failed to serialize");
         let loaded = Scene::from_bytes(&bytes).expect("Failed to deserialize");
 
@@ -1938,7 +1938,7 @@ mod tests {
 
     #[test]
     fn test_round_trip_hierarchy() {
-        let mut original = create_test_scene();
+        let original = create_test_scene();
         let bytes = original.to_bytes().expect("Failed to serialize");
         let loaded = Scene::from_bytes(&bytes).expect("Failed to deserialize");
 
@@ -1961,7 +1961,7 @@ mod tests {
 
     #[test]
     fn test_round_trip_lights() {
-        let mut original = create_test_scene();
+        let original = create_test_scene();
         let bytes = original.to_bytes().expect("Failed to serialize");
         let loaded = Scene::from_bytes(&bytes).expect("Failed to deserialize");
 
@@ -1981,7 +1981,7 @@ mod tests {
 
     #[test]
     fn test_round_trip_annotations() {
-        let mut original = create_test_scene();
+        let original = create_test_scene();
         let bytes = original.to_bytes().expect("Failed to serialize");
         let loaded = Scene::from_bytes(&bytes).expect("Failed to deserialize");
 
@@ -2000,7 +2000,7 @@ mod tests {
 
     #[test]
     fn test_empty_scene_round_trip() {
-        let mut scene = Scene::new();
+        let scene = Scene::new();
         let bytes = scene.to_bytes().expect("Failed to serialize empty scene");
         let loaded = Scene::from_bytes(&bytes).expect("Failed to deserialize empty scene");
 
@@ -2013,7 +2013,7 @@ mod tests {
 
     #[test]
     fn test_version_in_header() {
-        let mut scene = Scene::new();
+        let scene = Scene::new();
         let bytes = scene.to_bytes().expect("Failed to serialize");
 
         // Check version bytes (offset 4-5)

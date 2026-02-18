@@ -406,6 +406,7 @@ impl Annotation {
 /// automatically cleared with the scene.
 ///
 /// The AnnotationManager is owned by Scene, ensuring lifecycle consistency.
+#[derive(Clone)]
 pub struct AnnotationManager {
     /// All annotations indexed by their ID
     annotations: HashMap<AnnotationId, Annotation>,

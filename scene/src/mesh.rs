@@ -123,6 +123,7 @@ pub enum MeshDescriptor<'a> {
 ///
 /// // GPU resources are created automatically during rendering
 /// ```
+#[derive(Clone)]
 pub struct Mesh {
     /// Unique identifier for this mesh (assigned by Scene)
     pub id: MeshId,

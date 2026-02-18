@@ -467,7 +467,7 @@ impl GpuResourceManager {
     /// new GPU resources are created.
     pub fn ensure_texture(
         &mut self,
-        texture: &mut Texture,
+        texture: &Texture,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) -> Result<()> {
@@ -543,7 +543,7 @@ fn create_mesh_gpu_resources(mesh: &Mesh, device: &wgpu::Device) -> MeshGpuResou
 
 /// Create GPU resources for a texture.
 fn create_texture_gpu_resources(
-    texture: &mut Texture,
+    texture: &Texture,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
 ) -> Result<GpuTexture> {

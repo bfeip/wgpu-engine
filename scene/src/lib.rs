@@ -86,6 +86,7 @@ pub struct SceneProperties {
 /// let scale = Vector3::new(1.0, 1.0, 1.0);
 /// let node_id = scene.add_instance_node(None, mesh_id, mat_id, None, position, rotation, scale);
 /// ```
+#[derive(Clone)]
 pub struct Scene {
     pub meshes: HashMap<MeshId, Mesh>,
     pub instances: HashMap<InstanceId, Instance>,

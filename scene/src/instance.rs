@@ -5,6 +5,7 @@ use super::mesh::MeshId;
 pub type InstanceId = u32;
 
 /// An instance references a mesh and material to be rendered.
+#[derive(Clone)]
 pub struct Instance {
     pub id: InstanceId,
     pub mesh: MeshId,

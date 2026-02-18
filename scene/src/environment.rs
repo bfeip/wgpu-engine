@@ -16,7 +16,7 @@ pub enum EnvironmentSource {
 ///
 /// Environment maps provide ambient lighting through diffuse irradiance and
 /// specular reflections through a pre-filtered environment map.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct EnvironmentMap {
     /// Unique identifier for this environment map.
     pub id: EnvironmentMapId,

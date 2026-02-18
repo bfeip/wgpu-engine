@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use anyhow::{Context, Result};
 use image::{DynamicImage, GenericImageView};
@@ -9,8 +10,8 @@ pub type TextureId = u32;
 /// Describes how texture source data is stored.
 ///
 /// Textures can be created from embedded image data or loaded lazily from a file path.
-/// The `CachedPath` variant allows releasing image data from memory after GPU upload
-/// while retaining the ability to reload it if needed.
+/// File-based textures use `OnceLock` for thread-safe lazy loading, allowing
+/// `get_image()` to take `&self` instead of `&mut self`.
 pub enum TextureSource {
     /// Image data embedded in memory (always available).
     /// Optionally includes original compressed bytes (PNG/JPEG) for efficient serialization.
@@ -19,14 +20,34 @@ pub enum TextureSource {
         /// Original compressed bytes preserved from loading (e.g., from glTF).
         original_bytes: Option<(Vec<u8>, super::format::TextureFormat)>,
     },
-    /// Path to load image from (image loaded on demand)
-    Path(PathBuf),
-    /// Image was loaded from path, with optional cached data.
-    /// The image can be released to save memory and reloaded later if needed.
-    CachedPath {
+    /// Image loaded lazily from a file path via `OnceLock`.
+    /// The image can be released and reloaded by replacing the `OnceLock`.
+    File {
         path: PathBuf,
-        image: Option<DynamicImage>,
+        cache: OnceLock<DynamicImage>,
     },
+}
+
+impl Clone for TextureSource {
+    fn clone(&self) -> Self {
+        match self {
+            TextureSource::Embedded { image, original_bytes } => TextureSource::Embedded {
+                image: image.clone(),
+                original_bytes: original_bytes.clone(),
+            },
+            TextureSource::File { path, cache } => TextureSource::File {
+                path: path.clone(),
+                cache: match cache.get() {
+                    Some(img) => {
+                        let lock = OnceLock::new();
+                        let _ = lock.set(img.clone());
+                        lock
+                    }
+                    None => OnceLock::new(),
+                },
+            },
+        }
+    }
 }
 
 /// A texture that can exist without GPU resources.
@@ -54,10 +75,18 @@ pub struct Texture {
     pub id: TextureId,
     /// Source data for the texture
     source: TextureSource,
-    /// Cached dimensions (set after first image load)
-    dimensions: Option<(u32, u32)>,
     /// Generation counter - increments on any mutation (for GPU sync tracking)
     generation: u64,
+}
+
+impl Clone for Texture {
+    fn clone(&self) -> Self {
+        Self {
+            id: self.id,
+            source: self.source.clone(),
+            generation: self.generation,
+        }
+    }
 }
 
 impl Texture {
@@ -69,11 +98,9 @@ impl Texture {
     /// # Arguments
     /// * `image` - The image data to use for this texture
     pub fn from_image(image: DynamicImage) -> Self {
-        let dimensions = Some(image.dimensions());
         Self {
             id: 0, // Assigned by Scene
             source: TextureSource::Embedded { image, original_bytes: None },
-            dimensions,
             generation: 1,
         }
     }
@@ -88,8 +115,10 @@ impl Texture {
     pub fn from_path(path: impl Into<PathBuf>) -> Self {
         Self {
             id: 0, // Assigned by Scene
-            source: TextureSource::Path(path.into()),
-            dimensions: None,
+            source: TextureSource::File {
+                path: path.into(),
+                cache: OnceLock::new(),
+            },
             generation: 1,
         }
     }
@@ -108,14 +137,12 @@ impl Texture {
         original_bytes: Vec<u8>,
         format: super::format::TextureFormat,
     ) -> Self {
-        let dimensions = Some(image.dimensions());
         Self {
             id: 0,
             source: TextureSource::Embedded {
                 image,
                 original_bytes: Some((original_bytes, format)),
             },
-            dimensions,
             generation: 1,
         }
     }
@@ -128,51 +155,35 @@ impl Texture {
     /// Get the texture dimensions, if known.
     ///
     /// Returns `None` if the texture was created from a path and hasn't been loaded yet.
+    /// Call `get_image()` first to trigger loading if dimensions are needed.
     pub fn dimensions(&self) -> Option<(u32, u32)> {
-        self.dimensions
+        match &self.source {
+            TextureSource::Embedded { image, .. } => Some(image.dimensions()),
+            TextureSource::File { cache, .. } => cache.get().map(|img| img.dimensions()),
+        }
     }
 
     /// Load and return a reference to the image data.
     ///
-    /// For path-based textures, this loads the image from disk on first access.
-    /// The loaded image is cached for future access.
+    /// For path-based textures, this loads the image from disk on first access
+    /// using `OnceLock` for thread-safe lazy initialization. The loaded image
+    /// is cached for future access.
     ///
     /// # Errors
     /// Returns an error if the image cannot be loaded from the path.
-    pub fn get_image(&mut self) -> Result<&DynamicImage> {
-        // First, ensure the image is loaded (may mutate self.source)
-        self.ensure_image_loaded()?;
-
-        // Now we can return a reference
+    pub fn get_image(&self) -> Result<&DynamicImage> {
         match &self.source {
             TextureSource::Embedded { image, .. } => Ok(image),
-            TextureSource::CachedPath { image: Some(img), .. } => Ok(img),
-            _ => unreachable!("ensure_image_loaded should have loaded the image"),
-        }
-    }
-
-    /// Ensure the image is loaded into memory.
-    fn ensure_image_loaded(&mut self) -> Result<()> {
-        match &self.source {
-            TextureSource::Embedded { .. } => Ok(()),
-            TextureSource::CachedPath { image: Some(_), .. } => Ok(()),
-            TextureSource::Path(_) | TextureSource::CachedPath { image: None, .. } => {
-                // Need to load the image
-                let path = match &self.source {
-                    TextureSource::Path(p) => p.clone(),
-                    TextureSource::CachedPath { path, .. } => path.clone(),
-                    _ => unreachable!(),
-                };
-
-                let img = image::open(&path)
+            TextureSource::File { path, cache } => {
+                if let Some(img) = cache.get() {
+                    return Ok(img);
+                }
+                let img = image::open(path)
                     .with_context(|| format!("Failed to load texture from {:?}", path))?;
-                self.dimensions = Some(img.dimensions());
-
-                self.source = TextureSource::CachedPath {
-                    path,
-                    image: Some(img),
-                };
-                Ok(())
+                // If another thread set it first, our image is dropped and
+                // we use theirs. This is correct — just a rare double-load.
+                let _ = cache.set(img);
+                Ok(cache.get().expect("just set or another thread set it"))
             }
         }
     }
@@ -195,8 +206,12 @@ impl Texture {
     ///
     /// Note: This does not release GPU resources - only the CPU-side image data.
     pub fn release_image_cache(&mut self) {
-        if let TextureSource::CachedPath { image, .. } = &mut self.source {
-            *image = None;
+        if let TextureSource::File { path, .. } = &self.source {
+            let path = path.clone();
+            self.source = TextureSource::File {
+                path,
+                cache: OnceLock::new(),
+            };
         }
         // Embedded textures cannot release their image data
     }
@@ -206,7 +221,6 @@ impl Texture {
     /// This increments the generation counter, so GPU resources will be updated
     /// on the next render.
     pub fn set_image(&mut self, image: DynamicImage) {
-        self.dimensions = Some(image.dimensions());
         self.source = TextureSource::Embedded { image, original_bytes: None };
         self.generation += 1;
     }
@@ -214,8 +228,7 @@ impl Texture {
     /// Get the source path if this texture was created from a path.
     pub fn source_path(&self) -> Option<&Path> {
         match &self.source {
-            TextureSource::Path(path) => Some(path),
-            TextureSource::CachedPath { path, .. } => Some(path),
+            TextureSource::File { path, .. } => Some(path),
             TextureSource::Embedded { .. } => None,
         }
     }

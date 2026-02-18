@@ -36,6 +36,7 @@ pub enum EffectiveVisibility {
 }
 
 /// A node in the scene tree hierarchy.
+#[derive(Clone)]
 pub struct Node {
     pub id: NodeId,
     pub name: Option<String>,

@@ -702,7 +702,7 @@ type SaveResult = Result<Option<Vec<u8>>, LoadError>;
 
 /// Save a scene synchronously. Useful for CLI tools and tests.
 pub fn save_sync(
-    scene: &mut Scene,
+    scene: &Scene,
     dest: SaveDestination,
     options: crate::format::SaveOptions,
 ) -> SaveResult {
@@ -711,7 +711,7 @@ pub fn save_sync(
 }
 
 fn save_sync_with_progress(
-    scene: &mut Scene,
+    scene: &Scene,
     dest: SaveDestination,
     options: &crate::format::SaveOptions,
     progress: &LoadProgress,
@@ -744,17 +744,19 @@ fn save_sync_with_progress(
 ///
 /// On native, spawns a background thread. On WASM, schedules as a microtask.
 ///
-/// Note: The scene is moved into the background task. If you need the scene
-/// afterward, clone it first.
+/// The scene is cloned internally for the background task, so the caller
+/// retains full ownership. Note: this is currently a deep clone. A future
+/// optimization can Arc-wrap large data (textures, meshes) for cheap clones.
 pub fn save_async(
-    mut scene: Scene,
+    scene: &Scene,
     dest: SaveDestination,
     options: crate::format::SaveOptions,
 ) -> SaveHandle {
+    let scene = scene.clone();
     #[cfg(not(target_arch = "wasm32"))]
     {
         spawn_async(LoadProgress::new(), move |progress| {
-            save_sync_with_progress(&mut scene, dest, &options, progress)
+            save_sync_with_progress(&scene, dest, &options, progress)
         })
     }
     #[cfg(target_arch = "wasm32")]
@@ -762,7 +764,7 @@ pub fn save_async(
         let progress = LoadProgress::new();
         let p = progress.clone();
         spawn_async_wasm(progress, async move {
-            save_sync_with_progress(&mut scene, dest, &options, &p)
+            save_sync_with_progress(&scene, dest, &options, &p)
         })
     }
 }
@@ -943,9 +945,9 @@ mod tests {
 
     #[test]
     fn test_save_sync_to_bytes() {
-        let mut scene = create_test_scene();
+        let scene = create_test_scene();
         let result = save_sync(
-            &mut scene,
+            &scene,
             SaveDestination::Bytes,
             crate::format::SaveOptions::default(),
         )
@@ -963,7 +965,7 @@ mod tests {
     fn test_save_async_to_bytes() {
         let scene = create_test_scene();
         let handle = save_async(
-            scene,
+            &scene,
             SaveDestination::Bytes,
             crate::format::SaveOptions::default(),
         );

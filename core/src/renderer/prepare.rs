@@ -21,7 +21,7 @@ impl<'a> Renderer<'a> {
         scene.reify_annotations();
 
         // 1. Prepare all textures first (materials depend on them)
-        for texture in scene.textures.values_mut() {
+        for texture in scene.textures.values() {
             self.gpu_resources.ensure_texture(texture, &self.device, &self.queue)?;
         }
 
