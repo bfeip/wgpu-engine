@@ -693,7 +693,7 @@ impl SaveHandle {
     ///
     /// The inner `Option<Vec<u8>>` is `Some` when saving to bytes
     /// ([`SaveDestination::Bytes`]), `None` when saving to a file.
-    pub fn try_recv(&self) -> Option<SaveResult> {
+    pub fn try_get(&self) -> Option<SaveResult> {
         #[cfg(not(target_arch = "wasm32"))]
         {
             self.receiver.try_recv().ok()
@@ -1038,7 +1038,7 @@ mod tests {
         );
 
         loop {
-            if let Some(result) = handle.try_recv() {
+            if let Some(result) = handle.try_get() {
                 let bytes = result.unwrap().expect("Should return bytes");
                 assert!(bytes.starts_with(b"WGSC"));
                 break;
