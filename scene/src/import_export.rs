@@ -35,6 +35,8 @@ pub mod assimp;
 pub mod format;
 pub mod gltf;
 pub(crate) mod mesh_util;
+#[cfg(feature = "usd")]
+pub mod usd;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
@@ -98,6 +100,8 @@ pub enum DetectedFormat {
     Gltf,
     #[cfg(feature = "assimp")]
     Assimp,
+    #[cfg(feature = "usd")]
+    Usd,
 }
 
 /// Coarse loading phases for progress display.
@@ -146,6 +150,13 @@ pub enum LoadError {
     #[error("Assimp error: {0}")]
     Assimp(String),
 
+    #[cfg(feature = "usd")]
+    #[error("USD error: {0}")]
+    Usd(String),
+
+    #[error("Format '{0}' is not supported on this platform")]
+    UnsupportedPlatform(String),
+
     #[error("Unknown file format")]
     UnknownFormat,
 }
@@ -176,6 +187,15 @@ const GLTF_WEIGHTS: [u8; 8] = weights(&[
 /// Weights for assimp loading: Reading(10) + Parsing(30) + BuildingMeshes(40) + Assembling(20).
 #[cfg(feature = "assimp")]
 const ASSIMP_WEIGHTS: [u8; 8] = weights(&[
+    (LoadPhase::Reading, 10),
+    (LoadPhase::Parsing, 30),
+    (LoadPhase::BuildingMeshes, 40),
+    (LoadPhase::Assembling, 20),
+]);
+
+/// Weights for USD loading: Reading(10) + Parsing(30) + BuildingMeshes(40) + Assembling(20).
+#[cfg(feature = "usd")]
+const USD_WEIGHTS: [u8; 8] = weights(&[
     (LoadPhase::Reading, 10),
     (LoadPhase::Parsing, 30),
     (LoadPhase::BuildingMeshes, 40),
@@ -363,6 +383,18 @@ fn detect_format_from_bytes(bytes: &[u8]) -> Result<DetectedFormat, LoadError> {
         return Ok(DetectedFormat::Wgsc);
     }
 
+    // USD binary (.usdc) starts with "PXR-USDC"
+    #[cfg(feature = "usd")]
+    if bytes.len() >= 8 && bytes.starts_with(b"PXR-USDC") {
+        return Ok(DetectedFormat::Usd);
+    }
+
+    // USDZ is a ZIP archive starting with "PK"
+    #[cfg(feature = "usd")]
+    if bytes.len() >= 2 && bytes[0] == b'P' && bytes[1] == b'K' {
+        return Ok(DetectedFormat::Usd);
+    }
+
     // glTF binary (.glb) starts with "glTF"
     if bytes.starts_with(b"glTF") {
         return Ok(DetectedFormat::Gltf);
@@ -386,6 +418,8 @@ fn detect_format_from_extension(path: &std::path::Path) -> Result<DetectedFormat
         Some("glb") | Some("gltf") => Ok(DetectedFormat::Gltf),
         #[cfg(feature = "assimp")]
         Some(ext) if self::assimp::is_assimp_extension(ext) => Ok(DetectedFormat::Assimp),
+        #[cfg(feature = "usd")]
+        Some(ext) if self::usd::is_usd_extension(ext) => Ok(DetectedFormat::Usd),
         _ => Err(LoadError::UnknownFormat),
     }
 }
@@ -435,6 +469,11 @@ fn load_sync_with_progress(
         DetectedFormat::Assimp => {
             progress.set_weights(&ASSIMP_WEIGHTS);
             load_assimp_phased(&path_hint, &bytes, progress)
+        }
+        #[cfg(feature = "usd")]
+        DetectedFormat::Usd => {
+            progress.set_weights(&USD_WEIGHTS);
+            load_usd_phased(&path_hint, &bytes, progress)
         }
     }
 }
@@ -511,6 +550,30 @@ fn load_assimp_phased(
         scene: assimp_result.scene,
         camera: assimp_result.camera,
         format: DetectedFormat::Assimp,
+    })
+}
+
+#[cfg(feature = "usd")]
+fn load_usd_phased(
+    path_hint: &Option<PathBuf>,
+    bytes: &[u8],
+    progress: &LoadProgress,
+) -> LoadResult {
+    progress.enter_phase(LoadPhase::Parsing);
+
+    let result = if let Some(path) = path_hint {
+        self::usd::load_usd_scene_from_path(path)
+    } else {
+        self::usd::load_usd_scene_from_bytes(bytes, "scene.usd")
+    };
+
+    let usd_result = result.map_err(|e| LoadError::Usd(e.to_string()))?;
+
+    progress.enter_phase(LoadPhase::Complete);
+    Ok(SceneLoadResult {
+        scene: usd_result.scene,
+        camera: usd_result.camera,
+        format: DetectedFormat::Usd,
     })
 }
 
@@ -675,13 +738,23 @@ async fn load_chunked_wasm(
             load_wgsc_chunked(&bytes, progress).await
         }
         DetectedFormat::Gltf => {
+            if !bytes.starts_with(b"glTF") {
+                // Non-GLB glTF files reference external resources via filesystem
+                // paths, which are not accessible on WASM.
+                return Err(LoadError::UnsupportedPlatform(
+                    "non-GLB glTF (requires filesystem)".into(),
+                ));
+            }
             progress.set_weights(&GLTF_WEIGHTS);
             load_gltf_chunked(&bytes, options, progress).await
         }
         #[cfg(feature = "assimp")]
         DetectedFormat::Assimp => {
-            // Assimp (C library) is not available on WASM
-            Err(LoadError::UnknownFormat)
+            Err(LoadError::UnsupportedPlatform("assimp".into()))
+        }
+        #[cfg(feature = "usd")]
+        DetectedFormat::Usd => {
+            Err(LoadError::UnsupportedPlatform("usd".into()))
         }
     }
 }

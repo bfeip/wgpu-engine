@@ -25,6 +25,7 @@ required-features = ["egui-support"]
 winit-support = ["winit"]
 egui-support = ["winit-support", "egui", "egui-wgpu", "egui-winit"]
 assimp = ["wgpu-engine-scene/assimp"]
+usd = ["wgpu-engine-scene/usd"]
 
 
 # Shared dependencies

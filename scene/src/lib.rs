@@ -10,6 +10,8 @@ pub use import_export::gltf;
 pub use import_export as loader;
 #[cfg(feature = "assimp")]
 pub use import_export::assimp;
+#[cfg(feature = "usd")]
+pub use import_export::usd;
 
 pub use camera::Camera;
 

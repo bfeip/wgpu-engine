@@ -6,9 +6,12 @@ edition = "2024"
 [features]
 default = []
 assimp = ["dep:russimp"]
+usd = ["dep:openusd", "dep:zip"]
 
 [dependencies]
 russimp = { version = "3", features = ["prebuilt"], optional = true }
+openusd = { version = "0.1", optional = true }
+zip = { version = "2", optional = true, default-features = false, features = ["deflate"] }
 wgpu-engine-common = { path = "../common" }
 anyhow = "1.0"
 bincode = "1.3"
