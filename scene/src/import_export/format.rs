@@ -34,7 +34,7 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use super::{
+use crate::{
     annotation::{
         Annotation, AnnotationId, AxesAnnotation, BoxAnnotation,
         GridAnnotation, LineAnnotation, PointsAnnotation, PolylineAnnotation, AnnotationMeta,
@@ -51,7 +51,7 @@ use crate::common::{
     RgbaColor, array_to_point3, array_to_rgba, array_to_vec3,
     point3_to_array, rgba_to_array, vec3_to_array
 };
-use super::environment::EnvironmentMapId;
+use crate::environment::EnvironmentMapId;
 
 // ============================================================================
 // Constants
@@ -1698,10 +1698,10 @@ impl Scene {
             for (&id, env_map) in &self.environment_maps {
                 let remapped_id = remapper.remap_environment_map(id).unwrap_or(0);
                 let hdr_data = match &env_map.source {
-                    super::environment::EnvironmentSource::EquirectangularPath(path) => {
+                    crate::environment::EnvironmentSource::EquirectangularPath(path) => {
                         std::fs::read(path).map_err(|e| FormatError::IoError(e))?
                     }
-                    super::environment::EnvironmentSource::EquirectangularHdr(data) => {
+                    crate::environment::EnvironmentSource::EquirectangularHdr(data) => {
                         data.clone()
                     }
                 };

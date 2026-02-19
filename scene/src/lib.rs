@@ -1,17 +1,21 @@
-#[cfg(feature = "assimp")]
-pub mod assimp;
 pub mod camera;
 pub use wgpu_engine_common as common;
 pub mod geom_query;
-pub mod gltf;
-pub mod loader;
+pub mod import_export;
+
+// Backward-compatible re-exports so existing `crate::gltf::*`, `crate::format::*`,
+// `crate::loader::*`, `crate::assimp::*` paths continue to resolve.
+pub use import_export::format;
+pub use import_export::gltf;
+pub use import_export as loader;
+#[cfg(feature = "assimp")]
+pub use import_export::assimp;
 
 pub use camera::Camera;
 
 // Scene submodules (formerly scene/src/scene/)
 pub mod annotation;
 pub mod environment;
-pub mod format;
 mod instance;
 mod light;
 mod material;

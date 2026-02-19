@@ -1,7 +1,7 @@
 use std::path::Path;
 use crate::camera::Camera;
 use crate::{
-    Material, Texture, Mesh, MeshId, MeshPrimitive, PrimitiveType, Scene, Vertex,
+    Material, Texture, Mesh, MeshId, PrimitiveType, Scene, Vertex,
     MaterialId, DEFAULT_MATERIAL_ID,
 };
 
@@ -97,20 +97,22 @@ fn load_vertices(
     Ok(vertices)
 }
 
-/// Loads index data from a glTF primitive.
+/// Loads index data from a glTF primitive as u32 indices.
+///
+/// Returns u32 indices which are later converted to u16 (splitting the mesh
+/// into chunks if the vertex count exceeds the u16 limit).
 fn load_indices(
     primitive: &gltf::Primitive,
     buffers: &[gltf::buffer::Data],
-) -> anyhow::Result<Vec<u16>> {
+) -> anyhow::Result<Vec<u32>> {
     // Create a reader for this primitive
     let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
 
-    // Read indices and convert to u16
+    // Read indices as u32 (will be converted to u16 later, with splitting if needed)
     let indices = reader
         .read_indices()
         .ok_or_else(|| anyhow::anyhow!("Primitive missing indices"))?
         .into_u32()
-        .map(|i| i as u16) // Convert u32 to u16 (assumes small meshes)
         .collect();
 
     Ok(indices)
@@ -170,8 +172,8 @@ fn extract_embedded_image_bytes(
     image_index: usize,
     document: &gltf::Document,
     buffers: &[gltf::buffer::Data],
-) -> Option<(Vec<u8>, crate::format::TextureFormat)> {
-    use crate::format::TextureFormat;
+) -> Option<(Vec<u8>, super::format::TextureFormat)> {
+    use super::format::TextureFormat;
 
     let img = document.images().nth(image_index)?;
     let gltf::image::Source::View { view, mime_type } = img.source() else { return None };
@@ -545,20 +547,18 @@ pub fn load_gltf_assets(
             };
 
             let vertices = load_vertices(&primitive, &parsed.buffers)?;
-            let indices = load_indices(&primitive, &parsed.buffers)?;
-
-            let primitives = vec![MeshPrimitive {
-                primitive_type,
-                indices,
-            }];
-
-            let mesh_obj = Mesh::from_raw(vertices, primitives);
-            let mesh_id = scene.add_mesh(mesh_obj);
+            let indices_u32 = load_indices(&primitive, &parsed.buffers)?;
 
             let material_id =
                 get_material_for_primitive(&primitive, primitive_type, &material_map);
 
-            primitives_data.push((mesh_id, material_id));
+            // Convert u32 indices to u16, splitting the mesh if it exceeds the u16 vertex limit
+            let chunks = super::mesh_util::to_u16_primitives(&vertices, &indices_u32, primitive_type);
+            for (chunk_verts, chunk_prim) in chunks {
+                let mesh_obj = Mesh::from_raw(chunk_verts, vec![chunk_prim]);
+                let mesh_id = scene.add_mesh(mesh_obj);
+                primitives_data.push((mesh_id, material_id));
+            }
         }
 
         mesh_map.push(primitives_data);

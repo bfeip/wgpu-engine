@@ -17,7 +17,7 @@ use russimp::scene::{PostProcess, Scene as RScene};
 use crate::camera::Camera;
 use crate::common::{RgbaColor, decompose_matrix};
 use crate::{
-    DEFAULT_MATERIAL_ID, Light, Material, MaterialId, Mesh, MeshId, MeshIndex, MeshPrimitive,
+    DEFAULT_MATERIAL_ID, Light, Material, MaterialId, Mesh, MeshId, MeshPrimitive,
     NodeId, PrimitiveType, Scene, Texture, TextureId, Vertex,
 };
 
@@ -373,88 +373,16 @@ fn load_single_mesh(
         .flat_map(|face| face.0.iter().copied())
         .collect();
 
-    // Split if necessary for u16 index limit
-    if vertices.len() <= MeshIndex::MAX as usize {
-        // Simple case: fits in u16
-        let u16_indices: Vec<MeshIndex> = indices.iter().map(|&i| i as MeshIndex).collect();
-        let primitive = MeshPrimitive {
-            primitive_type: PrimitiveType::TriangleList,
-            indices: u16_indices,
-        };
-        let mesh = Mesh::from_raw(vertices, vec![primitive]);
-        let mesh_id = scene.add_mesh(mesh);
-        vec![(mesh_id, material_id)]
-    } else {
-        // Need to split into chunks
-        let chunks = split_mesh(&vertices, &indices);
-        chunks
-            .into_iter()
-            .map(|(chunk_verts, chunk_prim)| {
-                let mesh = Mesh::from_raw(chunk_verts, vec![chunk_prim]);
-                let mesh_id = scene.add_mesh(mesh);
-                (mesh_id, material_id)
-            })
-            .collect()
-    }
-}
-
-/// Split a mesh with >65535 vertices into multiple chunks that each fit in u16 indices.
-fn split_mesh(vertices: &[Vertex], indices: &[u32]) -> Vec<(Vec<Vertex>, MeshPrimitive)> {
-    let max_verts = MeshIndex::MAX as usize;
-    let mut chunks: Vec<(Vec<Vertex>, MeshPrimitive)> = Vec::new();
-
-    let mut chunk_verts: Vec<Vertex> = Vec::new();
-    let mut chunk_indices: Vec<MeshIndex> = Vec::new();
-    let mut remap: HashMap<u32, MeshIndex> = HashMap::new();
-
-    for triangle in indices.chunks(3) {
-        if triangle.len() < 3 {
-            break;
-        }
-
-        // Check if adding this triangle would overflow the chunk
-        let new_verts_needed = triangle
-            .iter()
-            .filter(|&&idx| !remap.contains_key(&idx))
-            .count();
-
-        if chunk_verts.len() + new_verts_needed > max_verts {
-            // Finalize current chunk
-            if !chunk_indices.is_empty() {
-                chunks.push((
-                    std::mem::take(&mut chunk_verts),
-                    MeshPrimitive {
-                        primitive_type: PrimitiveType::TriangleList,
-                        indices: std::mem::take(&mut chunk_indices),
-                    },
-                ));
-            }
-            remap.clear();
-        }
-
-        // Add triangle to current chunk
-        for &orig_idx in triangle {
-            let local_idx = *remap.entry(orig_idx).or_insert_with(|| {
-                let idx = chunk_verts.len() as MeshIndex;
-                chunk_verts.push(vertices[orig_idx as usize]);
-                idx
-            });
-            chunk_indices.push(local_idx);
-        }
-    }
-
-    // Finalize last chunk
-    if !chunk_indices.is_empty() {
-        chunks.push((
-            chunk_verts,
-            MeshPrimitive {
-                primitive_type: PrimitiveType::TriangleList,
-                indices: chunk_indices,
-            },
-        ));
-    }
-
+    // Split if necessary for u16 index limit, using shared mesh utility
+    let chunks = super::mesh_util::to_u16_primitives(&vertices, &indices, PrimitiveType::TriangleList);
     chunks
+        .into_iter()
+        .map(|(chunk_verts, chunk_prim)| {
+            let mesh = Mesh::from_raw(chunk_verts, vec![chunk_prim]);
+            let mesh_id = scene.add_mesh(mesh);
+            (mesh_id, material_id)
+        })
+        .collect()
 }
 
 // ============================================================================

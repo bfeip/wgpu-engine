@@ -1,7 +1,14 @@
-//! Async scene import/export library.
+//! Scene import/export library.
 //!
 //! Provides format-agnostic loading and saving of scenes with progress reporting.
-//! Supports glTF (.glb/.gltf) and WGSC (.wgsc) formats with automatic detection.
+//! Supports glTF (.glb/.gltf), WGSC (.wgsc), and optionally assimp-based formats.
+//!
+//! # Submodules
+//!
+//! - [`format`] — Binary scene serialization (.wgsc)
+//! - [`gltf`] — glTF loading
+//! - [`assimp`] — Assimp-based loading (feature-gated)
+//! - [`mesh_util`] — Shared mesh utilities (splitting large meshes)
 //!
 //! # Native
 //! Loading runs on a background thread via [`std::thread::spawn`]. The caller
@@ -15,13 +22,19 @@
 //! # Examples
 //!
 //! ```no_run
-//! use wgpu_engine_scene::loader::{load_async, LoadOptions, SceneSource};
+//! use wgpu_engine_scene::import_export::{load_async, LoadOptions, SceneSource};
 //!
 //! let handle = load_async(SceneSource::Path("model.glb".into()), LoadOptions::default());
 //!
 //! // In your render loop:
 //! // if let Some(result) = handle.try_recv() { ... }
 //! ```
+
+#[cfg(feature = "assimp")]
+pub mod assimp;
+pub mod format;
+pub mod gltf;
+pub(crate) mod mesh_util;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
@@ -30,7 +43,7 @@ use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
 use crate::camera::Camera;
-use crate::format::FormatError;
+use self::format::FormatError;
 use crate::Scene;
 
 // ============================================================================
@@ -372,7 +385,7 @@ fn detect_format_from_extension(path: &std::path::Path) -> Result<DetectedFormat
         Some("wgsc") => Ok(DetectedFormat::Wgsc),
         Some("glb") | Some("gltf") => Ok(DetectedFormat::Gltf),
         #[cfg(feature = "assimp")]
-        Some(ext) if crate::assimp::is_assimp_extension(ext) => Ok(DetectedFormat::Assimp),
+        Some(ext) if self::assimp::is_assimp_extension(ext) => Ok(DetectedFormat::Assimp),
         _ => Err(LoadError::UnknownFormat),
     }
 }
@@ -427,7 +440,7 @@ fn load_sync_with_progress(
 }
 
 fn load_wgsc_phased(bytes: &[u8], progress: &LoadProgress) -> LoadResult {
-    use crate::format::{assemble_wgsc_scene, decode_wgsc_texture, parse_wgsc};
+    use self::format::{assemble_wgsc_scene, decode_wgsc_texture, parse_wgsc};
 
     progress.enter_phase(LoadPhase::Parsing);
     let sections = parse_wgsc(bytes)?;
@@ -453,7 +466,7 @@ fn load_wgsc_phased(bytes: &[u8], progress: &LoadProgress) -> LoadResult {
 }
 
 fn load_gltf_phased(bytes: &[u8], options: &LoadOptions, progress: &LoadProgress) -> LoadResult {
-    use crate::gltf::{build_gltf_scene, load_gltf_assets, parse_gltf};
+    use self::gltf::{build_gltf_scene, load_gltf_assets, parse_gltf};
 
     progress.enter_phase(LoadPhase::Parsing);
     let parsed = parse_gltf(bytes).map_err(|e| LoadError::Gltf(e.to_string()))?;
@@ -485,10 +498,10 @@ fn load_assimp_phased(
 
     let result = if let Some(path) = path_hint {
         // Prefer file path loading so assimp can resolve external textures
-        crate::assimp::load_assimp_scene_from_path(path)
+        self::assimp::load_assimp_scene_from_path(path)
     } else {
         // Fallback to buffer loading with empty hint
-        crate::assimp::load_assimp_scene_from_bytes(bytes, "")
+        self::assimp::load_assimp_scene_from_bytes(bytes, "")
     };
 
     let assimp_result = result.map_err(|e| LoadError::Assimp(e.to_string()))?;
@@ -675,7 +688,7 @@ async fn load_chunked_wasm(
 
 #[cfg(target_arch = "wasm32")]
 async fn load_wgsc_chunked(bytes: &[u8], progress: &LoadProgress) -> LoadResult {
-    use crate::format::{assemble_wgsc_scene, decode_wgsc_texture, parse_wgsc};
+    use self::format::{assemble_wgsc_scene, decode_wgsc_texture, parse_wgsc};
 
     progress.enter_phase(LoadPhase::Parsing);
     let sections = parse_wgsc(bytes)?;
@@ -710,7 +723,7 @@ async fn load_gltf_chunked(
     options: &LoadOptions,
     progress: &LoadProgress,
 ) -> LoadResult {
-    use crate::gltf::{build_gltf_scene, load_gltf_assets, parse_gltf};
+    use self::gltf::{build_gltf_scene, load_gltf_assets, parse_gltf};
 
     progress.enter_phase(LoadPhase::Parsing);
     let parsed = parse_gltf(bytes).map_err(|e| LoadError::Gltf(e.to_string()))?;
@@ -757,7 +770,7 @@ type SaveResult = Result<Option<Vec<u8>>, LoadError>;
 pub fn save_sync(
     scene: &Scene,
     dest: SaveDestination,
-    options: crate::format::SaveOptions,
+    options: self::format::SaveOptions,
 ) -> SaveResult {
     let progress = LoadProgress::new();
     save_sync_with_progress(scene, dest, &options, &progress)
@@ -766,7 +779,7 @@ pub fn save_sync(
 fn save_sync_with_progress(
     scene: &Scene,
     dest: SaveDestination,
-    options: &crate::format::SaveOptions,
+    options: &self::format::SaveOptions,
     progress: &LoadProgress,
 ) -> SaveResult {
     progress.set_weights(&SAVE_WEIGHTS);
@@ -803,7 +816,7 @@ fn save_sync_with_progress(
 pub fn save_async(
     scene: &Scene,
     dest: SaveDestination,
-    options: crate::format::SaveOptions,
+    options: self::format::SaveOptions,
 ) -> SaveHandle {
     let scene = scene.clone();
     #[cfg(not(target_arch = "wasm32"))]
@@ -1008,7 +1021,7 @@ mod tests {
         let result = save_sync(
             &scene,
             SaveDestination::Bytes,
-            crate::format::SaveOptions::default(),
+            format::SaveOptions::default(),
         )
         .unwrap();
         let bytes = result.expect("Should return bytes");
@@ -1026,7 +1039,7 @@ mod tests {
         let handle = save_async(
             &scene,
             SaveDestination::Bytes,
-            crate::format::SaveOptions::default(),
+            format::SaveOptions::default(),
         );
 
         loop {
