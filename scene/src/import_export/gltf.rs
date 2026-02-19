@@ -194,26 +194,67 @@ fn extract_embedded_image_bytes(
 
 /// Decodes glTF image pixel data into a DynamicImage.
 fn decode_gltf_image(gltf_image: &gltf::image::Data) -> anyhow::Result<image::DynamicImage> {
+    use gltf::image::Format;
+    use image::DynamicImage;
+
+    let w = gltf_image.width;
+    let h = gltf_image.height;
+    let pixels = &gltf_image.pixels;
+    let make_err = || anyhow::anyhow!("Pixel data size mismatch for {:?} image", gltf_image.format);
+
     match gltf_image.format {
-        gltf::image::Format::R8G8B8A8 => {
-            let img = image::RgbaImage::from_raw(
-                gltf_image.width,
-                gltf_image.height,
-                gltf_image.pixels.clone(),
-            )
-            .ok_or_else(|| anyhow::anyhow!("Failed to create RGBA image from glTF data"))?;
-            Ok(image::DynamicImage::ImageRgba8(img))
+        Format::R8 => {
+            let img = image::GrayImage::from_raw(w, h, pixels.clone()).ok_or_else(make_err)?;
+            Ok(DynamicImage::ImageLuma8(img))
         }
-        gltf::image::Format::R8G8B8 => {
-            let img = image::RgbImage::from_raw(
-                gltf_image.width,
-                gltf_image.height,
-                gltf_image.pixels.clone(),
-            )
-            .ok_or_else(|| anyhow::anyhow!("Failed to create RGB image from glTF data"))?;
-            Ok(image::DynamicImage::ImageRgb8(img))
+        Format::R8G8 => {
+            let img = image::GrayAlphaImage::from_raw(w, h, pixels.clone()).ok_or_else(make_err)?;
+            Ok(DynamicImage::ImageLumaA8(img))
         }
-        _ => Err(anyhow::anyhow!("Unsupported glTF image format: {:?}", gltf_image.format)),
+        Format::R8G8B8 => {
+            let img = image::RgbImage::from_raw(w, h, pixels.clone()).ok_or_else(make_err)?;
+            Ok(DynamicImage::ImageRgb8(img))
+        }
+        Format::R8G8B8A8 => {
+            let img = image::RgbaImage::from_raw(w, h, pixels.clone()).ok_or_else(make_err)?;
+            Ok(DynamicImage::ImageRgba8(img))
+        }
+        Format::R16 => {
+            let img = image::ImageBuffer::<image::Luma<u16>, _>::from_raw(
+                w, h, bytemuck::cast_vec(pixels.clone()),
+            ).ok_or_else(make_err)?;
+            Ok(DynamicImage::ImageLuma16(img))
+        }
+        Format::R16G16 => {
+            let img = image::ImageBuffer::<image::LumaA<u16>, _>::from_raw(
+                w, h, bytemuck::cast_vec(pixels.clone()),
+            ).ok_or_else(make_err)?;
+            Ok(DynamicImage::ImageLumaA16(img))
+        }
+        Format::R16G16B16 => {
+            let img = image::ImageBuffer::<image::Rgb<u16>, _>::from_raw(
+                w, h, bytemuck::cast_vec(pixels.clone()),
+            ).ok_or_else(make_err)?;
+            Ok(DynamicImage::ImageRgb16(img))
+        }
+        Format::R16G16B16A16 => {
+            let img = image::ImageBuffer::<image::Rgba<u16>, _>::from_raw(
+                w, h, bytemuck::cast_vec(pixels.clone()),
+            ).ok_or_else(make_err)?;
+            Ok(DynamicImage::ImageRgba16(img))
+        }
+        Format::R32G32B32FLOAT => {
+            let img = image::ImageBuffer::<image::Rgb<f32>, _>::from_raw(
+                w, h, bytemuck::cast_vec(pixels.clone()),
+            ).ok_or_else(make_err)?;
+            Ok(DynamicImage::ImageRgb32F(img))
+        }
+        Format::R32G32B32A32FLOAT => {
+            let img = image::ImageBuffer::<image::Rgba<f32>, _>::from_raw(
+                w, h, bytemuck::cast_vec(pixels.clone()),
+            ).ok_or_else(make_err)?;
+            Ok(DynamicImage::ImageRgba32F(img))
+        }
     }
 }
 

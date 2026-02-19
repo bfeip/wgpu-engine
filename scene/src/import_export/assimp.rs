@@ -17,7 +17,7 @@ use russimp::scene::{PostProcess, Scene as RScene};
 use crate::camera::Camera;
 use crate::common::{RgbaColor, decompose_matrix};
 use crate::{
-    DEFAULT_MATERIAL_ID, Light, Material, MaterialId, Mesh, MeshId, MeshPrimitive,
+    DEFAULT_MATERIAL_ID, Light, Material, MaterialId, Mesh, MeshId,
     NodeId, PrimitiveType, Scene, Texture, TextureId, Vertex,
 };
 
