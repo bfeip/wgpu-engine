@@ -11,8 +11,8 @@ use cgmath::Vector3;
 use wgpu_engine::common::RgbaColor;
 use wgpu_engine::egui_support::EguiViewerApp;
 use wgpu_engine::input::{ElementState, Key};
-use wgpu_engine::load_gltf_scene_from_path;
 use wgpu_engine::operator::BuiltinOperatorId;
+use wgpu_engine::scene::import_export::{LoadOptions, SceneSource, load_sync};
 use wgpu_engine::scene::{Light, LightType, Scene, MAX_LIGHTS};
 
 /// Debug actions triggered by key presses
@@ -24,8 +24,6 @@ enum DebugAction {
 /// Application state for the winit event loop with egui integration
 struct App<'a> {
     viewer_app: Option<EguiViewerApp<'a>>,
-    /// Pending file path to load (set by file dialog, processed in main loop)
-    pending_gltf_path: Option<std::path::PathBuf>,
     /// Pending HDR environment path to load
     pending_hdr_path: Option<std::path::PathBuf>,
     /// Pending scene file path to load
@@ -38,9 +36,6 @@ impl<'a> App<'a> {
     /// Handle the RedrawRequested event - build UI and render the frame
     fn handle_redraw_requested(&mut self) {
         // Process any pending file operations
-        if self.pending_gltf_path.is_some() {
-            self.load_gltf_file();
-        }
         if self.pending_hdr_path.is_some() {
             self.load_hdr_file();
         }
@@ -63,9 +58,6 @@ impl<'a> App<'a> {
         }
 
         // Handle UI actions (after releasing viewer_app borrow)
-        if ui_actions.load_gltf {
-            self.open_gltf_file_dialog();
-        }
         if ui_actions.load_scene {
             self.open_scene_file_dialog();
         }
@@ -93,48 +85,6 @@ impl<'a> App<'a> {
 
         // Request next frame
         self.viewer_app.as_ref().unwrap().request_redraw();
-    }
-
-    /// Open a file dialog to select a glTF file
-    fn open_gltf_file_dialog(&mut self) {
-        let file = rfd::FileDialog::new()
-            .add_filter("glTF", &["gltf", "glb"])
-            .pick_file();
-
-        if let Some(path) = file {
-            self.pending_gltf_path = Some(path);
-        }
-    }
-
-    /// Load a glTF file into the scene
-    fn load_gltf_file(&mut self) {
-        let Some(path) = self.pending_gltf_path.take() else {
-            return;
-        };
-
-        let viewer = self.viewer_app.as_mut().unwrap().viewer_mut();
-        let aspect = {
-            let size = viewer.size();
-            size.0 as f32 / size.1 as f32
-        };
-
-        let path_str = path.display().to_string();
-        match load_gltf_scene_from_path(&path, aspect) {
-            Ok(result) => {
-                // Replace the scene with the loaded one
-                viewer.set_scene(result.scene);
-
-                // Apply camera if one was found in the glTF
-                if let Some(camera) = result.camera {
-                    viewer.set_camera(camera);
-                }
-
-                log::info!("Loaded glTF: {}", path_str);
-            }
-            Err(e) => {
-                log::error!("Failed to load glTF {}: {}", path_str, e);
-            }
-        }
     }
 
     /// Clear the scene (remove all nodes, meshes, instances, etc.)
@@ -216,8 +166,17 @@ impl<'a> App<'a> {
 
     /// Open a file dialog to select a scene file to load
     fn open_scene_file_dialog(&mut self) {
+        #[allow(unused_mut)]
+        let mut extensions: Vec<&str> = vec!["glb", "gltf", "wgsc"];
+
+        #[cfg(feature = "assimp")]
+        extensions.extend_from_slice(wgpu_engine::scene::import_export::assimp::ASSIMP_EXTENSIONS);
+
+        #[cfg(feature = "usd")]
+        extensions.extend_from_slice(wgpu_engine::scene::import_export::usd::USD_EXTENSIONS);
+
         let file = rfd::FileDialog::new()
-            .add_filter("WGPU Scene", &["wgsc"])
+            .add_filter("3D Scenes", &extensions)
             .pick_file();
 
         if let Some(path) = file {
@@ -225,17 +184,20 @@ impl<'a> App<'a> {
         }
     }
 
-    /// Load a scene file
+    /// Load a scene file using the unified loader (auto-detects format)
     fn load_scene_file(&mut self) {
         let Some(path) = self.pending_scene_load_path.take() else {
             return;
         };
 
         let path_str = path.display().to_string();
-        match Scene::load_from_file(&path) {
-            Ok(scene) => {
+        match load_sync(SceneSource::Path(path), LoadOptions::default()) {
+            Ok(result) => {
                 let viewer = self.viewer_app.as_mut().unwrap().viewer_mut();
-                viewer.set_scene(scene);
+                viewer.set_scene(result.scene);
+                if let Some(camera) = result.camera {
+                    viewer.set_camera(camera);
+                }
                 log::info!("Loaded scene: {}", path_str);
             }
             Err(e) => {
@@ -389,7 +351,6 @@ fn main() {
     // Create application state
     let mut app = App {
         viewer_app: None,
-        pending_gltf_path: None,
         pending_hdr_path: None,
         pending_scene_load_path: None,
         pending_scene_save_path: None,
