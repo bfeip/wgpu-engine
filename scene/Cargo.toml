@@ -3,7 +3,12 @@ name = "wgpu-engine-scene"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+assimp = ["dep:russimp"]
+
 [dependencies]
+russimp = { version = "3", features = ["prebuilt"], optional = true }
 wgpu-engine-common = { path = "../common" }
 anyhow = "1.0"
 bincode = "1.3"

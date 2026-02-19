@@ -1,3 +1,5 @@
+#[cfg(feature = "assimp")]
+pub mod assimp;
 pub mod camera;
 pub use wgpu_engine_common as common;
 pub mod geom_query;

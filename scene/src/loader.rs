@@ -83,6 +83,8 @@ pub struct SceneLoadResult {
 pub enum DetectedFormat {
     Wgsc,
     Gltf,
+    #[cfg(feature = "assimp")]
+    Assimp,
 }
 
 /// Coarse loading phases for progress display.
@@ -127,6 +129,10 @@ pub enum LoadError {
     #[error("glTF error: {0}")]
     Gltf(String),
 
+    #[cfg(feature = "assimp")]
+    #[error("Assimp error: {0}")]
+    Assimp(String),
+
     #[error("Unknown file format")]
     UnknownFormat,
 }
@@ -152,6 +158,15 @@ const GLTF_WEIGHTS: [u8; 8] = weights(&[
     (LoadPhase::Parsing, 10),
     (LoadPhase::DecodingTextures, 50),
     (LoadPhase::Assembling, 30),
+]);
+
+/// Weights for assimp loading: Reading(10) + Parsing(30) + BuildingMeshes(40) + Assembling(20).
+#[cfg(feature = "assimp")]
+const ASSIMP_WEIGHTS: [u8; 8] = weights(&[
+    (LoadPhase::Reading, 10),
+    (LoadPhase::Parsing, 30),
+    (LoadPhase::BuildingMeshes, 40),
+    (LoadPhase::Assembling, 20),
 ]);
 
 /// Weights for save operations: Parsing/serializing(60) + Assembling/writing(40).
@@ -356,6 +371,8 @@ fn detect_format_from_extension(path: &std::path::Path) -> Result<DetectedFormat
     match path.extension().and_then(|e| e.to_str()) {
         Some("wgsc") => Ok(DetectedFormat::Wgsc),
         Some("glb") | Some("gltf") => Ok(DetectedFormat::Gltf),
+        #[cfg(feature = "assimp")]
+        Some(ext) if crate::assimp::is_assimp_extension(ext) => Ok(DetectedFormat::Assimp),
         _ => Err(LoadError::UnknownFormat),
     }
 }
@@ -400,6 +417,11 @@ fn load_sync_with_progress(
         DetectedFormat::Gltf => {
             progress.set_weights(&GLTF_WEIGHTS);
             load_gltf_phased(&bytes, options, progress)
+        }
+        #[cfg(feature = "assimp")]
+        DetectedFormat::Assimp => {
+            progress.set_weights(&ASSIMP_WEIGHTS);
+            load_assimp_phased(&path_hint, &bytes, progress)
         }
     }
 }
@@ -450,6 +472,32 @@ fn load_gltf_phased(bytes: &[u8], options: &LoadOptions, progress: &LoadProgress
         scene,
         camera,
         format: DetectedFormat::Gltf,
+    })
+}
+
+#[cfg(feature = "assimp")]
+fn load_assimp_phased(
+    path_hint: &Option<PathBuf>,
+    bytes: &[u8],
+    progress: &LoadProgress,
+) -> LoadResult {
+    progress.enter_phase(LoadPhase::Parsing);
+
+    let result = if let Some(path) = path_hint {
+        // Prefer file path loading so assimp can resolve external textures
+        crate::assimp::load_assimp_scene_from_path(path)
+    } else {
+        // Fallback to buffer loading with empty hint
+        crate::assimp::load_assimp_scene_from_bytes(bytes, "")
+    };
+
+    let assimp_result = result.map_err(|e| LoadError::Assimp(e.to_string()))?;
+
+    progress.enter_phase(LoadPhase::Complete);
+    Ok(SceneLoadResult {
+        scene: assimp_result.scene,
+        camera: assimp_result.camera,
+        format: DetectedFormat::Assimp,
     })
 }
 
@@ -616,6 +664,11 @@ async fn load_chunked_wasm(
         DetectedFormat::Gltf => {
             progress.set_weights(&GLTF_WEIGHTS);
             load_gltf_chunked(&bytes, options, progress).await
+        }
+        #[cfg(feature = "assimp")]
+        DetectedFormat::Assimp => {
+            // Assimp (C library) is not available on WASM
+            Err(LoadError::UnknownFormat)
         }
     }
 }
@@ -849,6 +902,12 @@ mod tests {
             detect_format_from_extension(std::path::Path::new("model.gltf")).unwrap(),
             DetectedFormat::Gltf
         );
+        #[cfg(feature = "assimp")]
+        assert_eq!(
+            detect_format_from_extension(std::path::Path::new("model.obj")).unwrap(),
+            DetectedFormat::Assimp
+        );
+        #[cfg(not(feature = "assimp"))]
         assert!(detect_format_from_extension(std::path::Path::new("model.obj")).is_err());
     }
 
