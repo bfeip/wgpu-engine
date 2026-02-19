@@ -11,9 +11,9 @@ import package::vertex::vertex_standard;
     import package::fragment_pbr_lit::fragment_pbr_lit;
 @if(has_texture && has_lighting && !use_pbr)
     import package::fragment_texture_lit::fragment_texture_lit;
-@if(!has_texture && has_lighting)
+@if(!has_texture && has_lighting && !use_pbr)
     import package::fragment_color_lit::fragment_color_lit;
-@if(!has_texture && !has_lighting)
+@if(!has_texture && !has_lighting && !use_pbr)
     import package::fragment_color_unlit::fragment_color_unlit;
 
 // Vertex shader entry point
@@ -40,11 +40,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         return fragment_texture_lit(in);
     }
 
-    @if(!has_texture && has_lighting) {
+    @if(!has_texture && has_lighting && !use_pbr) {
         return fragment_color_lit(in);
     }
 
-    @if(!has_texture && !has_lighting) {
+    @if(!has_texture && !has_lighting && !use_pbr) {
         return fragment_color_unlit(in);
     }
 
