@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "wasm-dev": "wasm-pack build ../core --target web --dev --out-dir ../web-demo/pkg",
-    "wasm": "wasm-pack build ../core --target web --out-dir ../web-demo/pkg",
+    "wasm": "wasm-pack build ../core --target web --release --out-dir ../web-demo/pkg",
     "dev": "npm run wasm-dev && vite",
     "build": "npm run wasm && tsc && vite build",
     "preview": "vite preview"

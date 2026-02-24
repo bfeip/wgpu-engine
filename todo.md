@@ -26,8 +26,10 @@
 
 ## March quality push
 - Materials cleanup and fixes
+- Shader refactor / modular shaders
 - Rendering debug tools (wireframe, normal viewing, light visualization, etc.)
 - format.rs and import export cleanup
+- Everything optional behind features + good default features
 - IBL weirdness
 - High-level docs
 - Better WASM API
@@ -37,4 +39,3 @@
 - Performance
 - API and docs review
 - Merge walk and orbit operators under navigation operator
-- Shader refactor / modular shaders

@@ -6,3 +6,4 @@ CLAUDE.md
 gltf-viewer/dist
 web-demo/node_modules
 web-demo/pkg
+web-demo/dist
