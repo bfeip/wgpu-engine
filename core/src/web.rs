@@ -19,7 +19,7 @@ use wasm_bindgen::prelude::*;
 use web_sys::HtmlCanvasElement;
 
 use crate::event::Event;
-use crate::input::{ElementState, Key, KeyEvent, MouseButton, MouseScrollDelta, NamedKey, PhysicalKey};
+use crate::input::{ElementState, Key, KeyEvent, MouseButton, MouseScrollDelta, NamedKey, PhysicalKey, TouchPhase};
 use crate::loader::LoadHandle;
 use crate::viewer::Viewer;
 use crate::scene::loader;
@@ -148,6 +148,44 @@ impl WebViewer {
         self.viewer.handle_event(&Event::KeyboardInput {
             event: make_key_event(key, code, ElementState::Released, false),
             is_synthetic: false,
+        });
+    }
+
+    /// Forward a touchstart event for a single touch point.
+    /// - `id`: the Touch.identifier value
+    /// - `x`, `y`: touch position in canvas pixel coordinates
+    pub fn on_touch_start(&mut self, id: i32, x: f64, y: f64) {
+        self.viewer.handle_event(&Event::Touch {
+            id,
+            phase: TouchPhase::Started,
+            position: (x, y),
+        });
+    }
+
+    /// Forward a touchmove event for a single touch point.
+    pub fn on_touch_move(&mut self, id: i32, x: f64, y: f64) {
+        self.viewer.handle_event(&Event::Touch {
+            id,
+            phase: TouchPhase::Moved,
+            position: (x, y),
+        });
+    }
+
+    /// Forward a touchend event for a single touch point.
+    pub fn on_touch_end(&mut self, id: i32) {
+        self.viewer.handle_event(&Event::Touch {
+            id,
+            phase: TouchPhase::Ended,
+            position: (0.0, 0.0),
+        });
+    }
+
+    /// Forward a touchcancel event for a single touch point.
+    pub fn on_touch_cancel(&mut self, id: i32) {
+        self.viewer.handle_event(&Event::Touch {
+            id,
+            phase: TouchPhase::Cancelled,
+            position: (0.0, 0.0),
         });
     }
 

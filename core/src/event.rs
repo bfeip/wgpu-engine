@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use web_time::Instant;
 
-use crate::input::{ElementState, KeyEvent, MouseButton, MouseScrollDelta};
+use crate::input::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, TouchId, TouchPhase};
 use crate::renderer::Renderer;
 use crate::scene::Scene;
 use crate::selection::SelectionManager;
@@ -67,6 +67,8 @@ pub enum EventKind {
     MouseDragEnd,
     /// Mouse click (button pressed and released quickly without dragging)
     MouseClick,
+    /// Touch input (finger down, move, up, or cancel)
+    Touch,
 }
 
 /// Application events with associated data.
@@ -154,6 +156,15 @@ pub enum Event {
         /// Duration of the button press in milliseconds
         duration_ms: u64,
     },
+    /// Touch input (finger down, move, up, or cancel)
+    Touch {
+        /// Unique identifier for this touch point
+        id: TouchId,
+        /// Phase of the touch (started, moved, ended, cancelled)
+        phase: TouchPhase,
+        /// Position in physical pixels
+        position: (f64, f64),
+    },
 }
 
 impl Event {
@@ -171,6 +182,7 @@ impl Event {
             Self::MouseDrag { .. } => EventKind::MouseDrag,
             Self::MouseDragEnd { .. } => EventKind::MouseDragEnd,
             Self::MouseClick { .. } => EventKind::MouseClick,
+            Self::Touch { .. } => EventKind::Touch,
             #[cfg(test)]
             Self::Test => EventKind::Test,
         }
@@ -179,6 +191,38 @@ impl Event {
     // NOTE: Winit conversion functions have been removed to make the core library
     // implementation-agnostic. If you're using winit, you can create a winit_support
     // module that provides conversion functions from winit types to our input types.
+}
+
+/// Current touch interaction mode for synthesis.
+#[derive(Debug, Clone)]
+enum TouchMode {
+    /// No active touch interaction
+    None,
+    /// Single finger is active
+    SingleFinger { id: TouchId },
+    /// Two fingers are active
+    TwoFinger { ids: [TouchId; 2] },
+}
+
+/// State for synthesizing mouse events from touch input.
+#[derive(Debug, Clone)]
+struct TouchSynthState {
+    /// Active touch points: id → last known position
+    active_touches: HashMap<TouchId, (f64, f64)>,
+    /// Current interaction mode
+    mode: TouchMode,
+    /// Previous pinch distance for delta computation
+    prev_pinch_distance: Option<f64>,
+}
+
+impl TouchSynthState {
+    fn new() -> Self {
+        Self {
+            active_touches: HashMap::new(),
+            mode: TouchMode::None,
+            prev_pinch_distance: None,
+        }
+    }
 }
 
 /// State tracking for a mouse button that is currently pressed.
@@ -212,6 +256,8 @@ pub struct EventDispatcher {
     button_states: HashMap<MouseButton, ButtonState>,
     /// Current cursor position in physical pixels (from CursorMoved events)
     current_cursor_position: Option<(f32, f32)>,
+    /// State for synthesizing mouse events from touch input
+    touch_state: TouchSynthState,
 }
 
 impl EventDispatcher {
@@ -222,6 +268,7 @@ impl EventDispatcher {
             next_id: 0,
             button_states: HashMap::new(),
             current_cursor_position: None,
+            touch_state: TouchSynthState::new(),
         }
     }
 
@@ -340,6 +387,9 @@ impl EventDispatcher {
             Event::MouseMotion { delta } => {
                 self.process_mouse_motion(*delta, ctx);
             }
+            Event::Touch { id, phase, position } => {
+                self.process_touch(*id, *phase, *position, ctx);
+            }
             _ => {
                 // No state processing needed for other events
             }
@@ -421,6 +471,252 @@ impl EventDispatcher {
         }
     }
 
+    /// Processes a touch event and synthesizes corresponding mouse events.
+    ///
+    /// Touch gestures are mapped to mouse events so existing operators work unchanged:
+    /// - Single-finger drag → left mouse drag (orbit)
+    /// - Two-finger drag → right mouse drag (pan)
+    /// - Two-finger pinch → mouse wheel (zoom)
+    /// - Single tap → left mouse click (selection)
+    fn process_touch<'w, 'c>(
+        &mut self,
+        id: TouchId,
+        phase: TouchPhase,
+        position: (f64, f64),
+        ctx: &mut EventContext<'w, 'c>,
+    ) {
+        match phase {
+            TouchPhase::Started => self.process_touch_started(id, position, ctx),
+            TouchPhase::Moved => self.process_touch_moved(id, position, ctx),
+            TouchPhase::Ended | TouchPhase::Cancelled => self.process_touch_ended(id, ctx),
+        }
+    }
+
+    /// Handles a new finger touching the screen.
+    fn process_touch_started<'w, 'c>(
+        &mut self,
+        id: TouchId,
+        position: (f64, f64),
+        ctx: &mut EventContext<'w, 'c>,
+    ) {
+        self.touch_state.active_touches.insert(id, position);
+
+        match &self.touch_state.mode {
+            TouchMode::None => {
+                // First finger: start single-finger mode (maps to left mouse)
+                self.touch_state.mode = TouchMode::SingleFinger { id };
+                self.dispatch_synthetic_mouse(
+                    &Event::CursorMoved { position },
+                    ctx,
+                );
+                self.dispatch_synthetic_mouse(
+                    &Event::MouseInput {
+                        state: ElementState::Pressed,
+                        button: MouseButton::Left,
+                    },
+                    ctx,
+                );
+            }
+            TouchMode::SingleFinger { id: first_id } => {
+                // Second finger: transition to two-finger mode
+                let first_id = *first_id;
+
+                // Release the left button to cancel any single-finger drag
+                self.dispatch_synthetic_mouse(
+                    &Event::MouseInput {
+                        state: ElementState::Released,
+                        button: MouseButton::Left,
+                    },
+                    ctx,
+                );
+
+                // Calculate initial pinch distance and center
+                if let (Some(&first_pos), Some(&second_pos)) = (
+                    self.touch_state.active_touches.get(&first_id),
+                    self.touch_state.active_touches.get(&id),
+                ) {
+                    let center = touch_center(first_pos, second_pos);
+                    let distance = touch_distance(first_pos, second_pos);
+                    self.touch_state.prev_pinch_distance = Some(distance);
+                    self.touch_state.mode = TouchMode::TwoFinger {
+                        ids: [first_id, id],
+                    };
+
+                    // Start right-button press at center for pan
+                    self.dispatch_synthetic_mouse(
+                        &Event::CursorMoved { position: center },
+                        ctx,
+                    );
+                    self.dispatch_synthetic_mouse(
+                        &Event::MouseInput {
+                            state: ElementState::Pressed,
+                            button: MouseButton::Right,
+                        },
+                        ctx,
+                    );
+                }
+            }
+            TouchMode::TwoFinger { .. } => {
+                // Third+ finger: ignore
+            }
+        }
+    }
+
+    /// Handles a finger moving on the screen.
+    fn process_touch_moved<'w, 'c>(
+        &mut self,
+        id: TouchId,
+        position: (f64, f64),
+        ctx: &mut EventContext<'w, 'c>,
+    ) {
+        let old_position = self.touch_state.active_touches.get(&id).copied();
+        self.touch_state.active_touches.insert(id, position);
+
+        match &self.touch_state.mode {
+            TouchMode::None => {}
+            TouchMode::SingleFinger { id: finger_id } => {
+                if id != *finger_id {
+                    return;
+                }
+                if let Some(old_pos) = old_position {
+                    let delta = (position.0 - old_pos.0, position.1 - old_pos.1);
+                    self.dispatch_synthetic_mouse(
+                        &Event::CursorMoved { position },
+                        ctx,
+                    );
+                    self.dispatch_synthetic_mouse(
+                        &Event::MouseMotion { delta },
+                        ctx,
+                    );
+                }
+            }
+            TouchMode::TwoFinger { ids } => {
+                let [id0, id1] = *ids;
+                if id != id0 && id != id1 {
+                    return;
+                }
+                if let (Some(&pos0), Some(&pos1)) = (
+                    self.touch_state.active_touches.get(&id0),
+                    self.touch_state.active_touches.get(&id1),
+                ) {
+                    let center = touch_center(pos0, pos1);
+                    let distance = touch_distance(pos0, pos1);
+
+                    // Emit pan as right-drag (center movement)
+                    if let Some(old_pos) = old_position {
+                        // Compute how the center moved due to this finger's movement
+                        let half_delta = (
+                            (position.0 - old_pos.0) * 0.5,
+                            (position.1 - old_pos.1) * 0.5,
+                        );
+                        self.dispatch_synthetic_mouse(
+                            &Event::CursorMoved { position: center },
+                            ctx,
+                        );
+                        self.dispatch_synthetic_mouse(
+                            &Event::MouseMotion { delta: half_delta },
+                            ctx,
+                        );
+                    }
+
+                    // Emit zoom as mouse wheel (pinch distance change)
+                    if let Some(prev_distance) = self.touch_state.prev_pinch_distance {
+                        if prev_distance > 0.0 {
+                            let delta = distance - prev_distance;
+                            // Scale: positive delta = fingers moving apart = zoom in
+                            if delta.abs() > 0.5 {
+                                self.dispatch_synthetic_mouse(
+                                    &Event::MouseWheel {
+                                        delta: MouseScrollDelta::PixelDelta(0.0, delta as f32),
+                                    },
+                                    ctx,
+                                );
+                            }
+                        }
+                    }
+                    self.touch_state.prev_pinch_distance = Some(distance);
+                }
+            }
+        }
+    }
+
+    /// Handles a finger leaving the screen.
+    fn process_touch_ended<'w, 'c>(
+        &mut self,
+        id: TouchId,
+        ctx: &mut EventContext<'w, 'c>,
+    ) {
+        self.touch_state.active_touches.remove(&id);
+
+        match &self.touch_state.mode {
+            TouchMode::None => {}
+            TouchMode::SingleFinger { id: finger_id } => {
+                if id != *finger_id {
+                    return;
+                }
+                // Release left button
+                self.dispatch_synthetic_mouse(
+                    &Event::MouseInput {
+                        state: ElementState::Released,
+                        button: MouseButton::Left,
+                    },
+                    ctx,
+                );
+                self.touch_state.mode = TouchMode::None;
+            }
+            TouchMode::TwoFinger { ids } => {
+                let [id0, id1] = *ids;
+                if id != id0 && id != id1 {
+                    return;
+                }
+
+                // Release right button (end pan)
+                self.dispatch_synthetic_mouse(
+                    &Event::MouseInput {
+                        state: ElementState::Released,
+                        button: MouseButton::Right,
+                    },
+                    ctx,
+                );
+                self.touch_state.prev_pinch_distance = None;
+
+                // Find remaining finger and transition to single-finger mode
+                let remaining_id = if id == id0 { id1 } else { id0 };
+                if let Some(&remaining_pos) = self.touch_state.active_touches.get(&remaining_id) {
+                    self.touch_state.mode = TouchMode::SingleFinger { id: remaining_id };
+                    self.dispatch_synthetic_mouse(
+                        &Event::CursorMoved {
+                            position: remaining_pos,
+                        },
+                        ctx,
+                    );
+                    self.dispatch_synthetic_mouse(
+                        &Event::MouseInput {
+                            state: ElementState::Pressed,
+                            button: MouseButton::Left,
+                        },
+                        ctx,
+                    );
+                } else {
+                    self.touch_state.mode = TouchMode::None;
+                }
+            }
+        }
+    }
+
+    /// Dispatches a synthesized mouse event through the full processing pipeline.
+    ///
+    /// This calls `process_event` so the synthesized mouse event updates button/cursor
+    /// state and triggers further synthesis (e.g., drag and click events).
+    fn dispatch_synthetic_mouse<'w, 'c>(
+        &mut self,
+        event: &Event,
+        ctx: &mut EventContext<'w, 'c>,
+    ) {
+        self.process_event(event, ctx);
+        self.dispatch_to_callbacks(event, ctx);
+    }
+
     /// Processes MouseMotion events to track drag distance and synthesize drag events.
     fn process_mouse_motion<'w, 'c>(
         &mut self,
@@ -463,6 +759,18 @@ impl EventDispatcher {
             self.dispatch_to_callbacks(&drag_event, ctx);
         }
     }
+}
+
+/// Compute the center point between two touch positions.
+fn touch_center(a: (f64, f64), b: (f64, f64)) -> (f64, f64) {
+    ((a.0 + b.0) * 0.5, (a.1 + b.1) * 0.5)
+}
+
+/// Compute the Euclidean distance between two touch positions.
+fn touch_distance(a: (f64, f64), b: (f64, f64)) -> f64 {
+    let dx = b.0 - a.0;
+    let dy = b.1 - a.1;
+    (dx * dx + dy * dy).sqrt()
 }
 
 #[cfg(test)]

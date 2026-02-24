@@ -146,6 +146,45 @@ export function Viewer({ onReady, onLoadProgress, onLoadComplete }: ViewerProps)
         onKeyUp={(e) => {
           viewerRef.current?.on_key_up(e.key, e.keyCode);
         }}
+        onTouchStart={(e) => {
+          e.preventDefault();
+          const canvas = canvasRef.current!;
+          const rect = canvas.getBoundingClientRect();
+          const dpr = devicePixelRatio;
+          for (let i = 0; i < e.changedTouches.length; i++) {
+            const t = e.changedTouches[i];
+            viewerRef.current?.on_touch_start(
+              t.identifier,
+              (t.clientX - rect.left) * dpr,
+              (t.clientY - rect.top) * dpr
+            );
+          }
+        }}
+        onTouchMove={(e) => {
+          e.preventDefault();
+          const canvas = canvasRef.current!;
+          const rect = canvas.getBoundingClientRect();
+          const dpr = devicePixelRatio;
+          for (let i = 0; i < e.changedTouches.length; i++) {
+            const t = e.changedTouches[i];
+            viewerRef.current?.on_touch_move(
+              t.identifier,
+              (t.clientX - rect.left) * dpr,
+              (t.clientY - rect.top) * dpr
+            );
+          }
+        }}
+        onTouchEnd={(e) => {
+          e.preventDefault();
+          for (let i = 0; i < e.changedTouches.length; i++) {
+            viewerRef.current?.on_touch_end(e.changedTouches[i].identifier);
+          }
+        }}
+        onTouchCancel={(e) => {
+          for (let i = 0; i < e.changedTouches.length; i++) {
+            viewerRef.current?.on_touch_cancel(e.changedTouches[i].identifier);
+          }
+        }}
         onContextMenu={(e) => e.preventDefault()}
       />
     </div>
