@@ -264,31 +264,24 @@ fn load_single_material(
 
 /// Extract a color property from an assimp material by key.
 fn extract_color_property(mat: &RMaterial, key: &str) -> Option<RgbaColor> {
-    for prop in &mat.properties {
-        if prop.key == key {
-            if let russimp::material::PropertyTypeInfo::FloatArray(ref floats) = prop.data {
-                if floats.len() >= 3 {
-                    let a = if floats.len() >= 4 { floats[3] } else { 1.0 };
-                    return Some(RgbaColor { r: floats[0], g: floats[1], b: floats[2], a });
-                }
-            }
-        }
+    let prop = mat.properties.iter().find(|p| p.key == key)?;
+    let russimp::material::PropertyTypeInfo::FloatArray(ref floats) = prop.data else {
+        return None;
+    };
+    if floats.len() < 3 {
+        return None;
     }
-    None
+    let a = if floats.len() >= 4 { floats[3] } else { 1.0 };
+    Some(RgbaColor { r: floats[0], g: floats[1], b: floats[2], a })
 }
 
 /// Extract a float property from an assimp material by key.
 fn extract_float_property(mat: &RMaterial, key: &str) -> Option<f32> {
-    for prop in &mat.properties {
-        if prop.key == key {
-            if let russimp::material::PropertyTypeInfo::FloatArray(ref floats) = prop.data {
-                if !floats.is_empty() {
-                    return Some(floats[0]);
-                }
-            }
-        }
-    }
-    None
+    let prop = mat.properties.iter().find(|p| p.key == key)?;
+    let russimp::material::PropertyTypeInfo::FloatArray(ref floats) = prop.data else {
+        return None;
+    };
+    floats.first().copied()
 }
 
 /// Extract a texture from an assimp material for a given texture type.

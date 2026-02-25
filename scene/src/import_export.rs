@@ -392,6 +392,8 @@ fn detect_format_from_bytes(bytes: &[u8]) -> Result<DetectedFormat, LoadError> {
     }
 
     // USDZ is a ZIP archive starting with "PK"
+    // NOTE: b"PK\x03\x04" denotes *any* zip. If we support another zip format
+    // we'll have to get more creative.
     #[cfg(feature = "usd")]
     if bytes.len() >= 2 && bytes[0] == b'P' && bytes[1] == b'K' {
         return Ok(DetectedFormat::Usd);
