@@ -39,3 +39,11 @@
 - Performance
 - API and docs review
 - Merge walk and orbit operators under navigation operator
+- Everything optional behind features + good default features
+
+Stretch:
+- Scene graph expansion plan
+- Extract egui example to replace glTF viewer
+- Performance
+- High-level docs
+- Better WASM API (a redesign of the react demo might be better)

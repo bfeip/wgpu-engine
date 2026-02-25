@@ -1,12 +1,14 @@
 //! Scene import/export library.
 //!
 //! Provides format-agnostic loading and saving of scenes with progress reporting.
-//! Supports glTF (.glb/.gltf), WGSC (.wgsc), and optionally assimp-based formats.
+//! Supports glTF (.glb/.gltf), USD (.usdc/.usda/.usdz), WGSC (.wgsc), and
+//! optionally assimp-based formats.
 //!
 //! # Submodules
 //!
 //! - [`format`] — Binary scene serialization (.wgsc)
 //! - [`gltf`] — glTF loading
+//! - [`usd`] — USD loading (USDC, USDA, USDZ)
 //! - [`assimp`] — Assimp-based loading (feature-gated)
 //! - [`mesh_util`] — Shared mesh utilities (splitting large meshes)
 //!
