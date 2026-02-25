@@ -77,7 +77,7 @@ export function Viewer({ onReady, onLoadProgress, onLoadComplete }: ViewerProps)
         viewer.update_and_render();
         animationId = requestAnimationFrame(animate);
       }
-      
+
       animationId = requestAnimationFrame(animate);
     }
 
@@ -115,38 +115,120 @@ export function Viewer({ onReady, onLoadProgress, onLoadComplete }: ViewerProps)
     return () => observer.disconnect();
   }, []);
 
+  // Input event handling — imperative listeners so we can use { passive: false }
+  // for touch and wheel events (React registers these as passive by default,
+  // which silently ignores preventDefault).
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const onMouseMove = (e: MouseEvent) => {
+      const rect = canvas.getBoundingClientRect();
+      const dpr = devicePixelRatio;
+      const x = (e.clientX - rect.left) * dpr;
+      const y = (e.clientY - rect.top) * dpr;
+      viewerRef.current?.on_mouse_move(x, y, e.movementX * dpr, e.movementY * dpr);
+    };
+
+    const onMouseDown = (e: MouseEvent) => {
+      viewerRef.current?.on_mouse_down(e.button);
+      canvas.focus();
+    };
+
+    const onMouseUp = (e: MouseEvent) => {
+      viewerRef.current?.on_mouse_up(e.button);
+    };
+
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      viewerRef.current?.on_wheel(e.deltaX, e.deltaY);
+    };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      viewerRef.current?.on_key_down(e.key, e.keyCode, e.repeat);
+    };
+
+    const onKeyUp = (e: KeyboardEvent) => {
+      viewerRef.current?.on_key_up(e.key, e.keyCode);
+    };
+
+    const onTouchStart = (e: TouchEvent) => {
+      e.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const dpr = devicePixelRatio;
+      for (let i = 0; i < e.changedTouches.length; i++) {
+        const t = e.changedTouches[i];
+        viewerRef.current?.on_touch_start(
+          t.identifier,
+          (t.clientX - rect.left) * dpr,
+          (t.clientY - rect.top) * dpr
+        );
+      }
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      e.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const dpr = devicePixelRatio;
+      for (let i = 0; i < e.changedTouches.length; i++) {
+        const t = e.changedTouches[i];
+        viewerRef.current?.on_touch_move(
+          t.identifier,
+          (t.clientX - rect.left) * dpr,
+          (t.clientY - rect.top) * dpr
+        );
+      }
+    };
+
+    const onTouchEnd = (e: TouchEvent) => {
+      e.preventDefault();
+      for (let i = 0; i < e.changedTouches.length; i++) {
+        viewerRef.current?.on_touch_end(e.changedTouches[i].identifier);
+      }
+    };
+
+    const onTouchCancel = (e: TouchEvent) => {
+      for (let i = 0; i < e.changedTouches.length; i++) {
+        viewerRef.current?.on_touch_cancel(e.changedTouches[i].identifier);
+      }
+    };
+
+    const onContextMenu = (e: Event) => {
+      e.preventDefault();
+    };
+
+    canvas.addEventListener("mousemove", onMouseMove);
+    canvas.addEventListener("mousedown", onMouseDown);
+    canvas.addEventListener("mouseup", onMouseUp);
+    canvas.addEventListener("wheel", onWheel, { passive: false });
+    canvas.addEventListener("keydown", onKeyDown);
+    canvas.addEventListener("keyup", onKeyUp);
+    canvas.addEventListener("touchstart", onTouchStart, { passive: false });
+    canvas.addEventListener("touchmove", onTouchMove, { passive: false });
+    canvas.addEventListener("touchend", onTouchEnd, { passive: false });
+    canvas.addEventListener("touchcancel", onTouchCancel);
+    canvas.addEventListener("contextmenu", onContextMenu);
+
+    return () => {
+      canvas.removeEventListener("mousemove", onMouseMove);
+      canvas.removeEventListener("mousedown", onMouseDown);
+      canvas.removeEventListener("mouseup", onMouseUp);
+      canvas.removeEventListener("wheel", onWheel);
+      canvas.removeEventListener("keydown", onKeyDown);
+      canvas.removeEventListener("keyup", onKeyUp);
+      canvas.removeEventListener("touchstart", onTouchStart);
+      canvas.removeEventListener("touchmove", onTouchMove);
+      canvas.removeEventListener("touchend", onTouchEnd);
+      canvas.removeEventListener("touchcancel", onTouchCancel);
+      canvas.removeEventListener("contextmenu", onContextMenu);
+    };
+  }, []);
+
   return (
     <div ref={containerRef} className="viewer-container">
       <canvas
         ref={canvasRef}
         tabIndex={0}
-        onMouseMove={(e) => {
-          const canvas = canvasRef.current!;
-          const rect = canvas.getBoundingClientRect();
-          const dpr = devicePixelRatio;
-          const x = (e.clientX - rect.left) * dpr;
-          const y = (e.clientY - rect.top) * dpr;
-          viewerRef.current?.on_mouse_move(x, y, e.movementX * dpr, e.movementY * dpr);
-        }}
-        onMouseDown={(e) => {
-          viewerRef.current?.on_mouse_down(e.button);
-          // Focus canvas for keyboard events
-          canvasRef.current?.focus();
-        }}
-        onMouseUp={(e) => {
-          viewerRef.current?.on_mouse_up(e.button);
-        }}
-        onWheel={(e) => {
-          e.preventDefault();
-          viewerRef.current?.on_wheel(e.deltaX, e.deltaY);
-        }}
-        onKeyDown={(e) => {
-          viewerRef.current?.on_key_down(e.key, e.keyCode, e.repeat);
-        }}
-        onKeyUp={(e) => {
-          viewerRef.current?.on_key_up(e.key, e.keyCode);
-        }}
-        onContextMenu={(e) => e.preventDefault()}
       />
     </div>
   );

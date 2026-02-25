@@ -25,19 +25,33 @@
 - wgsl parser compilation issue
 
 ## March quality push
+### Rendering re-do (2 weeks)
+Done Together, 4 days:
 - Materials cleanup and fixes
 - Shader refactor / modular shaders
+
+One day each, 4 total:
 - Rendering debug tools (wireframe, normal viewing, light visualization, etc.)
-- format.rs and import export cleanup
-- Everything optional behind features + good default features
+- Anti-aliasing
+- Transparency
+- Core API + docs review
+
+With the remaining time:
+- Draw order optimization
 - IBL weirdness
-- High-level docs
-- Better WASM API
-- Anti-aliasing?
-- Transparency?
-- More benchmarking and tests
-- Performance
+
+### Crate improvements (2 weeks)
+Three days together:
+- format.rs and import export cleanup
+- Scene API and docs review
+
+One day each:
+- format.rs and import export cleanup
 - API and docs review
+- Benchmarking and tests
+- Camera space lights
+
+One day together:
 - Merge walk and orbit operators under navigation operator
 - Everything optional behind features + good default features
 

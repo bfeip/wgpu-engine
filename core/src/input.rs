@@ -1,5 +1,5 @@
-/// Input types that are independent of any specific windowing library.
-/// These types mirror common windowing system input abstractions.
+//! Input types that are independent of any specific windowing library.
+//! These types mirror common windowing system input abstractions.
 
 /// Element state (pressed or released)
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
@@ -92,4 +92,16 @@ pub struct Modifiers {
     pub control: bool,
     pub alt: bool,
     pub super_key: bool,
+}
+
+/// Unique identifier for a touch point (finger).
+pub type TouchId = i32;
+
+/// Phase of a touch event.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum TouchPhase {
+    Started,
+    Moved,
+    Ended,
+    Cancelled,
 }
