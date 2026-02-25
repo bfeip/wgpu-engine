@@ -677,17 +677,13 @@ fn get_material_binding(
     let rel_path = make_property_path(mesh_path, "material:binding");
 
     // Try various field names for relationship targets
-    for field in &["targetPaths", "default"] {
-        if let Ok(val) = data.get(&rel_path, field) {
-            if let Some(path_str) = extract_first_path_from_value(val.as_ref()) {
-                if let Some(&mat_id) = material_map.get(&path_str) {
-                    return mat_id;
-                }
-            }
-        }
-    }
+    let mat_id = ["targetPaths", "default"].iter().find_map(|field| {
+        let val = data.get(&rel_path, field).ok()?;
+        let path_str = extract_first_path_from_value(val.as_ref())?;
+        material_map.get(&path_str).copied()
+    });
 
-    DEFAULT_MATERIAL_ID
+    mat_id.unwrap_or(DEFAULT_MATERIAL_ID)
 }
 
 /// Try to extract a path string from various Value types used for relationships.
