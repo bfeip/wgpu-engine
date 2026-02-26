@@ -47,6 +47,8 @@ Three days together:
 
 One day each:
 - format.rs and import export cleanup
+  - Split import export
+  - trait-ification of importers + exporters
 - API and docs review
 - Benchmarking and tests
 - Camera space lights

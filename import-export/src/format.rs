@@ -34,24 +34,23 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{
+use wgpu_engine_scene::{
     annotation::{
         Annotation, AnnotationId, AxesAnnotation, BoxAnnotation,
         GridAnnotation, LineAnnotation, PointsAnnotation, PolylineAnnotation, AnnotationMeta,
     },
-    instance::Instance,
-    light::Light,
-    material::{Material, MaterialFlags, MaterialId, DEFAULT_MATERIAL_ID},
-    mesh::{Mesh, MeshId, MeshPrimitive, PrimitiveType, Vertex},
-    node::{Node, NodeId, Visibility},
-    texture::{Texture, TextureId},
-    InstanceId, Scene,
+    Instance, InstanceId,
+    Light,
+    Material, MaterialFlags, MaterialId, DEFAULT_MATERIAL_ID,
+    Mesh, MeshId, MeshPrimitive, PrimitiveType, Vertex,
+    Node, NodeId, Visibility,
+    Texture, TextureFormat, TextureId,
+    EnvironmentMapId, Scene,
 };
-use crate::common::{
+use wgpu_engine_scene::common::{
     RgbaColor, array_to_point3, array_to_rgba, array_to_vec3,
     point3_to_array, rgba_to_array, vec3_to_array
 };
-use crate::environment::EnvironmentMapId;
 
 // ============================================================================
 // Constants
@@ -402,24 +401,28 @@ pub struct SerializedMaterial {
     pub flags: u32,
 }
 
-/// Texture image format.
-#[repr(u8)]
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub enum TextureFormat {
-    Png = 0,
-    Jpeg = 1,
-    Raw = 2, // RGBA8 raw data
-}
-
 /// Serializable texture with embedded image data.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerializedTexture {
     pub id: u32,
-    pub format: TextureFormat,
+    /// Texture format as u8 discriminant (0=Png, 1=Jpeg, 2=Raw).
+    /// Maps to `TextureFormat` repr(u8) values.
+    pub format: u8,
     pub width: u32,
     pub height: u32,
     /// Compressed image bytes (PNG/JPEG) or raw RGBA data
     pub data: Vec<u8>,
+}
+
+impl SerializedTexture {
+    /// Get the texture format from the serialized u8 discriminant.
+    pub fn texture_format(&self) -> TextureFormat {
+        match self.format {
+            0 => TextureFormat::Png,
+            1 => TextureFormat::Jpeg,
+            _ => TextureFormat::Raw,
+        }
+    }
 }
 
 /// Serializable light.
@@ -1075,7 +1078,7 @@ impl SerializedTexture {
 
             return Ok(Some(Self {
                 id,
-                format,
+                format: format as u8,
                 width: dimensions.0,
                 height: dimensions.1,
                 data,
@@ -1095,7 +1098,7 @@ impl SerializedTexture {
 
                     return Ok(Some(Self {
                         id,
-                        format,
+                        format: format as u8,
                         width: dimensions.0,
                         height: dimensions.1,
                         data: bytes,
@@ -1124,7 +1127,7 @@ impl SerializedTexture {
                         image::ColorType::Rgb8,
                     )
                     .map_err(|e| FormatError::TextureError(e.to_string()))?;
-                (TextureFormat::Jpeg, buf)
+                (TextureFormat::Jpeg as u8, buf)
             }
             _ => {
                 use image::codecs::png::PngEncoder;
@@ -1144,7 +1147,7 @@ impl SerializedTexture {
                     image::ColorType::Rgba8,
                 )
                 .map_err(|e| FormatError::TextureError(e.to_string()))?;
-                (TextureFormat::Png, buf)
+                (TextureFormat::Png as u8, buf)
             }
         };
 
@@ -1170,7 +1173,8 @@ impl SerializedTexture {
     pub fn to_texture(&self) -> Result<Texture, FormatError> {
         use image::DynamicImage;
 
-        let image = match self.format {
+        let format = self.texture_format();
+        let image = match format {
             TextureFormat::Png | TextureFormat::Jpeg => {
                 image::load_from_memory(&self.data)
                     .map_err(|e| FormatError::TextureError(e.to_string()))?
@@ -1428,14 +1432,33 @@ pub fn assemble_wgsc_scene(
         instance_id_map.insert(file_id, scene_id);
     }
 
-    // Sort nodes by ID for consistent ordering
+    // Topological sort: parents before children so we can use Scene::add_node
+    // with the correct parent, maintaining tree consistency through the public API.
     let mut sorted_nodes = sections.nodes;
-    sorted_nodes.sort_by_key(|n| n.id);
+    {
+        // Pre-compute depth for each node (distance to root in the tree)
+        let parent_map: HashMap<u32, Option<u32>> =
+            sorted_nodes.iter().map(|sn| (sn.id, sn.parent_id)).collect();
+        let mut depth_map: HashMap<u32, u32> = HashMap::new();
+        for sn in &sorted_nodes {
+            let mut depth = 0u32;
+            let mut current = sn.parent_id;
+            while let Some(pid) = current {
+                if !parent_map.contains_key(&pid) {
+                    break;
+                }
+                depth += 1;
+                current = parent_map[&pid];
+            }
+            depth_map.insert(sn.id, depth);
+        }
+        sorted_nodes.sort_by_key(|n| depth_map[&n.id]);
+    }
 
     // Build node ID map (file ID -> scene ID)
     let mut node_id_map: HashMap<u32, NodeId> = HashMap::new();
 
-    // First pass: create all nodes without parent relationships
+    // Create nodes with correct parent relationships in a single pass
     for sn in &sorted_nodes {
         let position = Point3::new(sn.position[0], sn.position[1], sn.position[2]);
         let rotation = Quaternion::new(
@@ -1446,8 +1469,12 @@ pub fn assemble_wgsc_scene(
         );
         let scale = Vector3::new(sn.scale[0], sn.scale[1], sn.scale[2]);
 
+        let parent = sn
+            .parent_id
+            .and_then(|pid| node_id_map.get(&pid).copied());
+
         let node_id = scene
-            .add_node(None, sn.name.clone(), position, rotation, scale)
+            .add_node(parent, sn.name.clone(), position, rotation, scale)
             .map_err(|e| FormatError::DeserializationError(e.to_string()))?;
 
         node_id_map.insert(sn.id, node_id);
@@ -1466,33 +1493,14 @@ pub fn assemble_wgsc_scene(
         }
     }
 
-    // Second pass: establish parent-child relationships
-    scene.root_nodes.clear();
-
-    for sn in &sorted_nodes {
-        let scene_node_id = *node_id_map.get(&sn.id).unwrap();
-
-        if let Some(parent_file_id) = sn.parent_id {
-            if let Some(&scene_parent_id) = node_id_map.get(&parent_file_id) {
-                scene
-                    .get_node_mut(scene_node_id)
-                    .unwrap()
-                    .set_parent(Some(scene_parent_id));
-                scene
-                    .get_node_mut(scene_parent_id)
-                    .unwrap()
-                    .add_child(scene_node_id);
-            }
-        }
-    }
-
-    // Rebuild root_nodes from metadata
-    scene.root_nodes = sections
+    // Reorder root_nodes to match serialized order
+    let serialized_root_order: Vec<NodeId> = sections
         .metadata
         .root_nodes
         .iter()
         .filter_map(|&file_id| node_id_map.get(&file_id).copied())
         .collect();
+    scene.root_nodes = serialized_root_order;
 
     // Add lights
     scene.lights = sections
@@ -1534,18 +1542,17 @@ pub fn assemble_wgsc_scene(
 // Scene Serialization
 // ============================================================================
 
-impl Scene {
-    /// Serializes the scene to bytes in WGSC format with default options.
-    pub fn to_bytes(&self) -> Result<Vec<u8>, FormatError> {
-        self.to_bytes_with_options(&SaveOptions::default())
-    }
+/// Serializes the scene to bytes in WGSC format with default options.
+pub fn to_bytes(scene: &Scene) -> Result<Vec<u8>, FormatError> {
+    to_bytes_with_options(scene, &SaveOptions::default())
+}
 
-    /// Serializes the scene to bytes in WGSC format with custom options.
-    pub fn to_bytes_with_options(&self, options: &SaveOptions) -> Result<Vec<u8>, FormatError> {
+/// Serializes the scene to bytes in WGSC format with custom options.
+pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec<u8>, FormatError> {
         use std::time::{SystemTime, UNIX_EPOCH};
 
         let level = options.compression.zstd_level();
-        let remapper = IdRemapper::from_scene(self);
+        let remapper = IdRemapper::from_scene(scene);
         let mut output = Vec::new();
         let mut toc = TableOfContents::new();
 
@@ -1560,11 +1567,11 @@ impl Scene {
                 .map(|d| d.as_secs())
                 .unwrap_or(0),
             generator: format!("wgpu-engine {}", env!("CARGO_PKG_VERSION")),
-            root_nodes: self.root_nodes
+            root_nodes: scene.root_nodes
                 .iter()
                 .filter_map(|&id| remapper.remap_node(id))
                 .collect(),
-            active_environment_map: self.active_environment_map
+            active_environment_map: scene.active_environment_map
                 .and_then(|id| remapper.remap_environment_map(id)),
         };
         let offset = output.len() as u64;
@@ -1578,7 +1585,7 @@ impl Scene {
         output.extend(compressed);
 
         // ===== Nodes Section =====
-        let nodes: Vec<SerializedNode> = self.nodes
+        let nodes: Vec<SerializedNode> = scene.nodes
             .values()
             .filter_map(|node| SerializedNode::from_node(node, &remapper))
             .collect();
@@ -1593,7 +1600,7 @@ impl Scene {
         output.extend(compressed);
 
         // ===== Instances Section =====
-        let instances: Vec<SerializedInstance> = self.instances
+        let instances: Vec<SerializedInstance> = scene.instances
             .values()
             .filter_map(|inst| SerializedInstance::from_instance(inst, &remapper))
             .collect();
@@ -1609,7 +1616,7 @@ impl Scene {
 
         // ===== Materials Section =====
         // Skip the default material (it's always recreated by Scene::new())
-        let materials: Vec<SerializedMaterial> = self.materials
+        let materials: Vec<SerializedMaterial> = scene.materials
             .values()
             .filter(|mat| mat.id != DEFAULT_MATERIAL_ID)
             .filter_map(|mat| SerializedMaterial::from_material(mat, &remapper))
@@ -1625,7 +1632,7 @@ impl Scene {
         output.extend(compressed);
 
         // ===== Meshes Section =====
-        let meshes: Vec<SerializedMesh> = self.meshes
+        let meshes: Vec<SerializedMesh> = scene.meshes
             .values()
             .filter_map(|mesh| SerializedMesh::from_mesh(mesh, &remapper))
             .collect();
@@ -1641,7 +1648,7 @@ impl Scene {
 
         // ===== Textures Section =====
         let mut textures = Vec::new();
-        for texture in self.textures.values() {
+        for texture in scene.textures.values() {
             let serialized = SerializedTexture::from_texture(
                 texture,
                 &remapper,
@@ -1663,7 +1670,7 @@ impl Scene {
         output.extend(compressed);
 
         // ===== Lights Section =====
-        let lights: Vec<SerializedLight> = self.lights
+        let lights: Vec<SerializedLight> = scene.lights
             .iter()
             .map(SerializedLight::from_light)
             .collect();
@@ -1678,7 +1685,7 @@ impl Scene {
         output.extend(compressed);
 
         // ===== Annotations Section =====
-        let annotations: Vec<SerializedAnnotation> = self.annotations
+        let annotations: Vec<SerializedAnnotation> = scene.annotations
             .iter()
             .filter_map(|ann| SerializedAnnotation::from_annotation(ann, &remapper))
             .collect();
@@ -1693,15 +1700,15 @@ impl Scene {
         output.extend(compressed);
 
         // ===== Environment Maps Section =====
-        if !self.environment_maps.is_empty() {
+        if !scene.environment_maps.is_empty() {
             let mut env_maps = Vec::new();
-            for (&id, env_map) in &self.environment_maps {
+            for (&id, env_map) in &scene.environment_maps {
                 let remapped_id = remapper.remap_environment_map(id).unwrap_or(0);
                 let hdr_data = match &env_map.source {
-                    crate::environment::EnvironmentSource::EquirectangularPath(path) => {
+                    wgpu_engine_scene::EnvironmentSource::EquirectangularPath(path) => {
                         std::fs::read(path).map_err(|e| FormatError::IoError(e))?
                     }
-                    crate::environment::EnvironmentSource::EquirectangularHdr(data) => {
+                    wgpu_engine_scene::EnvironmentSource::EquirectangularHdr(data) => {
                         data.clone()
                     }
                 };
@@ -1737,38 +1744,37 @@ impl Scene {
         Ok(output)
     }
 
-    /// Deserializes a scene from WGSC format bytes.
-    ///
-    /// This is a convenience method that calls [`parse_wgsc`],
-    /// [`decode_wgsc_textures`], and [`assemble_wgsc_scene`] sequentially.
-    /// For progress reporting or async loading, call those phases individually.
-    pub fn from_bytes(bytes: &[u8]) -> Result<Scene, FormatError> {
-        let sections = parse_wgsc(bytes)?;
-        let textures = decode_wgsc_textures(&sections.textures)?;
-        assemble_wgsc_scene(sections, textures)
-    }
+/// Deserializes a scene from WGSC format bytes.
+///
+/// This is a convenience method that calls [`parse_wgsc`],
+/// [`decode_wgsc_textures`], and [`assemble_wgsc_scene`] sequentially.
+/// For progress reporting or async loading, call those phases individually.
+pub fn from_bytes(bytes: &[u8]) -> Result<Scene, FormatError> {
+    let sections = parse_wgsc(bytes)?;
+    let textures = decode_wgsc_textures(&sections.textures)?;
+    assemble_wgsc_scene(sections, textures)
+}
 
-    /// Saves the scene to a file with default options.
-    pub fn save_to_file(&self, path: impl AsRef<std::path::Path>) -> Result<(), FormatError> {
-        self.save_to_file_with_options(path, &SaveOptions::default())
-    }
+/// Saves the scene to a file with default options.
+pub fn save_to_file(scene: &Scene, path: impl AsRef<std::path::Path>) -> Result<(), FormatError> {
+    save_to_file_with_options(scene, path, &SaveOptions::default())
+}
 
-    /// Saves the scene to a file with custom options.
-    pub fn save_to_file_with_options(
-        &self,
-        path: impl AsRef<std::path::Path>,
-        options: &SaveOptions,
-    ) -> Result<(), FormatError> {
-        let bytes = self.to_bytes_with_options(options)?;
-        std::fs::write(path, bytes)?;
-        Ok(())
-    }
+/// Saves the scene to a file with custom options.
+pub fn save_to_file_with_options(
+    scene: &Scene,
+    path: impl AsRef<std::path::Path>,
+    options: &SaveOptions,
+) -> Result<(), FormatError> {
+    let bytes = to_bytes_with_options(scene, options)?;
+    std::fs::write(path, bytes)?;
+    Ok(())
+}
 
-    /// Loads a scene from a file.
-    pub fn load_from_file(path: impl AsRef<std::path::Path>) -> Result<Scene, FormatError> {
-        let bytes = std::fs::read(path)?;
-        Self::from_bytes(&bytes)
-    }
+/// Loads a scene from a file.
+pub fn load_from_file(path: impl AsRef<std::path::Path>) -> Result<Scene, FormatError> {
+    let bytes = std::fs::read(path)?;
+    from_bytes(&bytes)
 }
 
 // ============================================================================
@@ -1838,13 +1844,13 @@ mod tests {
         let original = create_test_scene();
 
         // Serialize
-        let bytes = original.to_bytes().expect("Failed to serialize scene");
+        let bytes = to_bytes(&original).expect("Failed to serialize scene");
 
         // Check magic number
         assert_eq!(&bytes[0..4], b"WGSC");
 
         // Deserialize
-        let loaded = Scene::from_bytes(&bytes).expect("Failed to deserialize scene");
+        let loaded = from_bytes(&bytes).expect("Failed to deserialize scene");
 
         // Verify basic structure
         assert_eq!(loaded.nodes.len(), original.nodes.len());
@@ -1858,8 +1864,8 @@ mod tests {
     #[test]
     fn test_round_trip_node_properties() {
         let original = create_test_scene();
-        let bytes = original.to_bytes().expect("Failed to serialize");
-        let loaded = Scene::from_bytes(&bytes).expect("Failed to deserialize");
+        let bytes = to_bytes(&original).expect("Failed to serialize");
+        let loaded = from_bytes(&bytes).expect("Failed to deserialize");
 
         // Find the test node by name
         let original_node = original.nodes.values()
@@ -1889,8 +1895,8 @@ mod tests {
     #[ignore = "Fails unpredictably, possibly due to multithreaded serialization"]
     fn test_round_trip_material_properties() {
         let original = create_test_scene();
-        let bytes = original.to_bytes().expect("Failed to serialize");
-        let loaded = Scene::from_bytes(&bytes).expect("Failed to deserialize");
+        let bytes = to_bytes(&original).expect("Failed to serialize");
+        let loaded = from_bytes(&bytes).expect("Failed to deserialize");
 
         // Skip the default material (ID 0), find our custom material
         let original_mat = original.materials.values()
@@ -1920,8 +1926,8 @@ mod tests {
     #[test]
     fn test_round_trip_mesh_geometry() {
         let original = create_test_scene();
-        let bytes = original.to_bytes().expect("Failed to serialize");
-        let loaded = Scene::from_bytes(&bytes).expect("Failed to deserialize");
+        let bytes = to_bytes(&original).expect("Failed to serialize");
+        let loaded = from_bytes(&bytes).expect("Failed to deserialize");
 
         // Get the first mesh from each scene
         let original_mesh = original.meshes.values().next().expect("No mesh in original");
@@ -1944,8 +1950,8 @@ mod tests {
     #[test]
     fn test_round_trip_hierarchy() {
         let original = create_test_scene();
-        let bytes = original.to_bytes().expect("Failed to serialize");
-        let loaded = Scene::from_bytes(&bytes).expect("Failed to deserialize");
+        let bytes = to_bytes(&original).expect("Failed to serialize");
+        let loaded = from_bytes(&bytes).expect("Failed to deserialize");
 
         // Find child node
         let loaded_child = loaded.nodes.values()
@@ -1967,8 +1973,8 @@ mod tests {
     #[test]
     fn test_round_trip_lights() {
         let original = create_test_scene();
-        let bytes = original.to_bytes().expect("Failed to serialize");
-        let loaded = Scene::from_bytes(&bytes).expect("Failed to deserialize");
+        let bytes = to_bytes(&original).expect("Failed to serialize");
+        let loaded = from_bytes(&bytes).expect("Failed to deserialize");
 
         assert_eq!(loaded.lights.len(), 1);
 
@@ -1987,8 +1993,8 @@ mod tests {
     #[test]
     fn test_round_trip_annotations() {
         let original = create_test_scene();
-        let bytes = original.to_bytes().expect("Failed to serialize");
-        let loaded = Scene::from_bytes(&bytes).expect("Failed to deserialize");
+        let bytes = to_bytes(&original).expect("Failed to serialize");
+        let loaded = from_bytes(&bytes).expect("Failed to deserialize");
 
         assert_eq!(loaded.annotations.len(), 1);
 
@@ -2006,8 +2012,8 @@ mod tests {
     #[test]
     fn test_empty_scene_round_trip() {
         let scene = Scene::new();
-        let bytes = scene.to_bytes().expect("Failed to serialize empty scene");
-        let loaded = Scene::from_bytes(&bytes).expect("Failed to deserialize empty scene");
+        let bytes = to_bytes(&scene).expect("Failed to serialize empty scene");
+        let loaded = from_bytes(&bytes).expect("Failed to deserialize empty scene");
 
         // Should only have the default material
         assert_eq!(loaded.materials.len(), 1);
@@ -2019,7 +2025,7 @@ mod tests {
     #[test]
     fn test_version_in_header() {
         let scene = Scene::new();
-        let bytes = scene.to_bytes().expect("Failed to serialize");
+        let bytes = to_bytes(&scene).expect("Failed to serialize");
 
         // Check version bytes (offset 4-5)
         let version = u16::from_le_bytes([bytes[4], bytes[5]]);
@@ -2031,7 +2037,7 @@ mod tests {
         let mut bytes = vec![b'X', b'X', b'X', b'X']; // Wrong magic
         bytes.extend([0u8; 12]); // Rest of header
 
-        let result = Scene::from_bytes(&bytes);
+        let result = from_bytes(&bytes);
         assert!(matches!(result, Err(FormatError::InvalidMagic)));
     }
 
@@ -2068,10 +2074,10 @@ mod tests {
         assert!(scene.nodes.len() > 1, "Should have annotation nodes");
 
         // Serialize
-        let bytes = scene.to_bytes().expect("Failed to serialize");
+        let bytes = to_bytes(&scene).expect("Failed to serialize");
 
         // Deserialize
-        let loaded = Scene::from_bytes(&bytes).expect("Failed to deserialize");
+        let loaded = from_bytes(&bytes).expect("Failed to deserialize");
 
         // After deserialization: annotation geometry should NOT be present
         // Only the regular mesh/material/instance/node should be serialized

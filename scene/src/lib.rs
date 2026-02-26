@@ -1,18 +1,6 @@
 pub mod camera;
 pub use wgpu_engine_common as common;
 pub mod geom_query;
-pub mod import_export;
-
-// Backward-compatible re-exports so existing `crate::gltf::*`, `crate::format::*`,
-// `crate::loader::*`, `crate::assimp::*` paths continue to resolve.
-pub use import_export::format;
-pub use import_export::gltf;
-pub use import_export as loader;
-#[cfg(feature = "assimp")]
-pub use import_export::assimp;
-#[cfg(feature = "usd")]
-pub use import_export::usd;
-
 pub use camera::Camera;
 
 // Scene submodules (formerly scene/src/scene/)
@@ -37,10 +25,10 @@ use annotation::{Annotation, AnnotationId, AnnotationManager};
 pub use environment::{EnvironmentMap, EnvironmentMapId, EnvironmentSource};
 pub use instance::{Instance, InstanceId};
 pub use light::{Light, LightType, MAX_LIGHTS};
-pub use material::{Material, MaterialId, DEFAULT_MATERIAL_ID};
+pub use material::{Material, MaterialFlags, MaterialId, DEFAULT_MATERIAL_ID};
 pub use mesh::{Mesh, MeshDescriptor, MeshId, MeshIndex, MeshPrimitive, ObjMesh, PrimitiveType, Vertex};
 pub use node::{EffectiveVisibility, Node, NodeId, Visibility};
-pub use texture::{Texture, TextureId};
+pub use texture::{Texture, TextureFormat, TextureId};
 pub use tree::{TreeVisitor, walk_tree};
 
 // Items used by core crate for rendering

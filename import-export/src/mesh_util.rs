@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use crate::{MeshIndex, MeshPrimitive, PrimitiveType, Vertex};
+use wgpu_engine_scene::{MeshIndex, MeshPrimitive, PrimitiveType, Vertex};
 
 /// Split a mesh with >65535 vertices into multiple chunks that each fit in u16 indices.
 ///

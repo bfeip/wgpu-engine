@@ -12,7 +12,7 @@ use wgpu_engine::common::RgbaColor;
 use wgpu_engine::egui_support::EguiViewerApp;
 use wgpu_engine::input::{ElementState, Key};
 use wgpu_engine::operator::BuiltinOperatorId;
-use wgpu_engine::scene::import_export::{LoadOptions, SceneSource, load_sync};
+use wgpu_engine::import_export::{LoadOptions, SceneSource, load_sync};
 use wgpu_engine::scene::{Light, LightType, Scene, MAX_LIGHTS};
 
 /// Debug actions triggered by key presses
@@ -170,10 +170,10 @@ impl<'a> App<'a> {
         let mut extensions: Vec<&str> = vec!["glb", "gltf", "wgsc"];
 
         #[cfg(feature = "assimp")]
-        extensions.extend_from_slice(wgpu_engine::scene::import_export::assimp::ASSIMP_EXTENSIONS);
+        extensions.extend_from_slice(wgpu_engine::import_export::assimp::ASSIMP_EXTENSIONS);
 
         #[cfg(feature = "usd")]
-        extensions.extend_from_slice(wgpu_engine::scene::import_export::usd::USD_EXTENSIONS);
+        extensions.extend_from_slice(wgpu_engine::import_export::usd::USD_EXTENSIONS);
 
         let file = rfd::FileDialog::new()
             .add_filter("3D Scenes", &extensions)
@@ -227,7 +227,7 @@ impl<'a> App<'a> {
         let viewer = self.viewer_app.as_mut().unwrap().viewer_mut();
         let path_str = path.display().to_string();
 
-        match viewer.scene_mut().save_to_file(&path) {
+        match wgpu_engine::import_export::format::save_to_file(viewer.scene(), &path) {
             Ok(()) => {
                 log::info!("Saved scene: {}", path_str);
             }

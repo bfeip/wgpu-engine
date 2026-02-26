@@ -4,8 +4,8 @@ use anyhow::{bail, Result};
 use clap::{Parser, ValueEnum};
 use image::imageops::FilterType;
 use image::GenericImageView;
-use wgpu_engine_scene::format::{CompressionLevel, SaveOptions};
-use wgpu_engine_scene::gltf::load_gltf_scene_from_path;
+use wgpu_engine_import_export::format::{CompressionLevel, SaveOptions, save_to_file_with_options};
+use wgpu_engine_import_export::gltf::load_gltf_scene_from_path;
 use wgpu_engine_scene::Scene;
 
 const MAX_TEXTURE_DIMENSION: u32 = 2048;
@@ -113,7 +113,7 @@ fn main() -> Result<()> {
     print_stats(&scene);
 
     eprintln!("Saving to {}...", output.display());
-    scene.save_to_file_with_options(&output, &options)?;
+    save_to_file_with_options(&scene, &output, &options)?;
 
     let file_size = std::fs::metadata(&output)?.len();
     eprintln!("Done. Output: {} ({})", output.display(), format_bytes(file_size));

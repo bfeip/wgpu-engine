@@ -11,11 +11,12 @@ use std::io::Cursor;
 use std::path::PathBuf;
 
 use clap::Parser;
-use wgpu_engine::scene::format::{
+use wgpu_engine_import_export::format::{
     FileHeader, FormatError, SectionType, SerializedAnnotation, SerializedInstance,
     SerializedLight, SerializedMaterial, SerializedMesh, SerializedMetadata, SerializedNode,
-    SerializedTexture, TableOfContents, TextureFormat, TocEntry,
+    SerializedTexture, TableOfContents, TocEntry,
 };
+use wgpu_engine_scene::TextureFormat;
 
 #[derive(Parser)]
 #[command(name = "scene-info")]
@@ -384,7 +385,7 @@ fn print_largest_textures(textures: &[SerializedTexture]) {
     sorted.sort_by(|a, b| b.data.len().cmp(&a.data.len()));
 
     for (i, tex) in sorted.iter().take(5).enumerate() {
-        let format_name = match tex.format {
+        let format_name = match tex.texture_format() {
             TextureFormat::Png => "PNG",
             TextureFormat::Jpeg => "JPEG",
             TextureFormat::Raw => "Raw",
@@ -514,7 +515,7 @@ fn print_texture_details(textures: &[SerializedTexture]) {
     println!("  {}", "-".repeat(40));
 
     for tex in textures {
-        let format_name = match tex.format {
+        let format_name = match tex.texture_format() {
             TextureFormat::Png => "PNG",
             TextureFormat::Jpeg => "JPEG",
             TextureFormat::Raw => "Raw",

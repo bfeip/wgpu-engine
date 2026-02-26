@@ -1,14 +1,19 @@
 // Re-export scene crate as `scene` module
 pub use wgpu_engine_scene as scene;
 
+// Re-export import-export crate
+pub use wgpu_engine_import_export as import_export;
+pub use wgpu_engine_import_export as loader; // backward compat alias
+
 // Convenience re-exports from scene crate
 pub use wgpu_engine_scene::common;
 pub use wgpu_engine_scene::geom_query;
-pub use wgpu_engine_scene::gltf;
 pub use wgpu_engine_scene::camera;
 pub use wgpu_engine_scene::{Camera, EnvironmentMap, EnvironmentMapId, Scene};
-pub use wgpu_engine_scene::gltf::{load_gltf_scene_from_path, load_gltf_scene_from_slice, GltfLoadResult};
-pub use wgpu_engine_scene::loader;
+
+// Convenience re-exports from import-export crate
+pub use wgpu_engine_import_export::gltf;
+pub use wgpu_engine_import_export::gltf::{load_gltf_scene_from_path, load_gltf_scene_from_slice, GltfLoadResult};
 
 // Core modules
 pub mod event;

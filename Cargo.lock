@@ -3634,6 +3634,7 @@ dependencies = [
  "anyhow",
  "clap",
  "image 0.24.9",
+ "wgpu-engine-import-export",
  "wgpu-engine-scene",
 ]
 
@@ -3644,7 +3645,8 @@ dependencies = [
  "bincode",
  "clap",
  "serde",
- "wgpu-engine",
+ "wgpu-engine-import-export",
+ "wgpu-engine-scene",
  "zstd",
 ]
 
@@ -4916,7 +4918,6 @@ name = "wgpu-engine"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bincode",
  "bitflags 2.10.0",
  "bytemuck",
  "cfg-if",
@@ -4927,14 +4928,11 @@ dependencies = [
  "egui-wgpu",
  "egui-winit",
  "env_logger",
- "gltf",
  "image 0.24.9",
  "log",
- "obj-rs",
  "pollster 0.3.0",
  "rayon",
  "rfd",
- "serde",
  "thiserror 2.0.17",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -4942,9 +4940,9 @@ dependencies = [
  "web-time",
  "wesl",
  "wgpu",
+ "wgpu-engine-import-export",
  "wgpu-engine-scene",
  "winit",
- "zstd",
 ]
 
 [[package]]
@@ -4956,19 +4954,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "wgpu-engine-scene"
+name = "wgpu-engine-import-export"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "bincode",
- "bitflags 2.10.0",
  "bytemuck",
  "cgmath",
  "gltf",
  "image 0.24.9",
  "js-sys",
  "log",
- "obj-rs",
  "openusd",
  "rayon",
  "russimp",
@@ -4976,9 +4972,24 @@ dependencies = [
  "thiserror 2.0.17",
  "wasm-bindgen",
  "wasm-bindgen-futures",
- "wgpu-engine-common",
+ "wgpu-engine-scene",
  "zip",
  "zstd",
+]
+
+[[package]]
+name = "wgpu-engine-scene"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bitflags 2.10.0",
+ "bytemuck",
+ "cgmath",
+ "image 0.24.9",
+ "log",
+ "obj-rs",
+ "thiserror 2.0.17",
+ "wgpu-engine-common",
 ]
 
 [[package]]

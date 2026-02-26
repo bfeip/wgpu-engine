@@ -24,7 +24,7 @@
 //! # Examples
 //!
 //! ```no_run
-//! use wgpu_engine_scene::import_export::{load_async, LoadOptions, SceneSource};
+//! use wgpu_engine_import_export::{load_async, LoadOptions, SceneSource};
 //!
 //! let handle = load_async(SceneSource::Path("model.glb".into()), LoadOptions::default());
 //!
@@ -46,9 +46,9 @@ use std::sync::{Arc, Mutex};
 
 use thiserror::Error;
 
-use crate::camera::Camera;
+use wgpu_engine_scene::Camera;
 use self::format::FormatError;
-use crate::Scene;
+use wgpu_engine_scene::Scene;
 
 // ============================================================================
 // Type Aliases
@@ -861,8 +861,7 @@ fn save_sync_with_progress(
 ) -> SaveResult {
     progress.set_weights(&SAVE_WEIGHTS);
     progress.enter_phase(LoadPhase::Parsing); // "Parsing" = serializing in export context
-    let bytes = scene
-        .to_bytes_with_options(options)
+    let bytes = format::to_bytes_with_options(scene, options)
         .map_err(LoadError::Format)?;
 
     progress.enter_phase(LoadPhase::Assembling);
@@ -919,7 +918,7 @@ pub fn save_async(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Material, Mesh};
+    use wgpu_engine_scene::{Material, Mesh};
     use cgmath::{Point3, Quaternion, Vector3};
 
     fn create_test_scene() -> Scene {
@@ -942,7 +941,7 @@ mod tests {
     }
 
     fn create_test_scene_bytes() -> Vec<u8> {
-        create_test_scene().to_bytes().unwrap()
+        format::to_bytes(&create_test_scene()).unwrap()
     }
 
     #[test]

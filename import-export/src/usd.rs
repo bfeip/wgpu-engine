@@ -13,12 +13,11 @@ use cgmath::{Deg, Matrix3, Matrix4, Point3, Quaternion, SquareMatrix, Vector3};
 
 use openusd::sdf::{self, AbstractData, Value};
 
-use crate::camera::Camera;
-use crate::common::{RgbaColor, decompose_matrix};
-use crate::{
-    DEFAULT_MATERIAL_ID, Light, Material, MaterialId, Mesh, MeshId, NodeId, PrimitiveType, Scene,
-    Vertex,
+use wgpu_engine_scene::{
+    Camera, DEFAULT_MATERIAL_ID, Light, Material, MaterialId, Mesh, MeshId,
+    NodeId, PrimitiveType, Scene, Vertex, MAX_LIGHTS,
 };
+use wgpu_engine_scene::common::{RgbaColor, decompose_matrix};
 
 /// Result of loading a scene from USD.
 pub struct UsdLoadResult {
@@ -638,7 +637,7 @@ fn extract_mesh(
 
     // Split if needed for u16 index limit
     let chunks =
-        super::mesh_util::to_u16_primitives(&vertices, &indices, PrimitiveType::TriangleList);
+        crate::mesh_util::to_u16_primitives(&vertices, &indices, PrimitiveType::TriangleList);
     chunks
         .into_iter()
         .map(|(chunk_verts, chunk_prim)| {
@@ -923,7 +922,7 @@ fn extract_light(
     position: &Point3<f32>,
     scene: &mut Scene,
 ) {
-    if scene.lights.len() >= crate::light::MAX_LIGHTS {
+    if scene.lights.len() >= MAX_LIGHTS {
         return;
     }
 

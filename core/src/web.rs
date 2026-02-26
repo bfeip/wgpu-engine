@@ -20,9 +20,9 @@ use web_sys::HtmlCanvasElement;
 
 use crate::event::Event;
 use crate::input::{ElementState, Key, KeyEvent, MouseButton, MouseScrollDelta, NamedKey, PhysicalKey, TouchPhase};
-use crate::loader::LoadHandle;
+use crate::import_export::LoadHandle;
 use crate::viewer::Viewer;
-use crate::scene::loader;
+use crate::import_export as loader;
 
 #[wasm_bindgen]
 pub enum LoadStatus {
@@ -192,9 +192,9 @@ impl WebViewer {
     /// Begin an async scene load. Format is auto-detected from magic bytes.
     /// Cancels any in-flight load. Poll with `poll_load()` each frame.
     pub fn start_load(&mut self, data: &[u8]) {
-        use crate::loader::{LoadOptions, SceneSource};
+        use crate::import_export::{LoadOptions, SceneSource};
         let aspect = self.viewer.camera().aspect;
-        self.pending_load = Some(crate::loader::load_async(
+        self.pending_load = Some(crate::import_export::load_async(
             SceneSource::Bytes(data.to_vec()),
             LoadOptions { aspect },
         ));
@@ -250,9 +250,9 @@ impl WebViewer {
     /// Load a scene synchronously from raw bytes. Format (glTF or WGSC) is auto-detected.
     /// The scene and camera will be set automatically.
     pub fn load(&mut self, data: &[u8]) -> Result<(), JsValue> {
-        use crate::loader::{LoadOptions, SceneSource};
+        use crate::import_export::{LoadOptions, SceneSource};
         let aspect = self.viewer.camera().aspect;
-        let result = crate::loader::load_sync(
+        let result = crate::import_export::load_sync(
             SceneSource::Bytes(data.to_vec()),
             LoadOptions { aspect },
         )

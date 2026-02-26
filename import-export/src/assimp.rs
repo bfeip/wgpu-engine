@@ -14,12 +14,11 @@ use russimp::material::{Material as RMaterial, TextureType};
 use russimp::node::Node as RNode;
 use russimp::scene::{PostProcess, Scene as RScene};
 
-use crate::camera::Camera;
-use crate::common::{RgbaColor, decompose_matrix};
-use crate::{
-    DEFAULT_MATERIAL_ID, Light, Material, MaterialId, Mesh, MeshId,
-    NodeId, PrimitiveType, Scene, Texture, TextureId, Vertex,
+use wgpu_engine_scene::{
+    Camera, DEFAULT_MATERIAL_ID, Light, Material, MaterialId, Mesh, MeshId,
+    NodeId, PrimitiveType, Scene, Texture, TextureId, Vertex, MAX_LIGHTS,
 };
+use wgpu_engine_scene::common::{RgbaColor, decompose_matrix};
 
 /// Result of loading a scene via assimp.
 pub struct AssimpLoadResult {
@@ -367,7 +366,7 @@ fn load_single_mesh(
         .collect();
 
     // Split if necessary for u16 index limit, using shared mesh utility
-    let chunks = super::mesh_util::to_u16_primitives(&vertices, &indices, PrimitiveType::TriangleList);
+    let chunks = crate::mesh_util::to_u16_primitives(&vertices, &indices, PrimitiveType::TriangleList);
     chunks
         .into_iter()
         .map(|(chunk_verts, chunk_prim)| {
@@ -489,7 +488,7 @@ fn build_node_tree(
 fn load_lights(assimp_lights: &[russimp::light::Light], scene: &mut Scene) {
     use russimp::light::LightSourceType;
 
-    for light in assimp_lights.iter().take(crate::light::MAX_LIGHTS) {
+    for light in assimp_lights.iter().take(MAX_LIGHTS) {
         let color = RgbaColor {
             r: light.color_diffuse.r,
             g: light.color_diffuse.g,

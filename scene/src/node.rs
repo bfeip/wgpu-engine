@@ -149,7 +149,7 @@ impl Node {
     }
 
     /// Sets the parent node ID (internal use only - use Scene methods to maintain consistency).
-    pub(super) fn set_parent(&mut self, parent: Option<NodeId>) {
+    pub(crate) fn set_parent(&mut self, parent: Option<NodeId>) {
         self.parent = parent;
         self.mark_transform_dirty();
         self.mark_bounds_dirty();
@@ -161,7 +161,7 @@ impl Node {
     }
 
     /// Adds a child node ID to this node's children list (internal use only - use Scene methods to maintain consistency).
-    pub(super) fn add_child(&mut self, child: NodeId) {
+    pub(crate) fn add_child(&mut self, child: NodeId) {
         if !self.children.contains(&child) {
             self.children.push(child);
             self.mark_bounds_dirty();

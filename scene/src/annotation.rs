@@ -603,7 +603,7 @@ impl AnnotationManager {
     /// Inserts an annotation with a specific ID (used during deserialization).
     /// Updates next_id if needed to avoid ID collisions.
     /// Returns an error if an annotation with the same ID already exists.
-    pub(crate) fn insert_with_id(&mut self, annotation: Annotation) -> anyhow::Result<()> {
+    pub fn insert_with_id(&mut self, annotation: Annotation) -> anyhow::Result<()> {
         let id = annotation.id();
         if self.annotations.contains_key(&id) {
             anyhow::bail!("Annotation with ID {} already exists", id);

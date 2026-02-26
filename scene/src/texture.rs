@@ -7,6 +7,15 @@ use image::{DynamicImage, GenericImageView};
 /// Unique identifier for a texture in the scene.
 pub type TextureId = u32;
 
+/// Texture image format.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextureFormat {
+    Png = 0,
+    Jpeg = 1,
+    Raw = 2,
+}
+
 /// Describes how texture source data is stored.
 ///
 /// Textures can be created from embedded image data or loaded lazily from a file path.
@@ -18,7 +27,7 @@ pub enum TextureSource {
     Embedded {
         image: DynamicImage,
         /// Original compressed bytes preserved from loading (e.g., from glTF).
-        original_bytes: Option<(Vec<u8>, super::format::TextureFormat)>,
+        original_bytes: Option<(Vec<u8>, TextureFormat)>,
     },
     /// Image loaded lazily from a file path via `OnceLock`.
     /// The image can be released and reloaded by replacing the `OnceLock`.
@@ -135,7 +144,7 @@ impl Texture {
     pub fn from_image_with_original_bytes(
         image: DynamicImage,
         original_bytes: Vec<u8>,
-        format: super::format::TextureFormat,
+        format: TextureFormat,
     ) -> Self {
         Self {
             id: 0,
@@ -238,7 +247,7 @@ impl Texture {
     /// Returns the original PNG/JPEG bytes if this texture was created with
     /// `from_image_with_original_bytes`. This is used for efficient serialization
     /// to avoid re-encoding the image.
-    pub fn original_bytes(&self) -> Option<(&[u8], super::format::TextureFormat)> {
+    pub fn original_bytes(&self) -> Option<(&[u8], TextureFormat)> {
         match &self.source {
             TextureSource::Embedded { original_bytes: Some((bytes, format)), .. } => {
                 Some((bytes.as_slice(), *format))
