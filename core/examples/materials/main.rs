@@ -192,6 +192,7 @@ struct App<'a> {
     window: Option<Arc<Window>>,
     viewer: Option<Viewer<'a>>,
     env_map_id: Option<EnvironmentMapId>,
+    default_lights: Vec<Light>,
 }
 
 impl<'a> App<'a> {
@@ -215,6 +216,7 @@ impl<'a> App<'a> {
                 .scene_mut()
                 .add_environment_map_from_hdr_path("assets/studio_small_09_4k.hdr");
         self.env_map_id = Some(env_map_id);
+        self.default_lights = viewer.scene().lights.clone();
 
         window.request_redraw();
         self.window = Some(window);
@@ -270,8 +272,14 @@ impl<'a> ApplicationHandler for App<'a> {
             Key::Character('e') => {
                 if let Some(env_id) = self.env_map_id {
                     let scene = viewer.scene_mut();
-                    let active = scene.active_environment_map().is_some();
-                    scene.set_active_environment_map(if active { None } else { Some(env_id) });
+                    let ibl_active = scene.active_environment_map().is_some();
+                    if ibl_active {
+                        scene.set_active_environment_map(None);
+                        scene.lights = self.default_lights.clone();
+                    } else {
+                        scene.set_active_environment_map(Some(env_id));
+                        scene.lights.clear();
+                    }
                 }
             }
             _ => {}
@@ -300,6 +308,7 @@ fn main() {
         window: None,
         viewer: None,
         env_map_id: None,
+        default_lights: Vec::new(),
     };
 
     event_loop.run_app(&mut app).unwrap();

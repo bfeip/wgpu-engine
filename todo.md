@@ -54,7 +54,7 @@ One day each:
 - Camera space lights
 
 One day together:
-- Merge walk and orbit operators under navigation operator
+- Merge walk and orbit operators under navigation operator + Middle click orbit
 - Everything optional behind features + good default features
 
 Stretch:
