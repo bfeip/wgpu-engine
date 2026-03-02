@@ -1020,7 +1020,6 @@ impl LightResources {
 /// Bind group layouts for different material types.
 pub(super) struct MaterialBindGroupLayouts {
     pub(super) color: wgpu::BindGroupLayout,
-    pub(super) texture: wgpu::BindGroupLayout,
     pub(super) pbr: wgpu::BindGroupLayout,
 }
 
@@ -1039,28 +1038,6 @@ impl MaterialBindGroupLayouts {
                 },
                 count: None,
             }],
-        });
-
-        let texture = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Texture Material Bind Group Layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        multisampled: false,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
         });
 
         let pbr = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -1134,14 +1111,13 @@ impl MaterialBindGroupLayouts {
             ],
         });
 
-        MaterialBindGroupLayouts { color, texture, pbr }
+        MaterialBindGroupLayouts { color, pbr }
     }
 }
 
 /// Pipeline layouts for different material types.
 pub(super) struct MaterialPipelineLayouts {
     pub(super) color: wgpu::PipelineLayout,
-    pub(super) texture: wgpu::PipelineLayout,
     pub(super) pbr: wgpu::PipelineLayout,
     /// PBR with IBL (includes environment bind group)
     pub(super) pbr_ibl: wgpu::PipelineLayout,
@@ -1162,16 +1138,6 @@ impl MaterialPipelineLayouts {
                 camera_bind_group_layout,
                 light_bind_group_layout,
                 &material_layouts.color,
-            ],
-            push_constant_ranges: &[],
-        });
-
-        let texture = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Texture Material Pipeline Layout"),
-            bind_group_layouts: &[
-                camera_bind_group_layout,
-                light_bind_group_layout,
-                &material_layouts.texture,
             ],
             push_constant_ranges: &[],
         });
@@ -1197,7 +1163,7 @@ impl MaterialPipelineLayouts {
             push_constant_ranges: &[],
         });
 
-        MaterialPipelineLayouts { color, texture, pbr, pbr_ibl }
+        MaterialPipelineLayouts { color, pbr, pbr_ibl }
     }
 }
 

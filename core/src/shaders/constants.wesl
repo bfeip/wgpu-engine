@@ -17,10 +17,8 @@ const BINDING_CAMERA_UNIFORM: u32 = 0u;
 // Lights bind group bindings
 const BINDING_LIGHTS_UNIFORM: u32 = 0u;
 
-// Material bind group bindings (simple material)
+// Material bind group bindings (simple color material)
 const BINDING_MATERIAL_COLOR: u32 = 0u;
-const BINDING_MATERIAL_TEXTURE: u32 = 0u;
-const BINDING_MATERIAL_SAMPLER: u32 = 1u;
 
 // PBR lighting constants
 const AMBIENT_FACTOR: f32 = 0.001;

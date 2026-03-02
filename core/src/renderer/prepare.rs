@@ -131,13 +131,10 @@ impl<'a> Renderer<'a> {
     /// Prepare GPU resources for triangle (face) rendering.
     fn prepare_triangle_material(&mut self, scene: &mut Scene, material_id: u32) -> Result<()> {
         let material = scene.materials.get(&material_id).unwrap();
-        let use_pbr =
-            material.normal_texture().is_some() || material.metallic_roughness_texture().is_some();
+        let has_lighting = !material.flags().contains(crate::scene::MaterialFlags::DO_NOT_LIGHT);
 
-        if use_pbr {
+        if has_lighting {
             self.prepare_pbr_material(scene, material_id)
-        } else if material.base_color_texture().is_some() {
-            self.prepare_textured_material(scene, material_id)
         } else {
             self.prepare_colored_material(scene, material_id)
         }
@@ -214,47 +211,6 @@ impl<'a> Renderer<'a> {
             MaterialGpuResources {
                 bind_group,
                 _buffer: Some(buffer),
-            },
-            generation,
-        );
-        Ok(())
-    }
-
-    /// Prepare GPU resources for texture-only material (base color texture, no PBR).
-    fn prepare_textured_material(&mut self, scene: &mut Scene, material_id: u32) -> Result<()> {
-        let material = scene.materials.get(&material_id).unwrap();
-        let texture_id = material.base_color_texture().unwrap();
-
-        let gpu_tex = self.gpu_resources.get_texture(texture_id).ok_or_else(|| {
-            anyhow::anyhow!(
-                "Texture {} GPU resources not found for material {}",
-                texture_id,
-                material_id
-            )
-        })?;
-
-        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Material Base Color Texture Bind Group"),
-            layout: &self.material_layouts.texture,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&gpu_tex.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&gpu_tex.sampler),
-                },
-            ],
-        });
-
-        let generation = scene.materials.get(&material_id).unwrap().generation(PrimitiveType::TriangleList);
-        self.gpu_resources.set_material(
-            material_id,
-            PrimitiveType::TriangleList,
-            MaterialGpuResources {
-                bind_group,
-                _buffer: None,
             },
             generation,
         );

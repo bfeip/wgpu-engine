@@ -16,10 +16,7 @@ const SHADER_CONSTANTS: &str = include_str!("shaders/constants.wesl");
 const SHADER_LIGHTING: &str = include_str!("shaders/lighting.wesl");
 const SHADER_VERTEX: &str = include_str!("shaders/vertex.wesl");
 const SHADER_MATERIAL_COLOR: &str = include_str!("shaders/material_color.wesl");
-const SHADER_MATERIAL_TEXTURE: &str = include_str!("shaders/material_texture.wesl");
-const SHADER_FRAGMENT_COLOR_LIT: &str = include_str!("shaders/fragment_color_lit.wesl");
 const SHADER_FRAGMENT_COLOR_UNLIT: &str = include_str!("shaders/fragment_color_unlit.wesl");
-const SHADER_FRAGMENT_TEXTURE_LIT: &str = include_str!("shaders/fragment_texture_lit.wesl");
 // PBR shader modules
 const SHADER_PBR: &str = include_str!("shaders/pbr.wesl");
 const SHADER_MATERIAL_PBR: &str = include_str!("shaders/material_pbr.wesl");
@@ -59,10 +56,7 @@ impl ShaderGenerator {
         resolver.add_module("package::lighting".parse().unwrap(), SHADER_LIGHTING.into());
         resolver.add_module("package::vertex".parse().unwrap(), SHADER_VERTEX.into());
         resolver.add_module("package::material_color".parse().unwrap(), SHADER_MATERIAL_COLOR.into());
-        resolver.add_module("package::material_texture".parse().unwrap(), SHADER_MATERIAL_TEXTURE.into());
-        resolver.add_module("package::fragment_color_lit".parse().unwrap(), SHADER_FRAGMENT_COLOR_LIT.into());
         resolver.add_module("package::fragment_color_unlit".parse().unwrap(), SHADER_FRAGMENT_COLOR_UNLIT.into());
-        resolver.add_module("package::fragment_texture_lit".parse().unwrap(), SHADER_FRAGMENT_TEXTURE_LIT.into());
         // PBR modules
         resolver.add_module("package::pbr".parse().unwrap(), SHADER_PBR.into());
         resolver.add_module("package::material_pbr".parse().unwrap(), SHADER_MATERIAL_PBR.into());
@@ -99,14 +93,9 @@ impl ShaderGenerator {
         }
 
         // Build feature map for WESL conditional compilation
-        // use_pbr enables the PBR shader path (requires PBR bind group layout)
-        // For now, enable PBR when normal or metallic-roughness textures are present
-        let use_pbr = material_props.has_normal_map || material_props.has_metallic_roughness_texture;
         let features = [
-            ("has_texture", material_props.has_base_color_texture),
             ("has_lighting", material_props.has_lighting),
-            ("use_pbr", use_pbr),
-            ("has_ibl", scene_props.has_ibl && use_pbr && material_props.has_lighting),
+            ("has_ibl", scene_props.has_ibl && material_props.has_lighting),
         ];
 
         // Set features and compile the main module
@@ -115,19 +104,14 @@ impl ShaderGenerator {
         let result = self.compiler.compile(&path)?;
         let wgsl = result.to_string();
 
-        let shader_label = if use_pbr && material_props.has_lighting {
+        let shader_label = if material_props.has_lighting {
             if scene_props.has_ibl {
-                "PBR Lit IBL Material Shader"
+                "PBR Lit IBL Shader"
             } else {
-                "PBR Lit Material Shader"
+                "PBR Lit Shader"
             }
         } else {
-            match (material_props.has_base_color_texture, material_props.has_lighting) {
-                (true, true) => "Lit Texture Material Shader",
-                (true, false) => "Unlit Texture Material Shader",
-                (false, true) => "Lit Color Material Shader",
-                (false, false) => "Unlit Color Material Shader",
-            }
+            "Unlit Color Shader"
         };
 
         let module = device.create_shader_module(ShaderModuleDescriptor {

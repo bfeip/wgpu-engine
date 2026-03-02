@@ -5,15 +5,11 @@
 import package::common::{VertexInput, InstanceInput, VertexOutput};
 import package::vertex::vertex_standard;
 
-// Conditionally import fragment shaders to avoid binding conflicts
-// PBR and texture paths use different bind group layouts at group 2
-@if(use_pbr && has_lighting)
+// Conditionally import fragment shaders based on lighting mode
+// Lit materials use PBR (Cook-Torrance BRDF), unlit use flat color
+@if(has_lighting)
     import package::fragment_pbr_lit::fragment_pbr_lit;
-@if(has_texture && has_lighting && !use_pbr)
-    import package::fragment_texture_lit::fragment_texture_lit;
-@if(!has_texture && has_lighting && !use_pbr)
-    import package::fragment_color_lit::fragment_color_lit;
-@if(!has_texture && !has_lighting && !use_pbr)
+@if(!has_lighting)
     import package::fragment_color_unlit::fragment_color_unlit;
 
 // Vertex shader entry point
@@ -29,22 +25,11 @@ fn vs_main(
 // Fragment shader entry point with conditional compilation
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    // Conditional compilation based on material properties
-    // PBR path (highest priority when enabled)
-    @if(use_pbr && has_lighting) {
+    @if(has_lighting) {
         return fragment_pbr_lit(in);
     }
 
-    // Legacy paths
-    @if(has_texture && has_lighting && !use_pbr) {
-        return fragment_texture_lit(in);
-    }
-
-    @if(!has_texture && has_lighting && !use_pbr) {
-        return fragment_color_lit(in);
-    }
-
-    @if(!has_texture && !has_lighting && !use_pbr) {
+    @if(!has_lighting) {
         return fragment_color_unlit(in);
     }
 

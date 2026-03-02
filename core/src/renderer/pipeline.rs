@@ -13,14 +13,11 @@ impl<'a> Renderer<'a> {
         let primitive_type = cache_key.primitive_type;
         self.pipeline_cache.entry(cache_key).or_insert_with(|| {
             // Select pipeline layout based on material type and scene properties
-            let use_pbr = material_props.has_normal_map || material_props.has_metallic_roughness_texture;
-            let use_ibl = scene_props.has_ibl && use_pbr && material_props.has_lighting;
+            let use_ibl = scene_props.has_ibl && material_props.has_lighting;
             let pipeline_layout = if use_ibl {
                 &self.pipelines.pbr_ibl
-            } else if use_pbr {
+            } else if material_props.has_lighting {
                 &self.pipelines.pbr
-            } else if material_props.has_base_color_texture {
-                &self.pipelines.texture
             } else {
                 &self.pipelines.color
             };

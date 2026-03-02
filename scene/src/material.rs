@@ -34,12 +34,6 @@ bitflags! {
 /// - Pipeline creation (different properties = different pipelines)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MaterialProperties {
-    /// Whether this material has a base color texture
-    pub has_base_color_texture: bool,
-    /// Whether this material has a normal map
-    pub has_normal_map: bool,
-    /// Whether this material has a metallic-roughness texture
-    pub has_metallic_roughness_texture: bool,
     /// Whether lighting calculations should be applied
     pub has_lighting: bool,
 }
@@ -342,18 +336,11 @@ impl Material {
     /// This is used by ShaderGenerator and PipelineManager to determine
     /// which shader variant to use.
     pub fn get_properties(&self, primitive_type: PrimitiveType) -> MaterialProperties {
-        let faces_have_lighting = !self.flags.contains(MaterialFlags::DO_NOT_LIGHT);
         match primitive_type {
             PrimitiveType::TriangleList => MaterialProperties {
-                has_base_color_texture: self.base_color_texture.is_some(),
-                has_normal_map: self.normal_texture.is_some(),
-                has_metallic_roughness_texture: self.metallic_roughness_texture.is_some(),
-                has_lighting: faces_have_lighting,
+                has_lighting: !self.flags.contains(MaterialFlags::DO_NOT_LIGHT),
             },
             PrimitiveType::LineList | PrimitiveType::PointList => MaterialProperties {
-                has_base_color_texture: false,
-                has_normal_map: false,
-                has_metallic_roughness_texture: false,
                 has_lighting: false,
             },
         }
