@@ -54,11 +54,11 @@ fn build_material_scene(viewer: &mut Viewer) {
     let identity_rot = Quaternion::new(1.0, 0.0, 0.0, 0.0);
     let unit_scale = Vector3::new(1.0, 1.0, 1.0);
 
-    // Row 0: Roughness gradient (dielectric white, roughness 0.0 -> 1.0)
+    // Row 0: Roughness gradient (dielectric blue, roughness 0.0 -> 1.0)
     for col in 0..COLS {
         let roughness = col as f32 / (COLS - 1) as f32;
         let mat = Material::new()
-            .with_base_color_factor(RgbaColor::WHITE)
+            .with_base_color_factor(RgbaColor::BLUE)
             .with_metallic_factor(0.0)
             .with_roughness_factor(roughness);
         let mat_id = scene.add_material(mat);
@@ -75,11 +75,11 @@ fn build_material_scene(viewer: &mut Viewer) {
             .unwrap();
     }
 
-    // Row 1: Metallic gradient (white, roughness 0.3, metallic 0.0 -> 1.0)
+    // Row 1: Metallic gradient (blue, roughness 0.3, metallic 0.0 -> 1.0)
     for col in 0..COLS {
         let metallic = col as f32 / (COLS - 1) as f32;
         let mat = Material::new()
-            .with_base_color_factor(RgbaColor::WHITE)
+            .with_base_color_factor(RgbaColor::BLUE)
             .with_roughness_factor(0.3)
             .with_metallic_factor(metallic);
         let mat_id = scene.add_material(mat);
@@ -102,7 +102,7 @@ fn build_material_scene(viewer: &mut Viewer) {
         ("Green", RgbaColor::GREEN),
         ("Blue", RgbaColor::BLUE),
         ("White", RgbaColor::WHITE),
-        ("Yellow", RgbaColor { r: 1.0, g: 1.0, b: 0.0, a: 1.0 }),
+        ("Yellow", RgbaColor::YELLOW),
     ];
     for (col, (name, color)) in colors.iter().enumerate() {
         let mat = Material::new()
@@ -125,11 +125,11 @@ fn build_material_scene(viewer: &mut Viewer) {
 
     // Row 3: Metallic colors (metallic 1.0, roughness 0.25)
     let metals = [
-        ("Gold", RgbaColor { r: 1.0, g: 0.76, b: 0.33, a: 1.0 }),
-        ("Silver", RgbaColor { r: 0.97, g: 0.96, b: 0.91, a: 1.0 }),
-        ("Copper", RgbaColor { r: 0.72, g: 0.45, b: 0.20, a: 1.0 }),
-        ("Titanium", RgbaColor { r: 0.54, g: 0.50, b: 0.47, a: 1.0 }),
-        ("Emerald", RgbaColor { r: 0.31, g: 0.78, b: 0.47, a: 1.0 }),
+        ("Red", RgbaColor::RED),
+        ("Green", RgbaColor::GREEN),
+        ("Blue", RgbaColor::BLUE),
+        ("White", RgbaColor::WHITE),
+        ("Yellow", RgbaColor::YELLOW),
     ];
     for (col, (name, color)) in metals.iter().enumerate() {
         let mat = Material::new()
@@ -156,6 +156,7 @@ fn build_material_scene(viewer: &mut Viewer) {
         ("Unlit Green", RgbaColor::GREEN),
         ("Unlit Blue", RgbaColor::BLUE),
         ("Unlit White", RgbaColor::WHITE),
+        ("Unlit Yellow", RgbaColor::YELLOW),
     ];
     for (col, (name, color)) in unlit_colors.iter().enumerate() {
         let mat = Material::new()
@@ -174,23 +175,6 @@ fn build_material_scene(viewer: &mut Viewer) {
             )
             .unwrap();
     }
-    // Last column: lit reference sphere
-    let mat = Material::new()
-        .with_base_color_factor(RgbaColor::WHITE)
-        .with_metallic_factor(0.0)
-        .with_roughness_factor(0.5);
-    let mat_id = scene.add_material(mat);
-    scene
-        .add_instance_node(
-            None,
-            mesh_id,
-            mat_id,
-            Some("Lit Reference".to_string()),
-            grid_position(4, 4),
-            identity_rot,
-            unit_scale,
-        )
-        .unwrap();
 
     // Camera: elevated view looking down at the grid
     let camera = viewer.camera_mut();
