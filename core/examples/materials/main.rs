@@ -9,7 +9,8 @@ use winit::{
 };
 
 use wgpu_engine::common::RgbaColor;
-use wgpu_engine::scene::{Light, Material, MaterialFlags, Mesh};
+use wgpu_engine::input::{ElementState, Key};
+use wgpu_engine::scene::{EnvironmentMapId, Light, Material, MaterialFlags, Mesh};
 use wgpu_engine::{Viewer, winit_support};
 
 const SPHERE_RADIUS: f32 = 0.4;
@@ -190,6 +191,7 @@ fn build_material_scene(viewer: &mut Viewer) {
 struct App<'a> {
     window: Option<Arc<Window>>,
     viewer: Option<Viewer<'a>>,
+    env_map_id: Option<EnvironmentMapId>,
 }
 
 impl<'a> App<'a> {
@@ -206,6 +208,13 @@ impl<'a> App<'a> {
         ));
 
         build_material_scene(&mut viewer);
+
+        // Load environment map for IBL (toggled with 'e' key)
+        let env_map_id =
+            viewer
+                .scene_mut()
+                .add_environment_map_from_hdr_path("assets/studio_small_09_4k.hdr");
+        self.env_map_id = Some(env_map_id);
 
         window.request_redraw();
         self.window = Some(window);
@@ -241,21 +250,31 @@ impl<'a> ApplicationHandler for App<'a> {
             _ => {}
         }
 
-        if let Some(app_event) = winit_support::convert_window_event(event) {
-            let viewer = self.viewer.as_mut().unwrap();
-            viewer.handle_event(&app_event);
+        let Some(app_event) = winit_support::convert_window_event(event) else {
+            return;
+        };
+        let viewer = self.viewer.as_mut().unwrap();
+        viewer.handle_event(&app_event);
 
-            if let wgpu_engine::event::Event::KeyboardInput {
-                event: key_event, ..
-            } = &app_event
-            {
-                if matches!(
-                    key_event.logical_key,
-                    wgpu_engine::input::Key::Named(wgpu_engine::input::NamedKey::Escape)
-                ) {
-                    event_loop.exit();
+        let wgpu_engine::event::Event::KeyboardInput {
+            event: key_event, ..
+        } = &app_event
+        else {
+            return;
+        };
+        if key_event.state != ElementState::Pressed || key_event.repeat {
+            return;
+        }
+        match &key_event.logical_key {
+            Key::Named(wgpu_engine::input::NamedKey::Escape) => event_loop.exit(),
+            Key::Character('e') => {
+                if let Some(env_id) = self.env_map_id {
+                    let scene = viewer.scene_mut();
+                    let active = scene.active_environment_map().is_some();
+                    scene.set_active_environment_map(if active { None } else { Some(env_id) });
                 }
             }
+            _ => {}
         }
     }
 
@@ -280,6 +299,7 @@ fn main() {
     let mut app = App {
         window: None,
         viewer: None,
+        env_map_id: None,
     };
 
     event_loop.run_app(&mut app).unwrap();
