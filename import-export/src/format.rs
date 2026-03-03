@@ -967,6 +967,9 @@ impl SerializedAnnotation {
                 divisions: a.divisions,
                 color: rgba_to_array(a.color),
             }),
+            // Reference-based annotations are not serialized — they reference
+            // live scene objects by index/ID that aren't valid after deserialization.
+            Annotation::PointLight(_) | Annotation::SpotLight(_) | Annotation::Normals(_) => None,
         }
     }
 

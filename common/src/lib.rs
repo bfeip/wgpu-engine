@@ -135,6 +135,24 @@ pub fn array_to_vec3(a: [f32; 3]) -> cgmath::Vector3<f32> {
     cgmath::Vector3::new(a[0], a[1], a[2])
 }
 
+/// Computes an orthonormal basis from a direction vector.
+///
+/// Returns `(right, up)` vectors perpendicular to `direction` and to each other.
+/// The input direction does not need to be normalized (it will be internally).
+///
+/// # Panics
+/// Panics if `direction` is a zero vector.
+pub fn orthonormal_basis(direction: Vector3<f32>) -> (Vector3<f32>, Vector3<f32>) {
+    let dir = direction.normalize();
+    let up_hint = if dir.y.abs() > 0.99 {
+        Vector3::new(1.0, 0.0, 0.0)
+    } else {
+        Vector3::new(0.0, 1.0, 0.0)
+    };
+    let right = dir.cross(up_hint).normalize();
+    let up = right.cross(dir).normalize();
+    (right, up)
+}
 
 #[cfg(test)]
 mod tests {
@@ -371,6 +389,59 @@ mod tests {
         assert!((scale.x.abs() - 1.0).abs() < EPSILON);
         assert!((scale.y - 2.0).abs() < EPSILON);
         assert!((scale.z - 3.0).abs() < EPSILON);
+    }
+
+    // ===== orthonormal_basis Tests =====
+
+    #[test]
+    fn test_orthonormal_basis_z_axis() {
+        let dir = Vector3::new(0.0, 0.0, 1.0);
+        let (right, up) = orthonormal_basis(dir);
+
+        // right and up should be perpendicular to dir
+        assert!(right.dot(dir).abs() < EPSILON);
+        assert!(up.dot(dir).abs() < EPSILON);
+        // right and up should be perpendicular to each other
+        assert!(right.dot(up).abs() < EPSILON);
+        // all should be unit vectors
+        assert!((right.magnitude() - 1.0).abs() < EPSILON);
+        assert!((up.magnitude() - 1.0).abs() < EPSILON);
+    }
+
+    #[test]
+    fn test_orthonormal_basis_y_axis() {
+        // Tests the near-Y edge case where we switch the hint vector
+        let dir = Vector3::new(0.0, 1.0, 0.0);
+        let (right, up) = orthonormal_basis(dir);
+
+        assert!(right.dot(dir).abs() < EPSILON);
+        assert!(up.dot(dir).abs() < EPSILON);
+        assert!(right.dot(up).abs() < EPSILON);
+        assert!((right.magnitude() - 1.0).abs() < EPSILON);
+        assert!((up.magnitude() - 1.0).abs() < EPSILON);
+    }
+
+    #[test]
+    fn test_orthonormal_basis_negative_y() {
+        let dir = Vector3::new(0.0, -1.0, 0.0);
+        let (right, up) = orthonormal_basis(dir);
+
+        assert!(right.dot(dir).abs() < EPSILON);
+        assert!(up.dot(dir).abs() < EPSILON);
+        assert!(right.dot(up).abs() < EPSILON);
+    }
+
+    #[test]
+    fn test_orthonormal_basis_arbitrary_direction() {
+        let dir = Vector3::new(1.0, 2.0, 3.0);
+        let (right, up) = orthonormal_basis(dir);
+        let dir_n = dir.normalize();
+
+        assert!(right.dot(dir_n).abs() < EPSILON);
+        assert!(up.dot(dir_n).abs() < EPSILON);
+        assert!(right.dot(up).abs() < EPSILON);
+        assert!((right.magnitude() - 1.0).abs() < EPSILON);
+        assert!((up.magnitude() - 1.0).abs() < EPSILON);
     }
 
     #[test]

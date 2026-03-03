@@ -1,7 +1,7 @@
 use std::{cell::Cell, fs::File, io::BufReader, path::Path};
 
 use anyhow::{Context, Result};
-use cgmath::Point3;
+use cgmath::{InnerSpace, Matrix4, Point3, Transform, Vector3};
 
 use crate::common::{Aabb, ConvexPolyhedron, Ray};
 
@@ -780,6 +780,55 @@ impl Mesh {
         )
     }
 
+    /// Creates a cone mesh with the apex at the given point, extending along a direction.
+    ///
+    /// This is a convenience wrapper around [`Mesh::cone`] that orients the cone
+    /// so the apex is at `apex` and the base extends `height` units along `direction`.
+    ///
+    /// # Arguments
+    /// * `apex` - Position of the cone tip
+    /// * `direction` - Direction from apex toward the base (will be normalized)
+    /// * `radius` - Radius of the base
+    /// * `height` - Height of the cone (distance from apex to base along direction)
+    /// * `segments` - Number of segments around the circumference (minimum 3)
+    /// * `capped` - Whether to include the base cap face
+    pub fn cone_directed(
+        apex: Point3<f32>,
+        direction: Vector3<f32>,
+        radius: f32,
+        height: f32,
+        segments: u32,
+        capped: bool,
+        primitive_type: PrimitiveType,
+    ) -> Self {
+        let dir = direction.normalize();
+
+        // Build rotation: the default cone has apex at +Y and base at -Y.
+        // We want apex at `apex` with base extending along `direction`.
+        // So -Y (base direction) must map to +dir, meaning +Y maps to -dir.
+        let neg_dir = -dir;
+        let (right, up) = crate::common::orthonormal_basis(neg_dir);
+
+        // Rotation matrix: maps (X, Y, Z) -> (right, -dir, up)
+        #[rustfmt::skip]
+        let rotation = Matrix4::new(
+            right.x,   neg_dir.x, up.x, 0.0,
+            right.y,   neg_dir.y, up.y, 0.0,
+            right.z,   neg_dir.z, up.z, 0.0,
+            0.0,       0.0,       0.0,  1.0,
+        );
+
+        // The default cone has apex at y = +half_height.
+        // After rotation, +Y maps to -dir, so apex is at -dir * half_height.
+        // Translate so the apex lands at the desired point.
+        let half_height = height / 2.0;
+        let apex_offset = neg_dir * half_height;
+        let translation = Vector3::new(apex.x, apex.y, apex.z) - apex_offset;
+        let transform = Matrix4::from_translation(translation) * rotation;
+
+        Self::cone(radius, height, segments, capped, primitive_type).transformed(&transform)
+    }
+
     /// Creates a torus mesh centered at the origin, lying in the XZ plane.
     ///
     /// # Arguments
@@ -1070,6 +1119,52 @@ impl Mesh {
     pub fn add_primitive(&mut self, primitive: MeshPrimitive) {
         self.primitives.push(primitive);
         self.generation += 1;
+    }
+
+    /// Translates all vertex positions by the given offset.
+    pub fn translate(&mut self, offset: Vector3<f32>) {
+        for v in &mut self.vertices {
+            v.position[0] += offset.x;
+            v.position[1] += offset.y;
+            v.position[2] += offset.z;
+        }
+        self.generation += 1;
+        self.cached_bounding.set(None);
+    }
+
+    /// Translates all vertex positions by the given offset (consuming variant).
+    pub fn translated(mut self, offset: Vector3<f32>) -> Self {
+        self.translate(offset);
+        self
+    }
+
+    /// Transforms all vertex positions and normals by a 4x4 matrix.
+    ///
+    /// Positions are transformed as points (affected by translation).
+    /// Normals are transformed by the inverse-transpose of the upper 3x3
+    /// to handle non-uniform scaling correctly.
+    pub fn transform(&mut self, matrix: &Matrix4<f32>) {
+        let normal_matrix = crate::common::compute_normal_matrix(matrix);
+
+        for v in &mut self.vertices {
+            // Transform position as a point
+            let pos = Point3::new(v.position[0], v.position[1], v.position[2]);
+            let transformed = matrix.transform_point(pos);
+            v.position = [transformed.x, transformed.y, transformed.z];
+
+            // Transform normal by inverse-transpose
+            let normal = Vector3::new(v.normal[0], v.normal[1], v.normal[2]);
+            let transformed_normal = (normal_matrix * normal).normalize();
+            v.normal = [transformed_normal.x, transformed_normal.y, transformed_normal.z];
+        }
+        self.generation += 1;
+        self.cached_bounding.set(None);
+    }
+
+    /// Transforms all vertex positions and normals by a 4x4 matrix (consuming variant).
+    pub fn transformed(mut self, matrix: &Matrix4<f32>) -> Self {
+        self.transform(matrix);
+        self
     }
 
     /// Returns the current generation counter.

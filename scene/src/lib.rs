@@ -14,7 +14,7 @@ mod node;
 mod texture;
 mod tree;
 
-use cgmath::{Matrix4, Point3, Quaternion, SquareMatrix, Vector3};
+use cgmath::{EuclideanSpace, InnerSpace, Matrix4, Point3, Quaternion, SquareMatrix, Vector3};
 use image::DynamicImage;
 use std::collections::HashMap;
 use std::path::Path;
@@ -103,6 +103,9 @@ pub struct Scene {
     /// Annotation manager
     pub annotations: AnnotationManager,
 
+    /// Generation counter for light changes (increments on any light mutation)
+    light_generation: u64,
+
     next_mesh_id: MeshId,
     next_instance_id: InstanceId,
     next_node_id: NodeId,
@@ -137,6 +140,8 @@ impl Scene {
             active_environment_map: None,
 
             annotations: AnnotationManager::new(),
+
+            light_generation: 1,
 
             next_mesh_id: 0,
             next_instance_id: 0,
@@ -552,6 +557,7 @@ impl Scene {
         self.instances.clear();
         self.meshes.clear();
         self.lights.clear();
+        self.light_generation += 1;
         self.textures.clear();
         self.environment_maps.clear();
         self.active_environment_map = None;
@@ -582,6 +588,7 @@ impl Scene {
         self.instances.clear();
         self.meshes.clear();
         self.lights.clear();
+        self.light_generation += 1;
         self.textures.clear();
         self.environment_maps.clear();
         self.active_environment_map = None;
@@ -602,6 +609,13 @@ impl Scene {
         self.next_environment_map_id = 0;
     }
 
+    /// Returns the current light generation counter.
+    ///
+    /// This increments whenever lights are modified through Scene methods.
+    pub fn light_generation(&self) -> u64 {
+        self.light_generation
+    }
+
     /// Sets up default lighting for the scene if no lights are present.
     ///
     /// Adds a single white point light at position (3, 3, 3) with intensity 1.0.
@@ -613,6 +627,7 @@ impl Scene {
                 crate::common::RgbaColor { r: 1.0, g: 1.0, b: 1.0, a: 1.0 },
                 1.0,
             ));
+            self.light_generation += 1;
         }
     }
 
@@ -638,6 +653,46 @@ impl Scene {
     /// # Returns
     /// The number of annotations that were reified.
     pub fn reify_annotations(&mut self) -> usize {
+        // Check for stale reference-based annotations and mark them for re-reification.
+        let stale_ids: Vec<AnnotationId> = self
+            .annotations
+            .iter()
+            .filter(|a| a.is_reified())
+            .filter(|a| match a {
+                Annotation::PointLight(pl) => {
+                    pl.reified_generation != Some(self.light_generation)
+                }
+                Annotation::SpotLight(sl) => {
+                    sl.reified_generation != Some(self.light_generation)
+                }
+                Annotation::Normals(normals) => {
+                    let current_gen = self
+                        .nodes
+                        .get(&normals.target_node_id)
+                        .and_then(|n| n.instance())
+                        .and_then(|iid| self.instances.get(&iid))
+                        .and_then(|inst| self.meshes.get(&inst.mesh))
+                        .map(|m| m.generation());
+                    normals.reified_generation != current_gen
+                }
+                _ => false,
+            })
+            .map(|a| a.id())
+            .collect();
+
+        // Remove old scene nodes for stale annotations
+        for &id in &stale_ids {
+            if let Some(annotation) = self.annotations.get(id) {
+                if let Some(old_node_id) = annotation.node_id() {
+                    self.remove_node(old_node_id);
+                }
+            }
+            if let Some(ann) = self.annotations.get_mut(id) {
+                ann.meta_mut().node_id = None;
+            }
+        }
+
+        // Now reify all unreified annotations (including freshly un-reified stale ones)
         let unreified_ids: Vec<AnnotationId> = self
             .annotations
             .iter_unreified()
@@ -697,7 +752,115 @@ impl Scene {
                 let data = grid.to_mesh_data();
                 self.create_annotation_node(root_id, data)
             }
+            Annotation::PointLight(pl) => {
+                let light = self.lights.get(pl.light_index)?;
+                if let Light::Point { position, color, .. } = light {
+                    let data = pl.to_mesh_data(Point3::from_vec(*position), *color);
+                    self.create_annotation_node(root_id, data)
+                } else {
+                    return None;
+                }
+            }
+            Annotation::SpotLight(sl) => {
+                let light = self.lights.get(sl.light_index)?;
+                if let Light::Spot {
+                    position,
+                    direction,
+                    color,
+                    inner_cone_angle,
+                    outer_cone_angle,
+                    ..
+                } = light
+                {
+                    let meshes = sl.to_mesh_data(
+                        Point3::from_vec(*position),
+                        *direction,
+                        *color,
+                        *inner_cone_angle,
+                        *outer_cone_angle,
+                    );
+                    let parent = self
+                        .add_default_node(Some(root_id), sl.meta.name.clone())
+                        .ok()?;
+                    for data in meshes {
+                        self.create_annotation_node(parent, data);
+                    }
+                    Some(parent)
+                } else {
+                    return None;
+                }
+            }
+            Annotation::Normals(normals) => {
+                let node = self.nodes.get(&normals.target_node_id)?;
+                let instance_id = node.instance()?;
+                let instance = self.instances.get(&instance_id)?;
+                let mesh = self.meshes.get(&instance.mesh)?;
+                let world_transform = self.nodes_transform(normals.target_node_id);
+                let normal_matrix =
+                    crate::common::compute_normal_matrix(&world_transform);
+
+                let world_vertices: Vec<(Point3<f32>, Vector3<f32>)> = mesh
+                    .vertices()
+                    .iter()
+                    .map(|v| {
+                        let local_pos =
+                            Point3::new(v.position[0], v.position[1], v.position[2]);
+                        let local_normal =
+                            Vector3::new(v.normal[0], v.normal[1], v.normal[2]);
+
+                        let world_pos = cgmath::Transform::transform_point(
+                            &world_transform,
+                            local_pos,
+                        );
+                        let world_normal = (normal_matrix * local_normal).normalize();
+
+                        (world_pos, world_normal)
+                    })
+                    .collect();
+
+                let meshes = normals.to_mesh_data(&world_vertices);
+                if meshes.is_empty() {
+                    return None;
+                }
+                if meshes.len() == 1 {
+                    self.create_annotation_node(
+                        root_id,
+                        meshes.into_iter().next().unwrap(),
+                    )
+                } else {
+                    let parent = self
+                        .add_default_node(
+                            Some(root_id),
+                            normals.meta.name.clone(),
+                        )
+                        .ok()?;
+                    for data in meshes {
+                        self.create_annotation_node(parent, data);
+                    }
+                    Some(parent)
+                }
+            }
         }?;
+
+        // Store generation for reference-based annotations
+        match self.annotations.get_mut(id) {
+            Some(Annotation::PointLight(pl)) => {
+                pl.reified_generation = Some(self.light_generation);
+            }
+            Some(Annotation::SpotLight(sl)) => {
+                sl.reified_generation = Some(self.light_generation);
+            }
+            Some(Annotation::Normals(normals)) => {
+                normals.reified_generation = self
+                    .nodes
+                    .get(&normals.target_node_id)
+                    .and_then(|n| n.instance())
+                    .and_then(|iid| self.instances.get(&iid))
+                    .and_then(|inst| self.meshes.get(&inst.mesh))
+                    .map(|m| m.generation());
+            }
+            _ => {}
+        }
 
         if let Some(annotation) = self.annotations.get_mut(id) {
             annotation.meta_mut().node_id = Some(node_id);

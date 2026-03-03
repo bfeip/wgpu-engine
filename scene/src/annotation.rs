@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use cgmath::{Point3, Vector3};
+use cgmath::{EuclideanSpace, Point3, Vector3};
 
 use super::{Material, Mesh, MeshPrimitive, NodeId, PrimitiveType, Vertex};
 use crate::common::RgbaColor;
@@ -346,6 +346,191 @@ impl GridAnnotation {
     }
 }
 
+/// Visualization of a point light as a wireframe sphere.
+///
+/// Stores a reference to a light by index. Geometry is built during reification
+/// from the live light data using [`Mesh::sphere`] with [`PrimitiveType::LineList`].
+#[derive(Debug, Clone)]
+pub struct PointLightAnnotation {
+    pub meta: AnnotationMeta,
+    /// Index into `scene.lights`
+    pub light_index: usize,
+    /// Radius of the indicator wireframe
+    pub radius: f32,
+    /// Number of segments for the wireframe sphere
+    pub segments: u32,
+    /// Generation of the light data when last reified
+    pub reified_generation: Option<u64>,
+}
+
+impl PointLightAnnotation {
+    /// Creates wireframe sphere geometry for the point light visualization.
+    ///
+    /// The sphere is centered at `position` using the light's `color`.
+    pub fn to_mesh_data(&self, position: Point3<f32>, color: RgbaColor) -> AnnotationMeshData {
+        let mesh = Mesh::sphere(self.radius, self.segments, self.segments / 2, PrimitiveType::LineList)
+            .translated(position.to_vec());
+
+        AnnotationMeshData {
+            mesh,
+            material: Material::new().with_line_color(color),
+            name: self.meta.name.clone(),
+        }
+    }
+}
+
+/// Visualization of a spot light as a cone outline.
+///
+/// Stores a reference to a light by index. Geometry is built during reification
+/// from the live light data using [`Mesh::cone_directed`] with [`PrimitiveType::LineList`].
+#[derive(Debug, Clone)]
+pub struct SpotLightAnnotation {
+    pub meta: AnnotationMeta,
+    /// Index into `scene.lights`
+    pub light_index: usize,
+    /// Length of the cone visualization
+    pub length: f32,
+    /// Number of segments forming the cone circumference
+    pub segments: u32,
+    /// Generation of the light data when last reified
+    pub reified_generation: Option<u64>,
+}
+
+impl SpotLightAnnotation {
+    /// Creates cone outline geometry for the spot light visualization.
+    ///
+    /// Returns 2 meshes: outer cone (full color) and inner cone (dimmer).
+    pub fn to_mesh_data(
+        &self,
+        position: Point3<f32>,
+        direction: Vector3<f32>,
+        color: RgbaColor,
+        inner_cone_angle: f32,
+        outer_cone_angle: f32,
+    ) -> Vec<AnnotationMeshData> {
+        let cones = [
+            (outer_cone_angle, color, "SpotLight_Outer"),
+            (
+                inner_cone_angle,
+                RgbaColor {
+                    r: color.r * 0.5,
+                    g: color.g * 0.5,
+                    b: color.b * 0.5,
+                    a: color.a,
+                },
+                "SpotLight_Inner",
+            ),
+        ];
+
+        cones
+            .iter()
+            .map(|&(cone_angle, cone_color, name)| {
+                let cone_radius = self.length * cone_angle.tan();
+                let mesh = Mesh::cone_directed(
+                    position,
+                    direction,
+                    cone_radius,
+                    self.length,
+                    self.segments,
+                    false,
+                    PrimitiveType::LineList,
+                );
+
+                AnnotationMeshData {
+                    mesh,
+                    material: Material::new().with_line_color(cone_color),
+                    name: Some(name.to_string()),
+                }
+            })
+            .collect()
+    }
+}
+
+/// Visualization of vertex normals as short lines.
+///
+/// Stores a reference to a node by ID. Geometry is built during reification
+/// by looking up the node's instance mesh and world transform.
+#[derive(Debug, Clone)]
+pub struct NormalsAnnotation {
+    pub meta: AnnotationMeta,
+    /// Node whose instance's mesh normals to visualize
+    pub target_node_id: NodeId,
+    /// Color for the normal lines
+    pub color: RgbaColor,
+    /// Length of each normal line
+    pub length: f32,
+    /// Generation of the mesh data when last reified
+    pub reified_generation: Option<u64>,
+}
+
+/// Maximum normals per mesh chunk (constrained by u16 index limit).
+/// Each normal uses 2 vertices, so 32,000 vertices = 16,000 normals.
+const MAX_NORMALS_PER_CHUNK: usize = 16_000;
+
+impl NormalsAnnotation {
+    /// Creates normal visualization geometry from world-space vertex data.
+    ///
+    /// Each entry in `vertices` is a (position, normal) pair in world space.
+    /// Splits into multiple meshes if the vertex count exceeds u16 index limits.
+    pub fn to_mesh_data(
+        &self,
+        vertices: &[(Point3<f32>, Vector3<f32>)],
+    ) -> Vec<AnnotationMeshData> {
+        if vertices.is_empty() {
+            return Vec::new();
+        }
+
+        vertices
+            .chunks(MAX_NORMALS_PER_CHUNK)
+            .enumerate()
+            .map(|(chunk_idx, chunk)| {
+                let mut mesh_vertices = Vec::with_capacity(chunk.len() * 2);
+                let mut indices = Vec::with_capacity(chunk.len() * 2);
+
+                for (i, (pos, normal)) in chunk.iter().enumerate() {
+                    let end = pos + normal * self.length;
+                    mesh_vertices.push(Vertex {
+                        position: (*pos).into(),
+                        tex_coords: [0.0; 3],
+                        normal: [0.0, 1.0, 0.0],
+                    });
+                    mesh_vertices.push(Vertex {
+                        position: end.into(),
+                        tex_coords: [0.0; 3],
+                        normal: [0.0, 1.0, 0.0],
+                    });
+                    indices.push((i * 2) as u16);
+                    indices.push((i * 2 + 1) as u16);
+                }
+
+                let primitives = vec![MeshPrimitive {
+                    primitive_type: PrimitiveType::LineList,
+                    indices,
+                }];
+
+                let name = if chunk_idx == 0 {
+                    self.meta
+                        .name
+                        .clone()
+                        .or_else(|| Some("Normals".to_string()))
+                } else {
+                    Some(format!(
+                        "{}_{}",
+                        self.meta.name.as_deref().unwrap_or("Normals"),
+                        chunk_idx
+                    ))
+                };
+
+                AnnotationMeshData {
+                    mesh: Mesh::from_raw(mesh_vertices, primitives),
+                    material: Material::new().with_line_color(self.color),
+                    name,
+                }
+            })
+            .collect()
+    }
+}
+
 /// Enum encompassing all annotation types
 #[derive(Debug, Clone)]
 pub enum Annotation {
@@ -355,6 +540,9 @@ pub enum Annotation {
     Axes(AxesAnnotation),
     Box(BoxAnnotation),
     Grid(GridAnnotation),
+    PointLight(PointLightAnnotation),
+    SpotLight(SpotLightAnnotation),
+    Normals(NormalsAnnotation),
 }
 
 impl Annotation {
@@ -367,6 +555,9 @@ impl Annotation {
             Annotation::Axes(a) => &a.meta,
             Annotation::Box(a) => &a.meta,
             Annotation::Grid(a) => &a.meta,
+            Annotation::PointLight(a) => &a.meta,
+            Annotation::SpotLight(a) => &a.meta,
+            Annotation::Normals(a) => &a.meta,
         }
     }
 
@@ -379,6 +570,9 @@ impl Annotation {
             Annotation::Axes(a) => &mut a.meta,
             Annotation::Box(a) => &mut a.meta,
             Annotation::Grid(a) => &mut a.meta,
+            Annotation::PointLight(a) => &mut a.meta,
+            Annotation::SpotLight(a) => &mut a.meta,
+            Annotation::Normals(a) => &mut a.meta,
         }
     }
 
@@ -588,6 +782,69 @@ impl AnnotationManager {
             size,
             divisions,
             color,
+        });
+        self.annotations.insert(id, annotation);
+        id
+    }
+
+    /// Adds a point light annotation (data only, not yet reified).
+    ///
+    /// Geometry is built during reification from the light at `light_index`.
+    pub fn add_point_light(
+        &mut self,
+        light_index: usize,
+        radius: f32,
+        segments: u32,
+    ) -> AnnotationId {
+        let id = self.next_id();
+        let annotation = Annotation::PointLight(PointLightAnnotation {
+            meta: AnnotationMeta::new(id),
+            light_index,
+            radius,
+            segments,
+            reified_generation: None,
+        });
+        self.annotations.insert(id, annotation);
+        id
+    }
+
+    /// Adds a spot light annotation (data only, not yet reified).
+    ///
+    /// Geometry is built during reification from the light at `light_index`.
+    pub fn add_spot_light(
+        &mut self,
+        light_index: usize,
+        length: f32,
+        segments: u32,
+    ) -> AnnotationId {
+        let id = self.next_id();
+        let annotation = Annotation::SpotLight(SpotLightAnnotation {
+            meta: AnnotationMeta::new(id),
+            light_index,
+            length,
+            segments,
+            reified_generation: None,
+        });
+        self.annotations.insert(id, annotation);
+        id
+    }
+
+    /// Adds a normals annotation (data only, not yet reified).
+    ///
+    /// Geometry is built during reification from the mesh of the node at `node_id`.
+    pub fn add_normals(
+        &mut self,
+        node_id: NodeId,
+        color: RgbaColor,
+        length: f32,
+    ) -> AnnotationId {
+        let id = self.next_id();
+        let annotation = Annotation::Normals(NormalsAnnotation {
+            meta: AnnotationMeta::new(id),
+            target_node_id: node_id,
+            color,
+            length,
+            reified_generation: None,
         });
         self.annotations.insert(id, annotation);
         id
