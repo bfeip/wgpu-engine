@@ -10,14 +10,14 @@ use winit::{
 
 use wgpu_engine::common::RgbaColor;
 use wgpu_engine::input::{ElementState, Key};
-use wgpu_engine::scene::{EnvironmentMapId, Light, Material, MaterialFlags, Mesh};
+use wgpu_engine::scene::{EnvironmentMapId, Light, Material, MaterialFlags, Mesh, PrimitiveType};
 use wgpu_engine::{Viewer, winit_support};
 
 const SPHERE_RADIUS: f32 = 0.4;
 const SPHERE_SEGMENTS: u32 = 32;
 const SPHERE_RINGS: u32 = 16;
 const COLS: usize = 5;
-const ROWS: usize = 5;
+const ROWS: usize = 7;
 const SPACING: f32 = 1.2;
 
 /// Compute the grid position for a (row, col) cell, centered at the origin.
@@ -50,7 +50,12 @@ fn build_material_scene(viewer: &mut Viewer) {
     //));
 
     // Shared sphere mesh for all instances
-    let mesh_id = scene.add_mesh(Mesh::sphere(SPHERE_RADIUS, SPHERE_SEGMENTS, SPHERE_RINGS));
+    let mesh_id = scene.add_mesh(Mesh::sphere(
+        SPHERE_RADIUS,
+        SPHERE_SEGMENTS,
+        SPHERE_RINGS,
+        PrimitiveType::TriangleList,
+    ));
 
     let identity_rot = Quaternion::new(1.0, 0.0, 0.0, 0.0);
     let unit_scale = Vector3::new(1.0, 1.0, 1.0);
@@ -171,6 +176,70 @@ fn build_material_scene(viewer: &mut Viewer) {
                 mat_id,
                 Some(name.to_string()),
                 grid_position(4, col),
+                identity_rot,
+                unit_scale,
+            )
+            .unwrap();
+    }
+
+    // Row 5: Wireframe spheres (lines) with various colors
+    let line_mesh_id = scene.add_mesh(Mesh::sphere(
+        SPHERE_RADIUS,
+        SPHERE_SEGMENTS,
+        SPHERE_RINGS,
+        PrimitiveType::LineList,
+    ));
+    let line_colors = [
+        ("Lines Red", RgbaColor::RED),
+        ("Lines Green", RgbaColor::GREEN),
+        ("Lines Blue", RgbaColor::BLUE),
+        ("Lines White", RgbaColor::WHITE),
+        ("Lines Yellow", RgbaColor::YELLOW),
+    ];
+    for (col, (name, color)) in line_colors.iter().enumerate() {
+        let mat = Material::new()
+            .with_line_color(*color)
+            .with_flags(MaterialFlags::DO_NOT_LIGHT);
+        let mat_id = scene.add_material(mat);
+        scene
+            .add_instance_node(
+                None,
+                line_mesh_id,
+                mat_id,
+                Some(name.to_string()),
+                grid_position(5, col),
+                identity_rot,
+                unit_scale,
+            )
+            .unwrap();
+    }
+
+    // Row 6: Point spheres with various colors
+    let point_mesh_id = scene.add_mesh(Mesh::sphere(
+        SPHERE_RADIUS,
+        SPHERE_SEGMENTS,
+        SPHERE_RINGS,
+        PrimitiveType::PointList,
+    ));
+    let point_colors = [
+        ("Points Red", RgbaColor::RED),
+        ("Points Green", RgbaColor::GREEN),
+        ("Points Blue", RgbaColor::BLUE),
+        ("Points White", RgbaColor::WHITE),
+        ("Points Yellow", RgbaColor::YELLOW),
+    ];
+    for (col, (name, color)) in point_colors.iter().enumerate() {
+        let mat = Material::new()
+            .with_point_color(*color)
+            .with_flags(MaterialFlags::DO_NOT_LIGHT);
+        let mat_id = scene.add_material(mat);
+        scene
+            .add_instance_node(
+                None,
+                point_mesh_id,
+                mat_id,
+                Some(name.to_string()),
+                grid_position(6, col),
                 identity_rot,
                 unit_scale,
             )

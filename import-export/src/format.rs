@@ -1791,7 +1791,7 @@ mod tests {
         let mut scene = Scene::new();
 
         // Add a mesh
-        let mesh = Mesh::cube(1.0);
+        let mesh = Mesh::cube(1.0, PrimitiveType::TriangleList);
         let mesh_id = scene.add_mesh(mesh);
 
         // Add a material
@@ -2047,7 +2047,7 @@ mod tests {
         let mut scene = Scene::new();
 
         // Add a regular mesh/node
-        let mesh = Mesh::cube(1.0);
+        let mesh = Mesh::cube(1.0, PrimitiveType::TriangleList);
         let mesh_id = scene.add_mesh(mesh);
         let mat_id = scene.add_material(Material::new());
         let _node_id = scene.add_instance_node(

@@ -65,6 +65,7 @@ Stretch:
 - Better WASM API (a redesign of the react demo might be better)
 - Text rendering
   - https://github.com/mooman219/fontdue
+  - https://github.com/pop-os/cosmic-text
   - https://github.com/nical/lyon
 
 ### Material shader re-design

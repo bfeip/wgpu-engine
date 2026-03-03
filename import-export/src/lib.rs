@@ -918,12 +918,12 @@ pub fn save_async(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wgpu_engine_scene::{Material, Mesh};
+    use wgpu_engine_scene::{Material, Mesh, PrimitiveType};
     use cgmath::{Point3, Quaternion, Vector3};
 
     fn create_test_scene() -> Scene {
         let mut scene = Scene::new();
-        let mesh = Mesh::cube(1.0);
+        let mesh = Mesh::cube(1.0, PrimitiveType::TriangleList);
         let mesh_id = scene.add_mesh(mesh);
         let mat_id = scene.add_material(Material::new());
         scene

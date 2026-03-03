@@ -244,11 +244,11 @@ impl Mesh {
     ///
     /// # Example
     /// ```
-    /// use wgpu_engine::scene::Mesh;
-    /// let cube = Mesh::box_mesh(1.0, 1.0, 1.0);
-    /// let rectangular = Mesh::box_mesh(2.0, 1.0, 0.5);
+    /// use wgpu_engine::scene::{Mesh, PrimitiveType};
+    /// let cube = Mesh::box_mesh(1.0, 1.0, 1.0, PrimitiveType::TriangleList);
+    /// let rectangular = Mesh::box_mesh(2.0, 1.0, 0.5, PrimitiveType::TriangleList);
     /// ```
-    pub fn box_mesh(width: f32, height: f32, depth: f32) -> Self {
+    pub fn box_mesh(width: f32, height: f32, depth: f32, primitive_type: PrimitiveType) -> Self {
         struct Face {
             normal: [f32; 3],
             corners: [[f32; 3]; 4],
@@ -289,11 +289,8 @@ impl Mesh {
         let uvs: [[f32; 2]; 4] = [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]];
 
         let mut vertices = Vec::with_capacity(24);
-        let mut indices = Vec::with_capacity(36);
 
         for face in &faces {
-            let base_index = vertices.len() as MeshIndex;
-
             for (i, pos) in face.corners.iter().enumerate() {
                 vertices.push(Vertex {
                     position: *pos,
@@ -301,22 +298,45 @@ impl Mesh {
                     normal: face.normal,
                 });
             }
-
-            // Two triangles per face
-            indices.extend_from_slice(&[
-                base_index,
-                base_index + 1,
-                base_index + 2,
-                base_index,
-                base_index + 2,
-                base_index + 3,
-            ]);
         }
+
+        let indices = match primitive_type {
+            PrimitiveType::TriangleList => {
+                let mut indices = Vec::with_capacity(36);
+                for face_idx in 0..6 {
+                    let base = (face_idx * 4) as MeshIndex;
+                    indices.extend_from_slice(&[
+                        base,
+                        base + 1,
+                        base + 2,
+                        base,
+                        base + 2,
+                        base + 3,
+                    ]);
+                }
+                indices
+            }
+            PrimitiveType::LineList => {
+                let mut indices = Vec::with_capacity(48);
+                for face_idx in 0..6 {
+                    let base = (face_idx * 4) as MeshIndex;
+                    // 4 edges per face
+                    indices.extend_from_slice(&[
+                        base, base + 1,
+                        base + 1, base + 2,
+                        base + 2, base + 3,
+                        base + 3, base,
+                    ]);
+                }
+                indices
+            }
+            PrimitiveType::PointList => (0..vertices.len() as MeshIndex).collect(),
+        };
 
         Self::from_raw(
             vertices,
             vec![MeshPrimitive {
-                primitive_type: PrimitiveType::TriangleList,
+                primitive_type,
                 indices,
             }],
         )
@@ -328,8 +348,8 @@ impl Mesh {
     ///
     /// # Arguments
     /// * `size` - The length of each edge
-    pub fn cube(size: f32) -> Self {
-        Self::box_mesh(size, size, size)
+    pub fn cube(size: f32, primitive_type: PrimitiveType) -> Self {
+        Self::box_mesh(size, size, size, primitive_type)
     }
 
     /// Creates a UV sphere mesh centered at the origin.
@@ -341,17 +361,16 @@ impl Mesh {
     ///
     /// # Example
     /// ```
-    /// use wgpu_engine::scene::Mesh;
-    /// let sphere = Mesh::sphere(1.0, 32, 16);
+    /// use wgpu_engine::scene::{Mesh, PrimitiveType};
+    /// let sphere = Mesh::sphere(1.0, 32, 16, PrimitiveType::TriangleList);
     /// ```
-    pub fn sphere(radius: f32, segments: u32, rings: u32) -> Self {
+    pub fn sphere(radius: f32, segments: u32, rings: u32, primitive_type: PrimitiveType) -> Self {
         use std::f32::consts::PI;
 
         let segments = segments.max(3);
         let rings = rings.max(2);
 
         let mut vertices = Vec::new();
-        let mut indices = Vec::new();
 
         // Generate vertices
         for ring in 0..=rings {
@@ -380,29 +399,57 @@ impl Mesh {
 
         // Generate indices
         let verts_per_ring = segments + 1;
-        for ring in 0..rings {
-            for seg in 0..segments {
-                let current = ring * verts_per_ring + seg;
-                let next = current + verts_per_ring;
+        let indices = match primitive_type {
+            PrimitiveType::TriangleList => {
+                let mut indices = Vec::new();
+                for ring in 0..rings {
+                    for seg in 0..segments {
+                        let current = ring * verts_per_ring + seg;
+                        let next = current + verts_per_ring;
 
-                // Skip degenerate triangles at poles
-                if ring != 0 {
-                    indices.push(current as MeshIndex);
-                    indices.push((current + 1) as MeshIndex);
-                    indices.push(next as MeshIndex);
+                        // Skip degenerate triangles at poles
+                        if ring != 0 {
+                            indices.push(current as MeshIndex);
+                            indices.push((current + 1) as MeshIndex);
+                            indices.push(next as MeshIndex);
+                        }
+                        if ring != rings - 1 {
+                            indices.push((current + 1) as MeshIndex);
+                            indices.push((next + 1) as MeshIndex);
+                            indices.push(next as MeshIndex);
+                        }
+                    }
                 }
-                if ring != rings - 1 {
-                    indices.push((current + 1) as MeshIndex);
-                    indices.push((next + 1) as MeshIndex);
-                    indices.push(next as MeshIndex);
-                }
+                indices
             }
-        }
+            PrimitiveType::LineList => {
+                let mut indices = Vec::new();
+                for ring in 0..=rings {
+                    for seg in 0..segments {
+                        let current = ring * verts_per_ring + seg;
+                        // Horizontal line along ring
+                        indices.push(current as MeshIndex);
+                        indices.push((current + 1) as MeshIndex);
+                    }
+                }
+                for ring in 0..rings {
+                    for seg in 0..=segments {
+                        let current = ring * verts_per_ring + seg;
+                        let next = current + verts_per_ring;
+                        // Vertical line between rings
+                        indices.push(current as MeshIndex);
+                        indices.push(next as MeshIndex);
+                    }
+                }
+                indices
+            }
+            PrimitiveType::PointList => (0..vertices.len() as MeshIndex).collect(),
+        };
 
         Self::from_raw(
             vertices,
             vec![MeshPrimitive {
-                primitive_type: PrimitiveType::TriangleList,
+                primitive_type,
                 indices,
             }],
         )
@@ -418,19 +465,24 @@ impl Mesh {
     ///
     /// # Example
     /// ```
-    /// use wgpu_engine::scene::Mesh;
-    /// let cylinder = Mesh::cylinder(0.5, 2.0, 32, true);
+    /// use wgpu_engine::scene::{Mesh, PrimitiveType};
+    /// let cylinder = Mesh::cylinder(0.5, 2.0, 32, true, PrimitiveType::TriangleList);
     /// ```
-    pub fn cylinder(radius: f32, height: f32, segments: u32, capped: bool) -> Self {
+    pub fn cylinder(
+        radius: f32,
+        height: f32,
+        segments: u32,
+        capped: bool,
+        primitive_type: PrimitiveType,
+    ) -> Self {
         use std::f32::consts::PI;
 
         let segments = segments.max(3);
         let half_height = height / 2.0;
 
         let mut vertices = Vec::new();
-        let mut indices = Vec::new();
 
-        // Side vertices (two rings)
+        // Side vertices (two rings): bottom at even indices, top at odd
         for i in 0..=segments {
             let theta = 2.0 * PI * i as f32 / segments as f32;
             let cos_theta = theta.cos();
@@ -455,23 +507,11 @@ impl Mesh {
             });
         }
 
-        // Side indices
-        for i in 0..segments {
-            let base = i * 2;
-            indices.extend_from_slice(&[
-                base as MeshIndex,
-                (base + 1) as MeshIndex,
-                (base + 3) as MeshIndex,
-                base as MeshIndex,
-                (base + 3) as MeshIndex,
-                (base + 2) as MeshIndex,
-            ]);
-        }
+        let side_vertex_count = vertices.len();
 
         // Caps
         if capped {
             // Top cap center
-            let top_center_idx = vertices.len() as MeshIndex;
             vertices.push(Vertex {
                 position: [0.0, half_height, 0.0],
                 tex_coords: [0.5, 0.5, 0.0],
@@ -491,18 +531,7 @@ impl Mesh {
                 });
             }
 
-            // Top cap indices
-            let top_ring_start = top_center_idx + 1;
-            for i in 0..segments as MeshIndex {
-                indices.extend_from_slice(&[
-                    top_center_idx,
-                    top_ring_start + i,
-                    top_ring_start + i + 1,
-                ]);
-            }
-
             // Bottom cap center
-            let bottom_center_idx = vertices.len() as MeshIndex;
             vertices.push(Vertex {
                 position: [0.0, -half_height, 0.0],
                 tex_coords: [0.5, 0.5, 0.0],
@@ -521,22 +550,88 @@ impl Mesh {
                     normal: [0.0, -1.0, 0.0],
                 });
             }
-
-            // Bottom cap indices (winding reversed)
-            let bottom_ring_start = bottom_center_idx + 1;
-            for i in 0..segments as MeshIndex {
-                indices.extend_from_slice(&[
-                    bottom_center_idx,
-                    bottom_ring_start + i + 1,
-                    bottom_ring_start + i,
-                ]);
-            }
         }
+
+        let indices = match primitive_type {
+            PrimitiveType::TriangleList => {
+                let mut indices = Vec::new();
+                // Side indices
+                for i in 0..segments {
+                    let base = i * 2;
+                    indices.extend_from_slice(&[
+                        base as MeshIndex,
+                        (base + 1) as MeshIndex,
+                        (base + 3) as MeshIndex,
+                        base as MeshIndex,
+                        (base + 3) as MeshIndex,
+                        (base + 2) as MeshIndex,
+                    ]);
+                }
+                if capped {
+                    let top_center_idx = side_vertex_count as MeshIndex;
+                    let top_ring_start = top_center_idx + 1;
+                    for i in 0..segments as MeshIndex {
+                        indices.extend_from_slice(&[
+                            top_center_idx,
+                            top_ring_start + i,
+                            top_ring_start + i + 1,
+                        ]);
+                    }
+                    let bottom_center_idx = top_ring_start + segments as MeshIndex + 1;
+                    let bottom_ring_start = bottom_center_idx + 1;
+                    for i in 0..segments as MeshIndex {
+                        indices.extend_from_slice(&[
+                            bottom_center_idx,
+                            bottom_ring_start + i + 1,
+                            bottom_ring_start + i,
+                        ]);
+                    }
+                }
+                indices
+            }
+            PrimitiveType::LineList => {
+                let mut indices = Vec::new();
+                // Bottom ring
+                for i in 0..segments {
+                    let base = i * 2;
+                    indices.push(base as MeshIndex);
+                    indices.push((base + 2) as MeshIndex);
+                }
+                // Top ring
+                for i in 0..segments {
+                    let base = i * 2 + 1;
+                    indices.push(base as MeshIndex);
+                    indices.push((base + 2) as MeshIndex);
+                }
+                // Vertical lines
+                for i in 0..segments {
+                    let base = i * 2;
+                    indices.push(base as MeshIndex);
+                    indices.push((base + 1) as MeshIndex);
+                }
+                if capped {
+                    let top_center_idx = side_vertex_count as MeshIndex;
+                    let top_ring_start = top_center_idx + 1;
+                    for i in 0..segments as MeshIndex {
+                        indices.push(top_center_idx);
+                        indices.push(top_ring_start + i);
+                    }
+                    let bottom_center_idx = top_ring_start + segments as MeshIndex + 1;
+                    let bottom_ring_start = bottom_center_idx + 1;
+                    for i in 0..segments as MeshIndex {
+                        indices.push(bottom_center_idx);
+                        indices.push(bottom_ring_start + i);
+                    }
+                }
+                indices
+            }
+            PrimitiveType::PointList => (0..vertices.len() as MeshIndex).collect(),
+        };
 
         Self::from_raw(
             vertices,
             vec![MeshPrimitive {
-                primitive_type: PrimitiveType::TriangleList,
+                primitive_type,
                 indices,
             }],
         )
@@ -552,17 +647,22 @@ impl Mesh {
     ///
     /// # Example
     /// ```
-    /// use wgpu_engine::scene::Mesh;
-    /// let cone = Mesh::cone(0.5, 1.0, 32, true);
+    /// use wgpu_engine::scene::{Mesh, PrimitiveType};
+    /// let cone = Mesh::cone(0.5, 1.0, 32, true, PrimitiveType::TriangleList);
     /// ```
-    pub fn cone(radius: f32, height: f32, segments: u32, capped: bool) -> Self {
+    pub fn cone(
+        radius: f32,
+        height: f32,
+        segments: u32,
+        capped: bool,
+        primitive_type: PrimitiveType,
+    ) -> Self {
         use std::f32::consts::PI;
 
         let segments = segments.max(3);
         let half_height = height / 2.0;
 
         let mut vertices = Vec::new();
-        let mut indices = Vec::new();
 
         // Calculate the normal slope for the cone sides
         let slope = radius / height;
@@ -572,7 +672,7 @@ impl Mesh {
         // Apex vertex (duplicated for each segment for proper normals)
         let apex_y = half_height;
 
-        // Side faces
+        // Side faces: base at even indices, apex at odd
         for i in 0..=segments {
             let theta = 2.0 * PI * i as f32 / segments as f32;
             let cos_theta = theta.cos();
@@ -596,19 +696,10 @@ impl Mesh {
             });
         }
 
-        // Side indices
-        for i in 0..segments {
-            let base = i * 2;
-            indices.extend_from_slice(&[
-                base as MeshIndex,
-                (base + 1) as MeshIndex,
-                (base + 2) as MeshIndex,
-            ]);
-        }
+        let side_vertex_count = vertices.len();
 
         // Bottom cap
         if capped {
-            let cap_center_idx = vertices.len() as MeshIndex;
             vertices.push(Vertex {
                 position: [0.0, -half_height, 0.0],
                 tex_coords: [0.5, 0.5, 0.0],
@@ -627,22 +718,63 @@ impl Mesh {
                     normal: [0.0, -1.0, 0.0],
                 });
             }
-
-            // Cap indices (winding reversed)
-            let cap_ring_start = cap_center_idx + 1;
-            for i in 0..segments as MeshIndex {
-                indices.extend_from_slice(&[
-                    cap_center_idx,
-                    cap_ring_start + i + 1,
-                    cap_ring_start + i,
-                ]);
-            }
         }
+
+        let indices = match primitive_type {
+            PrimitiveType::TriangleList => {
+                let mut indices = Vec::new();
+                for i in 0..segments {
+                    let base = i * 2;
+                    indices.extend_from_slice(&[
+                        base as MeshIndex,
+                        (base + 1) as MeshIndex,
+                        (base + 2) as MeshIndex,
+                    ]);
+                }
+                if capped {
+                    let cap_center_idx = side_vertex_count as MeshIndex;
+                    let cap_ring_start = cap_center_idx + 1;
+                    for i in 0..segments as MeshIndex {
+                        indices.extend_from_slice(&[
+                            cap_center_idx,
+                            cap_ring_start + i + 1,
+                            cap_ring_start + i,
+                        ]);
+                    }
+                }
+                indices
+            }
+            PrimitiveType::LineList => {
+                let mut indices = Vec::new();
+                // Base ring
+                for i in 0..segments {
+                    let base = i * 2;
+                    indices.push(base as MeshIndex);
+                    indices.push((base + 2) as MeshIndex);
+                }
+                // Lines from base to apex
+                for i in 0..segments {
+                    let base = i * 2;
+                    indices.push(base as MeshIndex);
+                    indices.push((base + 1) as MeshIndex);
+                }
+                if capped {
+                    let cap_center_idx = side_vertex_count as MeshIndex;
+                    let cap_ring_start = cap_center_idx + 1;
+                    for i in 0..segments as MeshIndex {
+                        indices.push(cap_center_idx);
+                        indices.push(cap_ring_start + i);
+                    }
+                }
+                indices
+            }
+            PrimitiveType::PointList => (0..vertices.len() as MeshIndex).collect(),
+        };
 
         Self::from_raw(
             vertices,
             vec![MeshPrimitive {
-                primitive_type: PrimitiveType::TriangleList,
+                primitive_type,
                 indices,
             }],
         )
@@ -658,17 +790,22 @@ impl Mesh {
     ///
     /// # Example
     /// ```
-    /// use wgpu_engine::scene::Mesh;
-    /// let torus = Mesh::torus(1.0, 0.3, 32, 16);
+    /// use wgpu_engine::scene::{Mesh, PrimitiveType};
+    /// let torus = Mesh::torus(1.0, 0.3, 32, 16, PrimitiveType::TriangleList);
     /// ```
-    pub fn torus(major_radius: f32, minor_radius: f32, major_segments: u32, minor_segments: u32) -> Self {
+    pub fn torus(
+        major_radius: f32,
+        minor_radius: f32,
+        major_segments: u32,
+        minor_segments: u32,
+        primitive_type: PrimitiveType,
+    ) -> Self {
         use std::f32::consts::PI;
 
         let major_segments = major_segments.max(3);
         let minor_segments = minor_segments.max(3);
 
         let mut vertices = Vec::new();
-        let mut indices = Vec::new();
 
         for i in 0..=major_segments {
             let theta = 2.0 * PI * i as f32 / major_segments as f32;
@@ -702,26 +839,54 @@ impl Mesh {
 
         // Generate indices
         let verts_per_ring = minor_segments + 1;
-        for i in 0..major_segments {
-            for j in 0..minor_segments {
-                let current = i * verts_per_ring + j;
-                let next = (i + 1) * verts_per_ring + j;
+        let indices = match primitive_type {
+            PrimitiveType::TriangleList => {
+                let mut indices = Vec::new();
+                for i in 0..major_segments {
+                    for j in 0..minor_segments {
+                        let current = i * verts_per_ring + j;
+                        let next = (i + 1) * verts_per_ring + j;
 
-                indices.extend_from_slice(&[
-                    current as MeshIndex,
-                    (current + 1) as MeshIndex,
-                    next as MeshIndex,
-                    (current + 1) as MeshIndex,
-                    (next + 1) as MeshIndex,
-                    next as MeshIndex,
-                ]);
+                        indices.extend_from_slice(&[
+                            current as MeshIndex,
+                            (current + 1) as MeshIndex,
+                            next as MeshIndex,
+                            (current + 1) as MeshIndex,
+                            (next + 1) as MeshIndex,
+                            next as MeshIndex,
+                        ]);
+                    }
+                }
+                indices
             }
-        }
+            PrimitiveType::LineList => {
+                let mut indices = Vec::new();
+                // Lines along minor circles (tube cross-sections)
+                for i in 0..=major_segments {
+                    for j in 0..minor_segments {
+                        let current = i * verts_per_ring + j;
+                        indices.push(current as MeshIndex);
+                        indices.push((current + 1) as MeshIndex);
+                    }
+                }
+                // Lines along major circles (around the main ring)
+                for i in 0..major_segments {
+                    for j in 0..=minor_segments {
+                        let current = i * verts_per_ring + j;
+                        let next = (i + 1) * verts_per_ring + j;
+                        indices.push(current as MeshIndex);
+                        indices.push(next as MeshIndex);
+                    }
+                }
+                indices
+            }
+            PrimitiveType::PointList => (0..vertices.len() as MeshIndex).collect(),
+        };
 
         Self::from_raw(
             vertices,
             vec![MeshPrimitive {
-                primitive_type: PrimitiveType::TriangleList,
+                primitive_type,
                 indices,
             }],
         )
@@ -737,11 +902,17 @@ impl Mesh {
     ///
     /// # Example
     /// ```
-    /// use wgpu_engine::scene::Mesh;
-    /// let plane = Mesh::plane(10.0, 10.0, 1, 1);
-    /// let detailed_plane = Mesh::plane(10.0, 10.0, 10, 10);
+    /// use wgpu_engine::scene::{Mesh, PrimitiveType};
+    /// let plane = Mesh::plane(10.0, 10.0, 1, 1, PrimitiveType::TriangleList);
+    /// let detailed_plane = Mesh::plane(10.0, 10.0, 10, 10, PrimitiveType::TriangleList);
     /// ```
-    pub fn plane(width: f32, depth: f32, width_segments: u32, depth_segments: u32) -> Self {
+    pub fn plane(
+        width: f32,
+        depth: f32,
+        width_segments: u32,
+        depth_segments: u32,
+        primitive_type: PrimitiveType,
+    ) -> Self {
         let width_segments = width_segments.max(1);
         let depth_segments = depth_segments.max(1);
 
@@ -749,7 +920,6 @@ impl Mesh {
         let hd = depth / 2.0;
 
         let mut vertices = Vec::new();
-        let mut indices = Vec::new();
 
         for zi in 0..=depth_segments {
             let v = zi as f32 / depth_segments as f32;
@@ -768,26 +938,54 @@ impl Mesh {
         }
 
         let verts_per_row = width_segments + 1;
-        for zi in 0..depth_segments {
-            for xi in 0..width_segments {
-                let current = zi * verts_per_row + xi;
-                let next = current + verts_per_row;
+        let indices = match primitive_type {
+            PrimitiveType::TriangleList => {
+                let mut indices = Vec::new();
+                for zi in 0..depth_segments {
+                    for xi in 0..width_segments {
+                        let current = zi * verts_per_row + xi;
+                        let next = current + verts_per_row;
 
-                indices.extend_from_slice(&[
-                    current as MeshIndex,
-                    next as MeshIndex,
-                    (current + 1) as MeshIndex,
-                    (current + 1) as MeshIndex,
-                    next as MeshIndex,
-                    (next + 1) as MeshIndex,
-                ]);
+                        indices.extend_from_slice(&[
+                            current as MeshIndex,
+                            next as MeshIndex,
+                            (current + 1) as MeshIndex,
+                            (current + 1) as MeshIndex,
+                            next as MeshIndex,
+                            (next + 1) as MeshIndex,
+                        ]);
+                    }
+                }
+                indices
             }
-        }
+            PrimitiveType::LineList => {
+                let mut indices = Vec::new();
+                // Horizontal lines (along width)
+                for zi in 0..=depth_segments {
+                    for xi in 0..width_segments {
+                        let current = zi * verts_per_row + xi;
+                        indices.push(current as MeshIndex);
+                        indices.push((current + 1) as MeshIndex);
+                    }
+                }
+                // Vertical lines (along depth)
+                for zi in 0..depth_segments {
+                    for xi in 0..=width_segments {
+                        let current = zi * verts_per_row + xi;
+                        let next = current + verts_per_row;
+                        indices.push(current as MeshIndex);
+                        indices.push(next as MeshIndex);
+                    }
+                }
+                indices
+            }
+            PrimitiveType::PointList => (0..vertices.len() as MeshIndex).collect(),
+        };
 
         Self::from_raw(
             vertices,
             vec![MeshPrimitive {
-                primitive_type: PrimitiveType::TriangleList,
+                primitive_type,
                 indices,
             }],
         )
@@ -801,10 +999,10 @@ impl Mesh {
     ///
     /// # Example
     /// ```
-    /// use wgpu_engine::scene::Mesh;
-    /// let quad = Mesh::quad(2.0, 1.0);
+    /// use wgpu_engine::scene::{Mesh, PrimitiveType};
+    /// let quad = Mesh::quad(2.0, 1.0, PrimitiveType::TriangleList);
     /// ```
-    pub fn quad(width: f32, height: f32) -> Self {
+    pub fn quad(width: f32, height: f32, primitive_type: PrimitiveType) -> Self {
         let hw = width / 2.0;
         let hh = height / 2.0;
 
@@ -831,12 +1029,16 @@ impl Mesh {
             },
         ];
 
-        let indices = vec![0, 1, 2, 0, 2, 3];
+        let indices = match primitive_type {
+            PrimitiveType::TriangleList => vec![0, 1, 2, 0, 2, 3],
+            PrimitiveType::LineList => vec![0, 1, 1, 2, 2, 3, 3, 0],
+            PrimitiveType::PointList => vec![0, 1, 2, 3],
+        };
 
         Self::from_raw(
             vertices,
             vec![MeshPrimitive {
-                primitive_type: PrimitiveType::TriangleList,
+                primitive_type,
                 indices,
             }],
         )
