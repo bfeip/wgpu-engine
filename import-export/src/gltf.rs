@@ -1,6 +1,6 @@
 use std::path::Path;
 use wgpu_engine_scene::{
-    Camera, Material, Texture, TextureFormat, Mesh, MeshId, PrimitiveType, Scene, Vertex,
+    Camera, Material, MaterialFlags, Texture, TextureFormat, Mesh, MeshId, PrimitiveType, Scene, Vertex,
     MaterialId, DEFAULT_MATERIAL_ID,
 };
 
@@ -340,6 +340,12 @@ fn load_material(
         material = material
             .with_normal_texture(texture_id)
             .with_normal_scale(normal_tex.scale());
+    }
+
+    // Double-sided rendering
+    if gltf_material.double_sided() {
+        let flags = material.flags() | MaterialFlags::DOUBLE_SIDED;
+        material = material.with_flags(flags);
     }
 
     let mat_id = scene.add_material(material);

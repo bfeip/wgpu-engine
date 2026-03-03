@@ -388,13 +388,13 @@ impl Mesh {
                 // Skip degenerate triangles at poles
                 if ring != 0 {
                     indices.push(current as MeshIndex);
-                    indices.push(next as MeshIndex);
                     indices.push((current + 1) as MeshIndex);
+                    indices.push(next as MeshIndex);
                 }
                 if ring != rings - 1 {
                     indices.push((current + 1) as MeshIndex);
-                    indices.push(next as MeshIndex);
                     indices.push((next + 1) as MeshIndex);
+                    indices.push(next as MeshIndex);
                 }
             }
         }
@@ -709,11 +709,11 @@ impl Mesh {
 
                 indices.extend_from_slice(&[
                     current as MeshIndex,
-                    next as MeshIndex,
-                    (current + 1) as MeshIndex,
                     (current + 1) as MeshIndex,
                     next as MeshIndex,
+                    (current + 1) as MeshIndex,
                     (next + 1) as MeshIndex,
+                    next as MeshIndex,
                 ]);
             }
         }

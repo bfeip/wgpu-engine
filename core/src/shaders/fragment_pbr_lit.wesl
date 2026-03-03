@@ -54,7 +54,7 @@ fn get_spot_light_params(
     return array<vec3<f32>, 2>(light_dir, radiance);
 }
 
-fn fragment_pbr_lit(in: VertexOutput) -> vec4<f32> {
+fn fragment_pbr_lit(in: VertexOutput, front_facing: bool) -> vec4<f32> {
     // Get base color (texture * factor, or just factor)
     let base_color = get_base_color(in.tex_coords);
     let albedo = base_color.rgb;
@@ -66,7 +66,14 @@ fn fragment_pbr_lit(in: VertexOutput) -> vec4<f32> {
     let roughness = mr.y;
 
     // Get normal (with normal mapping if available)
-    let n = get_normal(in.world_position, in.world_normal, in.tex_coords);
+    var n = get_normal(in.world_position, in.world_normal, in.tex_coords);
+
+    // For double-sided materials, flip normal for back-facing fragments
+    @if(double_sided) {
+        if (!front_facing) {
+            n = -n;
+        }
+    }
 
     // View direction (from surface to camera)
     let v = normalize(camera.eye_position - in.world_position);

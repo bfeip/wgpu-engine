@@ -96,6 +96,7 @@ impl ShaderGenerator {
         let features = [
             ("has_lighting", material_props.has_lighting),
             ("has_ibl", scene_props.has_ibl && material_props.has_lighting),
+            ("double_sided", material_props.double_sided),
         ];
 
         // Set features and compile the main module

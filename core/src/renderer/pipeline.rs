@@ -57,8 +57,10 @@ impl<'a> Renderer<'a> {
                         topology,
                         strip_index_format: None,
                         front_face: wgpu::FrontFace::Ccw,
-                        // Only cull for triangles, not for lines or points
-                        cull_mode: if topology == wgpu::PrimitiveTopology::TriangleList {
+                        // Only cull for single-sided triangles, not for lines, points, or double-sided materials
+                        cull_mode: if topology == wgpu::PrimitiveTopology::TriangleList
+                            && !material_props.double_sided
+                        {
                             Some(wgpu::Face::Back)
                         } else {
                             None

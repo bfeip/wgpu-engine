@@ -20,7 +20,7 @@ bitflags! {
         const NONE = 0;
         /// Enable alpha blending (TODO)
         const ALPHA_BLEND = 1 << 0;
-        /// Disable back-face culling (TODO)
+        /// Disable back-face culling and flip normals for back faces
         const DOUBLE_SIDED = 1 << 1;
         /// Disables face lighting. Faces will appear at a constant luminance
         const DO_NOT_LIGHT = 1 << 2;
@@ -36,6 +36,8 @@ bitflags! {
 pub struct MaterialProperties {
     /// Whether lighting calculations should be applied
     pub has_lighting: bool,
+    /// Whether the material is double-sided (disables back-face culling, flips normals)
+    pub double_sided: bool,
 }
 
 /// The ID of the default material created automatically by the Scene.
@@ -339,9 +341,11 @@ impl Material {
         match primitive_type {
             PrimitiveType::TriangleList => MaterialProperties {
                 has_lighting: !self.flags.contains(MaterialFlags::DO_NOT_LIGHT),
+                double_sided: self.flags.contains(MaterialFlags::DOUBLE_SIDED),
             },
             PrimitiveType::LineList | PrimitiveType::PointList => MaterialProperties {
                 has_lighting: false,
+                double_sided: false,
             },
         }
     }

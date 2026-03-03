@@ -24,9 +24,9 @@ fn vs_main(
 
 // Fragment shader entry point with conditional compilation
 @fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+fn fs_main(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
     @if(has_lighting) {
-        return fragment_pbr_lit(in);
+        return fragment_pbr_lit(in, front_facing);
     }
 
     @if(!has_lighting) {
