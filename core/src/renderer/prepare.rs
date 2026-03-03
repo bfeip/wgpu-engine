@@ -4,7 +4,7 @@ use wgpu::util::DeviceExt;
 
 use crate::scene::{PrimitiveType, Scene};
 
-use super::gpu_resources::{MaterialGpuResources, PbrUniform};
+use super::gpu_resources::{LightsArrayUniform, MaterialGpuResources, PbrUniform};
 use super::Renderer;
 
 impl<'a> Renderer<'a> {
@@ -55,7 +55,16 @@ impl<'a> Renderer<'a> {
             self.gpu_resources.ensure_mesh(mesh, &self.device);
         }
 
-        // 4. Process environment maps for IBL
+        // 4. Prepare lights
+        let light_generation = scene.light_generation();
+        if self.lights.synced_generation != light_generation {
+            let lights_uniform = LightsArrayUniform::from_lights(&scene.lights);
+            self.queue
+                .write_buffer(&self.lights.buffer, 0, bytes_of(&lights_uniform));
+            self.lights.synced_generation = light_generation;
+        }
+
+        // 5. Process environment maps for IBL
         if let Some(env_id) = scene.active_environment_map {
             if let Some(env_map) = scene.environment_maps.get_mut(&env_id) {
                 if env_map.needs_generation() {

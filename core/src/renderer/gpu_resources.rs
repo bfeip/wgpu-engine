@@ -974,6 +974,7 @@ pub(super) struct LightResources {
     pub(super) buffer: wgpu::Buffer,
     pub(super) bind_group_layout: wgpu::BindGroupLayout,
     pub(super) bind_group: wgpu::BindGroup,
+    pub(super) synced_generation: u64,
 }
 
 impl LightResources {
@@ -1013,6 +1014,7 @@ impl LightResources {
             buffer,
             bind_group_layout,
             bind_group,
+            synced_generation: 0,
         }
     }
 }

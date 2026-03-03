@@ -7,7 +7,6 @@ mod prepare;
 use std::collections::HashMap;
 
 use anyhow::Result;
-use bytemuck::bytes_of;
 
 use crate::{
     camera::Camera,
@@ -21,8 +20,8 @@ use batching::{collect_draw_batches, partition_batches};
 
 use gpu_resources::{
     clamp_surface_size, create_depth_texture, create_mask_texture, CameraResources, CameraUniform,
-    DefaultTextures, GpuResourceManager, LightResources, LightsArrayUniform,
-    MaterialBindGroupLayouts, MaterialPipelineLayouts, PipelineCacheKey,
+    DefaultTextures, GpuResourceManager, LightResources, MaterialBindGroupLayouts,
+    MaterialPipelineLayouts, PipelineCacheKey,
 };
 use outline::{OutlineResources, OutlineUniform};
 
@@ -209,6 +208,7 @@ impl<'a> Renderer<'a> {
     /// buffers (vertex data, textures, material bind groups) are not reused.
     pub(crate) fn clear_gpu_resources(&mut self) {
         self.gpu_resources.clear_scene_resources();
+        self.lights.synced_generation = 0;
     }
 
     pub fn resize(&mut self, new_size: (u32, u32)) {
@@ -280,12 +280,6 @@ impl<'a> Renderer<'a> {
         let camera_buffer_contents: &[u8] = bytemuck::cast_slice(camera_uniform_slice);
         self.queue
             .write_buffer(&self.camera_resources.buffer, 0, camera_buffer_contents);
-
-        // Update lights uniform array
-        // TODO: only when needed
-        let lights_uniform = LightsArrayUniform::from_lights(&scene.lights);
-        self.queue
-            .write_buffer(&self.lights.buffer, 0, bytes_of(&lights_uniform));
 
         // Collect all instances into batches grouped by mesh and material
         let batches = collect_draw_batches(scene);
