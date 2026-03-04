@@ -19,9 +19,9 @@ use crate::{
 use batching::{collect_draw_batches, partition_batches};
 
 use gpu_resources::{
-    clamp_surface_size, create_depth_texture, create_mask_texture, CameraResources, CameraUniform,
-    DefaultTextures, GpuResourceManager, LightResources, MaterialBindGroupLayouts,
-    MaterialPipelineLayouts, PipelineCacheKey,
+    clamp_surface_size, CameraResources, CameraUniform, DefaultTextures, GpuResourceManager,
+    GpuTexture, LightResources, MaterialBindGroupLayouts, MaterialPipelineLayouts,
+    PipelineCacheKey,
 };
 use outline::{OutlineResources, OutlineUniform};
 
@@ -223,44 +223,10 @@ impl<'a> Renderer<'a> {
             self.camera_resources.camera.aspect = width as f32 / height as f32;
 
             self.default_textures.depth =
-                create_depth_texture(&self.device, &self.config, "depth_texture");
+                GpuTexture::depth(&self.device, &self.config, "depth_texture");
 
-            // Recreate mask texture at new size
-            self.outline_resources.mask_texture = create_mask_texture(
-                &self.device,
-                clamped_width,
-                clamped_height,
-                "Outline Mask Texture",
-            );
-            self.outline_resources.mask_view = self
-                .outline_resources
-                .mask_texture
-                .create_view(&wgpu::TextureViewDescriptor::default());
-
-            // Recreate bind group with new texture view
-            self.outline_resources.bind_group =
-                self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("Outline Screenspace Bind Group"),
-                    layout: &self.outline_resources.bind_group_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(
-                                &self.outline_resources.mask_view,
-                            ),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::Sampler(
-                                &self.outline_resources.mask_sampler,
-                            ),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: self.outline_resources.uniform_buffer.as_entire_binding(),
-                        },
-                    ],
-                });
+            self.outline_resources
+                .resize(&self.device, clamped_width, clamped_height);
         }
     }
 
@@ -416,7 +382,7 @@ impl<'a> Renderer<'a> {
                 let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("Selection Mask Pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &self.outline_resources.mask_view,
+                        view: &self.outline_resources.mask.view,
                         resolve_target: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),

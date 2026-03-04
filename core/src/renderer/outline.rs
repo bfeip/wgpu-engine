@@ -2,7 +2,7 @@ use wgpu::util::DeviceExt;
 
 use crate::shaders::ShaderGenerator;
 
-use super::gpu_resources::{create_mask_texture, instance_buffer_layout, vertex_buffer_layout, DEPTH_FORMAT, MASK_FORMAT};
+use super::gpu_resources::{instance_buffer_layout, vertex_buffer_layout, GpuTexture};
 
 /// GPU uniform data for screen-space outline rendering.
 /// Must match the layout in outline_screenspace.wesl.
@@ -19,8 +19,7 @@ pub(super) struct OutlineUniform {
 /// GPU resources for screen-space selection outline rendering.
 pub(super) struct OutlineResources {
     /// Mask texture for selected objects (R8Unorm)
-    pub(super) mask_texture: wgpu::Texture,
-    pub(super) mask_view: wgpu::TextureView,
+    pub(super) mask: GpuTexture,
     /// Pipeline for rendering selected objects to mask texture
     pub(super) mask_pipeline: wgpu::RenderPipeline,
     /// Pipeline for fullscreen outline post-process
@@ -31,8 +30,6 @@ pub(super) struct OutlineResources {
     pub(super) bind_group_layout: wgpu::BindGroupLayout,
     /// Bind group containing mask texture, sampler, and uniforms
     pub(super) bind_group: wgpu::BindGroup,
-    /// Sampler for mask texture
-    pub(super) mask_sampler: wgpu::Sampler,
 }
 
 impl OutlineResources {
@@ -44,21 +41,7 @@ impl OutlineResources {
         shader_generator: &mut ShaderGenerator,
     ) -> OutlineResources {
         // Create mask texture (R8Unorm for storing selection mask)
-        let mask_texture =
-            create_mask_texture(device, config.width, config.height, "Outline Mask Texture");
-        let mask_view = mask_texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        // Create sampler for mask texture
-        let mask_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("Outline Mask Sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
+        let mask = GpuTexture::mask(device, config.width, config.height, "Outline Mask Texture");
 
         // Create uniform buffer with default values
         let uniform = OutlineUniform {
@@ -109,24 +92,7 @@ impl OutlineResources {
         });
 
         // Create bind group
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Outline Screenspace Bind Group"),
-            layout: &bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&mask_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&mask_sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: uniform_buffer.as_entire_binding(),
-                },
-            ],
-        });
+        let bind_group = Self::create_bind_group(device, &bind_group_layout, &mask, &uniform_buffer);
 
         // Generate mask shader
         let mask_shader = shader_generator
@@ -154,7 +120,7 @@ impl OutlineResources {
                 module: &mask_shader,
                 entry_point: Some("fs_mask"),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: MASK_FORMAT,
+                    format: GpuTexture::MASK_FORMAT,
                     blend: None,
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -170,7 +136,7 @@ impl OutlineResources {
                 conservative: false,
             },
             depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
+                format: GpuTexture::DEPTH_FORMAT,
                 depth_write_enabled: false,
                 depth_compare: wgpu::CompareFunction::LessEqual,
                 stencil: wgpu::StencilState::default(),
@@ -238,14 +204,44 @@ impl OutlineResources {
         });
 
         OutlineResources {
-            mask_texture,
-            mask_view,
+            mask,
             mask_pipeline,
             outline_pipeline,
             uniform_buffer,
             bind_group_layout,
             bind_group,
-            mask_sampler,
         }
+    }
+
+    /// Recreate size-dependent resources (mask texture and bind group) after a resize.
+    pub(super) fn resize(&mut self, device: &wgpu::Device, width: u32, height: u32) {
+        self.mask = GpuTexture::mask(device, width, height, "Outline Mask Texture");
+        self.bind_group = Self::create_bind_group(device, &self.bind_group_layout, &self.mask, &self.uniform_buffer);
+    }
+
+    fn create_bind_group(
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        mask: &GpuTexture,
+        uniform_buffer: &wgpu::Buffer,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Outline Screenspace Bind Group"),
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&mask.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&mask.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: uniform_buffer.as_entire_binding(),
+                },
+            ],
+        })
     }
 }

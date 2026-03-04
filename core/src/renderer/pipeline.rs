@@ -1,6 +1,6 @@
 use crate::scene::PrimitiveType;
 
-use super::gpu_resources::{instance_buffer_layout, vertex_buffer_layout, DEPTH_FORMAT, PipelineCacheKey};
+use super::gpu_resources::{instance_buffer_layout, vertex_buffer_layout, GpuTexture, PipelineCacheKey};
 use super::Renderer;
 
 impl<'a> Renderer<'a> {
@@ -73,7 +73,7 @@ impl<'a> Renderer<'a> {
                         conservative: false,
                     },
                     depth_stencil: Some(wgpu::DepthStencilState {
-                        format: DEPTH_FORMAT,
+                        format: GpuTexture::DEPTH_FORMAT,
                         depth_write_enabled: true,
                         depth_compare: wgpu::CompareFunction::Less,
                         stencil: wgpu::StencilState::default(),
