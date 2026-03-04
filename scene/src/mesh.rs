@@ -1,4 +1,4 @@
-use std::{cell::Cell, fs::File, io::BufReader, path::Path};
+use std::{cell::Cell, collections::HashSet, fs::File, io::BufReader, path::Path};
 
 use anyhow::{Context, Result};
 use cgmath::{InnerSpace, Matrix4, Point3, Transform, Vector3};
@@ -26,6 +26,62 @@ pub enum PrimitiveType {
 pub struct MeshPrimitive {
     pub primitive_type: PrimitiveType,
     pub indices: Vec<MeshIndex>,
+}
+
+impl MeshPrimitive {
+    /// Converts a TriangleList to a LineList with deduplicated edges.
+    ///
+    /// Each triangle `[a, b, c]` produces edges `[a,b], [b,c], [c,a]`. Shared
+    /// edges between adjacent triangles appear only once in the output.
+    ///
+    /// Returns `None` if this primitive is not a TriangleList.
+    pub fn to_line_list(&self) -> Option<MeshPrimitive> {
+        if self.primitive_type != PrimitiveType::TriangleList {
+            return None;
+        }
+
+        let mut edge_set: HashSet<(MeshIndex, MeshIndex)> = HashSet::new();
+        let mut line_indices: Vec<MeshIndex> = Vec::new();
+
+        for tri in self.indices.chunks_exact(3) {
+            let (a, b, c) = (tri[0], tri[1], tri[2]);
+            for (v0, v1) in [(a, b), (b, c), (c, a)] {
+                let edge = if v0 <= v1 { (v0, v1) } else { (v1, v0) };
+                if edge_set.insert(edge) {
+                    line_indices.push(v0);
+                    line_indices.push(v1);
+                }
+            }
+        }
+
+        Some(MeshPrimitive {
+            primitive_type: PrimitiveType::LineList,
+            indices: line_indices,
+        })
+    }
+
+    /// Converts a TriangleList or LineList to a PointList with unique vertex indices.
+    ///
+    /// Returns `None` if this primitive is already a PointList.
+    pub fn to_point_list(&self) -> Option<MeshPrimitive> {
+        if self.primitive_type == PrimitiveType::PointList {
+            return None;
+        }
+
+        let mut seen: HashSet<MeshIndex> = HashSet::new();
+        let mut point_indices: Vec<MeshIndex> = Vec::new();
+
+        for &idx in &self.indices {
+            if seen.insert(idx) {
+                point_indices.push(idx);
+            }
+        }
+
+        Some(MeshPrimitive {
+            primitive_type: PrimitiveType::PointList,
+            indices: point_indices,
+        })
+    }
 }
 
 /// Result of a ray-mesh intersection test in local mesh space.
