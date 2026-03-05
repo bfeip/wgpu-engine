@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use wgpu::ShaderModuleDescriptor;
 use wesl::{Wesl, ModulePath, VirtualResolver};
 
-use crate::scene::{MaterialProperties, SceneProperties};
+use crate::scene::{AlphaMode, MaterialProperties, SceneProperties};
 
 /// Combined key for shader cache (material + scene properties)
 type ShaderCacheKey = (MaterialProperties, SceneProperties);
@@ -97,6 +97,7 @@ impl ShaderGenerator {
             ("has_lighting", material_props.has_lighting),
             ("has_ibl", scene_props.has_ibl && material_props.has_lighting),
             ("double_sided", material_props.double_sided),
+            ("alpha_mask", material_props.alpha_mode == AlphaMode::Mask),
         ];
 
         // Set features and compile the main module

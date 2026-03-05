@@ -195,6 +195,8 @@ pub struct PbrUniform {
     pub roughness_factor: f32,
     pub normal_scale: f32,
     pub texture_flags: u32,
+    pub alpha_cutoff: f32,
+    pub _padding: [u32; 3],
 }
 
 impl PbrUniform {
@@ -222,6 +224,8 @@ impl PbrUniform {
             roughness_factor: material.roughness_factor(),
             normal_scale: material.normal_scale(),
             texture_flags,
+            alpha_cutoff: material.alpha_cutoff(),
+            _padding: [0; 3],
         }
     }
 }

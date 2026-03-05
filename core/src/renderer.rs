@@ -16,7 +16,7 @@ use crate::{
     shaders::ShaderGenerator,
 };
 
-use batching::{collect_draw_batches, partition_batches, DrawBatch};
+use batching::{collect_draw_batches, partition_batches, sort_batches_for_transparency, DrawBatch};
 
 use gpu_resources::{
     clamp_surface_size, CameraResources, CameraUniform, DefaultTextures, GpuResourceManager,
@@ -262,7 +262,14 @@ impl<'a> Renderer<'a> {
             .write_buffer(&self.camera_resources.buffer, 0, camera_buffer_contents);
 
         // Collect all instances into batches grouped by mesh and material
-        let batches = collect_draw_batches(scene);
+        let mut batches = collect_draw_batches(scene);
+
+        // Sort so opaque batches render first, then transparent back-to-front
+        sort_batches_for_transparency(
+            &mut batches,
+            scene,
+            self.camera_resources.camera.eye,
+        );
 
         // Partition batches by selection state if selection is provided
         let selected_batches = selection

@@ -1,4 +1,4 @@
-use crate::scene::PrimitiveType;
+use crate::scene::{AlphaMode, PrimitiveType};
 
 use super::gpu_resources::{instance_buffer_layout, vertex_buffer_layout, GpuTexture, PipelineCacheKey};
 use super::Renderer;
@@ -48,7 +48,10 @@ impl<'a> Renderer<'a> {
                         entry_point: Some("fs_main"),
                         targets: &[Some(wgpu::ColorTargetState {
                             format: self.config.format,
-                            blend: Some(wgpu::BlendState::REPLACE),
+                            blend: Some(match material_props.alpha_mode {
+                                AlphaMode::Blend => wgpu::BlendState::ALPHA_BLENDING,
+                                _ => wgpu::BlendState::REPLACE,
+                            }),
                             write_mask: wgpu::ColorWrites::ALL,
                         })],
                         compilation_options: wgpu::PipelineCompilationOptions::default(),
@@ -74,7 +77,7 @@ impl<'a> Renderer<'a> {
                     },
                     depth_stencil: Some(wgpu::DepthStencilState {
                         format: GpuTexture::DEPTH_FORMAT,
-                        depth_write_enabled: true,
+                        depth_write_enabled: material_props.alpha_mode != AlphaMode::Blend,
                         depth_compare: wgpu::CompareFunction::Less,
                         stencil: wgpu::StencilState::default(),
                         bias: wgpu::DepthBiasState::default(),

@@ -57,6 +57,13 @@ fn get_spot_light_params(
 fn fragment_pbr_lit(in: VertexOutput, front_facing: bool) -> vec4<f32> {
     // Get base color (texture * factor, or just factor)
     let base_color = get_base_color(in.tex_coords);
+    // Alpha mask: discard fragments below cutoff threshold
+    @if(alpha_mask) {
+        if (base_color.a < pbr_params.alpha_cutoff) {
+            discard;
+        }
+    }
+
     let albedo = base_color.rgb;
     let alpha = base_color.a;
 

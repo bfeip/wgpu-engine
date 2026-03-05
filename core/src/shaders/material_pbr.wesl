@@ -18,6 +18,10 @@ struct PbrParams {
     roughness_factor: f32,
     normal_scale: f32,
     texture_flags: u32,
+    alpha_cutoff: f32,
+    _padding1: u32,
+    _padding2: u32,
+    _padding3: u32,
 }
 
 // Texture flag constants

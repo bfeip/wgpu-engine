@@ -2,9 +2,11 @@ use std::collections::HashMap;
 
 use cgmath::{Matrix3, Matrix4, SquareMatrix};
 
+use cgmath::Point3;
+
 use crate::scene::{
-    InstanceId, MaterialId, MeshId, Node, NodeId, PrimitiveType, Scene, TreeVisitor, Visibility,
-    walk_tree,
+    AlphaMode, InstanceId, MaterialId, MeshId, Node, NodeId, PrimitiveType, Scene, TreeVisitor,
+    Visibility, walk_tree,
 };
 use crate::scene::common;
 
@@ -208,6 +210,59 @@ pub(crate) fn collect_draw_batches(scene: &Scene) -> Vec<DrawBatch> {
     let mut batches: Vec<DrawBatch> = batch_map.into_values().collect();
     batches.sort_by_key(|b| (b.material_id, b.primitive_type as u8, b.mesh_id));
     batches
+}
+
+/// Reorders batches so opaque/mask batches come first (preserving existing sort),
+/// followed by transparent (Blend) batches sorted back-to-front by distance from camera.
+pub(crate) fn sort_batches_for_transparency(
+    batches: &mut Vec<DrawBatch>,
+    scene: &Scene,
+    camera_position: Point3<f32>,
+) {
+    // Stable partition: opaque/mask first, then blend
+    batches.sort_by(|a, b| {
+        let a_transparent = is_transparent_batch(a, scene);
+        let b_transparent = is_transparent_batch(b, scene);
+        match (a_transparent, b_transparent) {
+            (false, true) => std::cmp::Ordering::Less,
+            (true, false) => std::cmp::Ordering::Greater,
+            (true, true) => {
+                // Both transparent: sort back-to-front (farthest first)
+                let dist_a = batch_centroid_distance_sq(a, camera_position);
+                let dist_b = batch_centroid_distance_sq(b, camera_position);
+                dist_b
+                    .partial_cmp(&dist_a)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            }
+            (false, false) => std::cmp::Ordering::Equal,
+        }
+    });
+}
+
+fn is_transparent_batch(batch: &DrawBatch, scene: &Scene) -> bool {
+    scene
+        .materials
+        .get(&batch.material_id)
+        .map(|m| m.alpha_mode() == AlphaMode::Blend)
+        .unwrap_or(false)
+}
+
+fn batch_centroid_distance_sq(batch: &DrawBatch, camera_position: Point3<f32>) -> f32 {
+    if batch.instances.is_empty() {
+        return 0.0;
+    }
+    let count = batch.instances.len() as f32;
+    let (sx, sy, sz) = batch.instances.iter().fold((0.0f32, 0.0f32, 0.0f32), |(x, y, z), i| {
+        (
+            x + i.world_transform[3][0],
+            y + i.world_transform[3][1],
+            z + i.world_transform[3][2],
+        )
+    });
+    let cx = sx / count - camera_position.x;
+    let cy = sy / count - camera_position.y;
+    let cz = sz / count - camera_position.z;
+    cx * cx + cy * cy + cz * cz
 }
 
 /// Partitions batches by a predicate on instances.
