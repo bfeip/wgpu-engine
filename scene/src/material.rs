@@ -16,6 +16,7 @@ pub const DEFAULT_ALPHA_CUTOFF: f32 = 0.5;
 
 /// Alpha rendering mode, matching glTF spec.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum AlphaMode {
     /// Fully opaque, alpha channel ignored.
     #[default]

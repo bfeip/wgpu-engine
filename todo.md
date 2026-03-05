@@ -49,6 +49,7 @@ One day each:
 - format.rs and import export cleanup
   - Split import export
   - trait-ification of importers + exporters
+  - serialization defaults
 - API and docs review (make sure docs tests pass too)
 - Benchmarking and tests
 - Camera space lights

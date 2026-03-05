@@ -1,7 +1,7 @@
 use std::path::Path;
 use wgpu_engine_scene::{
-    Camera, Material, MaterialFlags, Texture, TextureFormat, Mesh, MeshId, PrimitiveType, Scene, Vertex,
-    MaterialId, DEFAULT_MATERIAL_ID,
+    AlphaMode, Camera, Material, MaterialFlags, Texture, TextureFormat, Mesh, MeshId, PrimitiveType,
+    Scene, Vertex, MaterialId, DEFAULT_MATERIAL_ID,
 };
 
 /// A loaded primitive from a glTF mesh, containing the scene mesh ID and its material ID.
@@ -346,6 +346,19 @@ fn load_material(
     if gltf_material.double_sided() {
         let flags = material.flags() | MaterialFlags::DOUBLE_SIDED;
         material = material.with_flags(flags);
+    }
+
+    // Alpha mode
+    match gltf_material.alpha_mode() {
+        gltf::material::AlphaMode::Opaque => {}
+        gltf::material::AlphaMode::Mask => {
+            material = material
+                .with_alpha_mode(AlphaMode::Mask)
+                .with_alpha_cutoff(gltf_material.alpha_cutoff().unwrap_or(0.5));
+        }
+        gltf::material::AlphaMode::Blend => {
+            material = material.with_alpha_mode(AlphaMode::Blend);
+        }
     }
 
     let mat_id = scene.add_material(material);

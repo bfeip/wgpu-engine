@@ -3,10 +3,14 @@ name = "wgpu-engine-scene"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+serde = ["dep:serde"]
+
 [dependencies]
 wgpu-engine-common = { path = "../common" }
 anyhow = "1.0"
 bitflags = "2.0"
+serde = { version = "1.0", features = ["derive"], optional = true }
 bytemuck = { version = "1.16", features = ["derive"] }
 cgmath = "0.18"
 image = { version = "0.24", default-features = false, features = ["png", "jpeg"] }

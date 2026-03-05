@@ -41,7 +41,7 @@ use wgpu_engine_scene::{
     },
     Instance, InstanceId,
     Light,
-    Material, MaterialFlags, MaterialId, DEFAULT_MATERIAL_ID,
+    AlphaMode, Material, MaterialFlags, MaterialId, DEFAULT_MATERIAL_ID,
     Mesh, MeshId, MeshPrimitive, PrimitiveType, Vertex,
     Node, NodeId, Visibility,
     Texture, TextureFormat, TextureId,
@@ -399,6 +399,16 @@ pub struct SerializedMaterial {
     pub point_color: Option<[f32; 4]>,
     /// MaterialFlags as u32 bits
     pub flags: u32,
+    /// Alpha rendering mode
+    #[serde(default)]
+    pub alpha_mode: AlphaMode,
+    /// Alpha cutoff threshold for Mask mode
+    #[serde(default = "default_alpha_cutoff")]
+    pub alpha_cutoff: f32,
+}
+
+fn default_alpha_cutoff() -> f32 {
+    0.5
 }
 
 /// Serializable texture with embedded image data.
@@ -791,6 +801,8 @@ impl SerializedMaterial {
             line_color: line_color.map(|c| [c.r, c.g, c.b, c.a]),
             point_color: point_color.map(|c| [c.r, c.g, c.b, c.a]),
             flags: material.flags().bits(),
+            alpha_mode: material.alpha_mode(),
+            alpha_cutoff: material.alpha_cutoff(),
         })
     }
 
@@ -805,7 +817,9 @@ impl SerializedMaterial {
             .with_metallic_factor(self.metallic_factor)
             .with_roughness_factor(self.roughness_factor)
             .with_normal_scale(self.normal_scale)
-            .with_flags(MaterialFlags::from_bits_truncate(self.flags));
+            .with_flags(MaterialFlags::from_bits_truncate(self.flags))
+            .with_alpha_mode(self.alpha_mode)
+            .with_alpha_cutoff(self.alpha_cutoff);
 
         // Note: Texture IDs will be patched up after textures are loaded
         // using the file's IDs directly (they're already sequential)
