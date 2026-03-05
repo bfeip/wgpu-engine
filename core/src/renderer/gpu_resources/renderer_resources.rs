@@ -280,8 +280,8 @@ pub(in crate::renderer) struct DefaultTextures {
     pub(in crate::renderer) depth: GpuTexture,
     pub(in crate::renderer) white: GpuTexture,
     pub(in crate::renderer) normal: GpuTexture,
-    /// Color attachment texture for MSAA rendering. None when sample_count == 1.
-    pub(in crate::renderer) color_attachment: Option<GpuTexture>,
+    /// Multisampled color attachment for MSAA rendering. None when sample_count == 1.
+    pub(in crate::renderer) msaa_color_attachment: Option<GpuTexture>,
 }
 
 impl DefaultTextures {
@@ -305,13 +305,13 @@ impl DefaultTextures {
             [128, 128, 255, 255], // Neutral normal (0.5, 0.5, 1.0) in tangent space
             "default_normal_texture",
         );
-        let color_attachment = if sample_count > 1 {
-            Some(GpuTexture::color_attachment(device, config, sample_count, "color_attachment"))
+        let msaa_color_attachment = if sample_count > 1 {
+            Some(GpuTexture::color_attachment(device, config, sample_count, "msaa_color_attachment"))
         } else {
             None
         };
 
-        DefaultTextures { depth, white, normal, color_attachment }
+        DefaultTextures { depth, white, normal, msaa_color_attachment }
     }
 }
 

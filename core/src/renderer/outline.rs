@@ -25,7 +25,7 @@ pub(super) struct OutlineResources {
     pub(super) mask: GpuTexture,
     /// Multisampled mask color attachment for MSAA rendering.
     /// None when sample_count == 1.
-    pub(super) color_attachment: Option<GpuTexture>,
+    pub(super) msaa_color_attachment: Option<GpuTexture>,
     /// Pipeline for rendering selected objects to mask texture
     pub(super) mask_pipeline: wgpu::RenderPipeline,
     /// Pipeline for fullscreen outline post-process
@@ -51,7 +51,7 @@ impl OutlineResources {
         let mask = GpuTexture::mask(device, config.width, config.height, 1, "Outline Mask Texture");
 
         // Create multisampled mask color attachment when MSAA is active
-        let color_attachment = if sample_count > 1 {
+        let msaa_color_attachment = if sample_count > 1 {
             Some(GpuTexture::mask(device, config.width, config.height, sample_count, "Outline Mask Color Attachment"))
         } else {
             None
@@ -220,7 +220,7 @@ impl OutlineResources {
 
         OutlineResources {
             mask,
-            color_attachment,
+            msaa_color_attachment,
             mask_pipeline,
             outline_pipeline,
             uniform_buffer,
@@ -232,7 +232,7 @@ impl OutlineResources {
     /// Recreate size-dependent resources (mask texture and bind group) after a resize.
     pub(super) fn resize(&mut self, device: &wgpu::Device, width: u32, height: u32, sample_count: u32) {
         self.mask = GpuTexture::mask(device, width, height, 1, "Outline Mask Texture");
-        self.color_attachment = if sample_count > 1 {
+        self.msaa_color_attachment = if sample_count > 1 {
             Some(GpuTexture::mask(device, width, height, sample_count, "Outline Mask Color Attachment"))
         } else {
             None

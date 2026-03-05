@@ -233,8 +233,8 @@ impl<'a> Renderer<'a> {
             self.default_textures.depth =
                 GpuTexture::depth(&self.device, &self.config, self.sample_count, "depth_texture");
 
-            self.default_textures.color_attachment = if self.sample_count > 1 {
-                Some(GpuTexture::color_attachment(&self.device, &self.config, self.sample_count, "color_attachment"))
+            self.default_textures.msaa_color_attachment = if self.sample_count > 1 {
+                Some(GpuTexture::color_attachment(&self.device, &self.config, self.sample_count, "msaa_color_attachment"))
             } else {
                 None
             };
@@ -315,7 +315,7 @@ impl<'a> Renderer<'a> {
     ) {
         // When MSAA is active, render to the multisampled color attachment
         // and resolve to the swapchain view. Otherwise render directly to the swapchain.
-        let (color_view, resolve_target) = match &self.default_textures.color_attachment {
+        let (color_view, resolve_target) = match &self.default_textures.msaa_color_attachment {
             Some(msaa) => (&msaa.view, Some(view as &wgpu::TextureView)),
             None => (view, None),
         };
@@ -415,7 +415,7 @@ impl<'a> Renderer<'a> {
         selected_batches: &[DrawBatch],
         scene: &Scene,
     ) {
-        let (mask_view, mask_resolve_target) = match &self.outline_resources.color_attachment {
+        let (mask_view, mask_resolve_target) = match &self.outline_resources.msaa_color_attachment {
             Some(msaa_mask) => (&msaa_mask.view, Some(&self.outline_resources.mask.view as &wgpu::TextureView)),
             None => (&self.outline_resources.mask.view, None),
         };
