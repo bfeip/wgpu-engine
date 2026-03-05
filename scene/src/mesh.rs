@@ -1,4 +1,4 @@
-use std::{cell::Cell, fs::File, io::BufReader, path::Path};
+use std::{cell::Cell, collections::HashSet, fs::File, io::BufReader, path::Path};
 
 use anyhow::{Context, Result};
 use cgmath::{InnerSpace, Matrix4, Point3, Transform, Vector3};
@@ -26,6 +26,62 @@ pub enum PrimitiveType {
 pub struct MeshPrimitive {
     pub primitive_type: PrimitiveType,
     pub indices: Vec<MeshIndex>,
+}
+
+impl MeshPrimitive {
+    /// Converts a TriangleList to a LineList with deduplicated edges.
+    ///
+    /// Each triangle `[a, b, c]` produces edges `[a,b], [b,c], [c,a]`. Shared
+    /// edges between adjacent triangles appear only once in the output.
+    ///
+    /// Returns `None` if this primitive is not a TriangleList.
+    pub fn to_line_list(&self) -> Option<MeshPrimitive> {
+        if self.primitive_type != PrimitiveType::TriangleList {
+            return None;
+        }
+
+        let mut edge_set: HashSet<(MeshIndex, MeshIndex)> = HashSet::new();
+        let mut line_indices: Vec<MeshIndex> = Vec::new();
+
+        for tri in self.indices.chunks_exact(3) {
+            let (a, b, c) = (tri[0], tri[1], tri[2]);
+            for (v0, v1) in [(a, b), (b, c), (c, a)] {
+                let edge = if v0 <= v1 { (v0, v1) } else { (v1, v0) };
+                if edge_set.insert(edge) {
+                    line_indices.push(v0);
+                    line_indices.push(v1);
+                }
+            }
+        }
+
+        Some(MeshPrimitive {
+            primitive_type: PrimitiveType::LineList,
+            indices: line_indices,
+        })
+    }
+
+    /// Converts a TriangleList or LineList to a PointList with unique vertex indices.
+    ///
+    /// Returns `None` if this primitive is already a PointList.
+    pub fn to_point_list(&self) -> Option<MeshPrimitive> {
+        if self.primitive_type == PrimitiveType::PointList {
+            return None;
+        }
+
+        let mut seen: HashSet<MeshIndex> = HashSet::new();
+        let mut point_indices: Vec<MeshIndex> = Vec::new();
+
+        for &idx in &self.indices {
+            if seen.insert(idx) {
+                point_indices.push(idx);
+            }
+        }
+
+        Some(MeshPrimitive {
+            primitive_type: PrimitiveType::PointList,
+            indices: point_indices,
+        })
+    }
 }
 
 /// Result of a ray-mesh intersection test in local mesh space.
@@ -479,5 +535,111 @@ impl Mesh {
 impl Default for Mesh {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ========== to_line_list ==========
+
+    #[test]
+    fn single_triangle_to_line_list() {
+        let prim = MeshPrimitive {
+            primitive_type: PrimitiveType::TriangleList,
+            indices: vec![0, 1, 2],
+        };
+        let lines = prim.to_line_list().unwrap();
+        assert_eq!(lines.primitive_type, PrimitiveType::LineList);
+        // 3 edges: (0,1), (1,2), (2,0)
+        assert_eq!(lines.indices.len(), 6);
+        assert_eq!(lines.indices, vec![0, 1, 1, 2, 2, 0]);
+    }
+
+    #[test]
+    fn shared_edge_deduplicated() {
+        // Two triangles sharing edge (0,2): [0,1,2] and [0,2,3]
+        let prim = MeshPrimitive {
+            primitive_type: PrimitiveType::TriangleList,
+            indices: vec![0, 1, 2, 0, 2, 3],
+        };
+        let lines = prim.to_line_list().unwrap();
+        // 5 unique edges, not 6: (0,1), (1,2), (0,2) shared, (2,3), (0,3)
+        assert_eq!(lines.indices.len(), 10);
+
+        // Collect edges as pairs for verification
+        let edges: Vec<(u16, u16)> = lines
+            .indices
+            .chunks_exact(2)
+            .map(|e| {
+                let (a, b) = (e[0], e[1]);
+                if a <= b { (a, b) } else { (b, a) }
+            })
+            .collect();
+        assert_eq!(edges.len(), 5);
+        assert!(edges.contains(&(0, 1)));
+        assert!(edges.contains(&(1, 2)));
+        assert!(edges.contains(&(0, 2)));
+        assert!(edges.contains(&(2, 3)));
+        assert!(edges.contains(&(0, 3)));
+    }
+
+    #[test]
+    fn to_line_list_empty_indices() {
+        let prim = MeshPrimitive {
+            primitive_type: PrimitiveType::TriangleList,
+            indices: vec![],
+        };
+        let lines = prim.to_line_list().unwrap();
+        assert_eq!(lines.indices.len(), 0);
+    }
+
+    #[test]
+    fn to_line_list_non_triangle_returns_none() {
+        let line_prim = MeshPrimitive {
+            primitive_type: PrimitiveType::LineList,
+            indices: vec![0, 1],
+        };
+        assert!(line_prim.to_line_list().is_none());
+
+        let point_prim = MeshPrimitive {
+            primitive_type: PrimitiveType::PointList,
+            indices: vec![0],
+        };
+        assert!(point_prim.to_line_list().is_none());
+    }
+
+    // ========== to_point_list ==========
+
+    #[test]
+    fn triangle_to_point_list() {
+        let prim = MeshPrimitive {
+            primitive_type: PrimitiveType::TriangleList,
+            indices: vec![0, 1, 2, 0, 2, 3],
+        };
+        let points = prim.to_point_list().unwrap();
+        assert_eq!(points.primitive_type, PrimitiveType::PointList);
+        assert_eq!(points.indices, vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn line_to_point_list() {
+        let prim = MeshPrimitive {
+            primitive_type: PrimitiveType::LineList,
+            indices: vec![0, 1, 1, 2, 2, 0],
+        };
+        let points = prim.to_point_list().unwrap();
+        assert_eq!(points.primitive_type, PrimitiveType::PointList);
+        assert_eq!(points.indices, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn point_list_to_point_list_returns_none() {
+        let prim = MeshPrimitive {
+            primitive_type: PrimitiveType::PointList,
+            indices: vec![0, 1, 2],
+        };
+        assert!(prim.to_point_list().is_none());
     }
 }

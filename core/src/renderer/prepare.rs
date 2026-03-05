@@ -51,6 +51,10 @@ impl<'a> Renderer<'a> {
         }
 
         // 3. Prepare all meshes
+        // TODO: For wireframe mode, generate line index buffers from triangle primitives
+        // using MeshPrimitive::to_line_list(). This could be done here by checking a
+        // wireframe flag and ensuring meshes have line primitives derived from their
+        // triangle data before uploading to the GPU.
         for mesh in scene.meshes.values() {
             self.gpu_resources.ensure_mesh(mesh, &self.device);
         }
