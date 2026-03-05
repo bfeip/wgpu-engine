@@ -25,7 +25,7 @@ use annotation::{Annotation, AnnotationId, AnnotationManager};
 pub use environment::{EnvironmentMap, EnvironmentMapId, EnvironmentSource};
 pub use instance::{Instance, InstanceId};
 pub use light::{Light, LightType, MAX_LIGHTS};
-pub use material::{Material, MaterialFlags, MaterialId, DEFAULT_MATERIAL_ID};
+pub use material::{AlphaMode, Material, MaterialFlags, MaterialId, DEFAULT_MATERIAL_ID};
 pub use mesh::{Mesh, MeshDescriptor, MeshId, MeshIndex, MeshPrimitive, ObjMesh, PrimitiveType, Vertex};
 pub use node::{EffectiveVisibility, Node, NodeId, Visibility};
 pub use texture::{Texture, TextureFormat, TextureId};

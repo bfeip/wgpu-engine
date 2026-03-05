@@ -11,6 +11,20 @@ pub const DEFAULT_ROUGHNESS: f32 = 0.5;
 pub const DEFAULT_METALLIC: f32 = 0.0;
 /// Default normal scale when not specified
 pub const DEFAULT_NORMAL_SCALE: f32 = 1.0;
+/// Default alpha cutoff for mask mode (per glTF spec)
+pub const DEFAULT_ALPHA_CUTOFF: f32 = 0.5;
+
+/// Alpha rendering mode, matching glTF spec.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum AlphaMode {
+    /// Fully opaque, alpha channel ignored.
+    #[default]
+    Opaque,
+    /// Binary alpha test: alpha >= cutoff is fully opaque, otherwise discarded.
+    Mask,
+    /// Standard alpha blending (source alpha, one minus source alpha).
+    Blend,
+}
 
 bitflags! {
     /// Additional material rendering flags for extensibility
@@ -18,8 +32,6 @@ bitflags! {
     pub struct MaterialFlags: u32 {
         /// No special flags
         const NONE = 0;
-        /// Enable alpha blending (TODO)
-        const ALPHA_BLEND = 1 << 0;
         /// Disable back-face culling and flip normals for back faces
         const DOUBLE_SIDED = 1 << 1;
         /// Disables face lighting. Faces will appear at a constant luminance
@@ -38,6 +50,8 @@ pub struct MaterialProperties {
     pub has_lighting: bool,
     /// Whether the material is double-sided (disables back-face culling, flips normals)
     pub double_sided: bool,
+    /// Alpha rendering mode
+    pub alpha_mode: AlphaMode,
 }
 
 /// The ID of the default material created automatically by the Scene.
@@ -108,6 +122,11 @@ pub struct Material {
     /// Rendering flags
     flags: MaterialFlags,
 
+    /// Alpha rendering mode
+    alpha_mode: AlphaMode,
+    /// Alpha cutoff threshold for Mask mode
+    alpha_cutoff: f32,
+
     // Generation counters per primitive type (for GPU sync tracking)
     face_generation: u64,
     line_generation: u64,
@@ -131,6 +150,8 @@ impl Material {
             line_color: None,
             point_color: None,
             flags: MaterialFlags::NONE,
+            alpha_mode: AlphaMode::Opaque,
+            alpha_cutoff: DEFAULT_ALPHA_CUTOFF,
             face_generation: 1,
             line_generation: 1,
             point_generation: 1,
@@ -187,6 +208,16 @@ impl Material {
     /// Get the flags.
     pub fn flags(&self) -> MaterialFlags {
         self.flags
+    }
+
+    /// Get the alpha rendering mode.
+    pub fn alpha_mode(&self) -> AlphaMode {
+        self.alpha_mode
+    }
+
+    /// Get the alpha cutoff threshold (used in Mask mode).
+    pub fn alpha_cutoff(&self) -> f32 {
+        self.alpha_cutoff
     }
 
     // ========== Builder methods (chainable) ==========
@@ -259,6 +290,20 @@ impl Material {
         self
     }
 
+    /// Set the alpha rendering mode.
+    pub fn with_alpha_mode(mut self, alpha_mode: AlphaMode) -> Self {
+        self.alpha_mode = alpha_mode;
+        self.face_generation += 1;
+        self
+    }
+
+    /// Set the alpha cutoff threshold (used in Mask mode).
+    pub fn with_alpha_cutoff(mut self, alpha_cutoff: f32) -> Self {
+        self.alpha_cutoff = alpha_cutoff;
+        self.face_generation += 1;
+        self
+    }
+
     // ========== Mutation methods (increment generation) ==========
 
     /// Set the base color texture, incrementing the face generation.
@@ -319,6 +364,18 @@ impl Material {
         self.flags = flags;
     }
 
+    /// Set the alpha rendering mode, marking the material as dirty.
+    pub fn set_alpha_mode(&mut self, alpha_mode: AlphaMode) {
+        self.alpha_mode = alpha_mode;
+        self.face_generation += 1;
+    }
+
+    /// Set the alpha cutoff threshold, marking the material as dirty.
+    pub fn set_alpha_cutoff(&mut self, alpha_cutoff: f32) {
+        self.alpha_cutoff = alpha_cutoff;
+        self.face_generation += 1;
+    }
+
     // ========== Query methods ==========
 
     /// Returns the generation counter for a primitive type.
@@ -342,10 +399,12 @@ impl Material {
             PrimitiveType::TriangleList => MaterialProperties {
                 has_lighting: !self.flags.contains(MaterialFlags::DO_NOT_LIGHT),
                 double_sided: self.flags.contains(MaterialFlags::DOUBLE_SIDED),
+                alpha_mode: self.alpha_mode,
             },
             PrimitiveType::LineList | PrimitiveType::PointList => MaterialProperties {
                 has_lighting: false,
                 double_sided: false,
+                alpha_mode: AlphaMode::Opaque,
             },
         }
     }
