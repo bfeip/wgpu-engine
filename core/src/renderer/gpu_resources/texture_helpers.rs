@@ -67,6 +67,7 @@ impl GpuTexture {
     pub(crate) fn depth(
         device: &wgpu::Device,
         config: &wgpu::SurfaceConfiguration,
+        sample_count: u32,
         label: &str,
     ) -> GpuTexture {
         let size = wgpu::Extent3d {
@@ -78,7 +79,7 @@ impl GpuTexture {
             label: Some(label),
             size,
             mip_level_count: 1,
-            sample_count: 1,
+            sample_count,
             dimension: wgpu::TextureDimension::D2,
             format: Self::DEPTH_FORMAT,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
@@ -108,6 +109,7 @@ impl GpuTexture {
         device: &wgpu::Device,
         width: u32,
         height: u32,
+        sample_count: u32,
         label: &str,
     ) -> GpuTexture {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -118,7 +120,7 @@ impl GpuTexture {
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
-            sample_count: 1,
+            sample_count,
             dimension: wgpu::TextureDimension::D2,
             format: Self::MASK_FORMAT,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
@@ -136,6 +138,37 @@ impl GpuTexture {
             mipmap_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
         });
+
+        GpuTexture { _texture: texture, view, sampler }
+    }
+
+    /// Create a color attachment texture matching the surface format.
+    ///
+    /// Used as the multisampled color render target that resolves to the
+    /// swapchain surface texture.
+    pub(crate) fn color_attachment(
+        device: &wgpu::Device,
+        config: &wgpu::SurfaceConfiguration,
+        sample_count: u32,
+        label: &str,
+    ) -> GpuTexture {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width: config.width.max(1),
+                height: config.height.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count,
+            dimension: wgpu::TextureDimension::D2,
+            format: config.format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor::default());
 
         GpuTexture { _texture: texture, view, sampler }
     }

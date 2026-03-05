@@ -18,8 +18,14 @@ pub(super) struct OutlineUniform {
 
 /// GPU resources for screen-space selection outline rendering.
 pub(super) struct OutlineResources {
-    /// Mask texture for selected objects (R8Unorm)
+    /// Mask texture for selected objects (R8Unorm, always sample_count 1).
+    /// When MSAA is active, this serves as the resolve target for the
+    /// multisampled color attachment. The outline screenspace shader
+    /// always samples from this resolved texture.
     pub(super) mask: GpuTexture,
+    /// Multisampled mask color attachment for MSAA rendering.
+    /// None when sample_count == 1.
+    pub(super) color_attachment: Option<GpuTexture>,
     /// Pipeline for rendering selected objects to mask texture
     pub(super) mask_pipeline: wgpu::RenderPipeline,
     /// Pipeline for fullscreen outline post-process
@@ -39,9 +45,17 @@ impl OutlineResources {
         config: &wgpu::SurfaceConfiguration,
         camera_bind_group_layout: &wgpu::BindGroupLayout,
         shader_generator: &mut ShaderGenerator,
+        sample_count: u32,
     ) -> OutlineResources {
-        // Create mask texture (R8Unorm for storing selection mask)
-        let mask = GpuTexture::mask(device, config.width, config.height, "Outline Mask Texture");
+        // Create mask texture (R8Unorm, always 1x — serves as resolve target when MSAA is active)
+        let mask = GpuTexture::mask(device, config.width, config.height, 1, "Outline Mask Texture");
+
+        // Create multisampled mask color attachment when MSAA is active
+        let color_attachment = if sample_count > 1 {
+            Some(GpuTexture::mask(device, config.width, config.height, sample_count, "Outline Mask Color Attachment"))
+        } else {
+            None
+        };
 
         // Create uniform buffer with default values
         let uniform = OutlineUniform {
@@ -106,7 +120,8 @@ impl OutlineResources {
             push_constant_ranges: &[],
         });
 
-        // Create mask pipeline - renders selected objects to R8Unorm texture
+        // Create mask pipeline - renders selected objects to R8Unorm texture.
+        // Uses the renderer's sample_count to match the shared depth buffer.
         let mask_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Outline Mask Pipeline"),
             layout: Some(&mask_pipeline_layout),
@@ -143,7 +158,7 @@ impl OutlineResources {
                 bias: wgpu::DepthBiasState::default(),
             }),
             multisample: wgpu::MultisampleState {
-                count: 1,
+                count: sample_count,
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             },
@@ -205,6 +220,7 @@ impl OutlineResources {
 
         OutlineResources {
             mask,
+            color_attachment,
             mask_pipeline,
             outline_pipeline,
             uniform_buffer,
@@ -214,8 +230,13 @@ impl OutlineResources {
     }
 
     /// Recreate size-dependent resources (mask texture and bind group) after a resize.
-    pub(super) fn resize(&mut self, device: &wgpu::Device, width: u32, height: u32) {
-        self.mask = GpuTexture::mask(device, width, height, "Outline Mask Texture");
+    pub(super) fn resize(&mut self, device: &wgpu::Device, width: u32, height: u32, sample_count: u32) {
+        self.mask = GpuTexture::mask(device, width, height, 1, "Outline Mask Texture");
+        self.color_attachment = if sample_count > 1 {
+            Some(GpuTexture::mask(device, width, height, sample_count, "Outline Mask Color Attachment"))
+        } else {
+            None
+        };
         self.bind_group = Self::create_bind_group(device, &self.bind_group_layout, &self.mask, &self.uniform_buffer);
     }
 

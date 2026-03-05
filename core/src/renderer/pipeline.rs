@@ -80,7 +80,7 @@ impl<'a> Renderer<'a> {
                         bias: wgpu::DepthBiasState::default(),
                     }),
                     multisample: wgpu::MultisampleState {
-                        count: 1,
+                        count: self.sample_count,
                         mask: !0,
                         alpha_to_coverage_enabled: false,
                     },

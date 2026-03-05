@@ -50,6 +50,9 @@ pub(crate) struct Renderer<'a> {
 
     // Scene GPU resource tracking (for future use)
     gpu_resources: GpuResourceManager,
+
+    /// MSAA sample count (1 = no MSAA, 4 = 4x MSAA).
+    sample_count: u32,
 }
 
 impl<'a> Renderer<'a> {
@@ -159,13 +162,17 @@ impl<'a> Renderer<'a> {
             &material_layouts,
             &ibl_resources.bind_group_layout,
         );
-        let default_textures = DefaultTextures::new(&device, &queue, &config);
+        // Use 4x MSAA on native backends, disable on GL (WebGL2 doesn't support MSAA render targets)
+        let sample_count = if is_gl_backend { 1 } else { 4 };
+
+        let default_textures = DefaultTextures::new(&device, &queue, &config, sample_count);
         let mut shader_generator = ShaderGenerator::new();
         let outline_resources = OutlineResources::new(
             &device,
             &config,
             &camera_resources.bind_group_layout,
             &mut shader_generator,
+            sample_count,
         );
 
         Self {
@@ -185,6 +192,7 @@ impl<'a> Renderer<'a> {
             ibl_resources,
             outline_resources,
             gpu_resources: GpuResourceManager::new(),
+            sample_count,
         }
     }
 
@@ -223,10 +231,16 @@ impl<'a> Renderer<'a> {
             self.camera_resources.camera.aspect = width as f32 / height as f32;
 
             self.default_textures.depth =
-                GpuTexture::depth(&self.device, &self.config, "depth_texture");
+                GpuTexture::depth(&self.device, &self.config, self.sample_count, "depth_texture");
+
+            self.default_textures.color_attachment = if self.sample_count > 1 {
+                Some(GpuTexture::color_attachment(&self.device, &self.config, self.sample_count, "color_attachment"))
+            } else {
+                None
+            };
 
             self.outline_resources
-                .resize(&self.device, clamped_width, clamped_height);
+                .resize(&self.device, clamped_width, clamped_height, self.sample_count);
         }
     }
 
@@ -299,11 +313,18 @@ impl<'a> Renderer<'a> {
         batches: &[DrawBatch],
         scene: &Scene,
     ) {
+        // When MSAA is active, render to the multisampled color attachment
+        // and resolve to the swapchain view. Otherwise render directly to the swapchain.
+        let (color_view, resolve_target) = match &self.default_textures.color_attachment {
+            Some(msaa) => (&msaa.view, Some(view as &wgpu::TextureView)),
+            None => (view, None),
+        };
+
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("3D Scene Render Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view,
-                resolve_target: None,
+                view: color_view,
+                resolve_target,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color {
                         r: 0.04,
@@ -394,11 +415,16 @@ impl<'a> Renderer<'a> {
         selected_batches: &[DrawBatch],
         scene: &Scene,
     ) {
+        let (mask_view, mask_resolve_target) = match &self.outline_resources.color_attachment {
+            Some(msaa_mask) => (&msaa_mask.view, Some(&self.outline_resources.mask.view as &wgpu::TextureView)),
+            None => (&self.outline_resources.mask.view, None),
+        };
+
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Selection Mask Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &self.outline_resources.mask.view,
-                resolve_target: None,
+                view: mask_view,
+                resolve_target: mask_resolve_target,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                     store: wgpu::StoreOp::Store,
