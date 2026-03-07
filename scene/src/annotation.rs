@@ -9,7 +9,7 @@ use crate::common::RgbaColor;
 pub type AnnotationId = u32;
 
 /// Data needed to create scene geometry for an annotation
-pub struct AnnotationMeshData {
+pub(crate) struct AnnotationMeshData {
     pub mesh: Mesh,
     pub material: Material,
     pub name: Option<String>,
@@ -24,7 +24,7 @@ pub struct AnnotationMeta {
     pub name: Option<String>,
     /// Whether this annotation is currently visible
     pub visible: bool,
-    /// Node ID if this annotation has been reified (rendered to scene graph)
+    /// Node ID if this annotation has been reified
     pub node_id: Option<NodeId>,
 }
 
@@ -50,7 +50,7 @@ pub struct LineAnnotation {
 
 impl LineAnnotation {
     /// Creates mesh data for this line annotation
-    pub fn to_mesh_data(&self) -> AnnotationMeshData {
+    pub(crate) fn to_mesh_data(&self) -> AnnotationMeshData {
         let vertices = vec![
             Vertex {
                 position: self.start.into(),
@@ -90,7 +90,7 @@ pub struct PolylineAnnotation {
 impl PolylineAnnotation {
     /// Creates mesh data for this polyline annotation.
     /// Returns None if points is empty.
-    pub fn to_mesh_data(&self) -> Option<AnnotationMeshData> {
+    pub(crate) fn to_mesh_data(&self) -> Option<AnnotationMeshData> {
         if self.points.is_empty() {
             return None;
         }
@@ -139,7 +139,7 @@ pub struct PointsAnnotation {
 impl PointsAnnotation {
     /// Creates mesh data for this points annotation.
     /// Returns None if positions is empty.
-    pub fn to_mesh_data(&self) -> Option<AnnotationMeshData> {
+    pub(crate) fn to_mesh_data(&self) -> Option<AnnotationMeshData> {
         if self.positions.is_empty() {
             return None;
         }
@@ -180,7 +180,7 @@ pub struct AxesAnnotation {
 impl AxesAnnotation {
     /// Creates mesh data for each axis (X=red, Y=green, Z=blue).
     /// Returns a Vec with 3 mesh data items, one per axis.
-    pub fn to_mesh_data(&self) -> Vec<AnnotationMeshData> {
+    pub(crate) fn to_mesh_data(&self) -> Vec<AnnotationMeshData> {
         let axes = [
             (Vector3::new(self.size, 0.0, 0.0), RgbaColor::RED),
             (Vector3::new(0.0, self.size, 0.0), RgbaColor::GREEN),
@@ -229,7 +229,7 @@ pub struct BoxAnnotation {
 
 impl BoxAnnotation {
     /// Creates mesh data for this wireframe box annotation
-    pub fn to_mesh_data(&self) -> AnnotationMeshData {
+    pub(crate) fn to_mesh_data(&self) -> AnnotationMeshData {
         let half = self.size / 2.0;
 
         let corners = [
@@ -284,7 +284,7 @@ pub struct GridAnnotation {
 
 impl GridAnnotation {
     /// Creates mesh data for this grid annotation
-    pub fn to_mesh_data(&self) -> AnnotationMeshData {
+    pub(crate) fn to_mesh_data(&self) -> AnnotationMeshData {
         let half_size = self.size / 2.0;
         let step = self.size / self.divisions as f32;
 
@@ -367,7 +367,7 @@ impl PointLightAnnotation {
     /// Creates wireframe sphere geometry for the point light visualization.
     ///
     /// The sphere is centered at `position` using the light's `color`.
-    pub fn to_mesh_data(&self, position: Point3<f32>, color: RgbaColor) -> AnnotationMeshData {
+    pub(crate) fn to_mesh_data(&self, position: Point3<f32>, color: RgbaColor) -> AnnotationMeshData {
         let mesh = Mesh::sphere(self.radius, self.segments, self.segments / 2, PrimitiveType::LineList)
             .translated(position.to_vec());
 
@@ -400,7 +400,7 @@ impl SpotLightAnnotation {
     /// Creates cone outline geometry for the spot light visualization.
     ///
     /// Returns 2 meshes: outer cone (full color) and inner cone (dimmer).
-    pub fn to_mesh_data(
+    pub(crate) fn to_mesh_data(
         &self,
         position: Point3<f32>,
         direction: Vector3<f32>,
@@ -472,7 +472,7 @@ impl NormalsAnnotation {
     ///
     /// Each entry in `vertices` is a (position, normal) pair in world space.
     /// Splits into multiple meshes if the vertex count exceeds u16 index limits.
-    pub fn to_mesh_data(
+    pub(crate) fn to_mesh_data(
         &self,
         vertices: &[(Point3<f32>, Vector3<f32>)],
     ) -> Vec<AnnotationMeshData> {
@@ -595,12 +595,10 @@ impl Annotation {
 /// Manages 3D annotations with lazy reification.
 ///
 /// Annotations are stored as data objects and can be reified (converted to
-/// scene nodes with meshes and materials) on demand. This separation allows
-/// annotations to survive scene clearing operations if desired, or to be
-/// automatically cleared with the scene.
+/// scene nodes with meshes and materials) on demand.
 ///
 /// The AnnotationManager is owned by Scene, ensuring lifecycle consistency.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct AnnotationManager {
     /// All annotations indexed by their ID
     annotations: HashMap<AnnotationId, Annotation>,
@@ -610,12 +608,6 @@ pub struct AnnotationManager {
 
     /// Root node for all annotation geometry (lazy initialized)
     root_node: Option<NodeId>,
-}
-
-impl Default for AnnotationManager {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl AnnotationManager {
@@ -689,7 +681,7 @@ impl AnnotationManager {
     // ========== Add annotation methods ==========
     // These add annotation data but do NOT create scene nodes
 
-    /// Adds a line annotation (data only, not yet reified)
+    /// Adds a line annotation
     pub fn add_line(
         &mut self,
         start: Point3<f32>,
@@ -707,7 +699,7 @@ impl AnnotationManager {
         id
     }
 
-    /// Adds a polyline annotation (data only, not yet reified)
+    /// Adds a polyline annotation
     pub fn add_polyline(
         &mut self,
         points: Vec<Point3<f32>>,
@@ -725,7 +717,7 @@ impl AnnotationManager {
         id
     }
 
-    /// Adds a points annotation (data only, not yet reified)
+    /// Adds a points annotation
     pub fn add_points(&mut self, positions: Vec<Point3<f32>>, color: RgbaColor) -> AnnotationId {
         let id = self.next_id();
         let annotation = Annotation::Points(PointsAnnotation {
@@ -737,7 +729,7 @@ impl AnnotationManager {
         id
     }
 
-    /// Adds an axes annotation (data only, not yet reified)
+    /// Adds an axes annotation
     pub fn add_axes(&mut self, origin: Point3<f32>, size: f32) -> AnnotationId {
         let id = self.next_id();
         let annotation = Annotation::Axes(AxesAnnotation {
@@ -749,7 +741,7 @@ impl AnnotationManager {
         id
     }
 
-    /// Adds a box annotation (data only, not yet reified)
+    /// Adds a box annotation
     pub fn add_box(
         &mut self,
         center: Point3<f32>,
@@ -767,7 +759,7 @@ impl AnnotationManager {
         id
     }
 
-    /// Adds a grid annotation (data only, not yet reified)
+    /// Adds a grid annotation
     pub fn add_grid(
         &mut self,
         center: Point3<f32>,
@@ -787,7 +779,7 @@ impl AnnotationManager {
         id
     }
 
-    /// Adds a point light annotation (data only, not yet reified).
+    /// Adds a point light annotation.
     ///
     /// Geometry is built during reification from the light at `light_index`.
     pub fn add_point_light(
@@ -808,7 +800,7 @@ impl AnnotationManager {
         id
     }
 
-    /// Adds a spot light annotation (data only, not yet reified).
+    /// Adds a spot light annotation.
     ///
     /// Geometry is built during reification from the light at `light_index`.
     pub fn add_spot_light(
@@ -829,7 +821,7 @@ impl AnnotationManager {
         id
     }
 
-    /// Adds a normals annotation (data only, not yet reified).
+    /// Adds a normals annotation.
     ///
     /// Geometry is built during reification from the mesh of the node at `node_id`.
     pub fn add_normals(
