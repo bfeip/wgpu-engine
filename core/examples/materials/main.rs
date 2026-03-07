@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use cgmath::{Point3, Quaternion, Vector3};
+use wgpu_engine_scene::CoordinateSpace;
 use winit::{
     application::ApplicationHandler,
     event::{DeviceEvent, DeviceId, WindowEvent},
@@ -34,10 +35,10 @@ fn build_material_scene(viewer: &mut Viewer) {
     // Replace default lighting with a three-light setup
     scene.lights.clear();
     scene.lights.push(Light::directional(
-        Vector3::new(-1.0, 1.0, -1.0),
+        Vector3::new(-0.3, 0.0, -1.0),
         RgbaColor::WHITE,
         3.0,
-    ));
+    ).in_space(CoordinateSpace::Camera));
     //scene.lights.push(Light::point(
     //    Vector3::new(-4.0, 3.0, -2.0),
     //    RgbaColor { r: 0.7, g: 0.8, b: 1.0, a: 1.0 },
