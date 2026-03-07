@@ -40,7 +40,7 @@ use wgpu_engine_scene::{
         GridAnnotation, LineAnnotation, PointsAnnotation, PolylineAnnotation, AnnotationMeta,
     },
     Instance, InstanceId,
-    Light,
+    CoordinateSpace, Light,
     AlphaMode, Material, MaterialFlags, MaterialId, DEFAULT_MATERIAL_ID,
     Mesh, MeshId, MeshPrimitive, PrimitiveType, Vertex,
     Node, NodeId, Visibility,
@@ -447,6 +447,8 @@ pub struct SerializedLight {
     pub range: f32,
     pub inner_cone_angle: f32,
     pub outer_cone_angle: f32,
+    #[serde(default)]
+    pub space: CoordinateSpace,
 }
 
 /// Serializable annotation metadata.
@@ -855,6 +857,7 @@ impl SerializedLight {
                 color,
                 intensity,
                 range,
+                space,
             } => Self {
                 light_type: 0,
                 position: [position.x, position.y, position.z],
@@ -864,11 +867,13 @@ impl SerializedLight {
                 range: *range,
                 inner_cone_angle: 0.0,
                 outer_cone_angle: 0.0,
+                space: *space,
             },
             Light::Directional {
                 direction,
                 color,
                 intensity,
+                space,
             } => Self {
                 light_type: 1,
                 position: [0.0, 0.0, 0.0],
@@ -878,6 +883,7 @@ impl SerializedLight {
                 range: 0.0,
                 inner_cone_angle: 0.0,
                 outer_cone_angle: 0.0,
+                space: *space,
             },
             Light::Spot {
                 position,
@@ -887,6 +893,7 @@ impl SerializedLight {
                 range,
                 inner_cone_angle,
                 outer_cone_angle,
+                space,
             } => Self {
                 light_type: 2,
                 position: [position.x, position.y, position.z],
@@ -896,6 +903,7 @@ impl SerializedLight {
                 range: *range,
                 inner_cone_angle: *inner_cone_angle,
                 outer_cone_angle: *outer_cone_angle,
+                space: *space,
             },
         }
     }
@@ -916,11 +924,13 @@ impl SerializedLight {
                 color,
                 intensity: self.intensity,
                 range: self.range,
+                space: self.space,
             },
             1 => Light::Directional {
                 direction: Vector3::new(self.direction[0], self.direction[1], self.direction[2]),
                 color,
                 intensity: self.intensity,
+                space: self.space,
             },
             _ => Light::Spot {
                 position: Vector3::new(self.position[0], self.position[1], self.position[2]),
@@ -930,6 +940,7 @@ impl SerializedLight {
                 range: self.range,
                 inner_cone_angle: self.inner_cone_angle,
                 outer_cone_angle: self.outer_cone_angle,
+                space: self.space,
             },
         }
     }

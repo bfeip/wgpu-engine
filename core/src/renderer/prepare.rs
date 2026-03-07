@@ -2,7 +2,7 @@ use anyhow::Result;
 use bytemuck::bytes_of;
 use wgpu::util::DeviceExt;
 
-use crate::scene::{PrimitiveType, Scene};
+use crate::scene::{CoordinateSpace, PrimitiveType, Scene};
 
 use super::gpu_resources::{LightsArrayUniform, MaterialGpuResources, PbrUniform};
 use super::Renderer;
@@ -60,9 +60,19 @@ impl<'a> Renderer<'a> {
         }
 
         // 4. Prepare lights
+        let has_camera_space_lights = scene
+            .lights
+            .iter()
+            .any(|l| l.space() != CoordinateSpace::World);
         let light_generation = scene.light_generation();
-        if self.lights.synced_generation != light_generation {
-            let lights_uniform = LightsArrayUniform::from_lights(&scene.lights);
+        if self.lights.synced_generation != light_generation || has_camera_space_lights {
+            let camera = &self.camera_resources.camera;
+            let world_lights: Vec<_> = scene
+                .lights
+                .iter()
+                .map(|l| l.resolved_to_world(camera))
+                .collect();
+            let lights_uniform = LightsArrayUniform::from_lights(&world_lights);
             self.queue
                 .write_buffer(&self.lights.buffer, 0, bytes_of(&lights_uniform));
             self.lights.synced_generation = light_generation;

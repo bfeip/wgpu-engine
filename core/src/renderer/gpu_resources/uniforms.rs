@@ -97,6 +97,7 @@ impl LightUniform {
                 color,
                 intensity,
                 range,
+                ..
             } => LightUniform {
                 light_type: LightType::Point as u32,
                 range: *range,
@@ -113,6 +114,7 @@ impl LightUniform {
                 direction,
                 color,
                 intensity,
+                ..
             } => LightUniform {
                 light_type: LightType::Directional as u32,
                 range: 0.0,
@@ -133,6 +135,7 @@ impl LightUniform {
                 range,
                 inner_cone_angle,
                 outer_cone_angle,
+                ..
             } => LightUniform {
                 light_type: LightType::Spot as u32,
                 range: *range,

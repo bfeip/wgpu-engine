@@ -7,6 +7,7 @@ pub use camera::Camera;
 pub mod annotation;
 pub mod environment;
 mod instance;
+mod coordinate_space;
 mod light;
 mod material;
 mod mesh;
@@ -22,6 +23,7 @@ use std::path::Path;
 use annotation::{Annotation, AnnotationId, AnnotationManager};
 
 // Public API exports
+pub use coordinate_space::CoordinateSpace;
 pub use environment::{EnvironmentMap, EnvironmentMapId, EnvironmentSource};
 pub use instance::{Instance, InstanceId};
 pub use light::{Light, LightType, MAX_LIGHTS};
