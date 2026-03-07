@@ -88,7 +88,7 @@ fn pick_node<Q: PickQuery>(
             .expect("Instance referenced by node not found in scene");
         let mesh = scene
             .meshes
-            .get(&instance.mesh)
+            .get(&instance.mesh())
             .expect("Mesh referenced by instance not found in scene");
 
         // Get world transform and compute inverse for local space conversion

@@ -673,7 +673,7 @@ impl Scene {
                         .get(&normals.target_node_id)
                         .and_then(|n| n.instance())
                         .and_then(|iid| self.instances.get(&iid))
-                        .and_then(|inst| self.meshes.get(&inst.mesh))
+                        .and_then(|inst| self.meshes.get(&inst.mesh()))
                         .map(|m| m.generation());
                     normals.reified_generation != current_gen
                 }
@@ -796,7 +796,7 @@ impl Scene {
                 let node = self.nodes.get(&normals.target_node_id)?;
                 let instance_id = node.instance()?;
                 let instance = self.instances.get(&instance_id)?;
-                let mesh = self.meshes.get(&instance.mesh)?;
+                let mesh = self.meshes.get(&instance.mesh())?;
                 let world_transform = self.nodes_transform(normals.target_node_id);
                 let normal_matrix =
                     crate::common::compute_normal_matrix(&world_transform);
@@ -858,7 +858,7 @@ impl Scene {
                     .get(&normals.target_node_id)
                     .and_then(|n| n.instance())
                     .and_then(|iid| self.instances.get(&iid))
-                    .and_then(|inst| self.meshes.get(&inst.mesh))
+                    .and_then(|inst| self.meshes.get(&inst.mesh()))
                     .map(|m| m.generation());
             }
             _ => {}
@@ -1129,7 +1129,7 @@ impl Scene {
         let node_bounds = if let Some(instance_id) = node.instance() {
             let instance = self.instances.get(&instance_id)
                 .expect("Instance referenced by node not found in scene");
-            let mesh = self.meshes.get(&instance.mesh)
+            let mesh = self.meshes.get(&instance.mesh())
                 .expect("Mesh referenced by instance not found in scene");
 
             let local_bounds = mesh.bounding();

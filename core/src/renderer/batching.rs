@@ -184,7 +184,7 @@ pub(crate) fn collect_draw_batches(scene: &Scene) -> Vec<DrawBatch> {
         let Some(instance) = scene.instances.get(&inst_transform.instance_id) else {
             continue;
         };
-        let Some(mesh) = scene.meshes.get(&instance.mesh) else {
+        let Some(mesh) = scene.meshes.get(&instance.mesh()) else {
             continue;
         };
 
@@ -198,10 +198,10 @@ pub(crate) fn collect_draw_batches(scene: &Scene) -> Vec<DrawBatch> {
                 continue;
             }
 
-            let key = (instance.mesh, instance.material, primitive_type);
+            let key = (instance.mesh(), instance.material(), primitive_type);
             batch_map
                 .entry(key)
-                .or_insert_with(|| DrawBatch::new(instance.mesh, instance.material, primitive_type))
+                .or_insert_with(|| DrawBatch::new(instance.mesh(), instance.material(), primitive_type))
                 .add_instance(inst_transform.clone());
         }
     }

@@ -561,8 +561,8 @@ impl IdRemapper {
         let mut annotation_material_ids: HashSet<MaterialId> = HashSet::new();
         for &instance_id in &annotation_instance_ids {
             if let Some(instance) = scene.instances.get(&instance_id) {
-                annotation_mesh_ids.insert(instance.mesh);
-                annotation_material_ids.insert(instance.material);
+                annotation_mesh_ids.insert(instance.mesh());
+                annotation_material_ids.insert(instance.material());
             }
         }
 
@@ -695,8 +695,8 @@ impl SerializedInstance {
     pub fn from_instance(instance: &Instance, remapper: &IdRemapper) -> Option<Self> {
         Some(Self {
             id: remapper.remap_instance(instance.id)?,
-            mesh_id: remapper.remap_mesh(instance.mesh)?,
-            material_id: remapper.remap_material(instance.material)?,
+            mesh_id: remapper.remap_mesh(instance.mesh())?,
+            material_id: remapper.remap_material(instance.material())?,
         })
     }
 }

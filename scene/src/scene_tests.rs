@@ -26,8 +26,8 @@ fn test_add_instance() {
     assert_eq!(scene.instances.len(), 1);
 
     let instance = scene.instances.get(&instance_id).unwrap();
-    assert_eq!(instance.mesh, 10);
-    assert_eq!(instance.material, 5);
+    assert_eq!(instance.mesh(), 10);
+    assert_eq!(instance.material(), 5);
 }
 
 #[test]
@@ -209,8 +209,8 @@ fn test_add_instance_node() {
 
     let instance_id = node.instance().unwrap();
     let instance = scene.instances.get(&instance_id).unwrap();
-    assert_eq!(instance.mesh, 10);
-    assert_eq!(instance.material, 5);
+    assert_eq!(instance.mesh(), 10);
+    assert_eq!(instance.material(), 5);
 }
 
 // ========================================================================

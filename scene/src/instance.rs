@@ -5,11 +5,11 @@ use super::mesh::MeshId;
 pub type InstanceId = u32;
 
 /// An instance references a mesh and material to be rendered.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Instance {
     pub id: InstanceId,
-    pub mesh: MeshId,
-    pub material: MaterialId,
+    mesh: MeshId,
+    material: MaterialId,
 }
 
 impl Instance {
@@ -20,6 +20,16 @@ impl Instance {
             mesh,
             material,
         }
+    }
+
+    /// Returns the mesh ID referenced by this instance.
+    pub fn mesh(&self) -> MeshId {
+        self.mesh
+    }
+
+    /// Returns the material ID referenced by this instance.
+    pub fn material(&self) -> MaterialId {
+        self.material
     }
 }
 
@@ -33,8 +43,8 @@ mod tests {
         let instance = Instance::new(42, 10, 5);
 
         assert_eq!(instance.id, 42);
-        assert_eq!(instance.mesh, 10);
-        assert_eq!(instance.material, 5);
+        assert_eq!(instance.mesh(), 10);
+        assert_eq!(instance.material(), 5);
     }
 
     #[test]
@@ -51,7 +61,7 @@ mod tests {
     #[test]
     fn test_instance_mesh_reference() {
         let instance = Instance::new(1, 42, 5);
-        assert_eq!(instance.mesh, 42);
+        assert_eq!(instance.mesh(), 42);
 
         let instance2 = Instance::new(2, 99, 5);
         assert_eq!(instance2.mesh, 99);
@@ -60,7 +70,7 @@ mod tests {
     #[test]
     fn test_instance_material_reference() {
         let instance = Instance::new(1, 10, 7);
-        assert_eq!(instance.material, 7);
+        assert_eq!(instance.material(), 7);
 
         let instance2 = Instance::new(2, 10, 13);
         assert_eq!(instance2.material, 13);
