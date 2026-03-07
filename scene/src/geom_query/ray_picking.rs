@@ -23,8 +23,6 @@ pub struct RayPickResult {
 }
 
 /// Ray picking query that implements the generic PickQuery trait.
-///
-/// Wraps a Ray and the original world-space ray for distance calculations.
 pub struct RayPickQuery {
     /// The ray in current coordinate space (may be transformed to local space)
     ray: Ray,
@@ -93,8 +91,7 @@ impl PickQuery for RayPickQuery {
 
 /// Picks all instances intersected by a ray, sorted by distance from near to far.
 ///
-/// The ray should be in world space. The function walks the scene tree from root nodes,
-/// using cached bounding boxes to eliminate large portions of the scene efficiently.
+/// The ray should be in world space.
 ///
 /// Returns a vector of RayPickResult sorted by distance (closest first).
 pub fn pick_all_from_ray(ray: &Ray, scene: &Scene) -> Vec<RayPickResult> {

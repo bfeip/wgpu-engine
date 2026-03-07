@@ -11,6 +11,7 @@ impl Mesh {
     /// * `width` - Size along the X axis
     /// * `height` - Size along the Y axis
     /// * `depth` - Size along the Z axis
+    /// * `primitive_type` - Kind of primitive to create the mesh from
     ///
     /// # Example
     /// ```
@@ -58,7 +59,7 @@ impl Mesh {
         // UV coordinates for each face corner
         let uvs: [[f32; 2]; 4] = [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]];
 
-        let mut vertices = Vec::with_capacity(24);
+        let mut vertices = Vec::with_capacity(3 * 8);
 
         for face in &faces {
             for (i, pos) in face.corners.iter().enumerate() {
@@ -118,6 +119,7 @@ impl Mesh {
     ///
     /// # Arguments
     /// * `size` - The length of each edge
+    /// * `primitive_type` - Kind of primitive to create the mesh from
     pub fn cube(size: f32, primitive_type: PrimitiveType) -> Self {
         Self::box_mesh(size, size, size, primitive_type)
     }
@@ -128,6 +130,7 @@ impl Mesh {
     /// * `radius` - Radius of the sphere
     /// * `segments` - Number of longitudinal segments (minimum 3)
     /// * `rings` - Number of latitudinal rings (minimum 2)
+    /// * `primitive_type` - Kind of primitive to create the mesh from
     ///
     /// # Example
     /// ```
@@ -230,6 +233,7 @@ impl Mesh {
     /// * `height` - Height of the cylinder
     /// * `segments` - Number of segments around the circumference (minimum 3)
     /// * `capped` - Whether to include top and bottom cap faces
+    /// * `primitive_type` - Kind of primitive to create the mesh from
     ///
     /// # Example
     /// ```
@@ -410,6 +414,7 @@ impl Mesh {
     /// * `height` - Height of the cone
     /// * `segments` - Number of segments around the circumference (minimum 3)
     /// * `capped` - Whether to include the bottom cap face
+    /// * `primitive_type` - Kind of primitive to create the mesh from
     ///
     /// # Example
     /// ```
@@ -556,6 +561,7 @@ impl Mesh {
     /// * `height` - Height of the cone (distance from apex to base along direction)
     /// * `segments` - Number of segments around the circumference (minimum 3)
     /// * `capped` - Whether to include the base cap face
+    /// * `primitive_type` - Kind of primitive to create the mesh from
     pub fn cone_directed(
         apex: Point3<f32>,
         direction: Vector3<f32>,
@@ -600,6 +606,7 @@ impl Mesh {
     /// * `minor_radius` - Radius of the tube
     /// * `major_segments` - Number of segments around the main ring (minimum 3)
     /// * `minor_segments` - Number of segments around the tube cross-section (minimum 3)
+    /// * `primitive_type` - Kind of primitive to create the mesh from
     ///
     /// # Example
     /// ```
@@ -710,6 +717,7 @@ impl Mesh {
     /// * `depth` - Size along the Z axis
     /// * `width_segments` - Number of segments along the width (minimum 1)
     /// * `depth_segments` - Number of segments along the depth (minimum 1)
+    /// * `primitive_type` - Kind of primitive to create the mesh from
     ///
     /// # Example
     /// ```
@@ -807,6 +815,7 @@ impl Mesh {
     /// # Arguments
     /// * `width` - Size along the X axis
     /// * `height` - Size along the Y axis
+    /// * `primitive_type` - Kind of primitive to create the mesh from
     ///
     /// # Example
     /// ```

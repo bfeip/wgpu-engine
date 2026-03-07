@@ -12,15 +12,13 @@ pub struct VolumePickResult {
     pub node_id: NodeId,
     /// The instance that was hit
     pub instance_id: InstanceId,
-    /// Indices of triangles that intersect the volume
+    /// Indices of triangles that intersect the volume (index into the mesh's index buffer / 3)
     pub triangle_indices: Vec<usize>,
     /// True if the entire instance is fully contained within the volume
     pub fully_contained: bool,
 }
 
 /// Volume picking query that implements the generic PickQuery trait.
-///
-/// Wraps a ConvexPolyhedron with a flag for thorough testing.
 pub struct VolumePickQuery {
     /// The volume in current coordinate space (may be transformed to local space)
     volume: ConvexPolyhedron,
@@ -74,9 +72,6 @@ impl PickQuery for VolumePickQuery {
 }
 
 /// Picks all instances intersected by a convex volume.
-///
-/// The volume should be in world space. The function walks the scene tree from root nodes,
-/// using cached bounding boxes to eliminate large portions of the scene efficiently.
 ///
 /// # Arguments
 /// * `volume` - The convex polyhedron to test against (in world space)

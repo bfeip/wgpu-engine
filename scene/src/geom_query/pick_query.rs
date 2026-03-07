@@ -8,7 +8,7 @@ use crate::{InstanceId, Mesh, NodeId, Scene};
 /// Implement this trait to create custom picking behaviors. The generic
 /// traversal handles tree walking, AABB culling, and coordinate space
 /// transformations - implementors only need to define the actual tests.
-pub trait PickQuery: Sized {
+pub trait PickQuery {
     /// Result type returned for hits. A single mesh test may produce multiple results
     /// (e.g., ray hitting multiple triangles).
     type Result;
