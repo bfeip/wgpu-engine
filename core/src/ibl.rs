@@ -73,8 +73,8 @@ pub(crate) struct IblResources {
     pub bind_group_layout: wgpu::BindGroupLayout,
     /// Whether compute shaders are available.
     has_compute: bool,
-    /// Processed environment maps by ID.
-    processed_environments: std::collections::HashMap<EnvironmentMapId, ProcessedEnvironment>,
+    /// Processed environment maps by ID, with the generation they were synced at.
+    processed_environments: std::collections::HashMap<EnvironmentMapId, (ProcessedEnvironment, u64)>,
 }
 
 impl IblResources {
@@ -185,20 +185,24 @@ impl IblResources {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        env_map: &mut EnvironmentMap,
+        env_map: &EnvironmentMap,
     ) -> anyhow::Result<()> {
-        if !env_map.needs_generation() {
+        let current_gen = env_map.generation();
+        let synced_gen = self
+            .processed_environments
+            .get(&env_map.id)
+            .map(|(_, g)| *g);
+        if synced_gen == Some(current_gen) {
             return Ok(());
         }
 
         if !self.has_compute {
             log::warn!("Skipping environment map processing (no compute shaders). Scene will render without IBL.");
-            env_map.dirty = false;
             return Ok(());
         }
 
         // Load HDR image from source
-        let hdr_image = match &env_map.source {
+        let hdr_image = match env_map.source() {
             EnvironmentSource::EquirectangularPath(path) => load_hdr_from_path(path)?,
             EnvironmentSource::EquirectangularHdr(bytes) => load_hdr_from_bytes(bytes)?,
         };
@@ -253,21 +257,23 @@ impl IblResources {
         // Store processed environment
         self.processed_environments.insert(
             env_map.id,
-            ProcessedEnvironment {
-                _environment: environment,
-                _irradiance: irradiance,
-                _prefiltered: prefiltered,
-                bind_group,
-            },
+            (
+                ProcessedEnvironment {
+                    _environment: environment,
+                    _irradiance: irradiance,
+                    _prefiltered: prefiltered,
+                    bind_group,
+                },
+                current_gen,
+            ),
         );
 
-        env_map.dirty = false;
         Ok(())
     }
 
     /// Get the processed environment for an ID, if available.
     pub fn get_processed(&self, id: EnvironmentMapId) -> Option<&ProcessedEnvironment> {
-        self.processed_environments.get(&id)
+        self.processed_environments.get(&id).map(|(env, _)| env)
     }
 
     /// Remove a processed environment.

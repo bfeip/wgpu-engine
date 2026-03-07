@@ -80,11 +80,9 @@ impl<'a> Renderer<'a> {
 
         // 5. Process environment maps for IBL
         if let Some(env_id) = scene.active_environment_map {
-            if let Some(env_map) = scene.environment_maps.get_mut(&env_id) {
-                if env_map.needs_generation() {
-                    self.ibl_resources
-                        .process_environment(&self.device, &self.queue, env_map)?;
-                }
+            if let Some(env_map) = scene.environment_maps.get(&env_id) {
+                self.ibl_resources
+                    .process_environment(&self.device, &self.queue, env_map)?;
             }
         }
 

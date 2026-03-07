@@ -21,13 +21,13 @@ pub struct EnvironmentMap {
     /// Unique identifier for this environment map.
     pub id: EnvironmentMapId,
     /// Source data for the environment map.
-    pub source: EnvironmentSource,
+    source: EnvironmentSource,
     /// Intensity multiplier for the environment lighting.
-    pub intensity: f32,
+    intensity: f32,
     /// Rotation around the Y axis in radians.
-    pub rotation: f32,
-    /// Whether the environment needs to be (re)generated.
-    pub dirty: bool,
+    rotation: f32,
+    /// Generation counter, incremented on each change.
+    generation: u64,
 }
 
 impl EnvironmentMap {
@@ -35,26 +35,27 @@ impl EnvironmentMap {
     ///
     /// The HDR file will be loaded and processed when the environment is first used.
     /// This is internal - use `Scene::add_environment_map_from_hdr_path` to create environment maps.
-    pub fn from_hdr_path(id: EnvironmentMapId, path: impl Into<PathBuf>) -> Self {
+    pub(crate) fn from_hdr_path(id: EnvironmentMapId, path: impl Into<PathBuf>) -> Self {
         Self {
             id,
             source: EnvironmentSource::EquirectangularPath(path.into()),
             intensity: 1.0,
             rotation: 0.0,
-            dirty: true,
+            generation: 1,
         }
     }
 
     /// Create an environment map from in-memory HDR data.
     ///
     /// The HDR data will be processed into IBL maps when the environment is first used.
-    pub fn from_hdr_data(id: EnvironmentMapId, data: Vec<u8>) -> Self {
+    /// This is internal - use `Scene::add_environment_map_from_hdr_path` to create environment maps.
+    pub(crate) fn from_hdr_data(id: EnvironmentMapId, data: Vec<u8>) -> Self {
         Self {
             id,
             source: EnvironmentSource::EquirectangularHdr(data),
             intensity: 1.0,
             rotation: 0.0,
-            dirty: true,
+            generation: 1,
         }
     }
 
@@ -63,6 +64,7 @@ impl EnvironmentMap {
     /// Default is 1.0. Higher values make the environment brighter.
     pub fn with_intensity(mut self, intensity: f32) -> Self {
         self.intensity = intensity;
+        self.generation += 1;
         self
     }
 
@@ -71,7 +73,25 @@ impl EnvironmentMap {
     /// Rotation is in radians. Default is 0.0.
     pub fn with_rotation(mut self, radians: f32) -> Self {
         self.rotation = radians;
+        self.generation += 1;
         self
+    }
+
+    /// Set the intensity multiplier.
+    pub fn set_intensity(&mut self, intensity: f32) {
+        self.intensity = intensity;
+        self.generation += 1;
+    }
+
+    /// Set the rotation of the environment around the Y axis in radians.
+    pub fn set_rotation(&mut self, radians: f32) {
+        self.rotation = radians;
+        self.generation += 1;
+    }
+
+    /// Get the source from which the environment was created.
+    pub fn source(&self) -> &EnvironmentSource {
+        &self.source
     }
 
     /// Get the intensity multiplier.
@@ -84,13 +104,11 @@ impl EnvironmentMap {
         self.rotation
     }
 
-    /// Check if this environment needs GPU resource generation.
-    pub fn needs_generation(&self) -> bool {
-        self.dirty
-    }
-
-    /// Mark the environment as needing regeneration.
-    pub fn mark_dirty(&mut self) {
-        self.dirty = true;
+    /// Returns the current generation counter.
+    ///
+    /// Starts at 1 and increments on each change. GPU sync code compares
+    /// this against a last-synced generation to detect changes.
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 }

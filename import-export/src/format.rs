@@ -1551,8 +1551,8 @@ pub fn assemble_wgsc_scene(
     for sem in sections.environment_maps {
         let scene_id = scene.add_environment_map_from_hdr_data(sem.hdr_data);
         if let Some(em) = scene.get_environment_map_mut(scene_id) {
-            em.intensity = sem.intensity;
-            em.rotation = sem.rotation;
+            em.set_intensity(sem.intensity);
+            em.set_rotation(sem.rotation);
         }
         env_map_id_map.insert(sem.id, scene_id);
     }
@@ -1732,7 +1732,7 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
             let mut env_maps = Vec::new();
             for (&id, env_map) in &scene.environment_maps {
                 let remapped_id = remapper.remap_environment_map(id).unwrap_or(0);
-                let hdr_data = match &env_map.source {
+                let hdr_data = match env_map.source() {
                     wgpu_engine_scene::EnvironmentSource::EquirectangularPath(path) => {
                         std::fs::read(path).map_err(|e| FormatError::IoError(e))?
                     }
@@ -1743,8 +1743,8 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
                 env_maps.push(SerializedEnvironmentMap {
                     id: remapped_id,
                     hdr_data,
-                    intensity: env_map.intensity,
-                    rotation: env_map.rotation,
+                    intensity: env_map.intensity(),
+                    rotation: env_map.rotation(),
                 });
             }
             let offset = output.len() as u64;

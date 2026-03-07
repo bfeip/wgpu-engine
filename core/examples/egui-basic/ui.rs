@@ -221,11 +221,6 @@ fn build_environment_tab(ui: &mut egui::Ui, viewer: &Viewer, actions: &mut UiAct
             ui.label(format!("Active: Environment #{}", env_id));
             ui.label(format!("Intensity: {:.2}", env_map.intensity()));
             ui.label(format!("Rotation: {:.1}°", env_map.rotation().to_degrees()));
-            if env_map.needs_generation() {
-                ui.label("Status: Pending generation");
-            } else {
-                ui.label("Status: Ready");
-            }
         }
     } else {
         ui.label("No environment map active");

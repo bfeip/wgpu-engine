@@ -15,10 +15,6 @@ pub(crate) const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::
 
 /// A camera that defines the viewpoint and projection for rendering.
 ///
-/// The camera combines view parameters (position, orientation) with projection
-/// parameters (field of view, clipping planes) to produce a view-projection matrix
-/// used by the GPU to transform world-space coordinates to clip-space.
-///
 /// # Example
 ///
 /// ```
@@ -36,12 +32,13 @@ pub(crate) const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::
 ///     ortho: false,
 /// };
 /// ```
+#[derive(Clone, Debug)]
 pub struct Camera {
     /// The position of the camera in world space.
     pub eye: cgmath::Point3<f32>,
     /// The point the camera is looking at in world space.
     pub target: cgmath::Point3<f32>,
-    /// The up direction vector (typically Y-up: `(0, 1, 0)`).
+    /// The up direction vector.
     pub up: cgmath::Vector3<f32>,
     /// The aspect ratio of the viewport (width / height).
     pub aspect: f32,

@@ -4,24 +4,19 @@ use crate::common::{
     rotate_position_about_pivot, scale_position_about_pivot_local, scale_position_about_pivot_world,
 };
 use cgmath::{EuclideanSpace, Matrix4, Point3, Quaternion, Vector3};
-use std::cell::Cell;
+use std::{cell::Cell};
 
 /// Unique identifier for a Node in the scene tree.
 pub type NodeId = u32;
 
 /// Explicit visibility state set by the user.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Visibility {
     /// Node is explicitly set to visible
+    #[default]
     Visible,
     /// Node is explicitly set to invisible
     Invisible,
-}
-
-impl Default for Visibility {
-    fn default() -> Self {
-        Self::Visible
-    }
 }
 
 /// Effective visibility state computed during tree traversal.
