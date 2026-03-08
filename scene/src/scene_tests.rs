@@ -10,11 +10,11 @@ use crate::common::{EPSILON, RgbaColor};
 fn test_scene_new() {
     let scene = Scene::new();
 
-    assert_eq!(scene.meshes.len(), 0);
-    assert_eq!(scene.instances.len(), 0);
-    assert_eq!(scene.nodes.len(), 0);
-    assert_eq!(scene.root_nodes.len(), 0);
-    assert_eq!(scene.lights.len(), 0);
+    assert_eq!(scene.mesh_count(), 0);
+    assert_eq!(scene.instance_count(), 0);
+    assert_eq!(scene.node_count(), 0);
+    assert_eq!(scene.root_nodes().len(), 0);
+    assert_eq!(scene.lights().len(), 0);
 }
 
 #[test]
@@ -23,9 +23,9 @@ fn test_add_instance() {
 
     let instance_id = scene.add_instance(10, 5);
     assert_eq!(instance_id, 0);
-    assert_eq!(scene.instances.len(), 1);
+    assert_eq!(scene.instance_count(), 1);
 
-    let instance = scene.instances.get(&instance_id).unwrap();
+    let instance = scene.get_instance(instance_id).unwrap();
     assert_eq!(instance.mesh(), 10);
     assert_eq!(instance.material(), 5);
 }
@@ -41,7 +41,7 @@ fn test_add_multiple_instances() {
     assert_eq!(id1, 0);
     assert_eq!(id2, 1);
     assert_eq!(id3, 2);
-    assert_eq!(scene.instances.len(), 3);
+    assert_eq!(scene.instance_count(), 3);
 }
 
 // ========================================================================
@@ -55,9 +55,9 @@ fn test_add_root_node() {
     let node_id = scene.add_default_node(None, None).unwrap();
 
     assert_eq!(node_id, 0);
-    assert_eq!(scene.nodes.len(), 1);
-    assert_eq!(scene.root_nodes.len(), 1);
-    assert_eq!(scene.root_nodes[0], node_id);
+    assert_eq!(scene.node_count(), 1);
+    assert_eq!(scene.root_nodes().len(), 1);
+    assert_eq!(scene.root_nodes()[0], node_id);
 
     let node = scene.get_node(node_id).unwrap();
     assert_eq!(node.parent(), None);
@@ -71,8 +71,8 @@ fn test_add_child_node() {
     let root = scene.add_default_node(None, None).unwrap();
     let child = scene.add_default_node(Some(root), None).unwrap();
 
-    assert_eq!(scene.nodes.len(), 2);
-    assert_eq!(scene.root_nodes.len(), 1);
+    assert_eq!(scene.node_count(), 2);
+    assert_eq!(scene.root_nodes().len(), 1);
 
     // Verify parent-child relationship is bidirectional
     let root_node = scene.get_node(root).unwrap();
@@ -135,10 +135,10 @@ fn test_multiple_root_nodes() {
     let root2 = scene.add_default_node(None, None).unwrap();
     let root3 = scene.add_default_node(None, None).unwrap();
 
-    assert_eq!(scene.root_nodes.len(), 3);
-    assert!(scene.root_nodes.contains(&root1));
-    assert!(scene.root_nodes.contains(&root2));
-    assert!(scene.root_nodes.contains(&root3));
+    assert_eq!(scene.root_nodes().len(), 3);
+    assert!(scene.root_nodes().contains(&root1));
+    assert!(scene.root_nodes().contains(&root2));
+    assert!(scene.root_nodes().contains(&root3));
 
     // Verify all are truly roots
     assert_eq!(scene.get_node(root1).unwrap().parent(), None);
@@ -165,8 +165,8 @@ fn test_complex_tree_structure() {
     let gc3 = scene.add_default_node(Some(c2), None).unwrap();
 
     // Verify structure
-    assert_eq!(scene.root_nodes.len(), 1);
-    assert_eq!(scene.nodes.len(), 6);
+    assert_eq!(scene.root_nodes().len(), 1);
+    assert_eq!(scene.node_count(), 6);
 
     let root_node = scene.get_node(root).unwrap();
     assert_eq!(root_node.children().len(), 2);
@@ -201,14 +201,14 @@ fn test_add_instance_node() {
         Vector3::new(1.0, 1.0, 1.0),
     ).unwrap();
 
-    assert_eq!(scene.nodes.len(), 1);
-    assert_eq!(scene.instances.len(), 1);
+    assert_eq!(scene.node_count(), 1);
+    assert_eq!(scene.instance_count(), 1);
 
     let node = scene.get_node(node_id).unwrap();
     assert!(node.instance().is_some());
 
     let instance_id = node.instance().unwrap();
-    let instance = scene.instances.get(&instance_id).unwrap();
+    let instance = scene.get_instance(instance_id).unwrap();
     assert_eq!(instance.mesh(), 10);
     assert_eq!(instance.material(), 5);
 }
@@ -355,7 +355,7 @@ fn test_tree_consistency_after_multiple_operations() {
     assert!(scene.get_node(grandchild).is_some());
 
     // Verify every parent reference is valid
-    for (_, node) in &scene.nodes {
+    for (_, node) in scene.nodes() {
         if let Some(parent_id) = node.parent() {
             assert!(scene.get_node(parent_id).is_some(),
                 "Node references non-existent parent");
@@ -363,7 +363,7 @@ fn test_tree_consistency_after_multiple_operations() {
     }
 
     // Verify every child reference is valid
-    for (_, node) in &scene.nodes {
+    for (_, node) in scene.nodes() {
         for &child_id in node.children() {
             assert!(scene.get_node(child_id).is_some(),
                 "Node references non-existent child");
@@ -371,7 +371,7 @@ fn test_tree_consistency_after_multiple_operations() {
     }
 
     // Verify all root nodes are actually roots
-    for &root_id in &scene.root_nodes {
+    for &root_id in scene.root_nodes() {
         let node = scene.get_node(root_id).unwrap();
         assert!(node.parent().is_none(),
             "Root node has a parent");
@@ -418,12 +418,12 @@ fn test_no_orphaned_nodes() {
         }
     }
 
-    for &root_id in &scene.root_nodes {
+    for &root_id in scene.root_nodes() {
         visit_tree(&scene, root_id, &mut reachable);
     }
 
     // All nodes should be reachable
-    assert_eq!(reachable.len(), scene.nodes.len());
+    assert_eq!(reachable.len(), scene.node_count());
 }
 
 #[test]
@@ -482,7 +482,7 @@ fn test_add_node_with_invalid_parent_fails() {
     );
 
     assert!(result.is_err());
-    assert_eq!(scene.nodes.len(), 0);
+    assert_eq!(scene.node_count(), 0);
 }
 
 #[test]
@@ -492,7 +492,7 @@ fn test_add_default_node_with_invalid_parent_fails() {
     let result = scene.add_default_node(Some(999), None);
 
     assert!(result.is_err());
-    assert_eq!(scene.nodes.len(), 0);
+    assert_eq!(scene.node_count(), 0);
 }
 
 #[test]
@@ -511,7 +511,7 @@ fn test_add_instance_node_with_invalid_parent_fails() {
 
     assert!(result.is_err());
     // No node should be created
-    assert_eq!(scene.nodes.len(), 0);
+    assert_eq!(scene.node_count(), 0);
     // But instance is created before the node validation - this is a side effect
     // that could be improved in the future
 }
@@ -874,17 +874,16 @@ fn test_point_light_annotation_to_mesh_data() {
 #[test]
 fn test_point_light_annotation_reification() {
     let mut scene = Scene::new();
-    scene.lights.push(Light::point(
+    scene.add_light(Light::point(
         Vector3::new(1.0, 2.0, 3.0),
         RgbaColor::WHITE,
         1.0,
     ));
-    scene.light_generation += 1;
 
-    let id = scene.annotations.add_point_light(0, 0.5, 8);
+    let id = scene.annotations_mut().add_point_light(0, 0.5, 8);
     scene.reify_annotations();
 
-    let annotation = scene.annotations.get(id).unwrap();
+    let annotation = scene.annotations().get(id).unwrap();
     assert!(annotation.is_reified());
     assert!(annotation.node_id().is_some());
 }
@@ -920,7 +919,7 @@ fn test_spot_light_annotation_to_mesh_data() {
 #[test]
 fn test_spot_light_annotation_reification() {
     let mut scene = Scene::new();
-    scene.lights.push(Light::spot(
+    scene.add_light(Light::spot(
         Vector3::new(0.0, 5.0, 0.0),
         Vector3::new(0.0, -1.0, 0.0),
         RgbaColor::WHITE,
@@ -928,12 +927,11 @@ fn test_spot_light_annotation_reification() {
         0.3,
         0.6,
     ));
-    scene.light_generation += 1;
 
-    let id = scene.annotations.add_spot_light(0, 5.0, 8);
+    let id = scene.annotations_mut().add_spot_light(0, 5.0, 8);
     scene.reify_annotations();
 
-    let annotation = scene.annotations.get(id).unwrap();
+    let annotation = scene.annotations().get(id).unwrap();
     assert!(annotation.is_reified());
 }
 
@@ -1027,10 +1025,10 @@ fn test_normals_annotation_reification() {
         Vector3::new(1.0, 1.0, 1.0),
     ).unwrap();
 
-    let ann_id = scene.annotations.add_normals(node_id, RgbaColor::CYAN, 0.1);
+    let ann_id = scene.annotations_mut().add_normals(node_id, RgbaColor::CYAN, 0.1);
     scene.reify_annotations();
 
-    let annotation = scene.annotations.get(ann_id).unwrap();
+    let annotation = scene.annotations().get(ann_id).unwrap();
     assert!(annotation.is_reified());
 }
 
@@ -1041,14 +1039,13 @@ fn test_normals_annotation_reification() {
 #[test]
 fn test_point_light_staleness_detection() {
     let mut scene = Scene::new();
-    scene.lights.push(Light::point(
+    scene.add_light(Light::point(
         Vector3::new(0.0, 0.0, 0.0),
         RgbaColor::WHITE,
         1.0,
     ));
-    scene.light_generation += 1;
 
-    let id = scene.annotations.add_point_light(0, 0.5, 8);
+    let id = scene.annotations_mut().add_point_light(0, 0.5, 8);
     let reified_count = scene.reify_annotations();
     assert_eq!(reified_count, 1);
 
@@ -1056,14 +1053,15 @@ fn test_point_light_staleness_detection() {
     let reified_count = scene.reify_annotations();
     assert_eq!(reified_count, 0);
 
-    // Bump generation to simulate light change
-    scene.light_generation += 1;
+    // Bump generation to simulate light change by re-setting lights
+    let lights = scene.lights().to_vec();
+    scene.set_lights(lights);
 
     // Should detect staleness and re-reify
     let reified_count = scene.reify_annotations();
     assert_eq!(reified_count, 1);
 
-    let annotation = scene.annotations.get(id).unwrap();
+    let annotation = scene.annotations().get(id).unwrap();
     assert!(annotation.is_reified());
 }
 
@@ -1071,14 +1069,13 @@ fn test_point_light_staleness_detection() {
 fn test_wrong_light_type_returns_none() {
     let mut scene = Scene::new();
     // Add a directional light, but try to annotate it as a point light
-    scene.lights.push(Light::directional(
+    scene.add_light(Light::directional(
         Vector3::new(0.0, -1.0, 0.0),
         RgbaColor::WHITE,
         1.0,
     ));
-    scene.light_generation += 1;
 
-    let id = scene.annotations.add_point_light(0, 0.5, 8);
+    let id = scene.annotations_mut().add_point_light(0, 0.5, 8);
     let result = scene.reify_annotation(id);
     assert!(result.is_none());
 }
@@ -1087,7 +1084,7 @@ fn test_wrong_light_type_returns_none() {
 fn test_light_index_out_of_bounds_returns_none() {
     let mut scene = Scene::new();
     // No lights added, index 0 is out of bounds
-    let id = scene.annotations.add_point_light(0, 0.5, 8);
+    let id = scene.annotations_mut().add_point_light(0, 0.5, 8);
     let result = scene.reify_annotation(id);
     assert!(result.is_none());
 }

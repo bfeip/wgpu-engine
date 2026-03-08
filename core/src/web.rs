@@ -290,7 +290,7 @@ impl WebViewer {
 
     /// Get the number of meshes in the scene.
     pub fn mesh_count(&self) -> usize {
-        self.viewer.scene().meshes.len()
+        self.viewer.scene().mesh_count()
     }
 }
 

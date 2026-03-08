@@ -83,12 +83,10 @@ fn pick_node<Q: PickQuery>(
     // Narrow phase: If this node has an instance, test it
     if let Some(instance_id) = node.instance() {
         let instance = scene
-            .instances
-            .get(&instance_id)
+            .get_instance(instance_id)
             .expect("Instance referenced by node not found in scene");
         let mesh = scene
-            .meshes
-            .get(&instance.mesh())
+            .get_mesh(instance.mesh())
             .expect("Mesh referenced by instance not found in scene");
 
         // Get world transform and compute inverse for local space conversion

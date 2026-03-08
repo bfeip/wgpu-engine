@@ -1006,8 +1006,8 @@ mod tests {
         let result = load_sync(SceneSource::Bytes(bytes), LoadOptions::default()).unwrap();
         assert_eq!(result.format, DetectedFormat::Wgsc);
         assert!(result.camera.is_none());
-        assert_eq!(result.scene.meshes.len(), 1);
-        assert_eq!(result.scene.nodes.len(), 1);
+        assert_eq!(result.scene.mesh_count(), 1);
+        assert_eq!(result.scene.node_count(), 1);
     }
 
     #[test]
@@ -1067,7 +1067,7 @@ mod tests {
             if let Some(result) = handle.try_get() {
                 let result = result.unwrap();
                 assert_eq!(result.format, DetectedFormat::Wgsc);
-                assert_eq!(result.scene.meshes.len(), 1);
+                assert_eq!(result.scene.mesh_count(), 1);
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(1));
@@ -1105,7 +1105,7 @@ mod tests {
 
         // Verify round-trip
         let loaded = load_sync(SceneSource::Bytes(bytes), LoadOptions::default()).unwrap();
-        assert_eq!(loaded.scene.meshes.len(), 1);
+        assert_eq!(loaded.scene.mesh_count(), 1);
     }
 
     #[cfg(not(target_arch = "wasm32"))]

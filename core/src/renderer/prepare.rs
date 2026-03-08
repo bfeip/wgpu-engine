@@ -21,13 +21,14 @@ impl<'a> Renderer<'a> {
         scene.reify_annotations();
 
         // 1. Prepare all textures first (materials depend on them)
-        for texture in scene.textures.values() {
+        for (_, texture) in scene.textures() {
             self.gpu_resources.ensure_texture(texture, &self.device, &self.queue)?;
         }
 
         // 2. Prepare all materials
         // We need to collect material IDs first to avoid borrow issues
-        let material_ids: Vec<_> = scene.materials.keys().copied().collect();
+        // (prepare_material_primitive takes &mut Scene)
+        let material_ids: Vec<_> = scene.materials().map(|(id, _)| id).collect();
         for mat_id in material_ids {
             // Check each primitive type
             for prim_type in [
@@ -36,8 +37,7 @@ impl<'a> Renderer<'a> {
                 PrimitiveType::PointList,
             ] {
                 let needs_update = scene
-                    .materials
-                    .get(&mat_id)
+                    .get_material(mat_id)
                     .map(|m| {
                         m.has_primitive_data(prim_type)
                             && self.gpu_resources.material_needs_upload(mat_id, prim_type, m.generation(prim_type))
@@ -55,20 +55,20 @@ impl<'a> Renderer<'a> {
         // using MeshPrimitive::to_line_list(). This could be done here by checking a
         // wireframe flag and ensuring meshes have line primitives derived from their
         // triangle data before uploading to the GPU.
-        for mesh in scene.meshes.values() {
+        for (_, mesh) in scene.meshes() {
             self.gpu_resources.ensure_mesh(mesh, &self.device);
         }
 
         // 4. Prepare lights
         let has_camera_space_lights = scene
-            .lights
+            .lights()
             .iter()
             .any(|l| l.space() != CoordinateSpace::World);
         let light_generation = scene.light_generation();
         if self.lights.synced_generation != light_generation || has_camera_space_lights {
             let camera = &self.camera_resources.camera;
             let world_lights: Vec<_> = scene
-                .lights
+                .lights()
                 .iter()
                 .map(|l| l.resolved_to_world(camera))
                 .collect();
@@ -79,8 +79,8 @@ impl<'a> Renderer<'a> {
         }
 
         // 5. Process environment maps for IBL
-        if let Some(env_id) = scene.active_environment_map {
-            if let Some(env_map) = scene.environment_maps.get(&env_id) {
+        if let Some(env_id) = scene.active_environment_map() {
+            if let Some(env_map) = scene.get_environment_map(env_id) {
                 self.ibl_resources
                     .process_environment(&self.device, &self.queue, env_map)?;
             }
@@ -151,7 +151,7 @@ impl<'a> Renderer<'a> {
 
     /// Prepare GPU resources for triangle (face) rendering.
     fn prepare_triangle_material(&mut self, scene: &mut Scene, material_id: u32) -> Result<()> {
-        let material = scene.materials.get(&material_id).unwrap();
+        let material = scene.get_material(material_id).unwrap();
         let has_lighting = !material.flags().contains(crate::scene::MaterialFlags::DO_NOT_LIGHT);
 
         if has_lighting {
@@ -163,7 +163,7 @@ impl<'a> Renderer<'a> {
 
     /// Prepare GPU resources for PBR material (normal/metallic-roughness textures).
     fn prepare_pbr_material(&mut self, scene: &mut Scene, material_id: u32) -> Result<()> {
-        let material = scene.materials.get(&material_id).unwrap();
+        let material = scene.get_material(material_id).unwrap();
 
         let pbr_uniform = PbrUniform::from_material(material);
         let buffer = self
@@ -225,7 +225,7 @@ impl<'a> Renderer<'a> {
             ],
         });
 
-        let generation = scene.materials.get(&material_id).unwrap().generation(PrimitiveType::TriangleList);
+        let generation = scene.get_material(material_id).unwrap().generation(PrimitiveType::TriangleList);
         self.gpu_resources.set_material(
             material_id,
             PrimitiveType::TriangleList,
@@ -240,7 +240,7 @@ impl<'a> Renderer<'a> {
 
     /// Prepare GPU resources for color-only material (base_color_factor, no textures).
     fn prepare_colored_material(&mut self, scene: &mut Scene, material_id: u32) -> Result<()> {
-        let material = scene.materials.get(&material_id).unwrap();
+        let material = scene.get_material(material_id).unwrap();
         let gpu_resources =
             self.create_color_material_resources(&material.base_color_factor(), "Base Color Factor");
         let generation = material.generation(PrimitiveType::TriangleList);
@@ -251,7 +251,7 @@ impl<'a> Renderer<'a> {
 
     /// Prepare GPU resources for line rendering.
     fn prepare_line_material(&mut self, scene: &mut Scene, material_id: u32) -> Result<()> {
-        let material = scene.materials.get(&material_id).unwrap();
+        let material = scene.get_material(material_id).unwrap();
 
         if let Some(color) = material.line_color() {
             let gpu_resources = self.create_color_material_resources(&color, "Line Color");
@@ -264,7 +264,7 @@ impl<'a> Renderer<'a> {
 
     /// Prepare GPU resources for point rendering.
     fn prepare_point_material(&mut self, scene: &mut Scene, material_id: u32) -> Result<()> {
-        let material = scene.materials.get(&material_id).unwrap();
+        let material = scene.get_material(material_id).unwrap();
 
         if let Some(color) = material.point_color() {
             let gpu_resources = self.create_color_material_resources(&color, "Point Color");

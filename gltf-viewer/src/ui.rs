@@ -50,10 +50,10 @@ fn build_scene_panel(ctx: &egui::Context, viewer: &Viewer, actions: &mut UiActio
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    if viewer.scene().root_nodes.is_empty() {
+                    if viewer.scene().root_nodes().is_empty() {
                         ui.label("(empty)");
                     } else {
-                        for &root_id in &viewer.scene().root_nodes {
+                        for &root_id in viewer.scene().root_nodes() {
                             render_node_tree(ui, viewer.scene(), root_id, 0);
                         }
                     }

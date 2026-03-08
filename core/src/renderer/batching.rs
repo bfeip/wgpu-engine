@@ -181,10 +181,10 @@ pub(crate) fn collect_draw_batches(scene: &Scene) -> Vec<DrawBatch> {
     let mut batch_map: HashMap<(MeshId, MaterialId, PrimitiveType), DrawBatch> = HashMap::new();
 
     for inst_transform in instance_transforms {
-        let Some(instance) = scene.instances.get(&inst_transform.instance_id) else {
+        let Some(instance) = scene.get_instance(inst_transform.instance_id) else {
             continue;
         };
-        let Some(mesh) = scene.meshes.get(&instance.mesh()) else {
+        let Some(mesh) = scene.get_mesh(instance.mesh()) else {
             continue;
         };
 
@@ -241,8 +241,7 @@ pub(crate) fn sort_batches_for_transparency(
 
 fn is_transparent_batch(batch: &DrawBatch, scene: &Scene) -> bool {
     scene
-        .materials
-        .get(&batch.material_id)
+        .get_material(batch.material_id)
         .map(|m| m.alpha_mode() == AlphaMode::Blend)
         .unwrap_or(false)
 }

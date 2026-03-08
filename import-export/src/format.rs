@@ -545,14 +545,14 @@ impl IdRemapper {
 
         // Collect all annotation-created node IDs (recursively includes children)
         let mut annotation_node_ids: HashSet<NodeId> = HashSet::new();
-        if let Some(root_id) = scene.annotations.root_node() {
+        if let Some(root_id) = scene.annotations().root_node() {
             Self::collect_subtree_nodes(scene, root_id, &mut annotation_node_ids);
         }
 
         // Collect instance IDs from annotation nodes
         let annotation_instance_ids: HashSet<InstanceId> = annotation_node_ids
             .iter()
-            .filter_map(|&node_id| scene.nodes.get(&node_id))
+            .filter_map(|&node_id| scene.get_node(node_id))
             .filter_map(|node| node.instance())
             .collect();
 
@@ -560,7 +560,7 @@ impl IdRemapper {
         let mut annotation_mesh_ids: HashSet<MeshId> = HashSet::new();
         let mut annotation_material_ids: HashSet<MaterialId> = HashSet::new();
         for &instance_id in &annotation_instance_ids {
-            if let Some(instance) = scene.instances.get(&instance_id) {
+            if let Some(instance) = scene.get_instance(instance_id) {
                 annotation_mesh_ids.insert(instance.mesh());
                 annotation_material_ids.insert(instance.material());
             }
@@ -568,7 +568,7 @@ impl IdRemapper {
 
         // Remap nodes (excluding annotation nodes)
         let mut node_idx = 0u32;
-        for &id in scene.nodes.keys() {
+        for (id, _) in scene.nodes() {
             if !annotation_node_ids.contains(&id) {
                 remapper.nodes.insert(id, node_idx);
                 node_idx += 1;
@@ -577,7 +577,7 @@ impl IdRemapper {
 
         // Remap instances (excluding annotation instances)
         let mut inst_idx = 0u32;
-        for &id in scene.instances.keys() {
+        for (id, _) in scene.instances() {
             if !annotation_instance_ids.contains(&id) {
                 remapper.instances.insert(id, inst_idx);
                 inst_idx += 1;
@@ -586,7 +586,7 @@ impl IdRemapper {
 
         // Remap meshes (excluding annotation meshes)
         let mut mesh_idx = 0u32;
-        for &id in scene.meshes.keys() {
+        for (id, _) in scene.meshes() {
             if !annotation_mesh_ids.contains(&id) {
                 remapper.meshes.insert(id, mesh_idx);
                 mesh_idx += 1;
@@ -599,7 +599,7 @@ impl IdRemapper {
         // User materials get sequential file IDs starting from 0.
         remapper.materials.insert(DEFAULT_MATERIAL_ID, u32::MAX);
         let mut mat_idx = 0u32;
-        for &id in scene.materials.keys() {
+        for (id, _) in scene.materials() {
             if id == DEFAULT_MATERIAL_ID || annotation_material_ids.contains(&id) {
                 continue;
             }
@@ -608,17 +608,17 @@ impl IdRemapper {
         }
 
         // Remap textures
-        for (idx, &id) in scene.textures.keys().collect::<Vec<_>>().iter().enumerate() {
-            remapper.textures.insert(*id, idx as u32);
+        for (idx, (id, _)) in scene.textures().enumerate() {
+            remapper.textures.insert(id, idx as u32);
         }
 
         // Remap environment maps
-        for (idx, &id) in scene.environment_maps.keys().collect::<Vec<_>>().iter().enumerate() {
-            remapper.environment_maps.insert(*id, idx as u32);
+        for (idx, (id, _)) in scene.environment_maps().enumerate() {
+            remapper.environment_maps.insert(id, idx as u32);
         }
 
         // Remap annotations
-        for (idx, annotation) in scene.annotations.iter().enumerate() {
+        for (idx, annotation) in scene.annotations().iter().enumerate() {
             remapper.annotations.insert(annotation.id(), idx as u32);
         }
 
@@ -628,7 +628,7 @@ impl IdRemapper {
     /// Recursively collects all node IDs in a subtree.
     fn collect_subtree_nodes(scene: &Scene, node_id: NodeId, collected: &mut std::collections::HashSet<NodeId>) {
         collected.insert(node_id);
-        if let Some(node) = scene.nodes.get(&node_id) {
+        if let Some(node) = scene.get_node(node_id) {
             for &child_id in node.children() {
                 Self::collect_subtree_nodes(scene, child_id, collected);
             }
@@ -1528,20 +1528,20 @@ pub fn assemble_wgsc_scene(
         .iter()
         .filter_map(|&file_id| node_id_map.get(&file_id).copied())
         .collect();
-    scene.root_nodes = serialized_root_order;
+    scene.set_root_node_order(serialized_root_order);
 
     // Add lights
-    scene.lights = sections
+    scene.set_lights(sections
         .lights
         .iter()
         .map(SerializedLight::to_light)
-        .collect();
+        .collect());
 
     // Add annotations
     for sa in sections.annotations {
         let annotation = sa.to_annotation();
         scene
-            .annotations
+            .annotations_mut()
             .insert_with_id(annotation)
             .map_err(|e| FormatError::DeserializationError(e.to_string()))?;
     }
@@ -1558,10 +1558,10 @@ pub fn assemble_wgsc_scene(
     }
 
     // Set active environment map
-    scene.active_environment_map = sections
+    scene.set_active_environment_map(sections
         .metadata
         .active_environment_map
-        .and_then(|file_id| env_map_id_map.get(&file_id).copied());
+        .and_then(|file_id| env_map_id_map.get(&file_id).copied()));
 
     Ok(scene)
 }
@@ -1595,11 +1595,11 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
                 .map(|d| d.as_secs())
                 .unwrap_or(0),
             generator: format!("wgpu-engine {}", env!("CARGO_PKG_VERSION")),
-            root_nodes: scene.root_nodes
+            root_nodes: scene.root_nodes()
                 .iter()
                 .filter_map(|&id| remapper.remap_node(id))
                 .collect(),
-            active_environment_map: scene.active_environment_map
+            active_environment_map: scene.active_environment_map()
                 .and_then(|id| remapper.remap_environment_map(id)),
         };
         let offset = output.len() as u64;
@@ -1613,9 +1613,8 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
         output.extend(compressed);
 
         // ===== Nodes Section =====
-        let nodes: Vec<SerializedNode> = scene.nodes
-            .values()
-            .filter_map(|node| SerializedNode::from_node(node, &remapper))
+        let nodes: Vec<SerializedNode> = scene.nodes()
+            .filter_map(|(_, node)| SerializedNode::from_node(node, &remapper))
             .collect();
         let offset = output.len() as u64;
         let (compressed, uncompressed_size) = serialize_section_with_level(&nodes, level)?;
@@ -1628,9 +1627,8 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
         output.extend(compressed);
 
         // ===== Instances Section =====
-        let instances: Vec<SerializedInstance> = scene.instances
-            .values()
-            .filter_map(|inst| SerializedInstance::from_instance(inst, &remapper))
+        let instances: Vec<SerializedInstance> = scene.instances()
+            .filter_map(|(_, inst)| SerializedInstance::from_instance(inst, &remapper))
             .collect();
         let offset = output.len() as u64;
         let (compressed, uncompressed_size) = serialize_section_with_level(&instances, level)?;
@@ -1644,10 +1642,9 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
 
         // ===== Materials Section =====
         // Skip the default material (it's always recreated by Scene::new())
-        let materials: Vec<SerializedMaterial> = scene.materials
-            .values()
-            .filter(|mat| mat.id != DEFAULT_MATERIAL_ID)
-            .filter_map(|mat| SerializedMaterial::from_material(mat, &remapper))
+        let materials: Vec<SerializedMaterial> = scene.materials()
+            .filter(|(_, mat)| mat.id != DEFAULT_MATERIAL_ID)
+            .filter_map(|(_, mat)| SerializedMaterial::from_material(mat, &remapper))
             .collect();
         let offset = output.len() as u64;
         let (compressed, uncompressed_size) = serialize_section_with_level(&materials, level)?;
@@ -1660,9 +1657,8 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
         output.extend(compressed);
 
         // ===== Meshes Section =====
-        let meshes: Vec<SerializedMesh> = scene.meshes
-            .values()
-            .filter_map(|mesh| SerializedMesh::from_mesh(mesh, &remapper))
+        let meshes: Vec<SerializedMesh> = scene.meshes()
+            .filter_map(|(_, mesh)| SerializedMesh::from_mesh(mesh, &remapper))
             .collect();
         let offset = output.len() as u64;
         let (compressed, uncompressed_size) = serialize_section_with_level(&meshes, level)?;
@@ -1676,7 +1672,7 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
 
         // ===== Textures Section =====
         let mut textures = Vec::new();
-        for texture in scene.textures.values() {
+        for (_, texture) in scene.textures() {
             let serialized = SerializedTexture::from_texture(
                 texture,
                 &remapper,
@@ -1698,7 +1694,7 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
         output.extend(compressed);
 
         // ===== Lights Section =====
-        let lights: Vec<SerializedLight> = scene.lights
+        let lights: Vec<SerializedLight> = scene.lights()
             .iter()
             .map(SerializedLight::from_light)
             .collect();
@@ -1713,7 +1709,7 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
         output.extend(compressed);
 
         // ===== Annotations Section =====
-        let annotations: Vec<SerializedAnnotation> = scene.annotations
+        let annotations: Vec<SerializedAnnotation> = scene.annotations()
             .iter()
             .filter_map(|ann| SerializedAnnotation::from_annotation(ann, &remapper))
             .collect();
@@ -1728,9 +1724,9 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
         output.extend(compressed);
 
         // ===== Environment Maps Section =====
-        if !scene.environment_maps.is_empty() {
+        if scene.has_environment_maps() {
             let mut env_maps = Vec::new();
-            for (&id, env_map) in &scene.environment_maps {
+            for (id, env_map) in scene.environment_maps() {
                 let remapped_id = remapper.remap_environment_map(id).unwrap_or(0);
                 let hdr_data = match env_map.source() {
                     wgpu_engine_scene::EnvironmentSource::EquirectangularPath(path) => {
@@ -1851,14 +1847,14 @@ mod tests {
         ).unwrap();
 
         // Add a light
-        scene.lights.push(Light::point(
+        scene.add_light(Light::point(
             Vector3::new(5.0, 5.0, 5.0),
             RgbaColor::WHITE,
             10.0,
         ));
 
         // Add an annotation
-        scene.annotations.add_line(
+        scene.annotations_mut().add_line(
             Point3::new(0.0, 0.0, 0.0),
             Point3::new(1.0, 1.0, 1.0),
             RgbaColor::BLUE,
@@ -1881,12 +1877,12 @@ mod tests {
         let loaded = from_bytes(&bytes).expect("Failed to deserialize scene");
 
         // Verify basic structure
-        assert_eq!(loaded.nodes.len(), original.nodes.len());
-        assert_eq!(loaded.meshes.len(), original.meshes.len());
-        assert_eq!(loaded.materials.len(), original.materials.len());
-        assert_eq!(loaded.instances.len(), original.instances.len());
-        assert_eq!(loaded.lights.len(), original.lights.len());
-        assert_eq!(loaded.root_nodes.len(), original.root_nodes.len());
+        assert_eq!(loaded.node_count(), original.node_count());
+        assert_eq!(loaded.mesh_count(), original.mesh_count());
+        assert_eq!(loaded.material_count(), original.material_count());
+        assert_eq!(loaded.instance_count(), original.instance_count());
+        assert_eq!(loaded.lights().len(), original.lights().len());
+        assert_eq!(loaded.root_nodes().len(), original.root_nodes().len());
     }
 
     #[test]
@@ -1896,12 +1892,14 @@ mod tests {
         let loaded = from_bytes(&bytes).expect("Failed to deserialize");
 
         // Find the test node by name
-        let original_node = original.nodes.values()
-            .find(|n| n.name.as_deref() == Some("TestNode"))
+        let original_node = original.nodes()
+            .find(|(_, n)| n.name.as_deref() == Some("TestNode"))
+            .map(|(_, n)| n)
             .expect("TestNode not found in original");
 
-        let loaded_node = loaded.nodes.values()
-            .find(|n| n.name.as_deref() == Some("TestNode"))
+        let loaded_node = loaded.nodes()
+            .find(|(_, n)| n.name.as_deref() == Some("TestNode"))
+            .map(|(_, n)| n)
             .expect("TestNode not found in loaded");
 
         // Verify position
@@ -1927,12 +1925,14 @@ mod tests {
         let loaded = from_bytes(&bytes).expect("Failed to deserialize");
 
         // Skip the default material (ID 0), find our custom material
-        let original_mat = original.materials.values()
-            .find(|m| m.id != DEFAULT_MATERIAL_ID)
+        let original_mat = original.materials()
+            .find(|(_, m)| m.id != DEFAULT_MATERIAL_ID)
+            .map(|(_, m)| m)
             .expect("Custom material not found in original");
 
-        let loaded_mat = loaded.materials.values()
-            .find(|m| m.id != DEFAULT_MATERIAL_ID)
+        let loaded_mat = loaded.materials()
+            .find(|(_, m)| m.id != DEFAULT_MATERIAL_ID)
+            .map(|(_, m)| m)
             .expect("Custom material not found in loaded");
 
         // Verify base color
@@ -1958,8 +1958,8 @@ mod tests {
         let loaded = from_bytes(&bytes).expect("Failed to deserialize");
 
         // Get the first mesh from each scene
-        let original_mesh = original.meshes.values().next().expect("No mesh in original");
-        let loaded_mesh = loaded.meshes.values().next().expect("No mesh in loaded");
+        let original_mesh = original.meshes().map(|(_, m)| m).next().expect("No mesh in original");
+        let loaded_mesh = loaded.meshes().map(|(_, m)| m).next().expect("No mesh in loaded");
 
         // Verify vertex counts match
         assert_eq!(original_mesh.vertices().len(), loaded_mesh.vertices().len());
@@ -1982,16 +1982,18 @@ mod tests {
         let loaded = from_bytes(&bytes).expect("Failed to deserialize");
 
         // Find child node
-        let loaded_child = loaded.nodes.values()
-            .find(|n| n.name.as_deref() == Some("ChildNode"))
+        let loaded_child = loaded.nodes()
+            .find(|(_, n)| n.name.as_deref() == Some("ChildNode"))
+            .map(|(_, n)| n)
             .expect("ChildNode not found");
 
         // Verify it has a parent
         assert!(loaded_child.parent().is_some());
 
         // Find parent node
-        let loaded_parent = loaded.nodes.values()
-            .find(|n| n.name.as_deref() == Some("TestNode"))
+        let loaded_parent = loaded.nodes()
+            .find(|(_, n)| n.name.as_deref() == Some("TestNode"))
+            .map(|(_, n)| n)
             .expect("TestNode not found");
 
         // Verify parent has child
@@ -2004,9 +2006,9 @@ mod tests {
         let bytes = to_bytes(&original).expect("Failed to serialize");
         let loaded = from_bytes(&bytes).expect("Failed to deserialize");
 
-        assert_eq!(loaded.lights.len(), 1);
+        assert_eq!(loaded.lights().len(), 1);
 
-        match &loaded.lights[0] {
+        match &loaded.lights()[0] {
             Light::Point { position, color, intensity, .. } => {
                 assert!((position.x - 5.0).abs() < 1e-6);
                 assert!((position.y - 5.0).abs() < 1e-6);
@@ -2024,9 +2026,9 @@ mod tests {
         let bytes = to_bytes(&original).expect("Failed to serialize");
         let loaded = from_bytes(&bytes).expect("Failed to deserialize");
 
-        assert_eq!(loaded.annotations.len(), 1);
+        assert_eq!(loaded.annotations().len(), 1);
 
-        let annotation = loaded.annotations.iter().next().unwrap();
+        let annotation = loaded.annotations().iter().next().unwrap();
         match annotation {
             Annotation::Line(line) => {
                 assert!((line.start.x - 0.0).abs() < 1e-6);
@@ -2044,10 +2046,10 @@ mod tests {
         let loaded = from_bytes(&bytes).expect("Failed to deserialize empty scene");
 
         // Should only have the default material
-        assert_eq!(loaded.materials.len(), 1);
-        assert!(loaded.nodes.is_empty());
-        assert!(loaded.meshes.is_empty());
-        assert!(loaded.instances.is_empty());
+        assert_eq!(loaded.material_count(), 1);
+        assert_eq!(loaded.node_count(), 0);
+        assert_eq!(loaded.mesh_count(), 0);
+        assert_eq!(loaded.instance_count(), 0);
     }
 
     #[test]
@@ -2089,7 +2091,7 @@ mod tests {
         ).unwrap();
 
         // Add an annotation and reify it (creates mesh, material, instance, node)
-        scene.annotations.add_line(
+        scene.annotations_mut().add_line(
             Point3::new(0.0, 0.0, 0.0),
             Point3::new(1.0, 1.0, 1.0),
             RgbaColor::RED,
@@ -2098,8 +2100,8 @@ mod tests {
 
         // Before serialization: we have 2 meshes, 3 nodes
         // (annotation root + annotation node + regular node)
-        assert!(scene.meshes.len() > 1, "Should have annotation mesh");
-        assert!(scene.nodes.len() > 1, "Should have annotation nodes");
+        assert!(scene.mesh_count() > 1, "Should have annotation mesh");
+        assert!(scene.node_count() > 1, "Should have annotation nodes");
 
         // Serialize
         let bytes = to_bytes(&scene).expect("Failed to serialize");
@@ -2109,25 +2111,26 @@ mod tests {
 
         // After deserialization: annotation geometry should NOT be present
         // Only the regular mesh/material/instance/node should be serialized
-        assert_eq!(loaded.meshes.len(), 1, "Only regular mesh should be serialized");
-        assert_eq!(loaded.instances.len(), 1, "Only regular instance should be serialized");
-        assert_eq!(loaded.nodes.len(), 1, "Only regular node should be serialized");
+        assert_eq!(loaded.mesh_count(), 1, "Only regular mesh should be serialized");
+        assert_eq!(loaded.instance_count(), 1, "Only regular instance should be serialized");
+        assert_eq!(loaded.node_count(), 1, "Only regular node should be serialized");
 
         // But annotation data should still be present
-        assert_eq!(loaded.annotations.len(), 1, "Annotation data should be preserved");
+        assert_eq!(loaded.annotations().len(), 1, "Annotation data should be preserved");
 
         // Annotation should not be reified yet (node_id should be None)
-        let annotation = loaded.annotations.iter().next().unwrap();
+        let annotation = loaded.annotations().iter().next().unwrap();
         assert!(!annotation.is_reified(), "Annotation should not be reified after load");
 
         // Verify the regular node is present
-        let regular_node = loaded.nodes.values()
-            .find(|n| n.name.as_deref() == Some("RegularNode"))
+        let regular_node = loaded.nodes()
+            .find(|(_, n)| n.name.as_deref() == Some("RegularNode"))
+            .map(|(_, n)| n)
             .expect("RegularNode not found");
         assert!(regular_node.instance().is_some());
 
         // Now we can re-reify the annotations
-        let reified_count = loaded.annotations.unreified_count();
+        let reified_count = loaded.annotations().unreified_count();
         assert_eq!(reified_count, 1, "Should have 1 unreified annotation");
     }
 }

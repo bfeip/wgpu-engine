@@ -362,7 +362,7 @@ impl<'a> Renderer<'a> {
         render_pass.set_bind_group(1, &self.lights.bind_group, &[]);
 
         // Build scene properties for shader generation and bind IBL if active
-        let has_ibl = if let Some(env_id) = scene.active_environment_map {
+        let has_ibl = if let Some(env_id) = scene.active_environment_map() {
             if let Some(processed) = self.ibl_resources.get_processed(env_id) {
                 render_pass.set_bind_group(3, &processed.bind_group, &[]);
                 true
@@ -379,8 +379,8 @@ impl<'a> Renderer<'a> {
         let mut current_pipeline_key: Option<PipelineCacheKey> = None;
 
         for batch in batches {
-            let mesh = scene.meshes.get(&batch.mesh_id).unwrap();
-            let material = scene.materials.get(&batch.material_id).unwrap();
+            let mesh = scene.get_mesh(batch.mesh_id).unwrap();
+            let material = scene.get_material(batch.material_id).unwrap();
             let material_props = material.get_properties(batch.primitive_type);
 
             // Bind material for this batch
@@ -457,7 +457,7 @@ impl<'a> Renderer<'a> {
             if batch.primitive_type != PrimitiveType::TriangleList {
                 continue; // Only outline triangle meshes
             }
-            let mesh = scene.meshes.get(&batch.mesh_id).unwrap();
+            let mesh = scene.get_mesh(batch.mesh_id).unwrap();
             let gpu_mesh = self.gpu_resources.get_mesh(batch.mesh_id)
                 .expect("Mesh GPU resources not initialized");
             gpu_resources::draw_mesh_instances(

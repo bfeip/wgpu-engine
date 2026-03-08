@@ -521,7 +521,7 @@ fn load_lights(assimp_lights: &[russimp::light::Light], scene: &mut Scene) {
             _ => continue, // Skip Ambient, Area, Undefined
         };
 
-        scene.lights.push(engine_light);
+        scene.add_light(engine_light);
     }
 }
 

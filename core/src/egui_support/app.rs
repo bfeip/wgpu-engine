@@ -306,7 +306,7 @@ impl<'a> EguiViewerApp<'a> {
     /// app.render(|ctx, viewer| {
     ///     egui::Window::new("Info").show(ctx, |ui| {
     ///         ui.label(format!("FPS: {:.1}", ctx.input(|i| i.stable_dt).recip()));
-    ///         ui.label(format!("Meshes: {}", viewer.scene().meshes.len()));
+    ///         ui.label(format!("Meshes: {}", viewer.scene().mesh_count()));
     ///     });
     /// })?;
     /// ```

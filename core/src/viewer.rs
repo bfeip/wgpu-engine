@@ -33,11 +33,11 @@ impl<'a> Viewer<'a> {
         let mut scene = Scene::new();
 
         // Set up default lighting
-        scene.lights = vec![crate::scene::Light::point(
+        scene.set_lights(vec![crate::scene::Light::point(
             Vector3::new(1.0, -1.0, 1.0),
             RgbaColor{ r: 1.0, g: 1.0, b: 1.0, a: 1.0 },
             100.0
-        )];
+        )]);
 
         let mut dispatcher = EventDispatcher::new();
         let mut operator_manager = OperatorManager::new();

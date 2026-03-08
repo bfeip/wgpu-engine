@@ -922,7 +922,7 @@ fn extract_light(
     position: &Point3<f32>,
     scene: &mut Scene,
 ) {
-    if scene.lights.len() >= MAX_LIGHTS {
+    if scene.lights().len() >= MAX_LIGHTS {
         return;
     }
 
@@ -960,7 +960,7 @@ fn extract_light(
         _ => return,
     };
 
-    scene.lights.push(light);
+    scene.add_light(light);
 }
 
 // ============================================================================

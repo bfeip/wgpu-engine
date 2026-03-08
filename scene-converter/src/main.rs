@@ -98,7 +98,7 @@ fn main() -> Result<()> {
 
     // Resize large textures
     if !cli.no_texture_resize {
-        for texture in scene.textures.values_mut() {
+        for (_, texture) in scene.textures_mut() {
             let id = texture.id();
             let img = texture.get_image()?;
             let (w, h) = img.dimensions();
@@ -122,13 +122,13 @@ fn main() -> Result<()> {
 }
 
 fn print_stats(scene: &Scene) {
-    eprintln!("  Meshes:    {}", scene.meshes.len());
-    eprintln!("  Materials: {}", scene.materials.len());
-    eprintln!("  Textures:  {}", scene.textures.len());
-    eprintln!("  Nodes:     {}", scene.nodes.len());
-    eprintln!("  Lights:    {}", scene.lights.len());
-    eprintln!("  Instances: {}", scene.instances.len());
-    eprintln!("  Env maps:  {}", scene.environment_maps.len());
+    eprintln!("  Meshes:    {}", scene.mesh_count());
+    eprintln!("  Materials: {}", scene.material_count());
+    eprintln!("  Textures:  {}", scene.texture_count());
+    eprintln!("  Nodes:     {}", scene.node_count());
+    eprintln!("  Lights:    {}", scene.lights().len());
+    eprintln!("  Instances: {}", scene.instance_count());
+    eprintln!("  Env maps:  {}", scene.environment_map_count());
 }
 
 fn format_bytes(bytes: u64) -> String {
