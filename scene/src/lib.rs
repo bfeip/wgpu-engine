@@ -211,7 +211,22 @@ impl Scene {
         self.meshes.get_mut(&id)
     }
 
-    // ========== Material API (device-free) ==========
+    /// Returns an iterator over all meshes.
+    pub fn meshes(&self) -> impl Iterator<Item = &Mesh> {
+        self.meshes.values()
+    }
+
+    /// Returns a mutable iterator over all meshes.
+    pub fn meshes_mut(&mut self) -> impl Iterator<Item = &mut Mesh> {
+        self.meshes.values_mut()
+    }
+
+    /// Returns the number of meshes in the scene.
+    pub fn mesh_count(&self) -> usize {
+        self.meshes.len()
+    }
+
+    // ========== Material API ==========
 
     /// Adds a material to the scene.
     ///
@@ -240,7 +255,22 @@ impl Scene {
         self.materials.get_mut(&id)
     }
 
-    // ========== Texture API (device-free) ==========
+    /// Returns an iterator over all materials.
+    pub fn materials(&self) -> impl Iterator<Item = &Material> {
+        self.materials.values()
+    }
+
+    /// Returns a mutable iterator over all materials.
+    pub fn materials_mut(&mut self) -> impl Iterator<Item = &mut Material> {
+        self.materials.values_mut()
+    }
+
+    /// Returns the number of materials in the scene.
+    pub fn material_count(&self) -> usize {
+        self.materials.len()
+    }
+
+    // ========== Texture API ==========
 
     /// Adds a texture to the scene.
     ///
@@ -291,6 +321,21 @@ impl Scene {
     /// Gets a mutable reference to a texture by ID.
     pub fn get_texture_mut(&mut self, id: TextureId) -> Option<&mut Texture> {
         self.textures.get_mut(&id)
+    }
+
+    /// Returns an iterator over all textures.
+    pub fn textures(&self) -> impl Iterator<Item = &Texture> {
+        self.textures.values()
+    }
+
+    /// Returns a mutable iterator over all textures.
+    pub fn textures_mut(&mut self) -> impl Iterator<Item = &mut Texture> {
+        self.textures.values_mut()
+    }
+
+    /// Returns the number of textures in the scene.
+    pub fn texture_count(&self) -> usize {
+        self.textures.len()
     }
 
     // ========== Environment Map API (IBL) ==========
@@ -345,6 +390,26 @@ impl Scene {
         self.environment_maps.get_mut(&id)
     }
 
+    /// Returns an iterator over all environment maps.
+    pub fn environment_maps(&self) -> impl Iterator<Item = &EnvironmentMap> {
+        self.environment_maps.values()
+    }
+
+    /// Returns a mutable iterator over all environment maps.
+    pub fn environment_maps_mut(&mut self) -> impl Iterator<Item = &mut EnvironmentMap> {
+        self.environment_maps.values_mut()
+    }
+
+    /// Returns the number of environment maps in the scene.
+    pub fn environment_map_count(&self) -> usize {
+        self.environment_maps.len()
+    }
+
+    /// Returns true if the scene has any environment maps.
+    pub fn has_environment_maps(&self) -> bool {
+        !self.environment_maps.is_empty()
+    }
+
     /// Sets the active environment map for IBL lighting.
     ///
     /// Pass `None` to disable IBL lighting.
@@ -359,6 +424,27 @@ impl Scene {
 
     // ========== Instance API ==========
 
+    /// Adds an instance to the scene, binding a mesh to a material.
+    ///
+    /// # Arguments
+    /// * `mesh` - The mesh ID for this instance
+    /// * `material` - The material ID for this instance
+    ///
+    /// # Returns
+    /// The unique ID assigned to this instance
+    pub fn add_instance(
+        &mut self,
+        mesh: MeshId,
+        material: MaterialId,
+    ) -> InstanceId {
+        let id = self.next_instance_id;
+        self.next_instance_id += 1;
+
+        let instance = Instance::new(id, mesh, material);
+        self.instances.insert(id, instance);
+        id
+    }
+
     /// Gets a reference to an instance by ID.
     pub fn get_instance(&self, id: InstanceId) -> Option<&Instance> {
         self.instances.get(&id)
@@ -369,83 +455,19 @@ impl Scene {
         self.instances.get_mut(&id)
     }
 
-    /// Returns the number of instances in the scene.
-    pub fn instance_count(&self) -> usize {
-        self.instances.len()
-    }
-
-    // ========== Collection Iterators ==========
-
-    /// Returns an iterator over all meshes.
-    pub fn meshes(&self) -> impl Iterator<Item = &Mesh> {
-        self.meshes.values()
-    }
-
     /// Returns an iterator over all instances.
     pub fn instances(&self) -> impl Iterator<Item = &Instance> {
         self.instances.values()
     }
 
-    /// Returns an iterator over all materials.
-    pub fn materials(&self) -> impl Iterator<Item = &Material> {
-        self.materials.values()
+    /// Returns a mutable iterator over all instances.
+    pub fn instances_mut(&mut self) -> impl Iterator<Item = &mut Instance> {
+        self.instances.values_mut()
     }
 
-    /// Returns an iterator over all textures.
-    pub fn textures(&self) -> impl Iterator<Item = &Texture> {
-        self.textures.values()
-    }
-
-    /// Returns a mutable iterator over all textures.
-    pub fn textures_mut(&mut self) -> impl Iterator<Item = &mut Texture> {
-        self.textures.values_mut()
-    }
-
-    /// Returns an iterator over all nodes.
-    pub fn nodes(&self) -> impl Iterator<Item = &Node> {
-        self.nodes.values()
-    }
-
-    /// Returns an iterator over all environment maps.
-    pub fn environment_maps(&self) -> impl Iterator<Item = &EnvironmentMap> {
-        self.environment_maps.values()
-    }
-
-    // ========== Count Methods ==========
-
-    /// Returns the number of meshes in the scene.
-    pub fn mesh_count(&self) -> usize {
-        self.meshes.len()
-    }
-
-    /// Returns the number of nodes in the scene.
-    pub fn node_count(&self) -> usize {
-        self.nodes.len()
-    }
-
-    /// Returns the number of materials in the scene.
-    pub fn material_count(&self) -> usize {
-        self.materials.len()
-    }
-
-    /// Returns the number of textures in the scene.
-    pub fn texture_count(&self) -> usize {
-        self.textures.len()
-    }
-
-    /// Returns the number of environment maps in the scene.
-    pub fn environment_map_count(&self) -> usize {
-        self.environment_maps.len()
-    }
-
-    /// Returns true if the scene has any environment maps.
-    pub fn has_environment_maps(&self) -> bool {
-        !self.environment_maps.is_empty()
-    }
-
-    /// Returns true if a node with the given ID exists in the scene.
-    pub fn has_node(&self, id: NodeId) -> bool {
-        self.nodes.contains_key(&id)
+    /// Returns the number of instances in the scene.
+    pub fn instance_count(&self) -> usize {
+        self.instances.len()
     }
 
     // ========== Light Methods ==========
@@ -467,13 +489,6 @@ impl Scene {
         self.light_generation += 1;
     }
 
-    // ========== Root Node Ordering ==========
-
-    /// Sets the order of root nodes (used during deserialization).
-    pub fn set_root_node_order(&mut self, order: Vec<NodeId>) {
-        self.root_nodes = order;
-    }
-
     // ========== Node API ==========
 
     /// Gets a reference to a node by ID.
@@ -486,22 +501,35 @@ impl Scene {
         self.nodes.get_mut(&id)
     }
 
+    /// Returns an iterator over all nodes.
+    pub fn nodes(&self) -> impl Iterator<Item = &Node> {
+        self.nodes.values()
+    }
+
+    /// Returns a mutable iterator over all nodes.
+    pub fn nodes_mut(&mut self) -> impl Iterator<Item = &mut Node> {
+        self.nodes.values_mut()
+    }
+
+    /// Returns the number of nodes in the scene.
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+
+    /// Returns true if a node with the given ID exists in the scene.
+    pub fn has_node(&self, id: NodeId) -> bool {
+        self.nodes.contains_key(&id)
+    }
+
+    // TODO: Remove this after format.rs refactor
+    /// Sets the order of root nodes (used during deserialization).
+    pub fn set_root_node_order(&mut self, order: Vec<NodeId>) {
+        self.root_nodes = order;
+    }
+
     /// Returns a slice of root node IDs.
     pub fn root_nodes(&self) -> &[NodeId] {
         &self.root_nodes
-    }
-
-    pub fn add_instance(
-        &mut self,
-        mesh: MeshId,
-        material: MaterialId,
-    ) -> InstanceId {
-        let id = self.next_instance_id;
-        self.next_instance_id += 1;
-
-        let instance = Instance::new(id, mesh, material);
-        self.instances.insert(id, instance);
-        id
     }
 
     /// Adds a new node to the scene tree.
