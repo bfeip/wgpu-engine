@@ -545,7 +545,7 @@ impl IdRemapper {
 
         // Collect all annotation-created node IDs (recursively includes children)
         let mut annotation_node_ids: HashSet<NodeId> = HashSet::new();
-        if let Some(root_id) = scene.annotations().root_node() {
+        if let Some(root_id) = scene.annotations.root_node() {
             Self::collect_subtree_nodes(scene, root_id, &mut annotation_node_ids);
         }
 
@@ -568,27 +568,27 @@ impl IdRemapper {
 
         // Remap nodes (excluding annotation nodes)
         let mut node_idx = 0u32;
-        for (id, _) in scene.nodes() {
-            if !annotation_node_ids.contains(&id) {
-                remapper.nodes.insert(id, node_idx);
+        for node in scene.nodes() {
+            if !annotation_node_ids.contains(&node.id) {
+                remapper.nodes.insert(node.id, node_idx);
                 node_idx += 1;
             }
         }
 
         // Remap instances (excluding annotation instances)
         let mut inst_idx = 0u32;
-        for (id, _) in scene.instances() {
-            if !annotation_instance_ids.contains(&id) {
-                remapper.instances.insert(id, inst_idx);
+        for inst in scene.instances() {
+            if !annotation_instance_ids.contains(&inst.id) {
+                remapper.instances.insert(inst.id, inst_idx);
                 inst_idx += 1;
             }
         }
 
         // Remap meshes (excluding annotation meshes)
         let mut mesh_idx = 0u32;
-        for (id, _) in scene.meshes() {
-            if !annotation_mesh_ids.contains(&id) {
-                remapper.meshes.insert(id, mesh_idx);
+        for mesh in scene.meshes() {
+            if !annotation_mesh_ids.contains(&mesh.id) {
+                remapper.meshes.insert(mesh.id, mesh_idx);
                 mesh_idx += 1;
             }
         }
@@ -599,26 +599,26 @@ impl IdRemapper {
         // User materials get sequential file IDs starting from 0.
         remapper.materials.insert(DEFAULT_MATERIAL_ID, u32::MAX);
         let mut mat_idx = 0u32;
-        for (id, _) in scene.materials() {
-            if id == DEFAULT_MATERIAL_ID || annotation_material_ids.contains(&id) {
+        for mat in scene.materials() {
+            if mat.id == DEFAULT_MATERIAL_ID || annotation_material_ids.contains(&mat.id) {
                 continue;
             }
-            remapper.materials.insert(id, mat_idx);
+            remapper.materials.insert(mat.id, mat_idx);
             mat_idx += 1;
         }
 
         // Remap textures
-        for (idx, (id, _)) in scene.textures().enumerate() {
-            remapper.textures.insert(id, idx as u32);
+        for (idx, tex) in scene.textures().enumerate() {
+            remapper.textures.insert(tex.id, idx as u32);
         }
 
         // Remap environment maps
-        for (idx, (id, _)) in scene.environment_maps().enumerate() {
-            remapper.environment_maps.insert(id, idx as u32);
+        for (idx, em) in scene.environment_maps().enumerate() {
+            remapper.environment_maps.insert(em.id, idx as u32);
         }
 
         // Remap annotations
-        for (idx, annotation) in scene.annotations().iter().enumerate() {
+        for (idx, annotation) in scene.annotations.iter().enumerate() {
             remapper.annotations.insert(annotation.id(), idx as u32);
         }
 
@@ -1541,7 +1541,7 @@ pub fn assemble_wgsc_scene(
     for sa in sections.annotations {
         let annotation = sa.to_annotation();
         scene
-            .annotations_mut()
+            .annotations
             .insert_with_id(annotation)
             .map_err(|e| FormatError::DeserializationError(e.to_string()))?;
     }
@@ -1614,7 +1614,7 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
 
         // ===== Nodes Section =====
         let nodes: Vec<SerializedNode> = scene.nodes()
-            .filter_map(|(_, node)| SerializedNode::from_node(node, &remapper))
+            .filter_map(|node| SerializedNode::from_node(node, &remapper))
             .collect();
         let offset = output.len() as u64;
         let (compressed, uncompressed_size) = serialize_section_with_level(&nodes, level)?;
@@ -1628,7 +1628,7 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
 
         // ===== Instances Section =====
         let instances: Vec<SerializedInstance> = scene.instances()
-            .filter_map(|(_, inst)| SerializedInstance::from_instance(inst, &remapper))
+            .filter_map(|inst| SerializedInstance::from_instance(inst, &remapper))
             .collect();
         let offset = output.len() as u64;
         let (compressed, uncompressed_size) = serialize_section_with_level(&instances, level)?;
@@ -1643,8 +1643,8 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
         // ===== Materials Section =====
         // Skip the default material (it's always recreated by Scene::new())
         let materials: Vec<SerializedMaterial> = scene.materials()
-            .filter(|(_, mat)| mat.id != DEFAULT_MATERIAL_ID)
-            .filter_map(|(_, mat)| SerializedMaterial::from_material(mat, &remapper))
+            .filter(|mat| mat.id != DEFAULT_MATERIAL_ID)
+            .filter_map(|mat| SerializedMaterial::from_material(mat, &remapper))
             .collect();
         let offset = output.len() as u64;
         let (compressed, uncompressed_size) = serialize_section_with_level(&materials, level)?;
@@ -1658,7 +1658,7 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
 
         // ===== Meshes Section =====
         let meshes: Vec<SerializedMesh> = scene.meshes()
-            .filter_map(|(_, mesh)| SerializedMesh::from_mesh(mesh, &remapper))
+            .filter_map(|mesh| SerializedMesh::from_mesh(mesh, &remapper))
             .collect();
         let offset = output.len() as u64;
         let (compressed, uncompressed_size) = serialize_section_with_level(&meshes, level)?;
@@ -1672,7 +1672,7 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
 
         // ===== Textures Section =====
         let mut textures = Vec::new();
-        for (_, texture) in scene.textures() {
+        for texture in scene.textures() {
             let serialized = SerializedTexture::from_texture(
                 texture,
                 &remapper,
@@ -1709,7 +1709,7 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
         output.extend(compressed);
 
         // ===== Annotations Section =====
-        let annotations: Vec<SerializedAnnotation> = scene.annotations()
+        let annotations: Vec<SerializedAnnotation> = scene.annotations
             .iter()
             .filter_map(|ann| SerializedAnnotation::from_annotation(ann, &remapper))
             .collect();
@@ -1726,8 +1726,8 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
         // ===== Environment Maps Section =====
         if scene.has_environment_maps() {
             let mut env_maps = Vec::new();
-            for (id, env_map) in scene.environment_maps() {
-                let remapped_id = remapper.remap_environment_map(id).unwrap_or(0);
+            for env_map in scene.environment_maps() {
+                let remapped_id = remapper.remap_environment_map(env_map.id).unwrap_or(0);
                 let hdr_data = match env_map.source() {
                     wgpu_engine_scene::EnvironmentSource::EquirectangularPath(path) => {
                         std::fs::read(path).map_err(|e| FormatError::IoError(e))?
@@ -1854,7 +1854,7 @@ mod tests {
         ));
 
         // Add an annotation
-        scene.annotations_mut().add_line(
+        scene.annotations.add_line(
             Point3::new(0.0, 0.0, 0.0),
             Point3::new(1.0, 1.0, 1.0),
             RgbaColor::BLUE,
@@ -1893,13 +1893,11 @@ mod tests {
 
         // Find the test node by name
         let original_node = original.nodes()
-            .find(|(_, n)| n.name.as_deref() == Some("TestNode"))
-            .map(|(_, n)| n)
+            .find(|n| n.name.as_deref() == Some("TestNode"))
             .expect("TestNode not found in original");
 
         let loaded_node = loaded.nodes()
-            .find(|(_, n)| n.name.as_deref() == Some("TestNode"))
-            .map(|(_, n)| n)
+            .find(|n| n.name.as_deref() == Some("TestNode"))
             .expect("TestNode not found in loaded");
 
         // Verify position
@@ -1926,13 +1924,11 @@ mod tests {
 
         // Skip the default material (ID 0), find our custom material
         let original_mat = original.materials()
-            .find(|(_, m)| m.id != DEFAULT_MATERIAL_ID)
-            .map(|(_, m)| m)
+            .find(|m| m.id != DEFAULT_MATERIAL_ID)
             .expect("Custom material not found in original");
 
         let loaded_mat = loaded.materials()
-            .find(|(_, m)| m.id != DEFAULT_MATERIAL_ID)
-            .map(|(_, m)| m)
+            .find(|m| m.id != DEFAULT_MATERIAL_ID)
             .expect("Custom material not found in loaded");
 
         // Verify base color
@@ -1958,8 +1954,8 @@ mod tests {
         let loaded = from_bytes(&bytes).expect("Failed to deserialize");
 
         // Get the first mesh from each scene
-        let original_mesh = original.meshes().map(|(_, m)| m).next().expect("No mesh in original");
-        let loaded_mesh = loaded.meshes().map(|(_, m)| m).next().expect("No mesh in loaded");
+        let original_mesh = original.meshes().next().expect("No mesh in original");
+        let loaded_mesh = loaded.meshes().next().expect("No mesh in loaded");
 
         // Verify vertex counts match
         assert_eq!(original_mesh.vertices().len(), loaded_mesh.vertices().len());
@@ -1983,8 +1979,7 @@ mod tests {
 
         // Find child node
         let loaded_child = loaded.nodes()
-            .find(|(_, n)| n.name.as_deref() == Some("ChildNode"))
-            .map(|(_, n)| n)
+            .find(|n| n.name.as_deref() == Some("ChildNode"))
             .expect("ChildNode not found");
 
         // Verify it has a parent
@@ -1992,8 +1987,7 @@ mod tests {
 
         // Find parent node
         let loaded_parent = loaded.nodes()
-            .find(|(_, n)| n.name.as_deref() == Some("TestNode"))
-            .map(|(_, n)| n)
+            .find(|n| n.name.as_deref() == Some("TestNode"))
             .expect("TestNode not found");
 
         // Verify parent has child
@@ -2026,9 +2020,9 @@ mod tests {
         let bytes = to_bytes(&original).expect("Failed to serialize");
         let loaded = from_bytes(&bytes).expect("Failed to deserialize");
 
-        assert_eq!(loaded.annotations().len(), 1);
+        assert_eq!(loaded.annotations.len(), 1);
 
-        let annotation = loaded.annotations().iter().next().unwrap();
+        let annotation = loaded.annotations.iter().next().unwrap();
         match annotation {
             Annotation::Line(line) => {
                 assert!((line.start.x - 0.0).abs() < 1e-6);
@@ -2091,7 +2085,7 @@ mod tests {
         ).unwrap();
 
         // Add an annotation and reify it (creates mesh, material, instance, node)
-        scene.annotations_mut().add_line(
+        scene.annotations.add_line(
             Point3::new(0.0, 0.0, 0.0),
             Point3::new(1.0, 1.0, 1.0),
             RgbaColor::RED,
@@ -2116,21 +2110,20 @@ mod tests {
         assert_eq!(loaded.node_count(), 1, "Only regular node should be serialized");
 
         // But annotation data should still be present
-        assert_eq!(loaded.annotations().len(), 1, "Annotation data should be preserved");
+        assert_eq!(loaded.annotations.len(), 1, "Annotation data should be preserved");
 
         // Annotation should not be reified yet (node_id should be None)
-        let annotation = loaded.annotations().iter().next().unwrap();
+        let annotation = loaded.annotations.iter().next().unwrap();
         assert!(!annotation.is_reified(), "Annotation should not be reified after load");
 
         // Verify the regular node is present
         let regular_node = loaded.nodes()
-            .find(|(_, n)| n.name.as_deref() == Some("RegularNode"))
-            .map(|(_, n)| n)
+            .find(|n| n.name.as_deref() == Some("RegularNode"))
             .expect("RegularNode not found");
         assert!(regular_node.instance().is_some());
 
         // Now we can re-reify the annotations
-        let reified_count = loaded.annotations().unreified_count();
+        let reified_count = loaded.annotations.unreified_count();
         assert_eq!(reified_count, 1, "Should have 1 unreified annotation");
     }
 }

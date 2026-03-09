@@ -98,7 +98,7 @@ fn main() -> Result<()> {
 
     // Resize large textures
     if !cli.no_texture_resize {
-        for (_, texture) in scene.textures_mut() {
+        for texture in scene.textures_mut() {
             let id = texture.id();
             let img = texture.get_image()?;
             let (w, h) = img.dimensions();

@@ -21,14 +21,14 @@ impl<'a> Renderer<'a> {
         scene.reify_annotations();
 
         // 1. Prepare all textures first (materials depend on them)
-        for (_, texture) in scene.textures() {
+        for texture in scene.textures() {
             self.gpu_resources.ensure_texture(texture, &self.device, &self.queue)?;
         }
 
         // 2. Prepare all materials
         // We need to collect material IDs first to avoid borrow issues
         // (prepare_material_primitive takes &mut Scene)
-        let material_ids: Vec<_> = scene.materials().map(|(id, _)| id).collect();
+        let material_ids: Vec<_> = scene.materials().map(|m| m.id).collect();
         for mat_id in material_ids {
             // Check each primitive type
             for prim_type in [
@@ -55,7 +55,7 @@ impl<'a> Renderer<'a> {
         // using MeshPrimitive::to_line_list(). This could be done here by checking a
         // wireframe flag and ensuring meshes have line primitives derived from their
         // triangle data before uploading to the GPU.
-        for (_, mesh) in scene.meshes() {
+        for mesh in scene.meshes() {
             self.gpu_resources.ensure_mesh(mesh, &self.device);
         }
 

@@ -26,14 +26,6 @@
 
 ## March quality push
 ### Rendering re-do (2 weeks)
-Done Together, 4 days:
-- Materials cleanup and fixes
-- Shader refactor / modular shaders
-
-One day each, 4 total:
-- Rendering debug tools (wireframe, normal viewing, light visualization, etc.)
-- Anti-aliasing
-- Transparency
 - Core API + docs review
 
 With the remaining time:
@@ -43,16 +35,15 @@ With the remaining time:
 ### Crate improvements (2 weeks)
 Three days together:
 - format.rs and import export cleanup
-- Scene API and docs review
-
-One day each:
-- format.rs and import export cleanup
-  - Split import export
   - trait-ification of importers + exporters
   - serialization defaults
+  - Investigate removing serialization variants (e.g. SerializedMaterial)
+- Scene API and docs review
+  - Split scene graph into its own module
+
+One day each:
 - API and docs review (make sure docs tests pass too)
 - Benchmarking and tests
-- Camera space lights
 
 One day together:
 - Merge walk and orbit operators under navigation operator + Middle click orbit

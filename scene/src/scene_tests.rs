@@ -355,7 +355,7 @@ fn test_tree_consistency_after_multiple_operations() {
     assert!(scene.get_node(grandchild).is_some());
 
     // Verify every parent reference is valid
-    for (_, node) in scene.nodes() {
+    for node in scene.nodes() {
         if let Some(parent_id) = node.parent() {
             assert!(scene.get_node(parent_id).is_some(),
                 "Node references non-existent parent");
@@ -363,7 +363,7 @@ fn test_tree_consistency_after_multiple_operations() {
     }
 
     // Verify every child reference is valid
-    for (_, node) in scene.nodes() {
+    for node in scene.nodes() {
         for &child_id in node.children() {
             assert!(scene.get_node(child_id).is_some(),
                 "Node references non-existent child");
@@ -880,10 +880,10 @@ fn test_point_light_annotation_reification() {
         1.0,
     ));
 
-    let id = scene.annotations_mut().add_point_light(0, 0.5, 8);
+    let id = scene.annotations.add_point_light(0, 0.5, 8);
     scene.reify_annotations();
 
-    let annotation = scene.annotations().get(id).unwrap();
+    let annotation = scene.annotations.get(id).unwrap();
     assert!(annotation.is_reified());
     assert!(annotation.node_id().is_some());
 }
@@ -928,10 +928,10 @@ fn test_spot_light_annotation_reification() {
         0.6,
     ));
 
-    let id = scene.annotations_mut().add_spot_light(0, 5.0, 8);
+    let id = scene.annotations.add_spot_light(0, 5.0, 8);
     scene.reify_annotations();
 
-    let annotation = scene.annotations().get(id).unwrap();
+    let annotation = scene.annotations.get(id).unwrap();
     assert!(annotation.is_reified());
 }
 
@@ -1025,10 +1025,10 @@ fn test_normals_annotation_reification() {
         Vector3::new(1.0, 1.0, 1.0),
     ).unwrap();
 
-    let ann_id = scene.annotations_mut().add_normals(node_id, RgbaColor::CYAN, 0.1);
+    let ann_id = scene.annotations.add_normals(node_id, RgbaColor::CYAN, 0.1);
     scene.reify_annotations();
 
-    let annotation = scene.annotations().get(ann_id).unwrap();
+    let annotation = scene.annotations.get(ann_id).unwrap();
     assert!(annotation.is_reified());
 }
 
@@ -1045,7 +1045,7 @@ fn test_point_light_staleness_detection() {
         1.0,
     ));
 
-    let id = scene.annotations_mut().add_point_light(0, 0.5, 8);
+    let id = scene.annotations.add_point_light(0, 0.5, 8);
     let reified_count = scene.reify_annotations();
     assert_eq!(reified_count, 1);
 
@@ -1061,7 +1061,7 @@ fn test_point_light_staleness_detection() {
     let reified_count = scene.reify_annotations();
     assert_eq!(reified_count, 1);
 
-    let annotation = scene.annotations().get(id).unwrap();
+    let annotation = scene.annotations.get(id).unwrap();
     assert!(annotation.is_reified());
 }
 
@@ -1075,7 +1075,7 @@ fn test_wrong_light_type_returns_none() {
         1.0,
     ));
 
-    let id = scene.annotations_mut().add_point_light(0, 0.5, 8);
+    let id = scene.annotations.add_point_light(0, 0.5, 8);
     let result = scene.reify_annotation(id);
     assert!(result.is_none());
 }
@@ -1084,7 +1084,7 @@ fn test_wrong_light_type_returns_none() {
 fn test_light_index_out_of_bounds_returns_none() {
     let mut scene = Scene::new();
     // No lights added, index 0 is out of bounds
-    let id = scene.annotations_mut().add_point_light(0, 0.5, 8);
+    let id = scene.annotations.add_point_light(0, 0.5, 8);
     let result = scene.reify_annotation(id);
     assert!(result.is_none());
 }

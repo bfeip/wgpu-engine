@@ -322,7 +322,7 @@ impl TransformState {
                 let half_length = self.model_radius * 2.0;
                 let start = self.pivot_world - axis * half_length;
                 let end = self.pivot_world + axis * half_length;
-                let id = ctx.scene.annotations_mut().add_line(start, end, color);
+                let id = ctx.scene.annotations.add_line(start, end, color);
                 self.annotation_ids.push(id);
             }
         }

@@ -103,7 +103,7 @@ pub struct Scene {
     active_environment_map: Option<EnvironmentMapId>,
 
     /// Annotation manager
-    annotations: AnnotationManager,
+    pub annotations: AnnotationManager,
 
     /// Generation counter for light changes (increments on any light mutation)
     light_generation: u64,
@@ -376,39 +376,39 @@ impl Scene {
 
     // ========== Collection Iterators ==========
 
-    /// Returns an iterator over all meshes with their IDs.
-    pub fn meshes(&self) -> impl Iterator<Item = (MeshId, &Mesh)> {
-        self.meshes.iter().map(|(&id, m)| (id, m))
+    /// Returns an iterator over all meshes.
+    pub fn meshes(&self) -> impl Iterator<Item = &Mesh> {
+        self.meshes.values()
     }
 
-    /// Returns an iterator over all instances with their IDs.
-    pub fn instances(&self) -> impl Iterator<Item = (InstanceId, &Instance)> {
-        self.instances.iter().map(|(&id, i)| (id, i))
+    /// Returns an iterator over all instances.
+    pub fn instances(&self) -> impl Iterator<Item = &Instance> {
+        self.instances.values()
     }
 
-    /// Returns an iterator over all materials with their IDs.
-    pub fn materials(&self) -> impl Iterator<Item = (MaterialId, &Material)> {
-        self.materials.iter().map(|(&id, m)| (id, m))
+    /// Returns an iterator over all materials.
+    pub fn materials(&self) -> impl Iterator<Item = &Material> {
+        self.materials.values()
     }
 
-    /// Returns an iterator over all textures with their IDs.
-    pub fn textures(&self) -> impl Iterator<Item = (TextureId, &Texture)> {
-        self.textures.iter().map(|(&id, t)| (id, t))
+    /// Returns an iterator over all textures.
+    pub fn textures(&self) -> impl Iterator<Item = &Texture> {
+        self.textures.values()
     }
 
-    /// Returns a mutable iterator over all textures with their IDs.
-    pub fn textures_mut(&mut self) -> impl Iterator<Item = (TextureId, &mut Texture)> {
-        self.textures.iter_mut().map(|(&id, t)| (id, t))
+    /// Returns a mutable iterator over all textures.
+    pub fn textures_mut(&mut self) -> impl Iterator<Item = &mut Texture> {
+        self.textures.values_mut()
     }
 
-    /// Returns an iterator over all nodes with their IDs.
-    pub fn nodes(&self) -> impl Iterator<Item = (NodeId, &Node)> {
-        self.nodes.iter().map(|(&id, n)| (id, n))
+    /// Returns an iterator over all nodes.
+    pub fn nodes(&self) -> impl Iterator<Item = &Node> {
+        self.nodes.values()
     }
 
-    /// Returns an iterator over all environment maps with their IDs.
-    pub fn environment_maps(&self) -> impl Iterator<Item = (EnvironmentMapId, &EnvironmentMap)> {
-        self.environment_maps.iter().map(|(&id, em)| (id, em))
+    /// Returns an iterator over all environment maps.
+    pub fn environment_maps(&self) -> impl Iterator<Item = &EnvironmentMap> {
+        self.environment_maps.values()
     }
 
     // ========== Count Methods ==========
@@ -472,18 +472,6 @@ impl Scene {
     /// Sets the order of root nodes (used during deserialization).
     pub fn set_root_node_order(&mut self, order: Vec<NodeId>) {
         self.root_nodes = order;
-    }
-
-    // ========== Annotation Accessors ==========
-
-    /// Returns a reference to the annotation manager.
-    pub fn annotations(&self) -> &AnnotationManager {
-        &self.annotations
-    }
-
-    /// Returns a mutable reference to the annotation manager.
-    pub fn annotations_mut(&mut self) -> &mut AnnotationManager {
-        &mut self.annotations
     }
 
     // ========== Node API ==========
