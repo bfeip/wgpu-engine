@@ -18,7 +18,7 @@ use wgpu_engine_scene::{
     Camera, DEFAULT_MATERIAL_ID, Light, Material, MaterialId, Mesh, MeshId,
     NodeId, PrimitiveType, Scene, Texture, TextureId, Vertex, MAX_LIGHTS,
 };
-use wgpu_engine_scene::common::{RgbaColor, decompose_matrix};
+use wgpu_engine_scene::common::{RgbaColor, Transform, decompose_matrix};
 
 /// Result of loading a scene via assimp.
 pub struct AssimpLoadResult {
@@ -399,7 +399,7 @@ fn build_node_tree(
         t.a4, t.b4, t.c4, t.d4,
     );
 
-    let (position, rotation, scale) = decompose_matrix(&matrix);
+    let transform = decompose_matrix(&matrix);
 
     let name = if node.name.is_empty() {
         None
@@ -409,7 +409,7 @@ fn build_node_tree(
 
     if node.meshes.is_empty() {
         // Pure transform node (no geometry)
-        let node_id = scene.add_node(parent, name, position, rotation, scale)?;
+        let node_id = scene.add_node(parent, name, transform)?;
 
         // Recurse into children
         for child in node.children.borrow().iter() {
@@ -424,7 +424,7 @@ fn build_node_tree(
                 if entries.len() == 1 {
                     let (mesh_id, mat_id) = entries[0];
                     let node_id = scene.add_instance_node(
-                        parent, mesh_id, mat_id, name, position, rotation, scale,
+                        parent, mesh_id, mat_id, name, transform,
                     )?;
 
                     for child in node.children.borrow().iter() {
@@ -432,7 +432,7 @@ fn build_node_tree(
                     }
                 } else {
                     // Split mesh: create a parent transform node, then instance children
-                    let group_id = scene.add_node(parent, name, position, rotation, scale)?;
+                    let group_id = scene.add_node(parent, name, transform)?;
                     for (i, &(mesh_id, mat_id)) in entries.iter().enumerate() {
                         let chunk_name = Some(format!("chunk_{}", i));
                         scene.add_instance_node(
@@ -440,9 +440,7 @@ fn build_node_tree(
                             mesh_id,
                             mat_id,
                             chunk_name,
-                            Point3::new(0.0, 0.0, 0.0),
-                            Quaternion::new(1.0, 0.0, 0.0, 0.0),
-                            Vector3::new(1.0, 1.0, 1.0),
+                            Transform::IDENTITY,
                         )?;
                     }
 
@@ -453,7 +451,7 @@ fn build_node_tree(
             }
         } else {
             // Multiple meshes on one node: create parent + instance children
-            let group_id = scene.add_node(parent, name, position, rotation, scale)?;
+            let group_id = scene.add_node(parent, name, transform)?;
 
             for &mesh_idx in &node.meshes {
                 if let Some(entries) = mesh_map.get(mesh_idx as usize) {
@@ -463,9 +461,7 @@ fn build_node_tree(
                             mesh_id,
                             mat_id,
                             None,
-                            Point3::new(0.0, 0.0, 0.0),
-                            Quaternion::new(1.0, 0.0, 0.0, 0.0),
-                            Vector3::new(1.0, 1.0, 1.0),
+                            Transform::IDENTITY,
                         )?;
                     }
                 }

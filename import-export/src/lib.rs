@@ -919,7 +919,6 @@ pub fn save_async(
 mod tests {
     use super::*;
     use wgpu_engine_scene::{Material, Mesh, PrimitiveType};
-    use cgmath::{Point3, Quaternion, Vector3};
 
     fn create_test_scene() -> Scene {
         let mut scene = Scene::new();
@@ -932,9 +931,7 @@ mod tests {
                 mesh_id,
                 mat_id,
                 Some("TestNode".into()),
-                Point3::new(0.0, 0.0, 0.0),
-                Quaternion::new(1.0, 0.0, 0.0, 0.0),
-                Vector3::new(1.0, 1.0, 1.0),
+                wgpu_engine_scene::common::Transform::IDENTITY,
             )
             .unwrap();
         scene

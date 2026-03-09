@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use cgmath::{Point3, Quaternion, Vector3};
+use cgmath::{Point3, Vector3};
 use wgpu_engine_scene::CoordinateSpace;
 use winit::{
     application::ApplicationHandler,
@@ -9,7 +9,7 @@ use winit::{
     window::{Window, WindowId},
 };
 
-use wgpu_engine::common::RgbaColor;
+use wgpu_engine::common::{RgbaColor, Transform};
 use wgpu_engine::input::{ElementState, Key};
 use wgpu_engine::scene::{EnvironmentMapId, Light, Material, MaterialFlags, Mesh, PrimitiveType};
 use wgpu_engine::{Viewer, winit_support};
@@ -58,8 +58,8 @@ fn build_material_scene(viewer: &mut Viewer) {
         PrimitiveType::TriangleList,
     ));
 
-    let identity_rot = Quaternion::new(1.0, 0.0, 0.0, 0.0);
-    let unit_scale = Vector3::new(1.0, 1.0, 1.0);
+    // grid_position returns a Point3, wrap it in a Transform for add_instance_node
+    let grid_transform = |row, col| Transform::from_position(grid_position(row, col));
 
     // Row 0: Roughness gradient (dielectric blue, roughness 0.0 -> 1.0)
     for col in 0..COLS {
@@ -75,9 +75,7 @@ fn build_material_scene(viewer: &mut Viewer) {
                 mesh_id,
                 mat_id,
                 Some(format!("Roughness {roughness:.2}")),
-                grid_position(0, col),
-                identity_rot,
-                unit_scale,
+                grid_transform(0, col),
             )
             .unwrap();
     }
@@ -96,9 +94,7 @@ fn build_material_scene(viewer: &mut Viewer) {
                 mesh_id,
                 mat_id,
                 Some(format!("Metallic {metallic:.2}")),
-                grid_position(1, col),
-                identity_rot,
-                unit_scale,
+                grid_transform(1, col),
             )
             .unwrap();
     }
@@ -123,9 +119,7 @@ fn build_material_scene(viewer: &mut Viewer) {
                 mesh_id,
                 mat_id,
                 Some(name.to_string()),
-                grid_position(2, col),
-                identity_rot,
-                unit_scale,
+                grid_transform(2, col),
             )
             .unwrap();
     }
@@ -150,9 +144,7 @@ fn build_material_scene(viewer: &mut Viewer) {
                 mesh_id,
                 mat_id,
                 Some(name.to_string()),
-                grid_position(3, col),
-                identity_rot,
-                unit_scale,
+                grid_transform(3, col),
             )
             .unwrap();
     }
@@ -176,9 +168,7 @@ fn build_material_scene(viewer: &mut Viewer) {
                 mesh_id,
                 mat_id,
                 Some(name.to_string()),
-                grid_position(4, col),
-                identity_rot,
-                unit_scale,
+                grid_transform(4, col),
             )
             .unwrap();
     }
@@ -208,9 +198,7 @@ fn build_material_scene(viewer: &mut Viewer) {
                 line_mesh_id,
                 mat_id,
                 Some(name.to_string()),
-                grid_position(5, col),
-                identity_rot,
-                unit_scale,
+                grid_transform(5, col),
             )
             .unwrap();
     }
@@ -240,9 +228,7 @@ fn build_material_scene(viewer: &mut Viewer) {
                 point_mesh_id,
                 mat_id,
                 Some(name.to_string()),
-                grid_position(6, col),
-                identity_rot,
-                unit_scale,
+                grid_transform(6, col),
             )
             .unwrap();
     }

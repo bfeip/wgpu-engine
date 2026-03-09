@@ -77,9 +77,7 @@ impl AxisConstraint {
 #[derive(Debug, Clone)]
 struct OriginalTransform {
     node_id: NodeId,
-    position: Point3<f32>,
-    rotation: Quaternion<f32>,
-    scale: Vector3<f32>,
+    transform: crate::scene::common::Transform,
 }
 
 /// Internal state for the transform operator.
@@ -258,13 +256,13 @@ impl TransformState {
             match mode {
                 TransformMode::Translate => {
                     let delta = translation_delta.unwrap();
-                    node.set_position(orig.position + delta);
+                    node.set_position(orig.transform.position + delta);
                 }
                 TransformMode::Rotate => {
                     let rotation = rotation_quat.unwrap();
                     let new_position =
-                        rotate_position_about_pivot(orig.position, self.pivot_world, rotation);
-                    let new_rotation = compose_rotation(orig.rotation, rotation);
+                        rotate_position_about_pivot(orig.transform.position, self.pivot_world, rotation);
+                    let new_rotation = compose_rotation(orig.transform.rotation, rotation);
                     node.set_position(new_position);
                     node.set_rotation(new_rotation);
                 }
@@ -274,22 +272,22 @@ impl TransformState {
                     // For local axis constraints, we need to scale in local space
                     if self.axis_constraint.is_local() {
                         let new_position = scale_position_about_pivot_local(
-                            orig.position,
+                            orig.transform.position,
                             self.pivot_world,
                             scale,
                             self.primary_rotation,
                         );
-                        let new_scale = apply_scale(orig.scale, scale);
+                        let new_scale = apply_scale(orig.transform.scale, scale);
                         node.set_position(new_position);
                         node.set_scale(new_scale);
                     } else {
                         // Scale in world space
                         let new_position = scale_position_about_pivot_world(
-                            orig.position,
+                            orig.transform.position,
                             self.pivot_world,
                             scale,
                         );
-                        let new_scale = apply_scale(orig.scale, scale);
+                        let new_scale = apply_scale(orig.transform.scale, scale);
                         node.set_position(new_position);
                         node.set_scale(new_scale);
                     }
@@ -302,9 +300,7 @@ impl TransformState {
     fn restore_original_transforms(&self, ctx: &mut EventContext) {
         for orig in &self.original_transforms {
             if let Some(node) = ctx.scene.get_node_mut(orig.node_id) {
-                node.set_position(orig.position);
-                node.set_rotation(orig.rotation);
-                node.set_scale(orig.scale);
+                node.set_transform(orig.transform);
             }
         }
     }
@@ -375,9 +371,7 @@ impl TransformOperator {
             if let Some(node) = ctx.scene.get_node(*node_id) {
                 state.original_transforms.push(OriginalTransform {
                     node_id: *node_id,
-                    position: node.position(),
-                    rotation: node.rotation(),
-                    scale: node.scale(),
+                    transform: node.transform(),
                 });
                 positions.push(node.position());
             }

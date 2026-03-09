@@ -1,6 +1,6 @@
 use super::*;
 use cgmath::{Point3, Quaternion, Vector3, Matrix4, SquareMatrix};
-use crate::common::{EPSILON, RgbaColor};
+use crate::common::{EPSILON, RgbaColor, Transform};
 
 // ========================================================================
 // Scene Creation and Basic Operations
@@ -196,9 +196,7 @@ fn test_add_instance_node() {
         10,
         5,
         None,
-        Point3::new(0.0, 0.0, 0.0),
-        Quaternion::new(1.0, 0.0, 0.0, 0.0),
-        Vector3::new(1.0, 1.0, 1.0),
+        Transform::IDENTITY,
     ).unwrap();
 
     assert_eq!(scene.node_count(), 1);
@@ -245,18 +243,14 @@ fn test_child_transform_accumulation() {
     let root = scene.add_node(
         None,
         None,
-        Point3::new(10.0, 0.0, 0.0),
-        Quaternion::new(1.0, 0.0, 0.0, 0.0),
-        Vector3::new(1.0, 1.0, 1.0),
+        Transform::from_position(Point3::new(10.0, 0.0, 0.0)),
     ).unwrap();
 
     // Child at (5, 0, 0) relative to parent
     let child = scene.add_node(
         Some(root),
         None,
-        Point3::new(5.0, 0.0, 0.0),
-        Quaternion::new(1.0, 0.0, 0.0, 0.0),
-        Vector3::new(1.0, 1.0, 1.0),
+        Transform::from_position(Point3::new(5.0, 0.0, 0.0)),
     ).unwrap();
 
     let child_transform = scene.nodes_transform(child);
@@ -275,18 +269,18 @@ fn test_transform_with_scale() {
     let parent = scene.add_node(
         None,
         None,
-        Point3::new(0.0, 0.0, 0.0),
-        Quaternion::new(1.0, 0.0, 0.0, 0.0),
-        Vector3::new(2.0, 2.0, 2.0),
+        Transform::new(
+            Point3::new(0.0, 0.0, 0.0),
+            Quaternion::new(1.0, 0.0, 0.0, 0.0),
+            Vector3::new(2.0, 2.0, 2.0),
+        ),
     ).unwrap();
 
     // Child at (1, 0, 0)
     let child = scene.add_node(
         Some(parent),
         None,
-        Point3::new(1.0, 0.0, 0.0),
-        Quaternion::new(1.0, 0.0, 0.0, 0.0),
-        Vector3::new(1.0, 1.0, 1.0),
+        Transform::from_position(Point3::new(1.0, 0.0, 0.0)),
     ).unwrap();
 
     let child_transform = scene.nodes_transform(child);
@@ -476,9 +470,7 @@ fn test_add_node_with_invalid_parent_fails() {
     let result = scene.add_node(
         Some(999), // Non-existent parent ID
         None,
-        Point3::new(0.0, 0.0, 0.0),
-        Quaternion::new(1.0, 0.0, 0.0, 0.0),
-        Vector3::new(1.0, 1.0, 1.0),
+        Transform::IDENTITY,
     );
 
     assert!(result.is_err());
@@ -504,9 +496,7 @@ fn test_add_instance_node_with_invalid_parent_fails() {
         0,
         0,
         None,
-        Point3::new(0.0, 0.0, 0.0),
-        Quaternion::new(1.0, 0.0, 0.0, 0.0),
-        Vector3::new(1.0, 1.0, 1.0),
+        Transform::IDENTITY,
     );
 
     assert!(result.is_err());
@@ -1020,9 +1010,7 @@ fn test_normals_annotation_reification() {
     let mat_id = scene.add_material(Material::new());
     let node_id = scene.add_instance_node(
         None, mesh_id, mat_id, None,
-        Point3::new(0.0, 0.0, 0.0),
-        Quaternion::new(1.0, 0.0, 0.0, 0.0),
-        Vector3::new(1.0, 1.0, 1.0),
+        Transform::IDENTITY,
     ).unwrap();
 
     let ann_id = scene.annotations.add_normals(node_id, RgbaColor::CYAN, 0.1);

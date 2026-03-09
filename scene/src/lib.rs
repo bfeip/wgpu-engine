@@ -15,7 +15,7 @@ mod node;
 mod texture;
 mod tree;
 
-use cgmath::{EuclideanSpace, InnerSpace, Matrix4, Point3, Quaternion, SquareMatrix, Vector3};
+use cgmath::{EuclideanSpace, InnerSpace, Matrix4, Point3, SquareMatrix, Vector3};
 use image::DynamicImage;
 use std::collections::HashMap;
 use std::path::Path;
@@ -55,9 +55,8 @@ pub struct SceneProperties {
 /// # Examples
 ///
 /// ```
-/// use wgpu_engine::scene::{Scene, Mesh, MeshPrimitive, Vertex, Material, PrimitiveType};
+/// use wgpu_engine::scene::{Scene, Mesh, MeshPrimitive, Vertex, Material, PrimitiveType, common};
 /// use wgpu_engine::common::RgbaColor;
-/// use cgmath::{Point3, Quaternion, Vector3};
 ///
 /// let mut scene = Scene::new();
 ///
@@ -79,10 +78,7 @@ pub struct SceneProperties {
 /// let mat_id = scene.add_material(material);
 ///
 /// // Create an instance node
-/// let position = Point3::new(0.0, 0.0, 0.0);
-/// let rotation = Quaternion::new(1.0, 0.0, 0.0, 0.0);
-/// let scale = Vector3::new(1.0, 1.0, 1.0);
-/// let node_id = scene.add_instance_node(None, mesh_id, mat_id, None, position, rotation, scale);
+/// let node_id = scene.add_instance_node(None, mesh_id, mat_id, None, common::Transform::IDENTITY);
 /// ```
 #[derive(Clone)]
 pub struct Scene {
@@ -537,8 +533,7 @@ impl Scene {
     /// # Arguments
     /// * `parent` - Optional parent node ID. If `Some`, the parent must exist in the scene.
     /// * `position` - Local position of the node.
-    /// * `rotation` - Local rotation of the node.
-    /// * `scale` - Local scale of the node.
+    /// * `transform` - Local transform of the node.
     ///
     /// # Returns
     /// The ID of the newly created node, or an error if the parent doesn't exist.
@@ -549,9 +544,7 @@ impl Scene {
         &mut self,
         parent: Option<NodeId>,
         name: Option<String>,
-        position: cgmath::Point3<f32>,
-        rotation: cgmath::Quaternion<f32>,
-        scale: cgmath::Vector3<f32>,
+        transform: common::Transform,
     ) -> anyhow::Result<NodeId> {
         // Validate parent exists if specified
         if let Some(parent_id) = parent {
@@ -563,7 +556,7 @@ impl Scene {
         let id = self.next_node_id;
         self.next_node_id += 1;
 
-        let mut node = Node::new(id, name, position, rotation, scale);
+        let mut node = Node::new(id, name, transform);
 
         // Set up parent-child relationship
         if let Some(parent_id) = parent {
@@ -588,9 +581,8 @@ impl Scene {
     /// * `parent` - Optional parent node ID. If `Some`, the parent must exist in the scene.
     /// * `mesh` - The mesh ID for this instance.
     /// * `material` - The material ID for this instance.
-    /// * `position` - Local position of the node.
-    /// * `rotation` - Local rotation of the node.
-    /// * `scale` - Local scale of the node.
+    /// * `name` - Optional name for the node.
+    /// * `transform` - Local transform of the node.
     ///
     /// # Returns
     /// The ID of the newly created node, or an error if the parent doesn't exist.
@@ -603,15 +595,13 @@ impl Scene {
         mesh: MeshId,
         material: MaterialId,
         name: Option<String>,
-        position: cgmath::Point3<f32>,
-        rotation: cgmath::Quaternion<f32>,
-        scale: cgmath::Vector3<f32>,
+        transform: common::Transform,
     ) -> anyhow::Result<NodeId> {
         // Create the instance
         let instance_id = self.add_instance(mesh, material);
 
         // Create the node (validates parent exists)
-        let node_id = self.add_node(parent, name, position, rotation, scale)?;
+        let node_id = self.add_node(parent, name, transform)?;
 
         // Attach instance to node
         // Safe to unwrap since we just created the node above
@@ -632,15 +622,7 @@ impl Scene {
     /// # Errors
     /// Returns an error if `parent` is `Some` but the specified node doesn't exist.
     pub fn add_default_node(&mut self, parent: Option<NodeId>, name: Option<String>) -> anyhow::Result<NodeId> {
-        use cgmath::{Point3, Quaternion, Vector3};
-
-        self.add_node(
-            parent,
-            name,
-            Point3::new(0.0, 0.0, 0.0),
-            Quaternion::new(1.0, 0.0, 0.0, 0.0), // Identity quaternion
-            Vector3::new(1.0, 1.0, 1.0),
-        )
+        self.add_node(parent, name, common::Transform::IDENTITY)
     }
 
     /// Removes a node and all its children from the scene tree.
@@ -1030,9 +1012,7 @@ impl Scene {
             mesh_id,
             material_id,
             data.name,
-            Point3::new(0.0, 0.0, 0.0),
-            Quaternion::new(1.0, 0.0, 0.0, 0.0),
-            Vector3::new(1.0, 1.0, 1.0),
+            common::Transform::IDENTITY,
         )
         .ok()
     }

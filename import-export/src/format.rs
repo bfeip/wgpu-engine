@@ -1398,6 +1398,7 @@ pub fn assemble_wgsc_scene(
     decoded_textures: Vec<DecodedTexture>,
 ) -> Result<Scene, FormatError> {
     use cgmath::{Point3, Quaternion, Vector3};
+    use wgpu_engine_scene::common::Transform;
 
     let mut scene = Scene::new();
 
@@ -1488,21 +1489,23 @@ pub fn assemble_wgsc_scene(
 
     // Create nodes with correct parent relationships in a single pass
     for sn in &sorted_nodes {
-        let position = Point3::new(sn.position[0], sn.position[1], sn.position[2]);
-        let rotation = Quaternion::new(
-            sn.rotation[3], // w (scalar)
-            sn.rotation[0], // x
-            sn.rotation[1], // y
-            sn.rotation[2], // z
+        let transform = Transform::new(
+            Point3::new(sn.position[0], sn.position[1], sn.position[2]),
+            Quaternion::new(
+                sn.rotation[3], // w (scalar)
+                sn.rotation[0], // x
+                sn.rotation[1], // y
+                sn.rotation[2], // z
+            ),
+            Vector3::new(sn.scale[0], sn.scale[1], sn.scale[2]),
         );
-        let scale = Vector3::new(sn.scale[0], sn.scale[1], sn.scale[2]);
 
         let parent = sn
             .parent_id
             .and_then(|pid| node_id_map.get(&pid).copied());
 
         let node_id = scene
-            .add_node(parent, sn.name.clone(), position, rotation, scale)
+            .add_node(parent, sn.name.clone(), transform)
             .map_err(|e| FormatError::DeserializationError(e.to_string()))?;
 
         node_id_map.insert(sn.id, node_id);
@@ -1809,6 +1812,7 @@ pub fn load_from_file(path: impl AsRef<std::path::Path>) -> Result<Scene, Format
 mod tests {
     use super::*;
     use cgmath::{Point3, Quaternion, Vector3};
+    use wgpu_engine_scene::common::Transform;
 
     /// Creates a simple test scene with various elements.
     fn create_test_scene() -> Scene {
@@ -1832,18 +1836,18 @@ mod tests {
             mesh_id,
             mat_id,
             Some("TestNode".to_string()),
-            Point3::new(1.0, 2.0, 3.0),
-            Quaternion::new(1.0, 0.0, 0.0, 0.0),
-            Vector3::new(2.0, 2.0, 2.0),
+            Transform::new(
+                Point3::new(1.0, 2.0, 3.0),
+                Quaternion::new(1.0, 0.0, 0.0, 0.0),
+                Vector3::new(2.0, 2.0, 2.0),
+            ),
         ).unwrap();
 
         // Add a child node
         let _child_id = scene.add_node(
             Some(node_id),
             Some("ChildNode".to_string()),
-            Point3::new(0.5, 0.5, 0.5),
-            Quaternion::new(1.0, 0.0, 0.0, 0.0),
-            Vector3::new(1.0, 1.0, 1.0),
+            Transform::from_position(Point3::new(0.5, 0.5, 0.5)),
         ).unwrap();
 
         // Add a light
@@ -2079,9 +2083,7 @@ mod tests {
             mesh_id,
             mat_id,
             Some("RegularNode".to_string()),
-            Point3::new(0.0, 0.0, 0.0),
-            Quaternion::new(1.0, 0.0, 0.0, 0.0),
-            Vector3::new(1.0, 1.0, 1.0),
+            Transform::IDENTITY,
         ).unwrap();
 
         // Add an annotation and reify it (creates mesh, material, instance, node)

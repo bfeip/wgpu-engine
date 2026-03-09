@@ -17,7 +17,7 @@ use wgpu_engine_scene::{
     Camera, DEFAULT_MATERIAL_ID, Light, Material, MaterialId, Mesh, MeshId,
     NodeId, PrimitiveType, Scene, Vertex, MAX_LIGHTS,
 };
-use wgpu_engine_scene::common::{RgbaColor, decompose_matrix};
+use wgpu_engine_scene::common::{RgbaColor, Transform, decompose_matrix};
 
 /// Result of loading a scene from USD.
 pub struct UsdLoadResult {
@@ -358,7 +358,7 @@ fn build_node_recursive(
         .map(|s| s.to_string());
 
     // Extract transform
-    let (position, rotation, scale) = extract_transform(data, prim_path);
+    let transform = extract_transform(data, prim_path);
 
     match type_name.as_str() {
         "Mesh" => {
@@ -367,21 +367,19 @@ fn build_node_recursive(
             if mesh_entries.len() == 1 {
                 let (mesh_id, mat_id) = mesh_entries[0];
                 let node_id = scene.add_instance_node(
-                    parent, mesh_id, mat_id, name, position, rotation, scale,
+                    parent, mesh_id, mat_id, name, transform,
                 )?;
                 recurse_children(data, prim_path, material_map, scene, node_id, camera_out)?;
             } else if mesh_entries.len() > 1 {
                 // Split mesh: create group node, then instance children
-                let group_id = scene.add_node(parent, name, position, rotation, scale)?;
+                let group_id = scene.add_node(parent, name, transform)?;
                 for (i, &(mesh_id, mat_id)) in mesh_entries.iter().enumerate() {
                     scene.add_instance_node(
                         Some(group_id),
                         mesh_id,
                         mat_id,
                         Some(format!("chunk_{}", i)),
-                        Point3::new(0.0, 0.0, 0.0),
-                        Quaternion::new(1.0, 0.0, 0.0, 0.0),
-                        Vector3::new(1.0, 1.0, 1.0),
+                        Transform::IDENTITY,
                     )?;
                 }
                 recurse_children(data, prim_path, material_map, scene, group_id, camera_out)?;
@@ -393,14 +391,14 @@ fn build_node_recursive(
             }
         }
         "DistantLight" | "RectLight" | "SphereLight" | "DiskLight" => {
-            extract_light(data, prim_path, &type_name, &position, scene);
+            extract_light(data, prim_path, &type_name, &transform.position, scene);
         }
         "Material" | "Shader" => {
             // Already handled in material collection phase
         }
         _ => {
             // Xform, Scope, or unknown → create a transform node and recurse
-            let node_id = scene.add_node(parent, name, position, rotation, scale)?;
+            let node_id = scene.add_node(parent, name, transform)?;
             recurse_children(data, prim_path, material_map, scene, node_id, camera_out)?;
         }
     }
@@ -440,12 +438,8 @@ fn recurse_children(
 fn extract_transform(
     data: &mut dyn AbstractData,
     prim_path: &sdf::Path,
-) -> (Point3<f32>, Quaternion<f32>, Vector3<f32>) {
-    let default = (
-        Point3::new(0.0, 0.0, 0.0),
-        Quaternion::new(1.0, 0.0, 0.0, 0.0),
-        Vector3::new(1.0, 1.0, 1.0),
-    );
+) -> Transform {
+    let default = Transform::IDENTITY;
 
     // Try getting xformOpOrder from the property spec
     let op_order_path = make_property_path(prim_path, "xformOpOrder");
@@ -468,7 +462,7 @@ fn compose_xform_ops(
     data: &mut dyn AbstractData,
     prim_path: &sdf::Path,
     ops: &[String],
-) -> (Point3<f32>, Quaternion<f32>, Vector3<f32>) {
+) -> Transform {
     let mut matrix = Matrix4::identity();
 
     for op in ops {

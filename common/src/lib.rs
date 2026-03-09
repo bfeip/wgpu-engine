@@ -7,6 +7,7 @@ mod ray;
 mod aabb;
 mod plane;
 mod convex_polyhedron;
+mod transform;
 mod transform_ops;
 
 // Re-export common types
@@ -14,6 +15,7 @@ pub use ray::Ray;
 pub use aabb::Aabb;
 pub use plane::Plane;
 pub use convex_polyhedron::ConvexPolyhedron;
+pub use transform::Transform;
 pub use transform_ops::{
     apply_scale, centroid, centroid_of_slice, compose_rotation, local_axes, local_axis_x,
     local_axis_y, local_axis_z, quaternion_from_axis_angle_safe, rotate_position_about_pivot,
@@ -75,10 +77,10 @@ pub fn compute_normal_matrix(world_transform: &Matrix4<f32>) -> Matrix3<f32> {
 /// * `matrix` - A 4x4 transformation matrix (column-major)
 ///
 /// # Returns
-/// A tuple of (translation, rotation, scale)
-pub fn decompose_matrix(matrix: &Matrix4<f32>) -> (Point3<f32>, Quaternion<f32>, Vector3<f32>) {
+/// A [`Transform`] containing the decomposed translation, rotation, and scale.
+pub fn decompose_matrix(matrix: &Matrix4<f32>) -> Transform {
     // Extract translation from the last column
-    let translation = Point3::new(matrix[3][0], matrix[3][1], matrix[3][2]);
+    let position = Point3::new(matrix[3][0], matrix[3][1], matrix[3][2]);
 
     // Extract basis vectors (first three columns)
     let basis_x = Vector3::new(matrix[0][0], matrix[0][1], matrix[0][2]);
@@ -103,7 +105,7 @@ pub fn decompose_matrix(matrix: &Matrix4<f32>) -> (Point3<f32>, Quaternion<f32>,
     // Convert rotation matrix to quaternion
     let rotation: Quaternion<f32> = rotation_matrix.into();
 
-    (translation, rotation, scale)
+    Transform::new(position, rotation, scale)
 }
 
 pub fn rgba_to_array(c: RgbaColor) -> [f32; 4] {
@@ -157,7 +159,7 @@ pub fn orthonormal_basis(direction: Vector3<f32>) -> (Vector3<f32>, Vector3<f32>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cgmath::{EuclideanSpace, Matrix3, Matrix4, Vector3};
+    use cgmath::{Matrix3, Matrix4, Vector3};
 
     // ===== compute_normal_matrix Tests =====
 
@@ -280,72 +282,72 @@ mod tests {
     #[test]
     fn test_decompose_identity() {
         let identity = Matrix4::identity();
-        let (translation, rotation, scale) = decompose_matrix(&identity);
+        let t = decompose_matrix(&identity);
 
-        assert!((translation.x - 0.0).abs() < EPSILON);
-        assert!((translation.y - 0.0).abs() < EPSILON);
-        assert!((translation.z - 0.0).abs() < EPSILON);
+        assert!((t.position.x - 0.0).abs() < EPSILON);
+        assert!((t.position.y - 0.0).abs() < EPSILON);
+        assert!((t.position.z - 0.0).abs() < EPSILON);
 
         // Identity quaternion is (w=1, x=0, y=0, z=0) or (s=1, v=0)
-        assert!((rotation.s - 1.0).abs() < EPSILON || (rotation.s + 1.0).abs() < EPSILON);
+        assert!((t.rotation.s - 1.0).abs() < EPSILON || (t.rotation.s + 1.0).abs() < EPSILON);
 
-        assert!((scale.x - 1.0).abs() < EPSILON);
-        assert!((scale.y - 1.0).abs() < EPSILON);
-        assert!((scale.z - 1.0).abs() < EPSILON);
+        assert!((t.scale.x - 1.0).abs() < EPSILON);
+        assert!((t.scale.y - 1.0).abs() < EPSILON);
+        assert!((t.scale.z - 1.0).abs() < EPSILON);
     }
 
     #[test]
     fn test_decompose_translation_only() {
         let translation_vec = Vector3::new(5.0, 10.0, 15.0);
         let matrix = Matrix4::from_translation(translation_vec);
-        let (translation, _rotation, scale) = decompose_matrix(&matrix);
+        let t = decompose_matrix(&matrix);
 
-        assert!((translation.x - 5.0).abs() < EPSILON);
-        assert!((translation.y - 10.0).abs() < EPSILON);
-        assert!((translation.z - 15.0).abs() < EPSILON);
+        assert!((t.position.x - 5.0).abs() < EPSILON);
+        assert!((t.position.y - 10.0).abs() < EPSILON);
+        assert!((t.position.z - 15.0).abs() < EPSILON);
 
-        assert!((scale.x - 1.0).abs() < EPSILON);
-        assert!((scale.y - 1.0).abs() < EPSILON);
-        assert!((scale.z - 1.0).abs() < EPSILON);
+        assert!((t.scale.x - 1.0).abs() < EPSILON);
+        assert!((t.scale.y - 1.0).abs() < EPSILON);
+        assert!((t.scale.z - 1.0).abs() < EPSILON);
     }
 
     #[test]
     fn test_decompose_rotation_only() {
         use cgmath::Rad;
         let matrix = Matrix4::from_angle_y(Rad(std::f32::consts::PI / 2.0));
-        let (translation, rotation, scale) = decompose_matrix(&matrix);
+        let t = decompose_matrix(&matrix);
 
-        assert!((translation.x - 0.0).abs() < EPSILON);
-        assert!((translation.y - 0.0).abs() < EPSILON);
-        assert!((translation.z - 0.0).abs() < EPSILON);
+        assert!((t.position.x - 0.0).abs() < EPSILON);
+        assert!((t.position.y - 0.0).abs() < EPSILON);
+        assert!((t.position.z - 0.0).abs() < EPSILON);
 
         // Scale should be 1
-        assert!((scale.x - 1.0).abs() < EPSILON);
-        assert!((scale.y - 1.0).abs() < EPSILON);
-        assert!((scale.z - 1.0).abs() < EPSILON);
+        assert!((t.scale.x - 1.0).abs() < EPSILON);
+        assert!((t.scale.y - 1.0).abs() < EPSILON);
+        assert!((t.scale.z - 1.0).abs() < EPSILON);
 
         // Rotation should be 90° around Y axis
         // Quaternion for rotation around Y by θ: (cos(θ/2), 0, sin(θ/2), 0)
         // For θ = π/2: (cos(π/4), 0, sin(π/4), 0) = (√2/2, 0, √2/2, 0)
         let sqrt2_over_2 = std::f32::consts::SQRT_2 / 2.0;
-        assert!((rotation.s - sqrt2_over_2).abs() < 0.001);  // scalar part
-        assert!((rotation.v.x - 0.0).abs() < EPSILON);        // x component
-        assert!((rotation.v.y - sqrt2_over_2).abs() < 0.001); // y component
-        assert!((rotation.v.z - 0.0).abs() < EPSILON);        // z component
+        assert!((t.rotation.s - sqrt2_over_2).abs() < 0.001);  // scalar part
+        assert!((t.rotation.v.x - 0.0).abs() < EPSILON);        // x component
+        assert!((t.rotation.v.y - sqrt2_over_2).abs() < 0.001); // y component
+        assert!((t.rotation.v.z - 0.0).abs() < EPSILON);        // z component
     }
 
     #[test]
     fn test_decompose_scale_only() {
         let matrix = Matrix4::from_nonuniform_scale(2.0, 3.0, 4.0);
-        let (translation, _rotation, scale) = decompose_matrix(&matrix);
+        let t = decompose_matrix(&matrix);
 
-        assert!((translation.x - 0.0).abs() < EPSILON);
-        assert!((translation.y - 0.0).abs() < EPSILON);
-        assert!((translation.z - 0.0).abs() < EPSILON);
+        assert!((t.position.x - 0.0).abs() < EPSILON);
+        assert!((t.position.y - 0.0).abs() < EPSILON);
+        assert!((t.position.z - 0.0).abs() < EPSILON);
 
-        assert!((scale.x - 2.0).abs() < EPSILON);
-        assert!((scale.y - 3.0).abs() < EPSILON);
-        assert!((scale.z - 4.0).abs() < EPSILON);
+        assert!((t.scale.x - 2.0).abs() < EPSILON);
+        assert!((t.scale.y - 3.0).abs() < EPSILON);
+        assert!((t.scale.z - 4.0).abs() < EPSILON);
     }
 
     #[test]
@@ -357,15 +359,15 @@ mod tests {
         let s = Matrix4::from_scale(2.0);
         let trs = t * r * s;
 
-        let (translation, rotation, scale) = decompose_matrix(&trs);
+        let t = decompose_matrix(&trs);
 
-        assert!((translation.x - 1.0).abs() < EPSILON);
-        assert!((translation.y - 2.0).abs() < EPSILON);
-        assert!((translation.z - 3.0).abs() < EPSILON);
+        assert!((t.position.x - 1.0).abs() < EPSILON);
+        assert!((t.position.y - 2.0).abs() < EPSILON);
+        assert!((t.position.z - 3.0).abs() < EPSILON);
 
-        assert!((scale.x - 2.0).abs() < EPSILON);
-        assert!((scale.y - 2.0).abs() < EPSILON);
-        assert!((scale.z - 2.0).abs() < EPSILON);
+        assert!((t.scale.x - 2.0).abs() < EPSILON);
+        assert!((t.scale.y - 2.0).abs() < EPSILON);
+        assert!((t.scale.z - 2.0).abs() < EPSILON);
 
         // Rotation should be 45° around Z axis
         // Quaternion for rotation around Z by θ: (cos(θ/2), 0, 0, sin(θ/2))
@@ -374,21 +376,21 @@ mod tests {
         let expected_s = half_angle.cos();  // cos(π/8) ≈ 0.9239
         let expected_z = half_angle.sin();  // sin(π/8) ≈ 0.3827
 
-        assert!((rotation.s - expected_s).abs() < 0.001);     // scalar part
-        assert!((rotation.v.x - 0.0).abs() < EPSILON);        // x component
-        assert!((rotation.v.y - 0.0).abs() < EPSILON);        // y component
-        assert!((rotation.v.z - expected_z).abs() < 0.001);   // z component
+        assert!((t.rotation.s - expected_s).abs() < 0.001);     // scalar part
+        assert!((t.rotation.v.x - 0.0).abs() < EPSILON);        // x component
+        assert!((t.rotation.v.y - 0.0).abs() < EPSILON);        // y component
+        assert!((t.rotation.v.z - expected_z).abs() < 0.001);   // z component
     }
 
     #[test]
     fn test_decompose_negative_scale() {
         let matrix = Matrix4::from_nonuniform_scale(-1.0, 2.0, 3.0);
-        let (_translation, _rotation, scale) = decompose_matrix(&matrix);
+        let t = decompose_matrix(&matrix);
 
         // Negative scale should be preserved in magnitude
-        assert!((scale.x.abs() - 1.0).abs() < EPSILON);
-        assert!((scale.y - 2.0).abs() < EPSILON);
-        assert!((scale.z - 3.0).abs() < EPSILON);
+        assert!((t.scale.x.abs() - 1.0).abs() < EPSILON);
+        assert!((t.scale.y - 2.0).abs() < EPSILON);
+        assert!((t.scale.z - 3.0).abs() < EPSILON);
     }
 
     // ===== orthonormal_basis Tests =====
@@ -450,13 +452,10 @@ mod tests {
         let original = Matrix4::from_translation(Vector3::new(5.0, 0.0, 0.0))
             * Matrix4::from_scale(2.0);
 
-        let (translation, rotation, scale) = decompose_matrix(&original);
+        let t = decompose_matrix(&original);
 
         // Recompose: T * R * S
-        let t_mat = Matrix4::from_translation(translation.to_vec());
-        let r_mat = Matrix4::from(Matrix3::from(rotation));
-        let s_mat = Matrix4::from_nonuniform_scale(scale.x, scale.y, scale.z);
-        let recomposed = t_mat * r_mat * s_mat;
+        let recomposed = t.to_matrix();
 
         // Compare matrices (they should be very close)
         for i in 0..4 {

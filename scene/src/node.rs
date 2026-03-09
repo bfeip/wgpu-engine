@@ -1,10 +1,11 @@
 use super::InstanceId;
 use crate::common::{
-    Aabb, apply_scale, compose_rotation, local_axes, local_axis_x, local_axis_y, local_axis_z,
-    rotate_position_about_pivot, scale_position_about_pivot_local, scale_position_about_pivot_world,
+    Aabb, Transform, apply_scale, compose_rotation, local_axes, local_axis_x, local_axis_y,
+    local_axis_z, rotate_position_about_pivot, scale_position_about_pivot_local,
+    scale_position_about_pivot_world,
 };
-use cgmath::{EuclideanSpace, Matrix4, Point3, Quaternion, Vector3};
-use std::{cell::Cell};
+use cgmath::{Matrix4, Point3, Quaternion, Vector3};
+use std::cell::Cell;
 
 /// Unique identifier for a Node in the scene tree.
 pub type NodeId = u32;
@@ -36,10 +37,8 @@ pub struct Node {
     pub id: NodeId,
     pub name: Option<String>,
 
-    // Local transform components
-    position: Point3<f32>,
-    rotation: Quaternion<f32>,
-    scale: Vector3<f32>,
+    // Local transform
+    transform: Transform,
 
     // Hierarchy
     parent: Option<NodeId>,
@@ -58,20 +57,12 @@ pub struct Node {
 }
 
 impl Node {
-    /// Creates a new node with the given transform components.
-    pub fn new(
-        id: NodeId,
-        name: Option<String>,
-        position: Point3<f32>,
-        rotation: Quaternion<f32>,
-        scale: Vector3<f32>,
-    ) -> Self {
+    /// Creates a new node with the given transform.
+    pub fn new(id: NodeId, name: Option<String>, transform: Transform) -> Self {
         Self {
             id,
             name,
-            position,
-            rotation,
-            scale,
+            transform,
             parent: None,
             children: Vec::new(),
             instance: None,
@@ -84,54 +75,54 @@ impl Node {
 
     /// Creates a new node with default transform (identity).
     pub fn new_default(id: NodeId) -> Self {
-        Self::new(
-            id,
-            None,
-            Point3::new(0.0, 0.0, 0.0),
-            Quaternion::new(1.0, 0.0, 0.0, 0.0), // Identity quaternion
-            Vector3::new(1.0, 1.0, 1.0),
-        )
+        Self::new(id, None, Transform::IDENTITY)
     }
 
     /// Computes the local transform matrix from position, rotation, and scale.
     ///
     /// The order of operations is: Translation * Rotation * Scale (TRS)
     pub fn compute_local_transform(&self) -> Matrix4<f32> {
-        let translation = Matrix4::from_translation(self.position.to_vec());
-        let rotation = Matrix4::from(self.rotation);
-        let scale = Matrix4::from_nonuniform_scale(self.scale.x, self.scale.y, self.scale.z);
-
-        translation * rotation * scale
+        self.transform.to_matrix()
     }
 
     // Getters and setters for transform components
 
+    pub fn transform(&self) -> Transform {
+        self.transform
+    }
+
+    pub fn set_transform(&mut self, transform: Transform) {
+        self.transform = transform;
+        self.mark_transform_dirty();
+        self.mark_bounds_dirty();
+    }
+
     pub fn position(&self) -> Point3<f32> {
-        self.position
+        self.transform.position
     }
 
     pub fn set_position(&mut self, position: Point3<f32>) {
-        self.position = position;
+        self.transform.position = position;
         self.mark_transform_dirty();
         self.mark_bounds_dirty();
     }
 
     pub fn rotation(&self) -> Quaternion<f32> {
-        self.rotation
+        self.transform.rotation
     }
 
     pub fn set_rotation(&mut self, rotation: Quaternion<f32>) {
-        self.rotation = rotation;
+        self.transform.rotation = rotation;
         self.mark_transform_dirty();
         self.mark_bounds_dirty();
     }
 
     pub fn scale(&self) -> Vector3<f32> {
-        self.scale
+        self.transform.scale
     }
 
     pub fn set_scale(&mut self, scale: Vector3<f32>) {
-        self.scale = scale;
+        self.transform.scale = scale;
         self.mark_transform_dirty();
         self.mark_bounds_dirty();
     }
@@ -265,8 +256,8 @@ impl Node {
     /// * `pivot` - The world-space pivot point
     /// * `rotation` - The rotation to apply
     pub fn rotate_about_pivot(&mut self, pivot: Point3<f32>, rotation: Quaternion<f32>) {
-        let new_position = rotate_position_about_pivot(self.position, pivot, rotation);
-        let new_rotation = compose_rotation(self.rotation, rotation);
+        let new_position = rotate_position_about_pivot(self.transform.position, pivot, rotation);
+        let new_rotation = compose_rotation(self.transform.rotation, rotation);
         self.set_position(new_position);
         self.set_rotation(new_rotation);
     }
@@ -277,8 +268,8 @@ impl Node {
     /// * `pivot` - The world-space pivot point
     /// * `scale_factor` - The scale factors (x, y, z)
     pub fn scale_about_pivot(&mut self, pivot: Point3<f32>, scale_factor: Vector3<f32>) {
-        let new_position = scale_position_about_pivot_world(self.position, pivot, scale_factor);
-        let new_scale = apply_scale(self.scale, scale_factor);
+        let new_position = scale_position_about_pivot_world(self.transform.position, pivot, scale_factor);
+        let new_scale = apply_scale(self.transform.scale, scale_factor);
         self.set_position(new_position);
         self.set_scale(new_scale);
     }
@@ -298,8 +289,8 @@ impl Node {
         local_orientation: Quaternion<f32>,
     ) {
         let new_position =
-            scale_position_about_pivot_local(self.position, pivot, scale_factor, local_orientation);
-        let new_scale = apply_scale(self.scale, scale_factor);
+            scale_position_about_pivot_local(self.transform.position, pivot, scale_factor, local_orientation);
+        let new_scale = apply_scale(self.transform.scale, scale_factor);
         self.set_position(new_position);
         self.set_scale(new_scale);
     }
@@ -309,35 +300,35 @@ impl Node {
     /// # Arguments
     /// * `offset` - The translation offset in world space
     pub fn translate(&mut self, offset: Vector3<f32>) {
-        self.set_position(self.position + offset);
+        self.set_position(self.transform.position + offset);
     }
 
     /// Returns the local X axis (right) in world space.
     pub fn local_x_axis(&self) -> Vector3<f32> {
-        local_axis_x(self.rotation)
+        local_axis_x(self.transform.rotation)
     }
 
     /// Returns the local Y axis (up) in world space.
     pub fn local_y_axis(&self) -> Vector3<f32> {
-        local_axis_y(self.rotation)
+        local_axis_y(self.transform.rotation)
     }
 
     /// Returns the local Z axis (forward) in world space.
     pub fn local_z_axis(&self) -> Vector3<f32> {
-        local_axis_z(self.rotation)
+        local_axis_z(self.transform.rotation)
     }
 
     /// Returns all local axes (right, up, forward) in world space.
     pub fn local_axes(&self) -> (Vector3<f32>, Vector3<f32>, Vector3<f32>) {
-        local_axes(self.rotation)
+        local_axes(self.transform.rotation)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::EPSILON;
-    use cgmath::{Deg, Quaternion, Rotation3, Vector3, EuclideanSpace};
+    use crate::common::{EPSILON, Transform};
+    use cgmath::{Deg, EuclideanSpace, Quaternion, Rotation3, Vector3};
 
     // ========================================================================
     // Node Creation Tests
@@ -349,7 +340,7 @@ mod tests {
         let rotation = Quaternion::new(1.0, 0.0, 0.0, 0.0);
         let scale = Vector3::new(2.0, 2.0, 2.0);
 
-        let node = Node::new(42, None, position, rotation, scale);
+        let node = Node::new(42, None, Transform::new(position, rotation, scale));
 
         assert_eq!(node.id, 42);
         assert_eq!(node.position(), position);
@@ -399,7 +390,7 @@ mod tests {
         let rotation = Quaternion::new(1.0, 0.0, 0.0, 0.0); // Identity
         let scale = Vector3::new(1.0, 1.0, 1.0); // Unity scale
 
-        let node = Node::new(0, None, position, rotation, scale);
+        let node = Node::new(0, None, Transform::new(position, rotation, scale));
         let transform = node.compute_local_transform();
 
         // Check translation components (last column)
@@ -415,7 +406,7 @@ mod tests {
         let rotation = Quaternion::from_angle_z(Deg(90.0)); // 90 degrees around Z
         let scale = Vector3::new(1.0, 1.0, 1.0);
 
-        let node = Node::new(0, None, position, rotation, scale);
+        let node = Node::new(0, None, Transform::new(position, rotation, scale));
         let transform = node.compute_local_transform();
 
         // Apply transform to point (1, 0, 0) - should become roughly (0, 1, 0)
@@ -435,7 +426,7 @@ mod tests {
         let rotation = Quaternion::new(1.0, 0.0, 0.0, 0.0);
         let scale = Vector3::new(2.0, 3.0, 4.0);
 
-        let node = Node::new(0, None, position, rotation, scale);
+        let node = Node::new(0, None, Transform::new(position, rotation, scale));
         let transform = node.compute_local_transform();
 
         // Check diagonal elements (scale factors)
@@ -451,7 +442,7 @@ mod tests {
         let rotation = Quaternion::from_angle_y(Deg(45.0));
         let scale = Vector3::new(2.0, 2.0, 2.0);
 
-        let node = Node::new(0, None, position, rotation, scale);
+        let node = Node::new(0, None, Transform::new(position, rotation, scale));
         let transform = node.compute_local_transform();
 
         // Manually compute expected transform
@@ -969,7 +960,7 @@ mod tests {
         let rotation = Quaternion::new(1.0, 0.0, 0.0, 0.0);
         let scale = Vector3::new(0.0, 0.0, 0.0);
 
-        let node = Node::new(0, None, position, rotation, scale);
+        let node = Node::new(0, None, Transform::new(position, rotation, scale));
         let transform = node.compute_local_transform();
 
         // Should produce a zero-scale transform (degenerate)
@@ -984,7 +975,7 @@ mod tests {
         let rotation = Quaternion::new(1.0, 0.0, 0.0, 0.0);
         let scale = Vector3::new(-1.0, 1.0, 1.0); // Flip X
 
-        let node = Node::new(0, None, position, rotation, scale);
+        let node = Node::new(0, None, Transform::new(position, rotation, scale));
         let transform = node.compute_local_transform();
 
         // X axis should be flipped

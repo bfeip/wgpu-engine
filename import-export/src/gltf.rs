@@ -371,7 +371,7 @@ fn transform_to_matrix(transform: &gltf::scene::Transform) -> cgmath::Matrix4<f3
 }
 
 /// Decomposes a glTF transform into position, rotation, and scale.
-fn decompose_transform(transform: &gltf::scene::Transform) -> (cgmath::Point3<f32>, cgmath::Quaternion<f32>, cgmath::Vector3<f32>) {
+fn decompose_transform(transform: &gltf::scene::Transform) -> wgpu_engine_scene::common::Transform {
     wgpu_engine_scene::common::decompose_matrix(&transform_to_matrix(transform))
 }
 
@@ -698,7 +698,7 @@ fn load_node_recursive(
 ) -> anyhow::Result<()> {
 
     // Decompose transform
-    let (position, rotation, scale) = decompose_transform(&gltf_node.transform());
+    let transform = decompose_transform(&gltf_node.transform());
 
     // Extract node name from glTF
     let name = gltf_node.name().map(|s| s.to_string());
@@ -709,10 +709,10 @@ fn load_node_recursive(
 
         if primitives.is_empty() {
             // Mesh has no triangle primitives (only lines/points), treat as transform node
-            scene.add_node(parent, name, position, rotation, scale)?
+            scene.add_node(parent, name, transform)?
         } else if primitives.len() > 1 {
             // Multi-primitive mesh: create parent node and child nodes for each primitive
-            let parent_node_id = scene.add_node(parent, name, position, rotation, scale)?;
+            let parent_node_id = scene.add_node(parent, name, transform)?;
 
             // Create child nodes for each primitive with identity transform
             for (mesh_id, material_id) in primitives {
@@ -721,9 +721,7 @@ fn load_node_recursive(
                     *mesh_id,
                     *material_id,
                     None,
-                    cgmath::Point3::new(0.0, 0.0, 0.0),
-                    cgmath::Quaternion::new(1.0, 0.0, 0.0, 0.0),
-                    cgmath::Vector3::new(1.0, 1.0, 1.0),
+                    wgpu_engine_scene::common::Transform::IDENTITY,
                 )?;
             }
 
@@ -731,11 +729,11 @@ fn load_node_recursive(
         } else {
             // Single primitive: create a single instance node
             let (mesh_id, material_id) = primitives[0];
-            scene.add_instance_node(parent, mesh_id, material_id, name, position, rotation, scale)?
+            scene.add_instance_node(parent, mesh_id, material_id, name, transform)?
         }
     } else {
         // No mesh, just a transform node
-        scene.add_node(parent, name, position, rotation, scale)?
+        scene.add_node(parent, name, transform)?
     };
 
     node_map.insert(gltf_node.index(), node_id);
