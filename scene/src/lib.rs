@@ -485,6 +485,28 @@ impl Scene {
         self.light_generation += 1;
     }
 
+    /// Returns the current light generation counter.
+    ///
+    /// This increments whenever lights are modified through Scene methods.
+    pub fn light_generation(&self) -> u64 {
+        self.light_generation
+    }
+
+    /// Sets up default lighting for the scene if no lights are present.
+    ///
+    /// Adds a single white point light at position (3, 3, 3) with intensity 1.0.
+    /// This is useful when loading scenes that don't define their own lights.
+    pub fn set_default_lights(&mut self) {
+        if self.lights.is_empty() {
+            self.lights.push(Light::point(
+                cgmath::Vector3::new(3.0, 3.0, 3.0),
+                crate::common::RgbaColor { r: 1.0, g: 1.0, b: 1.0, a: 1.0 },
+                1.0,
+            ));
+            self.light_generation += 1;
+        }
+    }
+
     // ========== Node API ==========
 
     /// Gets a reference to a node by ID.
@@ -705,59 +727,6 @@ impl Scene {
         self.next_material_id = 0;
         self.next_texture_id = 0;
         self.next_environment_map_id = 0;
-    }
-
-    /// Clears scene geometry but preserves annotation data.
-    ///
-    /// Annotations will need to be re-reified after calling this.
-    /// Use this when you want to reload scene content but keep annotations.
-    pub fn clear_preserving_annotations(&mut self) {
-        self.nodes.clear();
-        self.root_nodes.clear();
-        self.instances.clear();
-        self.meshes.clear();
-        self.lights.clear();
-        self.light_generation += 1;
-        self.textures.clear();
-        self.environment_maps.clear();
-        self.active_environment_map = None;
-
-        // Mark annotations as unreified (their nodes no longer exist)
-        self.annotations.mark_all_unreified();
-
-        // Reset all materials and re-insert a fresh default material
-        self.materials.clear();
-        self.insert_default_material();
-
-        // Reset all ID counters
-        self.next_node_id = 0;
-        self.next_instance_id = 0;
-        self.next_mesh_id = 0;
-        self.next_material_id = 0;
-        self.next_texture_id = 0;
-        self.next_environment_map_id = 0;
-    }
-
-    /// Returns the current light generation counter.
-    ///
-    /// This increments whenever lights are modified through Scene methods.
-    pub fn light_generation(&self) -> u64 {
-        self.light_generation
-    }
-
-    /// Sets up default lighting for the scene if no lights are present.
-    ///
-    /// Adds a single white point light at position (3, 3, 3) with intensity 1.0.
-    /// This is useful when loading scenes that don't define their own lights.
-    pub fn set_default_lights(&mut self) {
-        if self.lights.is_empty() {
-            self.lights.push(Light::point(
-                cgmath::Vector3::new(3.0, 3.0, 3.0),
-                crate::common::RgbaColor { r: 1.0, g: 1.0, b: 1.0, a: 1.0 },
-                1.0,
-            ));
-            self.light_generation += 1;
-        }
     }
 
     // ========== Annotation Reification API ==========
