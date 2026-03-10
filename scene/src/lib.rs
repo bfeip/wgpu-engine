@@ -729,282 +729,6 @@ impl Scene {
         self.next_environment_map_id = 0;
     }
 
-    // ========== Annotation Reification API ==========
-
-    /// Ensures the annotation root node exists and returns its ID.
-    fn ensure_annotation_root(&mut self) -> NodeId {
-        if let Some(root_id) = self.annotations.root_node() {
-            if self.nodes.contains_key(&root_id) {
-                return root_id;
-            }
-        }
-
-        let root_id = self
-            .add_default_node(None, Some("AnnotationRoot".to_string()))
-            .expect("Failed to create annotation root node");
-        self.annotations.set_root_node(root_id);
-        root_id
-    }
-
-    /// Reifies all unreified annotations, creating scene nodes for them.
-    ///
-    /// # Returns
-    /// The number of annotations that were reified.
-    pub fn reify_annotations(&mut self) -> usize {
-        // Check for stale reference-based annotations and mark them for re-reification.
-        let stale_ids: Vec<AnnotationId> = self
-            .annotations
-            .iter()
-            .filter(|a| a.is_reified())
-            .filter(|a| match a {
-                Annotation::PointLight(pl) => {
-                    pl.reified_generation != Some(self.light_generation)
-                }
-                Annotation::SpotLight(sl) => {
-                    sl.reified_generation != Some(self.light_generation)
-                }
-                Annotation::Normals(normals) => {
-                    let current_gen = self
-                        .nodes
-                        .get(&normals.target_node_id)
-                        .and_then(|n| n.instance())
-                        .and_then(|iid| self.instances.get(&iid))
-                        .and_then(|inst| self.meshes.get(&inst.mesh()))
-                        .map(|m| m.generation());
-                    normals.reified_generation != current_gen
-                }
-                _ => false,
-            })
-            .map(|a| a.id())
-            .collect();
-
-        // Remove old scene nodes for stale annotations
-        for &id in &stale_ids {
-            if let Some(annotation) = self.annotations.get(id) {
-                if let Some(old_node_id) = annotation.node_id() {
-                    self.remove_node(old_node_id);
-                }
-            }
-            if let Some(ann) = self.annotations.get_mut(id) {
-                ann.meta_mut().node_id = None;
-            }
-        }
-
-        // Now reify all unreified annotations (including freshly un-reified stale ones)
-        let unreified_ids: Vec<AnnotationId> = self
-            .annotations
-            .iter_unreified()
-            .map(|a| a.id())
-            .collect();
-
-        let count = unreified_ids.len();
-        for id in unreified_ids {
-            self.reify_annotation(id);
-        }
-        count
-    }
-
-    /// Reifies a single annotation by ID.
-    ///
-    /// # Returns
-    /// The NodeId of the reified annotation, or None if not found or already reified.
-    pub fn reify_annotation(&mut self, id: AnnotationId) -> Option<NodeId> {
-        // Check if already reified
-        if let Some(annotation) = self.annotations.get(id) {
-            if annotation.is_reified() {
-                return annotation.node_id();
-            }
-        }
-
-        let annotation = self.annotations.get(id)?.clone();
-        let root_id = self.ensure_annotation_root();
-
-        let node_id = match &annotation {
-            Annotation::Line(line) => {
-                let data = line.to_mesh_data();
-                self.create_annotation_node(root_id, data)
-            }
-            Annotation::Polyline(polyline) => {
-                let data = polyline.to_mesh_data()?;
-                self.create_annotation_node(root_id, data)
-            }
-            Annotation::Points(points) => {
-                let data = points.to_mesh_data()?;
-                self.create_annotation_node(root_id, data)
-            }
-            Annotation::Axes(axes) => {
-                // Axes creates multiple children under a parent node
-                let parent = self
-                    .add_default_node(Some(root_id), axes.meta.name.clone())
-                    .ok()?;
-                for data in axes.to_mesh_data() {
-                    self.create_annotation_node(parent, data);
-                }
-                Some(parent)
-            }
-            Annotation::Box(box_ann) => {
-                let data = box_ann.to_mesh_data();
-                self.create_annotation_node(root_id, data)
-            }
-            Annotation::Grid(grid) => {
-                let data = grid.to_mesh_data();
-                self.create_annotation_node(root_id, data)
-            }
-            Annotation::PointLight(pl) => {
-                let light = self.lights.get(pl.light_index)?;
-                if let Light::Point { position, color, .. } = light {
-                    let data = pl.to_mesh_data(Point3::from_vec(*position), *color);
-                    self.create_annotation_node(root_id, data)
-                } else {
-                    return None;
-                }
-            }
-            Annotation::SpotLight(sl) => {
-                let light = self.lights.get(sl.light_index)?;
-                if let Light::Spot {
-                    position,
-                    direction,
-                    color,
-                    inner_cone_angle,
-                    outer_cone_angle,
-                    ..
-                } = light
-                {
-                    let meshes = sl.to_mesh_data(
-                        Point3::from_vec(*position),
-                        *direction,
-                        *color,
-                        *inner_cone_angle,
-                        *outer_cone_angle,
-                    );
-                    let parent = self
-                        .add_default_node(Some(root_id), sl.meta.name.clone())
-                        .ok()?;
-                    for data in meshes {
-                        self.create_annotation_node(parent, data);
-                    }
-                    Some(parent)
-                } else {
-                    return None;
-                }
-            }
-            Annotation::Normals(normals) => {
-                let node = self.nodes.get(&normals.target_node_id)?;
-                let instance_id = node.instance()?;
-                let instance = self.instances.get(&instance_id)?;
-                let mesh = self.meshes.get(&instance.mesh())?;
-                let world_transform = self.nodes_transform(normals.target_node_id);
-                let normal_matrix =
-                    crate::common::compute_normal_matrix(&world_transform);
-
-                let world_vertices: Vec<(Point3<f32>, Vector3<f32>)> = mesh
-                    .vertices()
-                    .iter()
-                    .map(|v| {
-                        let local_pos =
-                            Point3::new(v.position[0], v.position[1], v.position[2]);
-                        let local_normal =
-                            Vector3::new(v.normal[0], v.normal[1], v.normal[2]);
-
-                        let world_pos = cgmath::Transform::transform_point(
-                            &world_transform,
-                            local_pos,
-                        );
-                        let world_normal = (normal_matrix * local_normal).normalize();
-
-                        (world_pos, world_normal)
-                    })
-                    .collect();
-
-                let meshes = normals.to_mesh_data(&world_vertices);
-                if meshes.is_empty() {
-                    return None;
-                }
-                if meshes.len() == 1 {
-                    self.create_annotation_node(
-                        root_id,
-                        meshes.into_iter().next().unwrap(),
-                    )
-                } else {
-                    let parent = self
-                        .add_default_node(
-                            Some(root_id),
-                            normals.meta.name.clone(),
-                        )
-                        .ok()?;
-                    for data in meshes {
-                        self.create_annotation_node(parent, data);
-                    }
-                    Some(parent)
-                }
-            }
-        }?;
-
-        // Store generation for reference-based annotations
-        match self.annotations.get_mut(id) {
-            Some(Annotation::PointLight(pl)) => {
-                pl.reified_generation = Some(self.light_generation);
-            }
-            Some(Annotation::SpotLight(sl)) => {
-                sl.reified_generation = Some(self.light_generation);
-            }
-            Some(Annotation::Normals(normals)) => {
-                normals.reified_generation = self
-                    .nodes
-                    .get(&normals.target_node_id)
-                    .and_then(|n| n.instance())
-                    .and_then(|iid| self.instances.get(&iid))
-                    .and_then(|inst| self.meshes.get(&inst.mesh()))
-                    .map(|m| m.generation());
-            }
-            _ => {}
-        }
-
-        if let Some(annotation) = self.annotations.get_mut(id) {
-            annotation.meta_mut().node_id = Some(node_id);
-        }
-
-        Some(node_id)
-    }
-
-    /// Helper to create a node from annotation mesh data
-    fn create_annotation_node(
-        &mut self,
-        parent: NodeId,
-        data: annotation::AnnotationMeshData,
-    ) -> Option<NodeId> {
-        let mesh_id = self.add_mesh(data.mesh);
-        let material_id = self.add_material(data.material);
-
-        self.add_instance_node(
-            Some(parent),
-            mesh_id,
-            material_id,
-            data.name,
-            common::Transform::IDENTITY,
-        )
-        .ok()
-    }
-
-    /// Removes an annotation and its scene node (if reified).
-    pub fn remove_annotation(&mut self, id: AnnotationId) -> Option<Annotation> {
-        let annotation = self.annotations.remove(id)?;
-        if let Some(node_id) = annotation.node_id() {
-            self.remove_node(node_id);
-        }
-        Some(annotation)
-    }
-
-    /// Sets visibility for all annotations.
-    pub fn set_annotations_visible(&mut self, visible: bool) {
-        if let Some(root_id) = self.annotations.root_node() {
-            if let Some(root) = self.get_node_mut(root_id) {
-                let scale = if visible { 1.0 } else { 0.0 };
-                root.set_scale(Vector3::new(scale, scale, scale));
-            }
-        }
-    }
-
     /// Invalidates cached bounds for a node and all its ancestors.
     ///
     /// Walks up the parent chain from the given node to the root,
@@ -1116,6 +840,8 @@ impl Scene {
             node::EffectiveVisibility::Mixed
         }
     }
+
+    // ========== Transform & Bounding Box API ==========
 
     /// Gets the world transform of a node.
     ///
@@ -1246,6 +972,266 @@ impl Scene {
         node.set_cached_bounds(node_bounds);
 
         node_bounds
+    }
+
+    // ========== Annotation Reification API ==========
+
+    /// Ensures the annotation root node exists and returns its ID.
+    fn ensure_annotation_root(&mut self) -> NodeId {
+        if let Some(root_id) = self.annotations.root_node() {
+            if self.nodes.contains_key(&root_id) {
+                return root_id;
+            }
+        }
+
+        let root_id = self
+            .add_default_node(None, Some("AnnotationRoot".to_string()))
+            .expect("Failed to create annotation root node");
+        self.annotations.set_root_node(root_id);
+        root_id
+    }
+
+    /// Reifies all unreified annotations, creating scene nodes for them.
+    ///
+    /// # Returns
+    /// The number of annotations that were reified.
+    pub fn reify_annotations(&mut self) -> usize {
+        // Check for stale reference-based annotations and mark them for re-reification.
+        let stale_ids: Vec<AnnotationId> = self
+            .annotations
+            .iter()
+            .filter(|a| a.is_reified())
+            .filter(|a| match a {
+                Annotation::PointLight(pl) => {
+                    pl.reified_generation != Some(self.light_generation)
+                }
+                Annotation::SpotLight(sl) => {
+                    sl.reified_generation != Some(self.light_generation)
+                }
+                Annotation::Normals(normals) => {
+                    let current_gen = self
+                        .nodes
+                        .get(&normals.target_node_id)
+                        .and_then(|n| n.instance())
+                        .and_then(|iid| self.instances.get(&iid))
+                        .and_then(|inst| self.meshes.get(&inst.mesh()))
+                        .map(|m| m.generation());
+                    normals.reified_generation != current_gen
+                }
+                _ => false,
+            })
+            .map(|a| a.id())
+            .collect();
+
+        // Remove old scene nodes for stale annotations
+        for &id in &stale_ids {
+            if let Some(annotation) = self.annotations.get(id) {
+                if let Some(old_node_id) = annotation.node_id() {
+                    self.remove_node(old_node_id);
+                }
+            }
+            if let Some(ann) = self.annotations.get_mut(id) {
+                ann.meta_mut().node_id = None;
+            }
+        }
+
+        // Now reify all unreified annotations (including freshly un-reified stale ones)
+        let unreified_ids: Vec<AnnotationId> = self
+            .annotations
+            .iter_unreified()
+            .map(|a| a.id())
+            .collect();
+
+        let count = unreified_ids.len();
+        for id in unreified_ids {
+            self.reify_annotation(id);
+        }
+        count
+    }
+
+    /// Reifies a single annotation by ID.
+    ///
+    /// # Returns
+    /// The NodeId of the reified annotation, or None if not found or already reified.
+    pub fn reify_annotation(&mut self, id: AnnotationId) -> Option<NodeId> {
+        // Check if already reified
+        if let Some(annotation) = self.annotations.get(id) {
+            if annotation.is_reified() {
+                return annotation.node_id();
+            }
+        }
+
+        let annotation = self.annotations.get(id)?.clone();
+        let name = annotation.meta().name.clone();
+        let meshes = self.resolve_annotation_meshes(&annotation);
+        let root_id = self.ensure_annotation_root();
+        let node_id = self.create_annotation_nodes(root_id, name, meshes)?;
+
+        // Store generation for reference-based annotations
+        match self.annotations.get_mut(id) {
+            Some(Annotation::PointLight(pl)) => {
+                pl.reified_generation = Some(self.light_generation);
+            }
+            Some(Annotation::SpotLight(sl)) => {
+                sl.reified_generation = Some(self.light_generation);
+            }
+            Some(Annotation::Normals(normals)) => {
+                normals.reified_generation = self
+                    .nodes
+                    .get(&normals.target_node_id)
+                    .and_then(|n| n.instance())
+                    .and_then(|iid| self.instances.get(&iid))
+                    .and_then(|inst| self.meshes.get(&inst.mesh()))
+                    .map(|m| m.generation());
+            }
+            _ => {}
+        }
+
+        if let Some(annotation) = self.annotations.get_mut(id) {
+            annotation.meta_mut().node_id = Some(node_id);
+        }
+
+        Some(node_id)
+    }
+
+    /// Resolves an annotation's mesh data, consulting scene state as needed.
+    fn resolve_annotation_meshes(
+        &self,
+        annotation: &Annotation,
+    ) -> Vec<annotation::AnnotationMeshData> {
+        match annotation {
+            Annotation::Line(a) => vec![a.to_mesh_data()],
+            Annotation::Polyline(a) => a.to_mesh_data().into_iter().collect(),
+            Annotation::Points(a) => a.to_mesh_data().into_iter().collect(),
+            Annotation::Axes(a) => a.to_mesh_data(),
+            Annotation::Box(a) => vec![a.to_mesh_data()],
+            Annotation::Grid(a) => vec![a.to_mesh_data()],
+            Annotation::PointLight(pl) => {
+                let Some(Light::Point { position, color, .. }) =
+                    self.lights.get(pl.light_index)
+                else {
+                    return vec![];
+                };
+                vec![pl.to_mesh_data(Point3::from_vec(*position), *color)]
+            }
+            Annotation::SpotLight(sl) => {
+                let Some(Light::Spot {
+                    position,
+                    direction,
+                    color,
+                    inner_cone_angle,
+                    outer_cone_angle,
+                    ..
+                }) = self.lights.get(sl.light_index)
+                else {
+                    return vec![];
+                };
+                sl.to_mesh_data(
+                    Point3::from_vec(*position),
+                    *direction,
+                    *color,
+                    *inner_cone_angle,
+                    *outer_cone_angle,
+                )
+            }
+            Annotation::Normals(normals) => {
+                let Some(node) = self.nodes.get(&normals.target_node_id) else {
+                    return vec![];
+                };
+                let Some(instance_id) = node.instance() else {
+                    return vec![];
+                };
+                let Some(instance) = self.instances.get(&instance_id) else {
+                    return vec![];
+                };
+                let Some(mesh) = self.meshes.get(&instance.mesh()) else {
+                    return vec![];
+                };
+                let world_transform = self.nodes_transform(normals.target_node_id);
+                let normal_matrix =
+                    crate::common::compute_normal_matrix(&world_transform);
+
+                let world_vertices: Vec<(Point3<f32>, Vector3<f32>)> = mesh
+                    .vertices()
+                    .iter()
+                    .map(|v| {
+                        let local_pos =
+                            Point3::new(v.position[0], v.position[1], v.position[2]);
+                        let local_normal =
+                            Vector3::new(v.normal[0], v.normal[1], v.normal[2]);
+
+                        let world_pos = cgmath::Transform::transform_point(
+                            &world_transform,
+                            local_pos,
+                        );
+                        let world_normal = (normal_matrix * local_normal).normalize();
+
+                        (world_pos, world_normal)
+                    })
+                    .collect();
+
+                normals.to_mesh_data(&world_vertices)
+            }
+        }
+    }
+
+    /// Helper to create a node from annotation mesh data
+    fn create_annotation_node(
+        &mut self,
+        parent: NodeId,
+        data: annotation::AnnotationMeshData,
+    ) -> Option<NodeId> {
+        let mesh_id = self.add_mesh(data.mesh);
+        let material_id = self.add_material(data.material);
+
+        self.add_instance_node(
+            Some(parent),
+            mesh_id,
+            material_id,
+            data.name,
+            common::Transform::IDENTITY,
+        )
+        .ok()
+    }
+
+    /// Creates scene nodes from annotation mesh data.
+    /// Single mesh: direct child of `parent`. Multiple: grouped under a named node.
+    fn create_annotation_nodes(
+        &mut self,
+        parent: NodeId,
+        name: Option<String>,
+        meshes: Vec<annotation::AnnotationMeshData>,
+    ) -> Option<NodeId> {
+        match meshes.len() {
+            0 => None,
+            1 => self.create_annotation_node(parent, meshes.into_iter().next().unwrap()),
+            _ => {
+                let group = self.add_default_node(Some(parent), name).ok()?;
+                for data in meshes {
+                    self.create_annotation_node(group, data);
+                }
+                Some(group)
+            }
+        }
+    }
+
+    /// Removes an annotation and its scene node (if reified).
+    pub fn remove_annotation(&mut self, id: AnnotationId) -> Option<Annotation> {
+        let annotation = self.annotations.remove(id)?;
+        if let Some(node_id) = annotation.node_id() {
+            self.remove_node(node_id);
+        }
+        Some(annotation)
+    }
+
+    /// Sets visibility for all annotations.
+    pub fn set_annotations_visible(&mut self, visible: bool) {
+        if let Some(root_id) = self.annotations.root_node() {
+            if let Some(root) = self.get_node_mut(root_id) {
+                let scale = if visible { 1.0 } else { 0.0 };
+                root.set_scale(Vector3::new(scale, scale, scale));
+            }
+        }
     }
 }
 
