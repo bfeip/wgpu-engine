@@ -70,7 +70,7 @@ impl<'a> Renderer<'a> {
             let world_lights: Vec<_> = scene
                 .lights()
                 .iter()
-                .map(|l| l.resolved_to_world(camera))
+                .map(|l| l.in_worldspace(camera))
                 .collect();
             let lights_uniform = LightsArrayUniform::from_lights(&world_lights);
             self.queue

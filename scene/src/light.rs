@@ -7,7 +7,7 @@ use crate::common::RgbaColor;
 /// Maximum number of lights supported in the scene.
 pub const MAX_LIGHTS: usize = 8;
 
-/// Light type identifiers for GPU shader discrimination.
+/// Light type identifiers.
 #[repr(u32)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum LightType {
@@ -24,8 +24,11 @@ pub enum LightType {
 pub enum Light {
     /// Point light that radiates in all directions from a position.
     Point {
+        /// World or camera-space position.
         position: Vector3<f32>,
+        /// Light color.
         color: RgbaColor,
+        /// Intensity multiplier.
         intensity: f32,
         /// Maximum range of the light. 0.0 means infinite range.
         range: f32,
@@ -36,17 +39,22 @@ pub enum Light {
     Directional {
         /// Direction the light is pointing (will be normalized).
         direction: Vector3<f32>,
+        /// Light color.
         color: RgbaColor,
+        /// Intensity multiplier.
         intensity: f32,
         /// Coordinate space for this light's direction.
         space: CoordinateSpace,
     },
     /// Spotlight with a cone of light.
     Spot {
+        /// World or camera-space position.
         position: Vector3<f32>,
         /// Direction the spotlight is pointing (will be normalized).
         direction: Vector3<f32>,
+        /// Light color.
         color: RgbaColor,
+        /// Intensity multiplier.
         intensity: f32,
         /// Maximum range of the light. 0.0 means infinite range.
         range: f32,
@@ -98,14 +106,6 @@ impl Light {
     }
 
     /// Creates a new spotlight.
-    ///
-    /// # Arguments
-    /// * `position` - Position of the spotlight
-    /// * `direction` - Direction the spotlight is pointing
-    /// * `color` - Light color (RGB)
-    /// * `intensity` - Light intensity multiplier
-    /// * `inner_cone_angle` - Inner cone angle in radians (full intensity region)
-    /// * `outer_cone_angle` - Outer cone angle in radians (falloff to zero)
     pub fn spot(
         position: Vector3<f32>,
         direction: Vector3<f32>,
@@ -175,7 +175,7 @@ impl Light {
     /// If the light is already in world space, returns a clone unchanged.
     /// For camera-space lights, transforms positions and directions using
     /// the camera's inverse view matrix.
-    pub fn resolved_to_world(&self, camera: &Camera) -> Light {
+    pub fn in_worldspace(&self, camera: &Camera) -> Light {
         match self.space() {
             CoordinateSpace::World => self.clone(),
             CoordinateSpace::Camera => {
