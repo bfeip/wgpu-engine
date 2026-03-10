@@ -78,14 +78,14 @@ impl Node {
         Self::new(id, None, Transform::IDENTITY)
     }
 
+    // ============== Transform ==============
+
     /// Computes the local transform matrix from position, rotation, and scale.
     ///
     /// The order of operations is: Translation * Rotation * Scale (TRS)
     pub fn compute_local_transform(&self) -> Matrix4<f32> {
         self.transform.to_matrix()
     }
-
-    // Getters and setters for transform components
 
     pub fn transform(&self) -> Transform {
         self.transform
@@ -97,6 +97,9 @@ impl Node {
         self.mark_bounds_dirty();
     }
 
+    // Methods to get and set individual parts of the transform. This is
+    // for convince and to make sure that individual mutations of the transform
+    // properly update the dirty state.
     pub fn position(&self) -> Point3<f32> {
         self.transform.position
     }
@@ -125,127 +128,6 @@ impl Node {
         self.transform.scale = scale;
         self.mark_transform_dirty();
         self.mark_bounds_dirty();
-    }
-
-    // Hierarchy management
-
-    /// Gets the parent node ID.
-    pub fn parent(&self) -> Option<NodeId> {
-        self.parent
-    }
-
-    /// Sets the parent node ID (internal use only - use Scene methods to maintain consistency).
-    pub(crate) fn set_parent(&mut self, parent: Option<NodeId>) {
-        self.parent = parent;
-        self.mark_transform_dirty();
-        self.mark_bounds_dirty();
-    }
-
-    /// Gets the list of child node IDs.
-    pub fn children(&self) -> &[NodeId] {
-        &self.children
-    }
-
-    /// Adds a child node ID to this node's children list (internal use only - use Scene methods to maintain consistency).
-    pub(crate) fn add_child(&mut self, child: NodeId) {
-        if !self.children.contains(&child) {
-            self.children.push(child);
-            self.mark_bounds_dirty();
-        }
-    }
-
-    /// Removes a child node ID from this node's children list (internal use only - use Scene methods to maintain consistency).
-    pub(super) fn remove_child(&mut self, child: NodeId) {
-        self.children.retain(|&id| id != child);
-        self.mark_bounds_dirty();
-    }
-
-    // Instance reference
-
-    pub fn instance(&self) -> Option<InstanceId> {
-        self.instance
-    }
-
-    pub fn set_instance(&mut self, instance: Option<InstanceId>) {
-        self.instance = instance;
-        // Only invalidate bounds, not transform (instance doesn't affect transform)
-        self.cached_bounds.set(None);
-    }
-
-    /// Marks this node's world transform as dirty (needs recomputation).
-    /// Note: This only marks this node, not descendants. The Scene is responsible
-    /// for propagating dirty flags to children.
-    pub(super) fn mark_transform_dirty(&self) {
-        self.cached_world_transform.set(None);
-    }
-
-    /// Marks this node's bounds as dirty (needs recomputation).
-    /// Note: This only marks this node, not descendants.
-    pub(super) fn mark_bounds_dirty(&self) {
-        self.cached_bounds.set(None);
-    }
-
-    pub fn transform_dirty(&self) -> bool {
-        self.cached_world_transform.get().is_none()
-    }
-
-    pub fn bounds_dirty(&self) -> bool {
-        self.cached_bounds.get().is_none()
-    }
-
-    /// Gets the cached world transform if valid
-    /// You probably want [crate::Scene::nodes_transform]
-    pub fn cached_world_transform(&self) -> Option<Matrix4<f32>> {
-        self.cached_world_transform.get()
-    }
-
-    /// Sets the cached world transform
-    pub fn set_cached_world_transform(&self, transform: Matrix4<f32>) {
-        self.cached_world_transform.set(Some(transform));
-    }
-
-    /// Gets the cached bounding box if valid
-    /// You probably want [crate::Scene::nodes_bounding]
-    pub(super) fn cached_bounds(&self) -> Option<Aabb> {
-        self.cached_bounds.get()
-    }
-
-    /// Sets the cached bounding box
-    pub(super) fn set_cached_bounds(&self, bounds: Option<Aabb>) {
-        self.cached_bounds.set(bounds);
-    }
-
-    // ========== Visibility Management ==========
-
-    /// Gets the explicit visibility state of this node.
-    pub fn visibility(&self) -> Visibility {
-        self.visibility
-    }
-
-    /// Sets the explicit visibility state of this node.
-    pub fn set_visibility(&mut self, visibility: Visibility) {
-        self.visibility = visibility;
-        self.cached_effective_visibility.set(None);
-    }
-
-    /// Gets the cached effective visibility if valid.
-    pub(super) fn cached_effective_visibility(&self) -> Option<EffectiveVisibility> {
-        self.cached_effective_visibility.get()
-    }
-
-    /// Sets the cached effective visibility.
-    pub(super) fn set_cached_effective_visibility(&self, visibility: EffectiveVisibility) {
-        self.cached_effective_visibility.set(Some(visibility));
-    }
-
-    /// Returns true if effective visibility needs recomputation.
-    pub fn effective_visibility_dirty(&self) -> bool {
-        self.cached_effective_visibility.get().is_none()
-    }
-
-    /// Marks visibility cache as dirty.
-    pub fn mark_visibility_dirty(&self) {
-        self.cached_effective_visibility.set(None);
     }
 
     // ========== Transform Manipulation Methods ==========
@@ -321,6 +203,126 @@ impl Node {
     /// Returns all local axes (right, up, forward) in world space.
     pub fn local_axes(&self) -> (Vector3<f32>, Vector3<f32>, Vector3<f32>) {
         local_axes(self.transform.rotation)
+    }
+
+    // ============== Hierarchy ==============
+
+    /// Gets the parent node ID.
+    pub fn parent(&self) -> Option<NodeId> {
+        self.parent
+    }
+
+    /// Sets the parent node ID (internal use only - use Scene methods to maintain consistency).
+    pub(super) fn set_parent(&mut self, parent: Option<NodeId>) {
+        self.parent = parent;
+        self.mark_transform_dirty();
+        self.mark_bounds_dirty();
+    }
+
+    /// Gets the list of child node IDs.
+    pub fn children(&self) -> &[NodeId] {
+        &self.children
+    }
+
+    /// Adds a child node ID to this node's children list (internal use only - use Scene methods to maintain consistency).
+    pub(super) fn add_child(&mut self, child: NodeId) {
+        if !self.children.contains(&child) {
+            self.children.push(child);
+            self.mark_bounds_dirty();
+        }
+    }
+
+    /// Removes a child node ID from this node's children list (internal use only - use Scene methods to maintain consistency).
+    pub(super) fn remove_child(&mut self, child: NodeId) {
+        self.children.retain(|&id| id != child);
+        self.mark_bounds_dirty();
+    }
+
+    pub fn instance(&self) -> Option<InstanceId> {
+        self.instance
+    }
+
+    pub fn set_instance(&mut self, instance: Option<InstanceId>) {
+        self.instance = instance;
+        self.cached_bounds.set(None);
+    }
+
+    // ============== Dirty State ==============
+
+    /// Marks this node's world transform as dirty (needs recomputation).
+    /// Note: This only marks this node, not descendants. The Scene is responsible
+    /// for propagating dirty flags to children.
+    pub(super) fn mark_transform_dirty(&self) {
+        self.cached_world_transform.set(None);
+    }
+
+    /// Marks this node's bounds as dirty (needs recomputation).
+    /// Note: This only marks this node, not descendants.
+    pub(super) fn mark_bounds_dirty(&self) {
+        self.cached_bounds.set(None);
+    }
+
+    pub fn transform_dirty(&self) -> bool {
+        self.cached_world_transform.get().is_none()
+    }
+
+    pub fn bounds_dirty(&self) -> bool {
+        self.cached_bounds.get().is_none()
+    }
+
+    /// Gets the cached world transform if valid
+    /// You probably want [crate::Scene::nodes_transform]
+    pub fn cached_world_transform(&self) -> Option<Matrix4<f32>> {
+        self.cached_world_transform.get()
+    }
+
+    /// Sets the cached world transform
+    pub fn set_cached_world_transform(&self, transform: Matrix4<f32>) {
+        self.cached_world_transform.set(Some(transform));
+    }
+
+    /// Gets the cached bounding box if valid
+    /// You probably want [crate::Scene::nodes_bounding]
+    pub(super) fn cached_bounds(&self) -> Option<Aabb> {
+        self.cached_bounds.get()
+    }
+
+    /// Sets the cached bounding box
+    pub(super) fn set_cached_bounds(&self, bounds: Option<Aabb>) {
+        self.cached_bounds.set(bounds);
+    }
+
+    // ========== Visibility Management ==========
+
+    /// Gets the explicit visibility state of this node.
+    pub fn visibility(&self) -> Visibility {
+        self.visibility
+    }
+
+    /// Sets the explicit visibility state of this node.
+    pub fn set_visibility(&mut self, visibility: Visibility) {
+        self.visibility = visibility;
+        self.cached_effective_visibility.set(None);
+    }
+
+    /// Gets the cached effective visibility if valid.
+    pub(super) fn cached_effective_visibility(&self) -> Option<EffectiveVisibility> {
+        self.cached_effective_visibility.get()
+    }
+
+    /// Sets the cached effective visibility.
+    pub(super) fn set_cached_effective_visibility(&self, visibility: EffectiveVisibility) {
+        self.cached_effective_visibility.set(Some(visibility));
+    }
+
+    /// Returns true if effective visibility needs recomputation.
+    pub fn effective_visibility_dirty(&self) -> bool {
+        self.cached_effective_visibility.get().is_none()
+    }
+
+    /// Marks visibility cache as dirty.
+    pub fn mark_visibility_dirty(&self) {
+        self.cached_effective_visibility.set(None);
     }
 }
 
