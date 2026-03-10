@@ -19,17 +19,15 @@ pub enum TextureFormat {
 /// Describes how texture source data is stored.
 ///
 /// Textures can be created from embedded image data or loaded lazily from a file path.
-/// File-based textures use `OnceLock` for thread-safe lazy loading, allowing
-/// `get_image()` to take `&self` instead of `&mut self`.
 pub enum TextureSource {
-    /// Image data embedded in memory (always available).
+    /// Image data embedded in memory.
     /// Optionally includes original compressed bytes (PNG/JPEG) for efficient serialization.
     Embedded {
         image: DynamicImage,
         /// Original compressed bytes preserved from loading (e.g., from glTF).
         original_bytes: Option<(Vec<u8>, TextureFormat)>,
     },
-    /// Image loaded lazily from a file path via `OnceLock`.
+    /// Image loaded lazily from a file path.
     /// The image can be released and reloaded by replacing the `OnceLock`.
     File {
         path: PathBuf,
