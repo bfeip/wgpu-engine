@@ -57,11 +57,7 @@ impl Clone for TextureSource {
     }
 }
 
-/// A texture that can exist without GPU resources.
-///
-/// Textures store their source data (embedded image or file path) and lazily
-/// create GPU resources when first needed for rendering. This allows textures
-/// to be created and manipulated without access to the GPU device.
+/// An image texture.
 ///
 /// # Examples
 ///
@@ -82,7 +78,7 @@ pub struct Texture {
     pub id: TextureId,
     /// Source data for the texture
     source: TextureSource,
-    /// Generation counter - increments on any mutation (for GPU sync tracking)
+    /// Generation counter - increments on any mutation
     generation: u64,
 }
 
@@ -99,33 +95,12 @@ impl Clone for Texture {
 impl Texture {
     /// Create a texture from an embedded image.
     ///
-    /// The image data is stored in memory. GPU resources are created lazily
-    /// when the texture is first used for rendering.
-    ///
     /// # Arguments
     /// * `image` - The image data to use for this texture
     pub fn from_image(image: DynamicImage) -> Self {
         Self {
             id: 0, // Assigned by Scene
             source: TextureSource::Embedded { image, original_bytes: None },
-            generation: 1,
-        }
-    }
-
-    /// Create a texture from a file path.
-    ///
-    /// The image is not loaded immediately - it will be loaded on demand when
-    /// `get_image()` is called or when GPU resources are created.
-    ///
-    /// # Arguments
-    /// * `path` - Path to the image file
-    pub fn from_path(path: impl Into<PathBuf>) -> Self {
-        Self {
-            id: 0, // Assigned by Scene
-            source: TextureSource::File {
-                path: path.into(),
-                cache: OnceLock::new(),
-            },
             generation: 1,
         }
     }
@@ -154,27 +129,28 @@ impl Texture {
         }
     }
 
-    /// Get the texture's unique identifier.
-    pub fn id(&self) -> TextureId {
-        self.id
-    }
-
-    /// Get the texture dimensions, if known.
+    /// Create a texture from a file path.
     ///
-    /// Returns `None` if the texture was created from a path and hasn't been loaded yet.
-    /// Call `get_image()` first to trigger loading if dimensions are needed.
-    pub fn dimensions(&self) -> Option<(u32, u32)> {
-        match &self.source {
-            TextureSource::Embedded { image, .. } => Some(image.dimensions()),
-            TextureSource::File { cache, .. } => cache.get().map(|img| img.dimensions()),
+    /// The image is not loaded immediately - it will be loaded on demand when
+    /// `get_image()` is called.
+    ///
+    /// # Arguments
+    /// * `path` - Path to the image file
+    pub fn from_path(path: impl Into<PathBuf>) -> Self {
+        Self {
+            id: 0, // Assigned by Scene
+            source: TextureSource::File {
+                path: path.into(),
+                cache: OnceLock::new(),
+            },
+            generation: 1,
         }
     }
 
     /// Load and return a reference to the image data.
     ///
-    /// For path-based textures, this loads the image from disk on first access
-    /// using `OnceLock` for thread-safe lazy initialization. The loaded image
-    /// is cached for future access.
+    /// For path-based textures, this loads the image from disk on first access.
+    /// The loaded image is cached for future access.
     ///
     /// # Errors
     /// Returns an error if the image cannot be loaded from the path.
@@ -195,10 +171,32 @@ impl Texture {
         }
     }
 
+
+    /// Replace the texture's image data.
+    pub fn set_image(&mut self, image: DynamicImage) {
+        self.source = TextureSource::Embedded { image, original_bytes: None };
+        self.generation += 1;
+    }
+
+    /// Get the texture's unique identifier.
+    pub fn id(&self) -> TextureId {
+        self.id
+    }
+
+    /// Get the texture dimensions, if known.
+    ///
+    /// Returns `None` if the texture was created from a path and hasn't been loaded yet.
+    /// Call `get_image()` first to trigger loading if dimensions are needed.
+    pub fn dimensions(&self) -> Option<(u32, u32)> {
+        match &self.source {
+            TextureSource::Embedded { image, .. } => Some(image.dimensions()),
+            TextureSource::File { cache, .. } => cache.get().map(|img| img.dimensions()),
+        }
+    }
+
     /// Returns the current generation counter.
     ///
     /// This value increments on any mutation to the texture data.
-    /// Used by renderers to track when GPU resources need updating.
     pub fn generation(&self) -> u64 {
         self.generation
     }
@@ -210,8 +208,6 @@ impl Texture {
     /// by calling `get_image()` again.
     ///
     /// For embedded textures, this has no effect (the image cannot be reloaded).
-    ///
-    /// Note: This does not release GPU resources - only the CPU-side image data.
     pub fn release_image_cache(&mut self) {
         if let TextureSource::File { path, .. } = &self.source {
             let path = path.clone();
@@ -221,15 +217,6 @@ impl Texture {
             };
         }
         // Embedded textures cannot release their image data
-    }
-
-    /// Replace the texture's image data.
-    ///
-    /// This increments the generation counter, so GPU resources will be updated
-    /// on the next render.
-    pub fn set_image(&mut self, image: DynamicImage) {
-        self.source = TextureSource::Embedded { image, original_bytes: None };
-        self.generation += 1;
     }
 
     /// Get the source path if this texture was created from a path.
@@ -242,7 +229,7 @@ impl Texture {
 
     /// Get the original compressed bytes if available.
     ///
-    /// Returns the original PNG/JPEG bytes if this texture was created with
+    /// Returns the original compressed bytes if this texture was created with
     /// `from_image_with_original_bytes`. This is used for efficient serialization
     /// to avoid re-encoding the image.
     pub fn original_bytes(&self) -> Option<(&[u8], TextureFormat)> {
