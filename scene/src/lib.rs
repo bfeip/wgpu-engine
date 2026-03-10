@@ -13,7 +13,7 @@ mod material;
 mod mesh;
 mod node;
 mod texture;
-mod tree;
+
 
 use cgmath::{EuclideanSpace, InnerSpace, Matrix4, Point3, SquareMatrix, Vector3};
 use image::DynamicImage;
@@ -31,7 +31,7 @@ pub use material::{AlphaMode, Material, MaterialFlags, MaterialId, DEFAULT_MATER
 pub use mesh::{Mesh, MeshDescriptor, MeshId, MeshIndex, MeshPrimitive, ObjMesh, PrimitiveType, Vertex};
 pub use node::{EffectiveVisibility, Node, NodeId, Visibility};
 pub use texture::{Texture, TextureFormat, TextureId};
-pub use tree::{TreeVisitor, walk_tree};
+
 
 // Items used by core crate for rendering
 pub use material::MaterialProperties;
