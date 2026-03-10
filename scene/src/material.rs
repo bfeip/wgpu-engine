@@ -13,6 +13,18 @@ pub const DEFAULT_METALLIC: f32 = 0.0;
 pub const DEFAULT_NORMAL_SCALE: f32 = 1.0;
 /// Default alpha cutoff for mask mode (per glTF spec)
 pub const DEFAULT_ALPHA_CUTOFF: f32 = 0.5;
+/// The ID of the default material created automatically by the Scene.
+///
+/// This material is always available at a sentinel ID (`u32::MAX`) and provides
+/// fallback rendering for faces (magenta), lines (black), and points (black).
+/// Using `u32::MAX` ensures it never collides with user-assigned material IDs
+/// which are assigned sequentially starting from 0.
+pub const DEFAULT_MATERIAL_ID: MaterialId = u32::MAX;
+
+/// Unique identifier for materials.
+///
+/// Material IDs are assigned sequentially by the Scene starting from 0.
+pub type MaterialId = u32;
 
 /// Alpha rendering mode, matching glTF spec.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -54,19 +66,6 @@ pub struct MaterialProperties {
     /// Alpha rendering mode
     pub alpha_mode: AlphaMode,
 }
-
-/// The ID of the default material created automatically by the Scene.
-///
-/// This material is always available at a sentinel ID (`u32::MAX`) and provides
-/// fallback rendering for faces (magenta), lines (black), and points (black).
-/// Using `u32::MAX` ensures it never collides with user-assigned material IDs
-/// which are assigned sequentially starting from 0.
-pub const DEFAULT_MATERIAL_ID: MaterialId = u32::MAX;
-
-/// Unique identifier for materials.
-///
-/// Material IDs are assigned sequentially by the Scene starting from 0.
-pub type MaterialId = u32;
 
 /// Material that can be rendered as faces, lines, or points.
 ///
@@ -286,8 +285,12 @@ impl Material {
         self
     }
 
+    /// Set the material flags.
     pub fn with_flags(mut self, flags: MaterialFlags) -> Self {
         self.flags = flags;
+        self.face_generation += 1;
+        self.line_generation += 1;
+        self.point_generation += 1;
         self
     }
 
@@ -363,6 +366,9 @@ impl Material {
 
     pub fn set_flags(&mut self, flags: MaterialFlags) {
         self.flags = flags;
+        self.face_generation += 1;
+        self.line_generation += 1;
+        self.point_generation += 1;
     }
 
     /// Set the alpha rendering mode, marking the material as dirty.
