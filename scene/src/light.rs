@@ -21,6 +21,7 @@ pub enum LightType {
 
 /// A light source in the scene.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Light {
     /// Point light that radiates in all directions from a position.
     Point {

@@ -38,6 +38,12 @@ pub use material::MaterialProperties;
 
 use crate::common::{Aabb, RgbaColor};
 
+/// Default generation counter value for newly created resources.
+/// Starts at 1 so initial change detection triggers on first use.
+pub(crate) fn initial_generation() -> u64 {
+    1
+}
+
 /// Scene-level properties that affect shader generation.
 ///
 /// Unlike MaterialProperties which describe individual materials,

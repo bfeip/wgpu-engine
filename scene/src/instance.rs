@@ -6,6 +6,7 @@ pub type InstanceId = u32;
 
 /// An instance references a mesh and material to be rendered.
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Instance {
     pub id: InstanceId,
     mesh: MeshId,

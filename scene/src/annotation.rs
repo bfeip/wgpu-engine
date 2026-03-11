@@ -17,6 +17,7 @@ pub(crate) struct AnnotationMeshData {
 
 /// Common metadata for all annotations
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AnnotationMeta {
     /// Unique ID assigned when added to manager
     pub id: AnnotationId,
@@ -25,6 +26,7 @@ pub struct AnnotationMeta {
     /// Whether this annotation is currently visible
     pub visible: bool,
     /// Node ID if this annotation has been reified
+    #[cfg_attr(feature = "serde", serde(skip))]
     pub node_id: Option<NodeId>,
 }
 
@@ -41,6 +43,7 @@ impl AnnotationMeta {
 
 /// A single line segment annotation
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct LineAnnotation {
     pub meta: AnnotationMeta,
     pub start: Point3<f32>,
@@ -79,6 +82,7 @@ impl LineAnnotation {
 
 /// A connected series of line segments
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct PolylineAnnotation {
     pub meta: AnnotationMeta,
     pub points: Vec<Point3<f32>>,
@@ -130,6 +134,7 @@ impl PolylineAnnotation {
 
 /// A set of point markers
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct PointsAnnotation {
     pub meta: AnnotationMeta,
     pub positions: Vec<Point3<f32>>,
@@ -171,6 +176,7 @@ impl PointsAnnotation {
 
 /// Coordinate axes (RGB = XYZ)
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AxesAnnotation {
     pub meta: AnnotationMeta,
     pub origin: Point3<f32>,
@@ -220,6 +226,7 @@ impl AxesAnnotation {
 
 /// A wireframe box
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct BoxAnnotation {
     pub meta: AnnotationMeta,
     pub center: Point3<f32>,
@@ -274,6 +281,7 @@ impl BoxAnnotation {
 
 /// A grid in the XZ plane
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct GridAnnotation {
     pub meta: AnnotationMeta,
     pub center: Point3<f32>,
@@ -351,6 +359,7 @@ impl GridAnnotation {
 /// Stores a reference to a light by index. Geometry is built during reification
 /// from the live light data using [`Mesh::sphere`] with [`PrimitiveType::LineList`].
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct PointLightAnnotation {
     pub meta: AnnotationMeta,
     /// Index into `scene.lights`
@@ -384,6 +393,7 @@ impl PointLightAnnotation {
 /// Stores a reference to a light by index. Geometry is built during reification
 /// from the live light data using [`Mesh::cone_directed`] with [`PrimitiveType::LineList`].
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SpotLightAnnotation {
     pub meta: AnnotationMeta,
     /// Index into `scene.lights`
@@ -451,6 +461,7 @@ impl SpotLightAnnotation {
 /// Stores a reference to a node by ID. Geometry is built during reification
 /// by looking up the node's instance mesh and world transform.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct NormalsAnnotation {
     pub meta: AnnotationMeta,
     /// Node whose instance's mesh normals to visualize
@@ -533,6 +544,7 @@ impl NormalsAnnotation {
 
 /// Enum encompassing all annotation types
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Annotation {
     Line(LineAnnotation),
     Polyline(PolylineAnnotation),

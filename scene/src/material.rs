@@ -42,6 +42,8 @@ pub enum AlphaMode {
 bitflags! {
     /// Additional material rendering flags for extensibility
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+    #[cfg_attr(feature = "serde", serde(transparent))]
     pub struct MaterialFlags: u32 {
         /// No special flags
         const NONE = 0;
@@ -93,6 +95,7 @@ pub struct MaterialProperties {
 /// //         .with_roughness_factor(0.5);
 /// ```
 #[derive(Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Material {
     /// Unique identifier for this material
     pub id: MaterialId,
@@ -127,9 +130,12 @@ pub struct Material {
     /// Alpha cutoff threshold for Mask mode
     alpha_cutoff: f32,
 
-    // Generation counters per primitive type (for GPU sync tracking)
+    // Generation counters per primitive type (for change tracking)
+    #[cfg_attr(feature = "serde", serde(skip, default = "crate::initial_generation"))]
     face_generation: u64,
+    #[cfg_attr(feature = "serde", serde(skip, default = "crate::initial_generation"))]
     line_generation: u64,
+    #[cfg_attr(feature = "serde", serde(skip, default = "crate::initial_generation"))]
     point_generation: u64,
 }
 
@@ -152,9 +158,9 @@ impl Material {
             flags: MaterialFlags::NONE,
             alpha_mode: AlphaMode::Opaque,
             alpha_cutoff: DEFAULT_ALPHA_CUTOFF,
-            face_generation: 1,
-            line_generation: 1,
-            point_generation: 1,
+            face_generation: crate::initial_generation(),
+            line_generation: crate::initial_generation(),
+            point_generation: crate::initial_generation(),
         }
     }
 

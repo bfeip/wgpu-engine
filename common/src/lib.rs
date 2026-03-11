@@ -25,6 +25,7 @@ pub use transform_ops::{
 /// An RGBA color, with values between 0.0 and 1.0
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct RgbaColor {
     pub r: f32,
     pub g: f32,

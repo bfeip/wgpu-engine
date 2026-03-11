@@ -2,6 +2,7 @@ use cgmath::{EuclideanSpace, Matrix4, Point3, Quaternion, Vector3};
 
 /// A decomposed 3D transform consisting of position, rotation, and scale (TRS order).
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Transform {
     pub position: Point3<f32>,
     pub rotation: Quaternion<f32>,

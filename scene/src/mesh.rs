@@ -15,6 +15,7 @@ pub type MeshIndex = u16;
 
 /// Primitive types for mesh rendering
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum PrimitiveType {
     TriangleList,
     LineList,
@@ -23,6 +24,7 @@ pub enum PrimitiveType {
 
 /// A collection of indices representing a single primitive type in a mesh
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MeshPrimitive {
     pub primitive_type: PrimitiveType,
     pub indices: Vec<MeshIndex>,
@@ -116,6 +118,7 @@ pub struct MeshVolumeHit {
 /// - Implements `Pod` and `Zeroable` for zero-copy GPU buffer uploads
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Vertex {
     /// Vertex position in local mesh space [x, y, z]
     pub position: [f32; 3],
@@ -182,6 +185,7 @@ pub enum MeshDescriptor<'a> {
 /// // GPU resources are created automatically during rendering
 /// ```
 #[derive(Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Mesh {
     /// Unique identifier for this mesh (assigned by Scene)
     pub id: MeshId,
@@ -189,9 +193,11 @@ pub struct Mesh {
     vertices: Vec<Vertex>,
     /// CPU-side primitive data (index lists grouped by type)
     primitives: Vec<MeshPrimitive>,
-    /// Generation counter - increments on any mutation (for GPU sync tracking)
+    /// Generation counter - increments on any mutation (for change tracking)
+    #[cfg_attr(feature = "serde", serde(skip, default = "crate::initial_generation"))]
     generation: u64,
     /// Cached local-space axis-aligned bounding box
+    #[cfg_attr(feature = "serde", serde(skip))]
     cached_bounding: Cell<Option<Aabb>>,
 }
 
@@ -202,7 +208,7 @@ impl Mesh {
             id: 0, // Assigned by Scene
             vertices: Vec::new(),
             primitives: Vec::new(),
-            generation: 1, // Start at 1 so initial sync triggers upload
+            generation: crate::initial_generation(),
             cached_bounding: Cell::new(None),
         }
     }
@@ -217,7 +223,7 @@ impl Mesh {
             id: 0, // Assigned by Scene
             vertices,
             primitives,
-            generation: 1,
+            generation: crate::initial_generation(),
             cached_bounding: Cell::new(None),
         }
     }

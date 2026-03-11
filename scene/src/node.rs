@@ -12,6 +12,7 @@ pub type NodeId = u32;
 
 /// Explicit visibility state set by the user.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Visibility {
     /// Node is explicitly set to visible
     #[default]
@@ -33,6 +34,7 @@ pub enum EffectiveVisibility {
 
 /// A node in the scene tree hierarchy.
 #[derive(Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Node {
     pub id: NodeId,
     pub name: Option<String>,
@@ -49,10 +51,13 @@ pub struct Node {
 
     // Visibility
     visibility: Visibility,
+    #[cfg_attr(feature = "serde", serde(skip))]
     cached_effective_visibility: Cell<Option<EffectiveVisibility>>,
 
-    // Cached computed values (for optimization)
+    // Cached computed values
+    #[cfg_attr(feature = "serde", serde(skip))]
     cached_world_transform: Cell<Option<Matrix4<f32>>>,
+    #[cfg_attr(feature = "serde", serde(skip))]
     cached_bounds: Cell<Option<Aabb>>,
 }
 

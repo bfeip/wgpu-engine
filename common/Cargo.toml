@@ -3,6 +3,10 @@ name = "wgpu-engine-common"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+serde = ["dep:serde", "cgmath/serde"]
+
 [dependencies]
 bytemuck = { version = "1.16", features = ["derive"] }
 cgmath = "0.18"
+serde = { version = "1.0", features = ["derive"], optional = true }

@@ -10,6 +10,7 @@ pub type TextureId = u32;
 /// Texture image format.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum TextureFormat {
     Png = 0,
     Jpeg = 1,
