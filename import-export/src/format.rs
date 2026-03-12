@@ -22,7 +22,7 @@
 //! └──────────────────────────────────────────────────────────────┘
 //! ```
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write, Cursor};
 
 use image::GenericImageView;
@@ -35,21 +35,13 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use wgpu_engine_scene::{
-    annotation::{
-        Annotation, AnnotationId, AxesAnnotation, BoxAnnotation,
-        GridAnnotation, LineAnnotation, PointsAnnotation, PolylineAnnotation, AnnotationMeta,
-    },
     Instance, InstanceId,
-    CoordinateSpace, Light,
-    AlphaMode, Material, MaterialFlags, MaterialId, DEFAULT_MATERIAL_ID,
-    Mesh, MeshId, MeshPrimitive, PrimitiveType, Vertex,
-    Node, NodeId, Visibility,
+    Light,
+    Material, MaterialId, DEFAULT_MATERIAL_ID,
+    Mesh, MeshId,
+    Node, NodeId,
     Texture, TextureFormat, TextureId,
-    EnvironmentMapId, Scene,
-};
-use wgpu_engine_scene::common::{
-    RgbaColor, array_to_point3, array_to_rgba, array_to_vec3,
-    point3_to_array, rgba_to_array, vec3_to_array
+    EnvironmentMap, EnvironmentMapId, Scene,
 };
 
 // ============================================================================
@@ -61,10 +53,10 @@ pub const MAGIC: [u8; 4] = *b"WGSC";
 
 /// Current format version (major.minor encoded as single u16)
 /// major = version >> 8, minor = version & 0xFF
-pub const VERSION: u16 = 0x0001; // 0.1
+pub const VERSION: u16 = 0x0002; // 0.2
 
 /// Size of the fixed header in bytes
-pub const HEADER_SIZE: usize = 16;
+pub const HEADER_SIZE: usize = std::mem::size_of::<FileHeader>();
 
 // ============================================================================
 // Error Types
@@ -191,7 +183,7 @@ pub enum SectionType {
     Textures = 5,
     /// Light definitions
     Lights = 6,
-    /// Annotation data
+    /// Annotation data (v1 only, not written in v2+)
     Annotations = 7,
     /// Environment map data
     EnvironmentMaps = 8,
@@ -263,10 +255,10 @@ impl FileHeader {
         reader.read_exact(&mut version_bytes)?;
         let version = u16::from_le_bytes(version_bytes);
 
-        // Check version compatibility (currently only support 0.1)
+        // Check version compatibility (support 0.1 and 0.2)
         let major = (version >> 8) as u8;
         let minor = (version & 0xFF) as u8;
-        if major > 0 || (major == 0 && minor > 1) {
+        if major > 0 || (major == 0 && minor > 2) {
             return Err(FormatError::UnsupportedVersion(major, minor));
         }
 
@@ -345,158 +337,132 @@ pub struct SerializedMetadata {
     pub active_environment_map: Option<u32>,
 }
 
-/// Serializable node with remapped IDs.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SerializedNode {
-    pub id: u32,
-    pub name: Option<String>,
-    pub position: [f32; 3],
-    pub rotation: [f32; 4], // Quaternion as [x, y, z, w]
-    pub scale: [f32; 3],
-    pub parent_id: Option<u32>,
-    pub children_ids: Vec<u32>,
-    pub instance_id: Option<u32>,
-    pub visible: bool,
-}
-
-/// Serializable instance.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SerializedInstance {
-    pub id: u32,
-    pub mesh_id: u32,
-    pub material_id: u32,
-}
-
-/// Serializable mesh primitive.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SerializedPrimitive {
-    /// 0 = TriangleList, 1 = LineList, 2 = PointList
-    pub primitive_type: u8,
-    pub indices: Vec<u16>,
-}
-
-/// Serializable mesh with vertex data.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SerializedMesh {
-    pub id: u32,
-    /// Raw vertex bytes (36 bytes per vertex)
-    pub vertices: Vec<u8>,
-    pub primitives: Vec<SerializedPrimitive>,
-}
-
-/// Serializable material.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SerializedMaterial {
-    pub id: u32,
-    pub base_color_texture_id: Option<u32>,
-    pub normal_texture_id: Option<u32>,
-    pub metallic_roughness_texture_id: Option<u32>,
-    pub base_color_factor: [f32; 4],
-    pub metallic_factor: f32,
-    pub roughness_factor: f32,
-    pub normal_scale: f32,
-    pub line_color: Option<[f32; 4]>,
-    pub point_color: Option<[f32; 4]>,
-    /// MaterialFlags as u32 bits
-    pub flags: u32,
-    /// Alpha rendering mode
-    #[serde(default)]
-    pub alpha_mode: AlphaMode,
-    /// Alpha cutoff threshold for Mask mode
-    #[serde(default = "default_alpha_cutoff")]
-    pub alpha_cutoff: f32,
-}
-
-fn default_alpha_cutoff() -> f32 {
-    0.5
-}
 
 /// Serializable texture with embedded image data.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerializedTexture {
     pub id: u32,
-    /// Texture format as u8 discriminant (0=Png, 1=Jpeg, 2=Raw).
-    /// Maps to `TextureFormat` repr(u8) values.
-    pub format: u8,
+    pub format: TextureFormat,
     pub width: u32,
     pub height: u32,
-    /// Compressed image bytes (PNG/JPEG) or raw RGBA data
+    /// Compressed image bytes (PNG/JPEG) or raw RGBA data, depending on `format`
     pub data: Vec<u8>,
 }
 
 impl SerializedTexture {
-    /// Get the texture format from the serialized u8 discriminant.
-    pub fn texture_format(&self) -> TextureFormat {
-        match self.format {
-            0 => TextureFormat::Png,
-            1 => TextureFormat::Jpeg,
-            _ => TextureFormat::Raw,
+    /// Creates a SerializedTexture from a Texture.
+    ///
+    /// Uses original compressed bytes when available (from glTF embedded images or file paths),
+    /// avoiding expensive re-encoding. Falls back to `fallback_format` encoding otherwise.
+    pub fn from_texture(
+        texture: &Texture,
+        id: u32,
+        fallback_format: TextureFormat,
+        compression: CompressionLevel,
+    ) -> Result<Self, FormatError> {
+        // Priority 1: Use preserved original bytes (from glTF embedded images)
+        if let Some((data, format)) = Self::from_original_bytes(texture) {
+            let (width, height) = Self::texture_dimensions(texture)?;
+            return Ok(Self { id, format, width, height, data });
+        }
+
+        // Priority 2: Read original file bytes if texture has a source path
+        if let Some((data, format)) = Self::from_source_path(texture) {
+            let (width, height) = Self::texture_dimensions(texture)?;
+            return Ok(Self { id, format, width, height, data });
+        }
+
+        // Priority 3: Fall back to encoding with the configured format
+        let image = texture.get_image()
+            .map_err(|e| FormatError::TextureError(e.to_string()))?;
+        let (width, height) = image.dimensions();
+        let (format, data) = Self::encode_image(&image, fallback_format, compression)?;
+
+        Ok(Self { id, format, width, height, data })
+    }
+
+    fn texture_dimensions(texture: &Texture) -> Result<(u32, u32), FormatError> {
+        let image = texture.get_image()
+            .map_err(|e| FormatError::TextureError(e.to_string()))?;
+        Ok(image.dimensions())
+    }
+
+    fn from_original_bytes(texture: &Texture) -> Option<(Vec<u8>, TextureFormat)> {
+        texture.original_bytes().map(|(bytes, format)| (bytes.to_vec(), format))
+    }
+
+    fn from_source_path(texture: &Texture) -> Option<(Vec<u8>, TextureFormat)> {
+        let path = texture.source_path()?;
+        let bytes = std::fs::read(path).ok()?;
+        let format = Self::detect_format(&bytes)?;
+        Some((bytes, format))
+    }
+
+    fn encode_image(
+        image: &image::DynamicImage,
+        fallback_format: TextureFormat,
+        compression: CompressionLevel,
+    ) -> Result<(TextureFormat, Vec<u8>), FormatError> {
+        use image::ImageEncoder;
+
+        match fallback_format {
+            TextureFormat::Jpeg => {
+                use image::codecs::jpeg::JpegEncoder;
+
+                let rgb = image.to_rgb8();
+                let (w, h) = image.dimensions();
+                let mut buf = Vec::new();
+                JpegEncoder::new_with_quality(&mut buf, compression.jpeg_quality())
+                    .write_image(&rgb, w, h, image::ColorType::Rgb8)
+                    .map_err(|e| FormatError::TextureError(e.to_string()))?;
+                Ok((TextureFormat::Jpeg, buf))
+            }
+            _ => {
+                use image::codecs::png::PngEncoder;
+
+                let rgba = image.to_rgba8();
+                let (w, h) = image.dimensions();
+                let mut buf = Vec::new();
+                PngEncoder::new_with_quality(
+                    &mut buf,
+                    compression.png_compression(),
+                    FilterType::Adaptive,
+                )
+                .write_image(&rgba, w, h, image::ColorType::Rgba8)
+                .map_err(|e| FormatError::TextureError(e.to_string()))?;
+                Ok((TextureFormat::Png, buf))
+            }
         }
     }
-}
 
-/// Serializable light.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SerializedLight {
-    /// 0 = Point, 1 = Directional, 2 = Spot
-    pub light_type: u8,
-    pub position: [f32; 3],
-    pub direction: [f32; 3],
-    pub color: [f32; 4],
-    pub intensity: f32,
-    pub range: f32,
-    pub inner_cone_angle: f32,
-    pub outer_cone_angle: f32,
-    #[serde(default)]
-    pub space: CoordinateSpace,
-}
+    /// Detect image format from magic bytes.
+    fn detect_format(bytes: &[u8]) -> Option<TextureFormat> {
+        image::guess_format(bytes)
+            .ok()
+            .and_then(|f| TextureFormat::try_from(f).ok())
+    }
 
-/// Serializable annotation metadata.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SerializedAnnotationMeta {
-    pub id: u32,
-    pub name: Option<String>,
-    pub visible: bool,
-}
+    /// Converts to a Texture.
+    pub fn to_texture(&self) -> Result<Texture, FormatError> {
+        use image::DynamicImage;
 
-/// Serializable annotation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum SerializedAnnotation {
-    Line {
-        meta: SerializedAnnotationMeta,
-        start: [f32; 3],
-        end: [f32; 3],
-        color: [f32; 4],
-    },
-    Polyline {
-        meta: SerializedAnnotationMeta,
-        points: Vec<[f32; 3]>,
-        color: [f32; 4],
-        closed: bool,
-    },
-    Points {
-        meta: SerializedAnnotationMeta,
-        positions: Vec<[f32; 3]>,
-        color: [f32; 4],
-    },
-    Axes {
-        meta: SerializedAnnotationMeta,
-        origin: [f32; 3],
-        size: f32,
-    },
-    Box {
-        meta: SerializedAnnotationMeta,
-        center: [f32; 3],
-        size: [f32; 3],
-        color: [f32; 4],
-    },
-    Grid {
-        meta: SerializedAnnotationMeta,
-        center: [f32; 3],
-        size: f32,
-        divisions: u32,
-        color: [f32; 4],
-    },
+        let image = match self.format {
+            TextureFormat::Png | TextureFormat::Jpeg => {
+                image::load_from_memory(&self.data)
+                    .map_err(|e| FormatError::TextureError(e.to_string()))?
+            }
+            TextureFormat::Raw => {
+                // Raw RGBA8 data
+                let rgba = image::RgbaImage::from_raw(self.width, self.height, self.data.clone())
+                    .ok_or_else(|| FormatError::TextureError("Invalid raw image data".to_string()))?;
+                DynamicImage::ImageRgba8(rgba)
+            }
+        };
+
+        let mut texture = Texture::from_image(image);
+        texture.id = self.id;
+        Ok(texture)
+    }
 }
 
 /// Serializable environment map with embedded HDR data.
@@ -513,711 +479,58 @@ pub struct SerializedEnvironmentMap {
 }
 
 // ============================================================================
-// ID Remapping
+// Annotation Content Filter
 // ============================================================================
 
-/// Maps original runtime IDs to compact sequential IDs for serialization.
-#[derive(Debug, Default)]
-pub struct IdRemapper {
-    pub nodes: HashMap<NodeId, u32>,
-    pub instances: HashMap<InstanceId, u32>,
-    pub meshes: HashMap<MeshId, u32>,
-    pub materials: HashMap<MaterialId, u32>,
-    pub textures: HashMap<TextureId, u32>,
-    pub environment_maps: HashMap<EnvironmentMapId, u32>,
-    pub annotations: HashMap<AnnotationId, u32>,
+/// Collects IDs of annotation-created content to exclude from serialization.
+struct AnnotationContentFilter {
+    nodes: HashSet<NodeId>,
+    instances: HashSet<InstanceId>,
+    meshes: HashSet<MeshId>,
+    materials: HashSet<MaterialId>,
 }
 
-impl IdRemapper {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Build ID mappings from a scene, assigning sequential IDs starting from 0.
-    ///
-    /// Nodes, instances, meshes, and materials created by annotation reification
-    /// are excluded from the mapping. Annotations are serialized separately and
-    /// their geometry will be re-reified when the scene is loaded.
-    pub fn from_scene(scene: &Scene) -> Self {
-        use std::collections::HashSet;
-
-        let mut remapper = Self::new();
+impl AnnotationContentFilter {
+    /// Build the filter from a scene by collecting all annotation-created content.
+    fn from_scene(scene: &Scene) -> Self {
+        let mut filter = Self {
+            nodes: HashSet::new(),
+            instances: HashSet::new(),
+            meshes: HashSet::new(),
+            materials: HashSet::new(),
+        };
 
         // Collect all annotation-created node IDs (recursively includes children)
-        let mut annotation_node_ids: HashSet<NodeId> = HashSet::new();
         if let Some(root_id) = scene.annotations.root_node() {
-            Self::collect_subtree_nodes(scene, root_id, &mut annotation_node_ids);
+            collect_subtree_nodes(scene, root_id, &mut filter.nodes);
         }
 
         // Collect instance IDs from annotation nodes
-        let annotation_instance_ids: HashSet<InstanceId> = annotation_node_ids
+        filter.instances = filter.nodes
             .iter()
             .filter_map(|&node_id| scene.get_node(node_id))
             .filter_map(|node| node.instance())
             .collect();
 
         // Collect mesh and material IDs from annotation instances
-        let mut annotation_mesh_ids: HashSet<MeshId> = HashSet::new();
-        let mut annotation_material_ids: HashSet<MaterialId> = HashSet::new();
-        for &instance_id in &annotation_instance_ids {
+        for &instance_id in &filter.instances {
             if let Some(instance) = scene.get_instance(instance_id) {
-                annotation_mesh_ids.insert(instance.mesh());
-                annotation_material_ids.insert(instance.material());
+                filter.meshes.insert(instance.mesh());
+                filter.materials.insert(instance.material());
             }
         }
 
-        // Remap nodes (excluding annotation nodes)
-        let mut node_idx = 0u32;
-        for node in scene.nodes() {
-            if !annotation_node_ids.contains(&node.id) {
-                remapper.nodes.insert(node.id, node_idx);
-                node_idx += 1;
-            }
-        }
-
-        // Remap instances (excluding annotation instances)
-        let mut inst_idx = 0u32;
-        for inst in scene.instances() {
-            if !annotation_instance_ids.contains(&inst.id) {
-                remapper.instances.insert(inst.id, inst_idx);
-                inst_idx += 1;
-            }
-        }
-
-        // Remap meshes (excluding annotation meshes)
-        let mut mesh_idx = 0u32;
-        for mesh in scene.meshes() {
-            if !annotation_mesh_ids.contains(&mesh.id) {
-                remapper.meshes.insert(mesh.id, mesh_idx);
-                mesh_idx += 1;
-            }
-        }
-
-        // Remap materials (exclude annotation materials)
-        // The default material gets a sentinel file ID (u32::MAX) so instances
-        // can reference it, but its data is not serialized (Scene::new() recreates it).
-        // User materials get sequential file IDs starting from 0.
-        remapper.materials.insert(DEFAULT_MATERIAL_ID, u32::MAX);
-        let mut mat_idx = 0u32;
-        for mat in scene.materials() {
-            if mat.id == DEFAULT_MATERIAL_ID || annotation_material_ids.contains(&mat.id) {
-                continue;
-            }
-            remapper.materials.insert(mat.id, mat_idx);
-            mat_idx += 1;
-        }
-
-        // Remap textures
-        for (idx, tex) in scene.textures().enumerate() {
-            remapper.textures.insert(tex.id, idx as u32);
-        }
-
-        // Remap environment maps
-        for (idx, em) in scene.environment_maps().enumerate() {
-            remapper.environment_maps.insert(em.id, idx as u32);
-        }
-
-        // Remap annotations
-        for (idx, annotation) in scene.annotations.iter().enumerate() {
-            remapper.annotations.insert(annotation.id(), idx as u32);
-        }
-
-        remapper
-    }
-
-    /// Recursively collects all node IDs in a subtree.
-    fn collect_subtree_nodes(scene: &Scene, node_id: NodeId, collected: &mut std::collections::HashSet<NodeId>) {
-        collected.insert(node_id);
-        if let Some(node) = scene.get_node(node_id) {
-            for &child_id in node.children() {
-                Self::collect_subtree_nodes(scene, child_id, collected);
-            }
-        }
-    }
-
-    pub fn remap_node(&self, id: NodeId) -> Option<u32> {
-        self.nodes.get(&id).copied()
-    }
-
-    pub fn remap_instance(&self, id: InstanceId) -> Option<u32> {
-        self.instances.get(&id).copied()
-    }
-
-    pub fn remap_mesh(&self, id: MeshId) -> Option<u32> {
-        self.meshes.get(&id).copied()
-    }
-
-    pub fn remap_material(&self, id: MaterialId) -> Option<u32> {
-        self.materials.get(&id).copied()
-    }
-
-    pub fn remap_texture(&self, id: TextureId) -> Option<u32> {
-        self.textures.get(&id).copied()
-    }
-
-    pub fn remap_environment_map(&self, id: EnvironmentMapId) -> Option<u32> {
-        self.environment_maps.get(&id).copied()
+        filter
     }
 }
 
-// ============================================================================
-// Conversion: Scene -> Serialized
-// ============================================================================
-
-impl SerializedNode {
-    pub fn from_node(node: &Node, remapper: &IdRemapper) -> Option<Self> {
-        let id = remapper.remap_node(node.id)?;
-
-        let position = node.position();
-        let rotation = node.rotation();
-        let scale = node.scale();
-
-        // cgmath Quaternion: s is scalar (w), v is Vector3 (x, y, z)
-        Some(Self {
-            id,
-            name: node.name.clone(),
-            position: [position.x, position.y, position.z],
-            rotation: [rotation.v.x, rotation.v.y, rotation.v.z, rotation.s],
-            scale: [scale.x, scale.y, scale.z],
-            parent_id: node.parent().and_then(|pid| remapper.remap_node(pid)),
-            children_ids: node
-                .children()
-                .iter()
-                .filter_map(|&cid| remapper.remap_node(cid))
-                .collect(),
-            instance_id: node.instance().and_then(|iid| remapper.remap_instance(iid)),
-            visible: node.visibility() == Visibility::Visible,
-        })
-    }
-}
-
-impl SerializedInstance {
-    pub fn from_instance(instance: &Instance, remapper: &IdRemapper) -> Option<Self> {
-        Some(Self {
-            id: remapper.remap_instance(instance.id)?,
-            mesh_id: remapper.remap_mesh(instance.mesh())?,
-            material_id: remapper.remap_material(instance.material())?,
-        })
-    }
-}
-
-impl SerializedPrimitive {
-    pub fn from_primitive(primitive: &MeshPrimitive) -> Self {
-        let primitive_type = match primitive.primitive_type {
-            PrimitiveType::TriangleList => 0,
-            PrimitiveType::LineList => 1,
-            PrimitiveType::PointList => 2,
-        };
-
-        Self {
-            primitive_type,
-            indices: primitive.indices.clone(),
+/// Recursively collects all node IDs in a subtree.
+fn collect_subtree_nodes(scene: &Scene, node_id: NodeId, collected: &mut HashSet<NodeId>) {
+    collected.insert(node_id);
+    if let Some(node) = scene.get_node(node_id) {
+        for &child_id in node.children() {
+            collect_subtree_nodes(scene, child_id, collected);
         }
-    }
-
-    pub fn to_primitive(&self) -> MeshPrimitive {
-        let primitive_type = match self.primitive_type {
-            0 => PrimitiveType::TriangleList,
-            1 => PrimitiveType::LineList,
-            _ => PrimitiveType::PointList,
-        };
-
-        MeshPrimitive {
-            primitive_type,
-            indices: self.indices.clone(),
-        }
-    }
-
-    pub fn size(&self) -> usize {
-        self.indices.len() * size_of::<u16>()
-    }
-}
-
-impl SerializedMesh {
-    pub fn from_mesh(mesh: &Mesh, remapper: &IdRemapper) -> Option<Self> {
-        let id = remapper.remap_mesh(mesh.id)?;
-
-        // Convert vertices to raw bytes
-        let vertices_bytes: Vec<u8> = bytemuck::cast_slice(mesh.vertices()).to_vec();
-
-        let primitives = mesh
-            .primitives()
-            .iter()
-            .map(SerializedPrimitive::from_primitive)
-            .collect();
-
-        Some(Self {
-            id,
-            vertices: vertices_bytes,
-            primitives,
-        })
-    }
-
-    pub fn to_mesh(&self) -> Mesh {
-        // Convert raw bytes back to vertices
-        let vertices: Vec<Vertex> = bytemuck::cast_slice(&self.vertices).to_vec();
-
-        let primitives: Vec<MeshPrimitive> = self
-            .primitives
-            .iter()
-            .map(SerializedPrimitive::to_primitive)
-            .collect();
-
-        let mut mesh = Mesh::from_raw(vertices, primitives);
-        mesh.id = self.id;
-        mesh
-    }
-
-    pub fn size(&self) -> usize {
-        let vertices_size = self.vertices.len();
-        let primitives_size = self.primitives.iter().map(|primitive| {
-            primitive.size()
-        }).sum::<usize>();
-        vertices_size + primitives_size
-    }
-}
-
-impl SerializedMaterial {
-    pub fn from_material(material: &Material, remapper: &IdRemapper) -> Option<Self> {
-        let id = remapper.remap_material(material.id)?;
-
-        let base_color = material.base_color_factor();
-        let line_color = material.line_color();
-        let point_color = material.point_color();
-
-        Some(Self {
-            id,
-            base_color_texture_id: material
-                .base_color_texture()
-                .and_then(|tid| remapper.remap_texture(tid)),
-            normal_texture_id: material
-                .normal_texture()
-                .and_then(|tid| remapper.remap_texture(tid)),
-            metallic_roughness_texture_id: material
-                .metallic_roughness_texture()
-                .and_then(|tid| remapper.remap_texture(tid)),
-            base_color_factor: [base_color.r, base_color.g, base_color.b, base_color.a],
-            metallic_factor: material.metallic_factor(),
-            roughness_factor: material.roughness_factor(),
-            normal_scale: material.normal_scale(),
-            line_color: line_color.map(|c| [c.r, c.g, c.b, c.a]),
-            point_color: point_color.map(|c| [c.r, c.g, c.b, c.a]),
-            flags: material.flags().bits(),
-            alpha_mode: material.alpha_mode(),
-            alpha_cutoff: material.alpha_cutoff(),
-        })
-    }
-
-    pub fn to_material(&self) -> Material {
-        let mut material = Material::new()
-            .with_base_color_factor(RgbaColor {
-                r: self.base_color_factor[0],
-                g: self.base_color_factor[1],
-                b: self.base_color_factor[2],
-                a: self.base_color_factor[3],
-            })
-            .with_metallic_factor(self.metallic_factor)
-            .with_roughness_factor(self.roughness_factor)
-            .with_normal_scale(self.normal_scale)
-            .with_flags(MaterialFlags::from_bits_truncate(self.flags))
-            .with_alpha_mode(self.alpha_mode)
-            .with_alpha_cutoff(self.alpha_cutoff);
-
-        // Note: Texture IDs will be patched up after textures are loaded
-        // using the file's IDs directly (they're already sequential)
-
-        if let Some(color) = self.line_color {
-            material = material.with_line_color(RgbaColor {
-                r: color[0],
-                g: color[1],
-                b: color[2],
-                a: color[3],
-            });
-        }
-
-        if let Some(color) = self.point_color {
-            material = material.with_point_color(RgbaColor {
-                r: color[0],
-                g: color[1],
-                b: color[2],
-                a: color[3],
-            });
-        }
-
-        material.id = self.id;
-        material
-    }
-}
-
-impl SerializedLight {
-    pub fn from_light(light: &Light) -> Self {
-        match light {
-            Light::Point {
-                position,
-                color,
-                intensity,
-                range,
-                space,
-            } => Self {
-                light_type: 0,
-                position: [position.x, position.y, position.z],
-                direction: [0.0, 0.0, 0.0],
-                color: [color.r, color.g, color.b, color.a],
-                intensity: *intensity,
-                range: *range,
-                inner_cone_angle: 0.0,
-                outer_cone_angle: 0.0,
-                space: *space,
-            },
-            Light::Directional {
-                direction,
-                color,
-                intensity,
-                space,
-            } => Self {
-                light_type: 1,
-                position: [0.0, 0.0, 0.0],
-                direction: [direction.x, direction.y, direction.z],
-                color: [color.r, color.g, color.b, color.a],
-                intensity: *intensity,
-                range: 0.0,
-                inner_cone_angle: 0.0,
-                outer_cone_angle: 0.0,
-                space: *space,
-            },
-            Light::Spot {
-                position,
-                direction,
-                color,
-                intensity,
-                range,
-                inner_cone_angle,
-                outer_cone_angle,
-                space,
-            } => Self {
-                light_type: 2,
-                position: [position.x, position.y, position.z],
-                direction: [direction.x, direction.y, direction.z],
-                color: [color.r, color.g, color.b, color.a],
-                intensity: *intensity,
-                range: *range,
-                inner_cone_angle: *inner_cone_angle,
-                outer_cone_angle: *outer_cone_angle,
-                space: *space,
-            },
-        }
-    }
-
-    pub fn to_light(&self) -> Light {
-        use cgmath::Vector3;
-
-        let color = RgbaColor {
-            r: self.color[0],
-            g: self.color[1],
-            b: self.color[2],
-            a: self.color[3],
-        };
-
-        match self.light_type {
-            0 => Light::Point {
-                position: Vector3::new(self.position[0], self.position[1], self.position[2]),
-                color,
-                intensity: self.intensity,
-                range: self.range,
-                space: self.space,
-            },
-            1 => Light::Directional {
-                direction: Vector3::new(self.direction[0], self.direction[1], self.direction[2]),
-                color,
-                intensity: self.intensity,
-                space: self.space,
-            },
-            _ => Light::Spot {
-                position: Vector3::new(self.position[0], self.position[1], self.position[2]),
-                direction: Vector3::new(self.direction[0], self.direction[1], self.direction[2]),
-                color,
-                intensity: self.intensity,
-                range: self.range,
-                inner_cone_angle: self.inner_cone_angle,
-                outer_cone_angle: self.outer_cone_angle,
-                space: self.space,
-            },
-        }
-    }
-}
-
-impl SerializedAnnotation {
-    pub fn from_annotation(annotation: &Annotation, remapper: &IdRemapper) -> Option<Self> {
-        let make_meta = |meta: &AnnotationMeta| -> Option<SerializedAnnotationMeta> {
-            Some(SerializedAnnotationMeta {
-                id: *remapper.annotations.get(&meta.id)?,
-                name: meta.name.clone(),
-                visible: meta.visible,
-            })
-        };
-
-        match annotation {
-            Annotation::Line(a) => Some(SerializedAnnotation::Line {
-                meta: make_meta(&a.meta)?,
-                start: point3_to_array(a.start),
-                end: point3_to_array(a.end),
-                color: rgba_to_array(a.color),
-            }),
-            Annotation::Polyline(a) => Some(SerializedAnnotation::Polyline {
-                meta: make_meta(&a.meta)?,
-                points: a.points.iter().map(|p| point3_to_array(*p)).collect(),
-                color: rgba_to_array(a.color),
-                closed: a.closed,
-            }),
-            Annotation::Points(a) => Some(SerializedAnnotation::Points {
-                meta: make_meta(&a.meta)?,
-                positions: a.positions.iter().map(|p| point3_to_array(*p)).collect(),
-                color: rgba_to_array(a.color),
-            }),
-            Annotation::Axes(a) => Some(SerializedAnnotation::Axes {
-                meta: make_meta(&a.meta)?,
-                origin: point3_to_array(a.origin),
-                size: a.size,
-            }),
-            Annotation::Box(a) => Some(SerializedAnnotation::Box {
-                meta: make_meta(&a.meta)?,
-                center: point3_to_array(a.center),
-                size: vec3_to_array(a.size),
-                color: rgba_to_array(a.color),
-            }),
-            Annotation::Grid(a) => Some(SerializedAnnotation::Grid {
-                meta: make_meta(&a.meta)?,
-                center: point3_to_array(a.center),
-                size: a.size,
-                divisions: a.divisions,
-                color: rgba_to_array(a.color),
-            }),
-            // Reference-based annotations are not serialized — they reference
-            // live scene objects by index/ID that aren't valid after deserialization.
-            Annotation::PointLight(_) | Annotation::SpotLight(_) | Annotation::Normals(_) => None,
-        }
-    }
-
-    pub fn to_annotation(&self) -> Annotation {
-        match self {
-            SerializedAnnotation::Line { meta, start, end, color } => {
-                Annotation::Line(LineAnnotation {
-                    meta: AnnotationMeta {
-                        id: meta.id,
-                        name: meta.name.clone(),
-                        visible: meta.visible,
-                        node_id: None,
-                    },
-                    start: array_to_point3(*start),
-                    end: array_to_point3(*end),
-                    color: array_to_rgba(*color),
-                })
-            }
-            SerializedAnnotation::Polyline { meta, points, color, closed } => {
-                Annotation::Polyline(PolylineAnnotation {
-                    meta: AnnotationMeta {
-                        id: meta.id,
-                        name: meta.name.clone(),
-                        visible: meta.visible,
-                        node_id: None,
-                    },
-                    points: points.iter().map(|p| array_to_point3(*p)).collect(),
-                    color: array_to_rgba(*color),
-                    closed: *closed,
-                })
-            }
-            SerializedAnnotation::Points { meta, positions, color } => {
-                Annotation::Points(PointsAnnotation {
-                    meta: AnnotationMeta {
-                        id: meta.id,
-                        name: meta.name.clone(),
-                        visible: meta.visible,
-                        node_id: None,
-                    },
-                    positions: positions.iter().map(|p| array_to_point3(*p)).collect(),
-                    color: array_to_rgba(*color),
-                })
-            }
-            SerializedAnnotation::Axes { meta, origin, size } => {
-                Annotation::Axes(AxesAnnotation {
-                    meta: AnnotationMeta {
-                        id: meta.id,
-                        name: meta.name.clone(),
-                        visible: meta.visible,
-                        node_id: None,
-                    },
-                    origin: array_to_point3(*origin),
-                    size: *size,
-                })
-            }
-            SerializedAnnotation::Box { meta, center, size, color } => {
-                Annotation::Box(BoxAnnotation {
-                    meta: AnnotationMeta {
-                        id: meta.id,
-                        name: meta.name.clone(),
-                        visible: meta.visible,
-                        node_id: None,
-                    },
-                    center: array_to_point3(*center),
-                    size: array_to_vec3(*size),
-                    color: array_to_rgba(*color),
-                })
-            }
-            SerializedAnnotation::Grid { meta, center, size, divisions, color } => {
-                Annotation::Grid(GridAnnotation {
-                    meta: AnnotationMeta {
-                        id: meta.id,
-                        name: meta.name.clone(),
-                        visible: meta.visible,
-                        node_id: None,
-                    },
-                    center: array_to_point3(*center),
-                    size: *size,
-                    divisions: *divisions,
-                    color: array_to_rgba(*color),
-                })
-            }
-        }
-    }
-}
-
-impl SerializedTexture {
-    /// Creates a SerializedTexture from a Texture.
-    ///
-    /// Uses original compressed bytes when available (from glTF embedded images or file paths),
-    /// avoiding expensive re-encoding. Falls back to `fallback_format` encoding otherwise.
-    pub fn from_texture(
-        texture: &Texture,
-        remapper: &IdRemapper,
-        fallback_format: TextureFormat,
-        compression: CompressionLevel,
-    ) -> Result<Option<Self>, FormatError> {
-        let Some(id) = remapper.remap_texture(texture.id()) else {
-            return Ok(None);
-        };
-
-        // Priority 1: Use preserved original bytes (from glTF embedded images)
-        // Extract and clone data first to release the immutable borrow
-        let original = texture.original_bytes().map(|(bytes, format)| (bytes.to_vec(), format));
-        if let Some((data, format)) = original {
-            let image = texture.get_image()
-                .map_err(|e| FormatError::TextureError(e.to_string()))?;
-            let dimensions = image.dimensions();
-
-            return Ok(Some(Self {
-                id,
-                format: format as u8,
-                width: dimensions.0,
-                height: dimensions.1,
-                data,
-            }));
-        }
-
-        // Priority 2: Read original file bytes if texture has a source path
-        if let Some(path) = texture.source_path() {
-            if let Ok(bytes) = std::fs::read(path) {
-                // Detect format from magic bytes
-                let format = Self::detect_format(&bytes);
-                if let Some(format) = format {
-                    // Get dimensions from the loaded image (or load it)
-                    let image = texture.get_image()
-                        .map_err(|e| FormatError::TextureError(e.to_string()))?;
-                    let dimensions = image.dimensions();
-
-                    return Ok(Some(Self {
-                        id,
-                        format: format as u8,
-                        width: dimensions.0,
-                        height: dimensions.1,
-                        data: bytes,
-                    }));
-                }
-            }
-        }
-
-        // Priority 3: Fall back to encoding with the configured format
-        let image = texture.get_image()
-            .map_err(|e| FormatError::TextureError(e.to_string()))?;
-        let dimensions = image.dimensions();
-
-        let (format, data) = match fallback_format {
-            TextureFormat::Jpeg => {
-                use image::codecs::jpeg::JpegEncoder;
-                use image::ImageEncoder;
-
-                let rgb = image.to_rgb8();
-                let mut buf = Vec::new();
-                JpegEncoder::new_with_quality(&mut buf, compression.jpeg_quality())
-                    .write_image(
-                        &rgb,
-                        dimensions.0,
-                        dimensions.1,
-                        image::ColorType::Rgb8,
-                    )
-                    .map_err(|e| FormatError::TextureError(e.to_string()))?;
-                (TextureFormat::Jpeg as u8, buf)
-            }
-            _ => {
-                use image::codecs::png::PngEncoder;
-                use image::ImageEncoder;
-
-                let rgba = image.to_rgba8();
-                let mut buf = Vec::new();
-                PngEncoder::new_with_quality(
-                    &mut buf,
-                    compression.png_compression(),
-                    FilterType::Adaptive,
-                )
-                .write_image(
-                    &rgba,
-                    dimensions.0,
-                    dimensions.1,
-                    image::ColorType::Rgba8,
-                )
-                .map_err(|e| FormatError::TextureError(e.to_string()))?;
-                (TextureFormat::Png as u8, buf)
-            }
-        };
-
-        Ok(Some(Self {
-            id,
-            format,
-            width: dimensions.0,
-            height: dimensions.1,
-            data,
-        }))
-    }
-
-    /// Detect image format from magic bytes.
-    fn detect_format(bytes: &[u8]) -> Option<TextureFormat> {
-        match image::guess_format(bytes) {
-            Ok(image::ImageFormat::Png) => Some(TextureFormat::Png),
-            Ok(image::ImageFormat::Jpeg) => Some(TextureFormat::Jpeg),
-            _ => None,
-        }
-    }
-
-    /// Converts to a Texture.
-    pub fn to_texture(&self) -> Result<Texture, FormatError> {
-        use image::DynamicImage;
-
-        let format = self.texture_format();
-        let image = match format {
-            TextureFormat::Png | TextureFormat::Jpeg => {
-                image::load_from_memory(&self.data)
-                    .map_err(|e| FormatError::TextureError(e.to_string()))?
-            }
-            TextureFormat::Raw => {
-                // Raw RGBA8 data
-                let rgba = image::RgbaImage::from_raw(self.width, self.height, self.data.clone())
-                    .ok_or_else(|| FormatError::TextureError("Invalid raw image data".to_string()))?;
-                DynamicImage::ImageRgba8(rgba)
-            }
-        };
-
-        let mut texture = Texture::from_image(image);
-        texture.id = self.id;
-        Ok(texture)
     }
 }
 
@@ -1260,6 +573,26 @@ pub fn serialize_section<T: Serialize>(data: &T) -> Result<(Vec<u8>, usize), For
     serialize_section_with_level(data, 3)
 }
 
+/// Serialize, compress, and append a section to the output buffer, adding a TOC entry.
+fn write_section<T: Serialize>(
+    data: &T,
+    section_type: SectionType,
+    compression_level: i32,
+    output: &mut Vec<u8>,
+    toc: &mut TableOfContents,
+) -> Result<(), FormatError> {
+    let offset = output.len() as u64;
+    let (compressed, uncompressed_size) = serialize_section_with_level(data, compression_level)?;
+    toc.add_entry(TocEntry {
+        section_type,
+        offset,
+        compressed_size: compressed.len() as u64,
+        uncompressed_size: uncompressed_size as u64,
+    });
+    output.extend(compressed);
+    Ok(())
+}
+
 /// Decompress and deserialize a section.
 pub fn deserialize_section<T: for<'de> Deserialize<'de>>(compressed: &[u8]) -> Result<T, FormatError> {
     let uncompressed = decompress(compressed)?;
@@ -1277,16 +610,15 @@ pub fn deserialize_section<T: for<'de> Deserialize<'de>>(compressed: &[u8]) -> R
 pub struct WgscSections {
     pub metadata: SerializedMetadata,
     pub textures: Vec<SerializedTexture>,
-    pub materials: Vec<SerializedMaterial>,
-    pub meshes: Vec<SerializedMesh>,
-    pub instances: Vec<SerializedInstance>,
-    pub nodes: Vec<SerializedNode>,
-    pub lights: Vec<SerializedLight>,
-    pub annotations: Vec<SerializedAnnotation>,
+    pub materials: Vec<Material>,
+    pub meshes: Vec<Mesh>,
+    pub instances: Vec<Instance>,
+    pub nodes: Vec<Node>,
+    pub lights: Vec<Light>,
     pub environment_maps: Vec<SerializedEnvironmentMap>,
 }
 
-/// Phase 1: Parse WGSC header, TOC, and decompress/deserialize all sections.
+/// Parse WGSC header, TOC, and decompress/deserialize all sections.
 ///
 /// This is relatively fast (decompression + bincode deserialization).
 /// The heavy texture image decoding happens in [`decode_wgsc_textures`].
@@ -1310,18 +642,16 @@ pub fn parse_wgsc(bytes: &[u8]) -> Result<WgscSections, FormatError> {
         deserialize_section(read_section(SectionType::Metadata)?)?;
     let textures: Vec<SerializedTexture> =
         deserialize_section(read_section(SectionType::Textures)?)?;
-    let materials: Vec<SerializedMaterial> =
+    let materials: Vec<Material> =
         deserialize_section(read_section(SectionType::Materials)?)?;
-    let meshes: Vec<SerializedMesh> =
+    let meshes: Vec<Mesh> =
         deserialize_section(read_section(SectionType::Meshes)?)?;
-    let instances: Vec<SerializedInstance> =
+    let instances: Vec<Instance> =
         deserialize_section(read_section(SectionType::Instances)?)?;
-    let nodes: Vec<SerializedNode> =
+    let nodes: Vec<Node> =
         deserialize_section(read_section(SectionType::Nodes)?)?;
-    let lights: Vec<SerializedLight> =
+    let lights: Vec<Light> =
         deserialize_section(read_section(SectionType::Lights)?)?;
-    let annotations: Vec<SerializedAnnotation> =
-        deserialize_section(read_section(SectionType::Annotations)?)?;
     let environment_maps: Vec<SerializedEnvironmentMap> =
         if let Some(entry) = toc.find(SectionType::EnvironmentMaps) {
             let start = entry.offset as usize;
@@ -1339,7 +669,6 @@ pub fn parse_wgsc(bytes: &[u8]) -> Result<WgscSections, FormatError> {
         instances,
         nodes,
         lights,
-        annotations,
         environment_maps,
     })
 }
@@ -1350,7 +679,7 @@ pub struct DecodedTexture {
     pub texture: Texture,
 }
 
-/// Phase 2: Decode serialized textures into images.
+/// Decode serialized textures into images.
 ///
 /// On native this uses rayon for parallelism. On WASM it decodes sequentially.
 /// This is typically the most expensive phase of loading.
@@ -1390,181 +719,46 @@ pub fn decode_wgsc_texture(
         .map(|tex| DecodedTexture { file_id: serialized.id, texture: tex })
 }
 
-/// Phase 3: Assemble a [`Scene`] from parsed sections and decoded textures.
-///
-/// This is fast — it's just inserting data into hashmaps and linking nodes.
+/// Assemble a [`Scene`] from parsed sections and decoded textures.
 pub fn assemble_wgsc_scene(
     sections: WgscSections,
     decoded_textures: Vec<DecodedTexture>,
 ) -> Result<Scene, FormatError> {
-    use cgmath::{Point3, Quaternion, Vector3};
-    use wgpu_engine_scene::common::Transform;
-
     let mut scene = Scene::new();
 
-    // Add textures
-    let mut texture_id_map: HashMap<u32, TextureId> = HashMap::new();
     for dt in decoded_textures {
-        let scene_id = scene.add_texture(dt.texture);
-        texture_id_map.insert(dt.file_id, scene_id);
+        let mut texture = dt.texture;
+        texture.id = dt.file_id;
+        scene.insert_texture_unchecked(texture);
     }
 
-    // Add meshes
-    let mut mesh_id_map: HashMap<u32, MeshId> = HashMap::new();
-    for sm in sections.meshes {
-        let file_id = sm.id;
-        let mesh = sm.to_mesh();
-        let scene_id = scene.add_mesh(mesh);
-        mesh_id_map.insert(file_id, scene_id);
+    for mesh in sections.meshes {
+        scene.insert_mesh_unchecked(mesh);
     }
 
-    // Add materials (with texture ID remapping)
-    let mut material_id_map: HashMap<u32, MaterialId> = HashMap::new();
-    for sm in sections.materials {
-        let file_id = sm.id;
-        let mut material = sm.to_material();
-
-        if let Some(tex_id) = sm.base_color_texture_id {
-            if let Some(&scene_tex_id) = texture_id_map.get(&tex_id) {
-                material = material.with_base_color_texture(scene_tex_id);
-            }
-        }
-        if let Some(tex_id) = sm.normal_texture_id {
-            if let Some(&scene_tex_id) = texture_id_map.get(&tex_id) {
-                material = material.with_normal_texture(scene_tex_id);
-            }
-        }
-        if let Some(tex_id) = sm.metallic_roughness_texture_id {
-            if let Some(&scene_tex_id) = texture_id_map.get(&tex_id) {
-                material = material.with_metallic_roughness_texture(scene_tex_id);
-            }
-        }
-
-        let scene_id = scene.add_material(material);
-        material_id_map.insert(file_id, scene_id);
+    for material in sections.materials {
+        scene.insert_material_unchecked(material);
     }
 
-    // Map the sentinel file ID (u32::MAX) → DEFAULT_MATERIAL_ID for new files.
-    // For old files that serialized the default material at file ID 0, the loaded
-    // material becomes a regular user material (harmless duplicate of the default).
-    material_id_map.insert(u32::MAX, DEFAULT_MATERIAL_ID);
-
-    // Add instances
-    let mut instance_id_map: HashMap<u32, InstanceId> = HashMap::new();
-    for si in sections.instances {
-        let file_id = si.id;
-        let mesh_id = *mesh_id_map.get(&si.mesh_id).unwrap_or(&0);
-        let material_id = *material_id_map
-            .get(&si.material_id)
-            .unwrap_or(&DEFAULT_MATERIAL_ID);
-        let scene_id = scene.add_instance(mesh_id, material_id);
-        instance_id_map.insert(file_id, scene_id);
+    for instance in sections.instances {
+        scene.insert_instance_unchecked(instance);
     }
 
-    // Topological sort: parents before children so we can use Scene::add_node
-    // with the correct parent, maintaining tree consistency through the public API.
-    let mut sorted_nodes = sections.nodes;
-    {
-        // Pre-compute depth for each node (distance to root in the tree)
-        let parent_map: HashMap<u32, Option<u32>> =
-            sorted_nodes.iter().map(|sn| (sn.id, sn.parent_id)).collect();
-        let mut depth_map: HashMap<u32, u32> = HashMap::new();
-        for sn in &sorted_nodes {
-            let mut depth = 0u32;
-            let mut current = sn.parent_id;
-            while let Some(pid) = current {
-                if !parent_map.contains_key(&pid) {
-                    break;
-                }
-                depth += 1;
-                current = parent_map[&pid];
-            }
-            depth_map.insert(sn.id, depth);
-        }
-        sorted_nodes.sort_by_key(|n| depth_map[&n.id]);
+    for node in sections.nodes {
+        scene.insert_node_unchecked(node);
     }
 
-    // Build node ID map (file ID -> scene ID)
-    let mut node_id_map: HashMap<u32, NodeId> = HashMap::new();
+    scene.set_root_node_order(sections.metadata.root_nodes);
+    scene.set_lights(sections.lights);
 
-    // Create nodes with correct parent relationships in a single pass
-    for sn in &sorted_nodes {
-        let transform = Transform::new(
-            Point3::new(sn.position[0], sn.position[1], sn.position[2]),
-            Quaternion::new(
-                sn.rotation[3], // w (scalar)
-                sn.rotation[0], // x
-                sn.rotation[1], // y
-                sn.rotation[2], // z
-            ),
-            Vector3::new(sn.scale[0], sn.scale[1], sn.scale[2]),
-        );
-
-        let parent = sn
-            .parent_id
-            .and_then(|pid| node_id_map.get(&pid).copied());
-
-        let node_id = scene
-            .add_node(parent, sn.name.clone(), transform)
-            .map_err(|e| FormatError::DeserializationError(e.to_string()))?;
-
-        node_id_map.insert(sn.id, node_id);
-
-        if let Some(inst_file_id) = sn.instance_id {
-            if let Some(&scene_inst_id) = instance_id_map.get(&inst_file_id) {
-                scene
-                    .get_node_mut(node_id)
-                    .unwrap()
-                    .set_instance(Some(scene_inst_id));
-            }
-        }
-
-        if !sn.visible {
-            scene.set_node_visibility(node_id, Visibility::Invisible);
-        }
-    }
-
-    // Reorder root_nodes to match serialized order
-    let serialized_root_order: Vec<NodeId> = sections
-        .metadata
-        .root_nodes
-        .iter()
-        .filter_map(|&file_id| node_id_map.get(&file_id).copied())
-        .collect();
-    scene.set_root_node_order(serialized_root_order);
-
-    // Add lights
-    scene.set_lights(sections
-        .lights
-        .iter()
-        .map(SerializedLight::to_light)
-        .collect());
-
-    // Add annotations
-    for sa in sections.annotations {
-        let annotation = sa.to_annotation();
-        scene
-            .annotations
-            .insert_with_id(annotation)
-            .map_err(|e| FormatError::DeserializationError(e.to_string()))?;
-    }
-
-    // Add environment maps
-    let mut env_map_id_map: HashMap<u32, EnvironmentMapId> = HashMap::new();
     for sem in sections.environment_maps {
-        let scene_id = scene.add_environment_map_from_hdr_data(sem.hdr_data);
-        if let Some(em) = scene.get_environment_map_mut(scene_id) {
-            em.set_intensity(sem.intensity);
-            em.set_rotation(sem.rotation);
-        }
-        env_map_id_map.insert(sem.id, scene_id);
+        let mut em = EnvironmentMap::from_hdr_data(sem.id, sem.hdr_data);
+        em.set_intensity(sem.intensity);
+        em.set_rotation(sem.rotation);
+        scene.insert_environment_map_unchecked(em);
     }
 
-    // Set active environment map
-    scene.set_active_environment_map(sections
-        .metadata
-        .active_environment_map
-        .and_then(|file_id| env_map_id_map.get(&file_id).copied()));
+    scene.set_active_environment_map(sections.metadata.active_environment_map);
 
     Ok(scene)
 }
@@ -1573,6 +767,79 @@ pub fn assemble_wgsc_scene(
 // Scene Serialization
 // ============================================================================
 
+/// Estimates the serialized size in bytes for buffer pre-allocation.
+///
+/// Returns a heuristic upper bound — intentionally overestimates to avoid
+/// reallocations. The actual size after zstd compression will typically be
+/// smaller.
+pub fn estimate_serialized_size(scene: &Scene) -> usize {
+    use std::mem::size_of;
+    use wgpu_engine_scene::{EnvironmentSource, Vertex};
+
+    const GOOD_COMPRESSION_RATIO: f64 = 0.6;
+
+    // Mesh data (vertices + indices), estimate zstd compression at 60%
+    let mesh_raw: usize = scene.meshes()
+        .map(|m| {
+            let vert_bytes = m.vertices().len() * size_of::<Vertex>();
+            let idx_bytes: usize = m.primitives().iter()
+                .map(|p| p.indices.len() * 2)
+                .sum();
+            vert_bytes + idx_bytes
+        })
+        .sum();
+    let mesh_estimate = (mesh_raw as f64 * GOOD_COMPRESSION_RATIO) as usize;
+
+    // Texture data
+    let texture_estimate: usize = scene.textures()
+        .map(|tex| {
+            if let Some((bytes, _)) = tex.original_bytes() {
+                // already compressed as PNG/JPEG, zstd won't shrink further
+                return bytes.len();
+            }
+            if let Some(path) = tex.source_path() {
+                if let Ok(meta) = std::fs::metadata(path) {
+                    return meta.len() as usize;
+                }
+            }
+            // Fallback: estimate from dimensions (RGBA / 2 for rough PNG size)
+            tex.dimensions()
+                .map(|(w, h)| {
+                    let dimensions = w as usize * h as usize;
+                    let uncompressed_size = dimensions * 4;
+                    let compressed_size = uncompressed_size as f64 * GOOD_COMPRESSION_RATIO;
+                    compressed_size as usize
+                })
+                .unwrap_or(0)
+        })
+        .sum();
+
+    // Environment maps (HDR data, poorly compressible)
+    let env_estimate: usize = scene.environment_maps()
+        .map(|em| match em.source() {
+            EnvironmentSource::EquirectangularPath(path) => {
+                std::fs::metadata(path).map(|m| m.len() as usize).unwrap_or(0)
+            }
+            EnvironmentSource::EquirectangularHdr(data) => data.len(),
+        })
+        .sum();
+
+    // Structured data (nodes, instances, materials, lights) compresses well
+    let structured = scene.node_count() * std::mem::size_of::<Node>()
+        + scene.instance_count() * std::mem::size_of::<Instance>()
+        + scene.material_count() * std::mem::size_of::<Material>()
+        + scene.lights().len() * std::mem::size_of::<Light>();
+    let structured_estimate = (structured as f64 * GOOD_COMPRESSION_RATIO) as usize;
+
+    // Header (16 bytes) + TOC (~40 bytes per section × 8 sections)
+    let overhead = HEADER_SIZE + 8 * 40;
+
+    let total = mesh_estimate + texture_estimate + env_estimate + structured_estimate + overhead;
+
+    // 10% safety margin
+    total + total / 10
+}
+
 /// Serializes the scene to bytes in WGSC format with default options.
 pub fn to_bytes(scene: &Scene) -> Result<Vec<u8>, FormatError> {
     to_bytes_with_options(scene, &SaveOptions::default())
@@ -1580,196 +847,231 @@ pub fn to_bytes(scene: &Scene) -> Result<Vec<u8>, FormatError> {
 
 /// Serializes the scene to bytes in WGSC format with custom options.
 pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec<u8>, FormatError> {
-        use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
-        let level = options.compression.zstd_level();
-        let remapper = IdRemapper::from_scene(scene);
-        let mut output = Vec::new();
-        let mut toc = TableOfContents::new();
+    let compression_level = options.compression.zstd_level();
+    let annotation_filter = AnnotationContentFilter::from_scene(scene);
+    let mut output = Vec::with_capacity(estimate_serialized_size(scene));
+    let mut toc = TableOfContents::new();
 
-        // Reserve space for header (will be written at the end)
-        output.resize(HEADER_SIZE, 0);
+    // Build sequential ID maps for each type, excluding annotation content
+    let mut node_id_map: HashMap<NodeId, u32> = HashMap::new();
+    let mut instance_id_map: HashMap<InstanceId, u32> = HashMap::new();
+    let mut mesh_id_map: HashMap<MeshId, u32> = HashMap::new();
+    let mut material_id_map: HashMap<MaterialId, u32> = HashMap::new();
+    let mut texture_id_map: HashMap<TextureId, u32> = HashMap::new();
+    let mut env_map_id_map: HashMap<EnvironmentMapId, u32> = HashMap::new();
 
-        // ===== Metadata Section =====
-        let metadata = SerializedMetadata {
-            name: None,
-            created_at: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0),
-            generator: format!("wgpu-engine {}", env!("CARGO_PKG_VERSION")),
-            root_nodes: scene.root_nodes()
-                .iter()
-                .filter_map(|&id| remapper.remap_node(id))
-                .collect(),
-            active_environment_map: scene.active_environment_map()
-                .and_then(|id| remapper.remap_environment_map(id)),
-        };
-        let offset = output.len() as u64;
-        let (compressed, uncompressed_size) = serialize_section_with_level(&metadata, level)?;
-        toc.add_entry(TocEntry {
-            section_type: SectionType::Metadata,
-            offset,
-            compressed_size: compressed.len() as u64,
-            uncompressed_size: uncompressed_size as u64,
-        });
-        output.extend(compressed);
+    let mut node_idx = 0u32;
+    for node in scene.nodes() {
+        if !annotation_filter.nodes.contains(&node.id) {
+            node_id_map.insert(node.id, node_idx);
+            node_idx += 1;
+        }
+    }
 
-        // ===== Nodes Section =====
-        let nodes: Vec<SerializedNode> = scene.nodes()
-            .filter_map(|node| SerializedNode::from_node(node, &remapper))
-            .collect();
-        let offset = output.len() as u64;
-        let (compressed, uncompressed_size) = serialize_section_with_level(&nodes, level)?;
-        toc.add_entry(TocEntry {
-            section_type: SectionType::Nodes,
-            offset,
-            compressed_size: compressed.len() as u64,
-            uncompressed_size: uncompressed_size as u64,
-        });
-        output.extend(compressed);
+    let mut inst_idx = 0u32;
+    for inst in scene.instances() {
+        if !annotation_filter.instances.contains(&inst.id) {
+            instance_id_map.insert(inst.id, inst_idx);
+            inst_idx += 1;
+        }
+    }
 
-        // ===== Instances Section =====
-        let instances: Vec<SerializedInstance> = scene.instances()
-            .filter_map(|inst| SerializedInstance::from_instance(inst, &remapper))
-            .collect();
-        let offset = output.len() as u64;
-        let (compressed, uncompressed_size) = serialize_section_with_level(&instances, level)?;
-        toc.add_entry(TocEntry {
-            section_type: SectionType::Instances,
-            offset,
-            compressed_size: compressed.len() as u64,
-            uncompressed_size: uncompressed_size as u64,
-        });
-        output.extend(compressed);
+    let mut mesh_idx = 0u32;
+    for mesh in scene.meshes() {
+        if !annotation_filter.meshes.contains(&mesh.id) {
+            mesh_id_map.insert(mesh.id, mesh_idx);
+            mesh_idx += 1;
+        }
+    }
 
-        // ===== Materials Section =====
-        // Skip the default material (it's always recreated by Scene::new())
-        let materials: Vec<SerializedMaterial> = scene.materials()
-            .filter(|mat| mat.id != DEFAULT_MATERIAL_ID)
-            .filter_map(|mat| SerializedMaterial::from_material(mat, &remapper))
-            .collect();
-        let offset = output.len() as u64;
-        let (compressed, uncompressed_size) = serialize_section_with_level(&materials, level)?;
-        toc.add_entry(TocEntry {
-            section_type: SectionType::Materials,
-            offset,
-            compressed_size: compressed.len() as u64,
-            uncompressed_size: uncompressed_size as u64,
-        });
-        output.extend(compressed);
+    // The default material gets a sentinel file ID (u32::MAX) so instances
+    // can reference it, but its data is not serialized (Scene::new() recreates it).
+    material_id_map.insert(DEFAULT_MATERIAL_ID, u32::MAX);
+    let mut mat_idx = 0u32;
+    for mat in scene.materials() {
+        if mat.id == DEFAULT_MATERIAL_ID || annotation_filter.materials.contains(&mat.id) {
+            continue;
+        }
+        material_id_map.insert(mat.id, mat_idx);
+        mat_idx += 1;
+    }
 
-        // ===== Meshes Section =====
-        let meshes: Vec<SerializedMesh> = scene.meshes()
-            .filter_map(|mesh| SerializedMesh::from_mesh(mesh, &remapper))
-            .collect();
-        let offset = output.len() as u64;
-        let (compressed, uncompressed_size) = serialize_section_with_level(&meshes, level)?;
-        toc.add_entry(TocEntry {
-            section_type: SectionType::Meshes,
-            offset,
-            compressed_size: compressed.len() as u64,
-            uncompressed_size: uncompressed_size as u64,
-        });
-        output.extend(compressed);
+    for (idx, tex) in scene.textures().enumerate() {
+        texture_id_map.insert(tex.id(), idx as u32);
+    }
 
-        // ===== Textures Section =====
-        let mut textures = Vec::new();
-        for texture in scene.textures() {
+    for (idx, em) in scene.environment_maps().enumerate() {
+        env_map_id_map.insert(em.id, idx as u32);
+    }
+
+    // ===== Metadata Section =====
+    let metadata = SerializedMetadata {
+        name: None,
+        created_at: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+        generator: format!("wgpu-engine {}", env!("CARGO_PKG_VERSION")),
+        root_nodes: scene.root_nodes()
+            .iter()
+            .filter_map(|&id| node_id_map.get(&id).copied())
+            .collect(),
+        active_environment_map: scene.active_environment_map()
+            .and_then(|id| env_map_id_map.get(&id).copied()),
+    };
+    
+    write_section(&metadata, SectionType::Metadata, compression_level, &mut output, &mut toc)?;
+
+    // ===== Nodes Section =====
+    let nodes: Vec<Node> = scene.nodes()
+        .filter_map(|node| {
+            let remapped_id = *node_id_map.get(&node.id)?;
+            let mut node = node.clone();
+            node.id = remapped_id;
+            node.set_parent_unchecked(
+                node.parent().and_then(|pid| node_id_map.get(&pid).copied()),
+            );
+            node.set_children_unchecked(
+                node.children()
+                    .iter()
+                    .filter_map(|&cid| node_id_map.get(&cid).copied())
+                    .collect(),
+            );
+            node.set_instance(
+                node.instance().and_then(|iid| instance_id_map.get(&iid).copied()),
+            );
+            Some(node)
+        })
+        .collect();
+    write_section(&nodes, SectionType::Nodes, compression_level, &mut output, &mut toc)?;
+
+    // ===== Instances Section =====
+    let instances: Vec<Instance> = scene.instances()
+        .filter_map(|inst| {
+            let remapped_id = *instance_id_map.get(&inst.id)?;
+            let mut inst = inst.clone();
+            inst.id = remapped_id;
+            inst.set_mesh_unchecked(*mesh_id_map.get(&inst.mesh())?);
+            inst.set_material_unchecked(*material_id_map.get(&inst.material())?);
+            Some(inst)
+        })
+        .collect();
+    write_section(&instances, SectionType::Instances, compression_level, &mut output, &mut toc)?;
+
+    // ===== Materials Section =====
+    // Skip the default material (it's always recreated by Scene::new())
+    let materials: Vec<Material> = scene.materials()
+        .filter(|mat| mat.id != DEFAULT_MATERIAL_ID && !annotation_filter.materials.contains(&mat.id))
+        .map(|mat| {
+            let remapped_id = *material_id_map.get(&mat.id).unwrap_or(&0);
+
+            // Build a new material with remapped texture IDs
+            let mut new_mat = Material::new()
+                .with_base_color_factor(mat.base_color_factor())
+                .with_metallic_factor(mat.metallic_factor())
+                .with_roughness_factor(mat.roughness_factor())
+                .with_normal_scale(mat.normal_scale())
+                .with_flags(mat.flags())
+                .with_alpha_mode(mat.alpha_mode())
+                .with_alpha_cutoff(mat.alpha_cutoff());
+
+            if let Some(tid) = mat.base_color_texture() {
+                if let Some(&remapped) = texture_id_map.get(&tid) {
+                    new_mat = new_mat.with_base_color_texture(remapped);
+                }
+            }
+            if let Some(tid) = mat.normal_texture() {
+                if let Some(&remapped) = texture_id_map.get(&tid) {
+                    new_mat = new_mat.with_normal_texture(remapped);
+                }
+            }
+            if let Some(tid) = mat.metallic_roughness_texture() {
+                if let Some(&remapped) = texture_id_map.get(&tid) {
+                    new_mat = new_mat.with_metallic_roughness_texture(remapped);
+                }
+            }
+            if let Some(color) = mat.line_color() {
+                new_mat = new_mat.with_line_color(color);
+            }
+            if let Some(color) = mat.point_color() {
+                new_mat = new_mat.with_point_color(color);
+            }
+
+            new_mat.id = remapped_id;
+            new_mat
+        })
+        .collect();
+    write_section(&materials, SectionType::Materials, compression_level, &mut output, &mut toc)?;
+
+    // ===== Meshes Section =====
+    let meshes: Vec<Mesh> = scene.meshes()
+        .filter(|mesh| !annotation_filter.meshes.contains(&mesh.id))
+        .map(|mesh| {
+            let remapped_id = *mesh_id_map.get(&mesh.id).unwrap_or(&0);
+            let mut cloned = mesh.clone();
+            cloned.id = remapped_id;
+            cloned
+        })
+        .collect();
+    write_section(&meshes, SectionType::Meshes, compression_level, &mut output, &mut toc)?;
+
+    // ===== Textures Section =====
+    let mut textures = Vec::new();
+    for texture in scene.textures() {
+        if let Some(&remapped_id) = texture_id_map.get(&texture.id()) {
             let serialized = SerializedTexture::from_texture(
                 texture,
-                &remapper,
+                remapped_id,
                 options.texture_format,
                 options.compression,
             )?;
-            if let Some(serialized) = serialized {
-                textures.push(serialized);
-            }
+            textures.push(serialized);
         }
-        let offset = output.len() as u64;
-        let (compressed, uncompressed_size) = serialize_section_with_level(&textures, level)?;
-        toc.add_entry(TocEntry {
-            section_type: SectionType::Textures,
-            offset,
-            compressed_size: compressed.len() as u64,
-            uncompressed_size: uncompressed_size as u64,
-        });
-        output.extend(compressed);
-
-        // ===== Lights Section =====
-        let lights: Vec<SerializedLight> = scene.lights()
-            .iter()
-            .map(SerializedLight::from_light)
-            .collect();
-        let offset = output.len() as u64;
-        let (compressed, uncompressed_size) = serialize_section_with_level(&lights, level)?;
-        toc.add_entry(TocEntry {
-            section_type: SectionType::Lights,
-            offset,
-            compressed_size: compressed.len() as u64,
-            uncompressed_size: uncompressed_size as u64,
-        });
-        output.extend(compressed);
-
-        // ===== Annotations Section =====
-        let annotations: Vec<SerializedAnnotation> = scene.annotations
-            .iter()
-            .filter_map(|ann| SerializedAnnotation::from_annotation(ann, &remapper))
-            .collect();
-        let offset = output.len() as u64;
-        let (compressed, uncompressed_size) = serialize_section_with_level(&annotations, level)?;
-        toc.add_entry(TocEntry {
-            section_type: SectionType::Annotations,
-            offset,
-            compressed_size: compressed.len() as u64,
-            uncompressed_size: uncompressed_size as u64,
-        });
-        output.extend(compressed);
-
-        // ===== Environment Maps Section =====
-        if scene.has_environment_maps() {
-            let mut env_maps = Vec::new();
-            for env_map in scene.environment_maps() {
-                let remapped_id = remapper.remap_environment_map(env_map.id).unwrap_or(0);
-                let hdr_data = match env_map.source() {
-                    wgpu_engine_scene::EnvironmentSource::EquirectangularPath(path) => {
-                        std::fs::read(path).map_err(|e| FormatError::IoError(e))?
-                    }
-                    wgpu_engine_scene::EnvironmentSource::EquirectangularHdr(data) => {
-                        data.clone()
-                    }
-                };
-                env_maps.push(SerializedEnvironmentMap {
-                    id: remapped_id,
-                    hdr_data,
-                    intensity: env_map.intensity(),
-                    rotation: env_map.rotation(),
-                });
-            }
-            let offset = output.len() as u64;
-            let (compressed, uncompressed_size) = serialize_section_with_level(&env_maps, level)?;
-            toc.add_entry(TocEntry {
-                section_type: SectionType::EnvironmentMaps,
-                offset,
-                compressed_size: compressed.len() as u64,
-                uncompressed_size: uncompressed_size as u64,
-            });
-            output.extend(compressed);
-        }
-
-        // ===== Write TOC =====
-        let toc_offset = output.len() as u64;
-        let (toc_compressed, _) = serialize_section_with_level(&toc, level)?;
-        output.extend(toc_compressed);
-
-        // ===== Write Header =====
-        let header = FileHeader::new(toc_offset);
-        let mut header_bytes = Vec::new();
-        header.write(&mut header_bytes)?;
-        output[..HEADER_SIZE].copy_from_slice(&header_bytes);
-
-        Ok(output)
     }
+    write_section(&textures, SectionType::Textures, compression_level, &mut output, &mut toc)?;
+
+    // ===== Lights Section =====
+    let lights: Vec<Light> = scene.lights().to_vec();
+    write_section(&lights, SectionType::Lights, compression_level, &mut output, &mut toc)?;
+
+    // ===== Environment Maps Section =====
+    if scene.has_environment_maps() {
+        let mut env_maps = Vec::new();
+        for env_map in scene.environment_maps() {
+            let remapped_id = *env_map_id_map.get(&env_map.id).unwrap_or(&0);
+            let hdr_data = match env_map.source() {
+                wgpu_engine_scene::EnvironmentSource::EquirectangularPath(path) => {
+                    std::fs::read(path).map_err(|e| FormatError::IoError(e))?
+                }
+                wgpu_engine_scene::EnvironmentSource::EquirectangularHdr(data) => {
+                    data.clone()
+                }
+            };
+            env_maps.push(SerializedEnvironmentMap {
+                id: remapped_id,
+                hdr_data,
+                intensity: env_map.intensity(),
+                rotation: env_map.rotation(),
+            });
+        }
+        write_section(&env_maps, SectionType::EnvironmentMaps, compression_level, &mut output, &mut toc)?;
+    }
+
+    // ===== Write TOC =====
+    let toc_offset = output.len() as u64;
+    let (toc_compressed, _) = serialize_section_with_level(&toc, compression_level)?;
+    output.extend(toc_compressed);
+
+    // ===== Write Header =====
+    let header = FileHeader::new(toc_offset);
+    let mut header_bytes = Vec::new();
+    header.write(&mut header_bytes)?;
+    output[..HEADER_SIZE].copy_from_slice(&header_bytes);
+
+    Ok(output)
+}
 
 /// Deserializes a scene from WGSC format bytes.
 ///
@@ -1812,7 +1114,8 @@ pub fn load_from_file(path: impl AsRef<std::path::Path>) -> Result<Scene, Format
 mod tests {
     use super::*;
     use cgmath::{Point3, Quaternion, Vector3};
-    use wgpu_engine_scene::common::Transform;
+    use wgpu_engine_scene::common::{RgbaColor, Transform};
+    use wgpu_engine_scene::PrimitiveType;
 
     /// Creates a simple test scene with various elements.
     fn create_test_scene() -> Scene {
@@ -1856,13 +1159,6 @@ mod tests {
             RgbaColor::WHITE,
             10.0,
         ));
-
-        // Add an annotation
-        scene.annotations.add_line(
-            Point3::new(0.0, 0.0, 0.0),
-            Point3::new(1.0, 1.0, 1.0),
-            RgbaColor::BLUE,
-        );
 
         scene
     }
@@ -2019,25 +1315,6 @@ mod tests {
     }
 
     #[test]
-    fn test_round_trip_annotations() {
-        let original = create_test_scene();
-        let bytes = to_bytes(&original).expect("Failed to serialize");
-        let loaded = from_bytes(&bytes).expect("Failed to deserialize");
-
-        assert_eq!(loaded.annotations.len(), 1);
-
-        let annotation = loaded.annotations.iter().next().unwrap();
-        match annotation {
-            Annotation::Line(line) => {
-                assert!((line.start.x - 0.0).abs() < 1e-6);
-                assert!((line.end.x - 1.0).abs() < 1e-6);
-                assert!((line.color.b - 1.0).abs() < 1e-6); // Blue
-            }
-            _ => panic!("Expected line annotation"),
-        }
-    }
-
-    #[test]
     fn test_empty_scene_round_trip() {
         let scene = Scene::new();
         let bytes = to_bytes(&scene).expect("Failed to serialize empty scene");
@@ -2071,6 +1348,7 @@ mod tests {
 
     #[test]
     fn test_reified_annotation_geometry_excluded() {
+
         // Create a scene with a mesh and an annotation
         let mut scene = Scene::new();
 
@@ -2111,21 +1389,33 @@ mod tests {
         assert_eq!(loaded.instance_count(), 1, "Only regular instance should be serialized");
         assert_eq!(loaded.node_count(), 1, "Only regular node should be serialized");
 
-        // But annotation data should still be present
-        assert_eq!(loaded.annotations.len(), 1, "Annotation data should be preserved");
-
-        // Annotation should not be reified yet (node_id should be None)
-        let annotation = loaded.annotations.iter().next().unwrap();
-        assert!(!annotation.is_reified(), "Annotation should not be reified after load");
-
         // Verify the regular node is present
         let regular_node = loaded.nodes()
             .find(|n| n.name.as_deref() == Some("RegularNode"))
             .expect("RegularNode not found");
         assert!(regular_node.instance().is_some());
+    }
 
-        // Now we can re-reify the annotations
-        let reified_count = loaded.annotations.unreified_count();
-        assert_eq!(reified_count, 1, "Should have 1 unreified annotation");
+    #[test]
+    fn estimate_is_upper_bound() {
+        let scene = create_test_scene();
+        let estimate = estimate_serialized_size(&scene);
+        let bytes = to_bytes(&scene).expect("serialize");
+        assert!(
+            estimate >= bytes.len(),
+            "estimate ({}) should be >= actual size ({})",
+            estimate,
+            bytes.len(),
+        );
+    }
+
+    #[test]
+    fn estimate_empty_scene() {
+        let scene = Scene::new();
+        let estimate = estimate_serialized_size(&scene);
+        // Should return a small positive value (header + TOC overhead)
+        assert!(estimate > 0);
+        let bytes = to_bytes(&scene).expect("serialize");
+        assert!(estimate >= bytes.len());
     }
 }
