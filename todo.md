@@ -1,9 +1,6 @@
 # TODO
 
 ## Jots
-- Tree walker feature to skip subtrees on condition
-- Ability to walk the scene with multiple walkers at once
-
 - Integration tests
   - Materials (including faces, lines, and points)
   - Lights
@@ -13,9 +10,7 @@
 - Merge event dispatcher and operator manager into something like "interaction manager"
 - egui canvas frame
 - Higher level faces and lines
-- Mesh wireframe
 - Optimize drawing
-- Antialiasing
 - NURBS
 - 3D Overlays
 - Make operators optional feature
@@ -34,15 +29,11 @@ With the remaining time:
 
 ### Crate improvements (2 weeks)
 Three days together:
-- format.rs and import export cleanup
-  - trait-ification of importers + exporters
-  - serialization defaults
-  - Investigate removing serialization variants (e.g. SerializedMaterial)
 - Scene API and docs review
-  - Split scene graph into its own module
+  - Split scene graph into its own module (Maybe)
 
 One day each:
-- API and docs review (make sure docs tests pass too)
+- API and docs review
 - Benchmarking and tests
 
 One day together:
