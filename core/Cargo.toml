@@ -16,11 +16,6 @@ path = "examples/winit-basic/main.rs"
 required-features = ["winit-support"]
 
 [[example]]
-name = "egui"
-path = "examples/egui-basic/main.rs"
-required-features = ["egui-support"]
-
-[[example]]
 name = "materials"
 path = "examples/materials/main.rs"
 required-features = ["winit-support"]
@@ -69,5 +64,3 @@ wasm-bindgen-futures = "0.4.30"
 web-sys = { version = "0.3", features = ["Document", "Window", "Element", "HtmlCanvasElement"] }
 wgpu = { version = "27.0", features = ["webgl"] }
 
-[dev-dependencies]
-rfd = "0.15"

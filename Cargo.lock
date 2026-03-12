@@ -1108,6 +1108,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui-demo"
+version = "0.1.0"
+dependencies = [
+ "cgmath",
+ "egui",
+ "env_logger",
+ "log",
+ "pollster 0.3.0",
+ "rfd",
+ "wgpu-engine",
+ "winit",
+]
+
+[[package]]
 name = "egui-wgpu"
 version = "0.33.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1606,26 +1620,6 @@ dependencies = [
  "serde",
  "serde_derive",
  "serde_json",
-]
-
-[[package]]
-name = "gltf-viewer"
-version = "0.1.0"
-dependencies = [
- "cgmath",
- "console_error_panic_hook",
- "console_log",
- "egui",
- "env_logger",
- "js-sys",
- "log",
- "pollster 0.3.0",
- "rfd",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
- "wgpu-engine",
- "winit",
 ]
 
 [[package]]
@@ -4936,7 +4930,6 @@ dependencies = [
  "log",
  "pollster 0.3.0",
  "rayon",
- "rfd",
  "thiserror 2.0.17",
  "wasm-bindgen",
  "wasm-bindgen-futures",

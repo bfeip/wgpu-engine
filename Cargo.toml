@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["core", "scene", "common", "import-export", "gltf-viewer", "scene-info", "scene-converter"]
+members = ["core", "scene", "common", "import-export", "egui-demo", "scene-info", "scene-converter"]
 default-members = ["core"]
 
 
