@@ -852,6 +852,7 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
     let compression_level = options.compression.zstd_level();
     let annotation_filter = AnnotationContentFilter::from_scene(scene);
     let mut output = Vec::with_capacity(estimate_serialized_size(scene));
+    output.resize(HEADER_SIZE, 0); // Reserve space for header
     let mut toc = TableOfContents::new();
 
     // Build sequential ID maps for each type, excluding annotation content
