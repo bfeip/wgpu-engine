@@ -61,8 +61,8 @@ pub struct SceneProperties {
 /// # Examples
 ///
 /// ```
-/// use wgpu_engine::scene::{Scene, Mesh, MeshPrimitive, Vertex, Material, PrimitiveType, common};
-/// use wgpu_engine::common::RgbaColor;
+/// use wgpu_engine_scene::{Scene, Mesh, MeshPrimitive, Vertex, Material, PrimitiveType, common};
+/// use wgpu_engine_scene::common::RgbaColor;
 ///
 /// let mut scene = Scene::new();
 ///

@@ -75,7 +75,7 @@ impl Clone for TextureSource {
 /// # Examples
 ///
 /// ```
-/// use wgpu_engine::scene::{Texture, Scene};
+/// use wgpu_engine_scene::{Texture, Scene};
 ///
 /// // Create from path (loaded lazily when GPU resources are created)
 /// let texture = Texture::from_path("texture.png");

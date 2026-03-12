@@ -17,6 +17,9 @@
 //! ```rust,no_run
 //! use wgpu_engine::egui_support::EguiViewerApp;
 //! use winit::event_loop::EventLoop;
+//! use winit::event_loop::ActiveEventLoop;
+//! use winit::event::WindowEvent;
+//! use winit::window::WindowId;
 //! use winit::application::ApplicationHandler;
 //!
 //! struct App<'a> {

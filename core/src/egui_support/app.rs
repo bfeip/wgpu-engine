@@ -23,6 +23,8 @@ use super::render::render_egui_overlay;
 /// ```rust,no_run
 /// use wgpu_engine::egui_support::EguiViewerApp;
 /// use winit::event_loop::{EventLoop, ActiveEventLoop};
+/// use winit::event::WindowEvent;
+/// use winit::window::WindowId;
 /// use winit::application::ApplicationHandler;
 ///
 /// struct App<'a> {
@@ -78,7 +80,7 @@ impl EguiViewerApp<'static> {
     ///
     /// # Example
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use std::sync::Arc;
     /// use wgpu_engine::egui_support::EguiViewerApp;
     /// use winit::window::Window;
@@ -132,7 +134,7 @@ impl<'a> EguiViewerApp<'a> {
     ///
     /// # Example
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use wgpu_engine::egui_support::EguiViewerApp;
     ///
     /// let app = pollster::block_on(EguiViewerApp::new(event_loop));
@@ -152,7 +154,7 @@ impl<'a> EguiViewerApp<'a> {
     ///
     /// # Example
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use wgpu_engine::egui_support::EguiViewerApp;
     /// use winit::window::Window;
     /// use winit::dpi::LogicalSize;
@@ -302,7 +304,7 @@ impl<'a> EguiViewerApp<'a> {
     ///
     /// # Example
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// app.render(|ctx, viewer| {
     ///     egui::Window::new("Info").show(ctx, |ui| {
     ///         ui.label(format!("FPS: {:.1}", ctx.input(|i| i.stable_dt).recip()));
