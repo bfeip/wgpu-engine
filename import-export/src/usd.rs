@@ -891,7 +891,7 @@ fn extract_camera(data: &mut dyn AbstractData, cam_path: &sdf::Path) -> Option<C
         .unwrap_or((0.1, 10000.0));
 
     // Use transform position as eye point
-    let (position, _rotation, _scale) = extract_transform(data, cam_path);
+    let Transform { position, .. } = extract_transform(data, cam_path);
 
     Some(Camera {
         eye: position,
