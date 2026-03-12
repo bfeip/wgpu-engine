@@ -17,6 +17,18 @@ pub enum TextureFormat {
     Raw = 2,
 }
 
+impl TryFrom<image::ImageFormat> for TextureFormat {
+    type Error = anyhow::Error;
+
+    fn try_from(format: image::ImageFormat) -> Result<Self> {
+        match format {
+            image::ImageFormat::Png => Ok(TextureFormat::Png),
+            image::ImageFormat::Jpeg => Ok(TextureFormat::Jpeg),
+            _ => anyhow::bail!("unsupported image format: {:?}", format),
+        }
+    }
+}
+
 /// Describes how texture source data is stored.
 ///
 /// Textures can be created from embedded image data or loaded lazily from a file path.

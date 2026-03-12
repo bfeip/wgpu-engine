@@ -472,6 +472,51 @@ impl Scene {
         self.instances.len()
     }
 
+    // ========== Unchecked Insert API ==========
+    //
+    // These methods insert items using their existing `id` field, without
+    // assigning a new ID or validating internal references.  They update the
+    // `next_*_id` counter so that future `add_*` calls won't collide.
+
+    /// Inserts a texture using its existing `id`.
+    pub fn insert_texture_unchecked(&mut self, texture: Texture) {
+        self.next_texture_id = self.next_texture_id.max(texture.id + 1);
+        self.textures.insert(texture.id, texture);
+    }
+
+    /// Inserts a mesh using its existing `id`.
+    pub fn insert_mesh_unchecked(&mut self, mesh: Mesh) {
+        self.next_mesh_id = self.next_mesh_id.max(mesh.id + 1);
+        self.meshes.insert(mesh.id, mesh);
+    }
+
+    /// Inserts a material using its existing `id`.
+    pub fn insert_material_unchecked(&mut self, material: Material) {
+        self.next_material_id = self.next_material_id.max(material.id + 1);
+        self.materials.insert(material.id, material);
+    }
+
+    /// Inserts an instance using its existing `id`.
+    pub fn insert_instance_unchecked(&mut self, instance: Instance) {
+        self.next_instance_id = self.next_instance_id.max(instance.id + 1);
+        self.instances.insert(instance.id, instance);
+    }
+
+    /// Inserts a node using its existing `id`.
+    ///
+    /// Does **not** update `root_nodes` or parent/child links — the caller
+    /// is responsible for tree consistency (e.g. via `set_root_node_order`).
+    pub fn insert_node_unchecked(&mut self, node: Node) {
+        self.next_node_id = self.next_node_id.max(node.id + 1);
+        self.nodes.insert(node.id, node);
+    }
+
+    /// Inserts an environment map using its existing `id`.
+    pub fn insert_environment_map_unchecked(&mut self, env_map: EnvironmentMap) {
+        self.next_environment_map_id = self.next_environment_map_id.max(env_map.id + 1);
+        self.environment_maps.insert(env_map.id, env_map);
+    }
+
     // ========== Light Methods ==========
 
     /// Returns a slice of all lights in the scene.

@@ -48,8 +48,7 @@ impl EnvironmentMap {
     /// Create an environment map from in-memory HDR data.
     ///
     /// The HDR data will be processed into IBL maps when the environment is first used.
-    /// This is internal - use `Scene::add_environment_map_from_hdr_path` to create environment maps.
-    pub(crate) fn from_hdr_data(id: EnvironmentMapId, data: Vec<u8>) -> Self {
+    pub fn from_hdr_data(id: EnvironmentMapId, data: Vec<u8>) -> Self {
         Self {
             id,
             source: EnvironmentSource::EquirectangularHdr(data),
