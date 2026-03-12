@@ -364,6 +364,7 @@ impl Importer for AssimpImporter {
 /// The order determines detection priority (first match wins):
 /// WGSC, glTF, USD (if enabled), Assimp (if enabled).
 pub fn default_importers() -> Vec<Box<dyn Importer>> {
+    #[allow(unused_mut)]
     let mut importers: Vec<Box<dyn Importer>> = vec![
         Box::new(WgscImporter),
         Box::new(GltfImporter),

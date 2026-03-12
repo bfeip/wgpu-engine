@@ -145,10 +145,10 @@ fn build_scene_tab(ui: &mut egui::Ui, viewer: &Viewer, actions: &mut UiActions) 
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            if viewer.scene().root_nodes.is_empty() {
+            if viewer.scene().root_nodes().is_empty() {
                 ui.label("(empty)");
             } else {
-                for &root_id in &viewer.scene().root_nodes {
+                for &root_id in viewer.scene().root_nodes() {
                     render_node_tree(ui, viewer.scene(), root_id, 0, actions);
                 }
             }
@@ -171,7 +171,7 @@ fn build_lights_tab(ui: &mut egui::Ui, viewer: &mut Viewer, actions: &mut UiActi
         }
     });
 
-    let light_count = viewer.scene().lights.len();
+    let light_count = viewer.scene().lights().len();
     ui.label(format!("({}/{} lights)", light_count, MAX_LIGHTS));
 
     ui.separator();
@@ -185,7 +185,7 @@ fn build_lights_tab(ui: &mut egui::Ui, viewer: &mut Viewer, actions: &mut UiActi
             } else {
                 let mut light_to_delete: Option<usize> = None;
 
-                for i in 0..viewer.scene().lights.len() {
+                for i in 0..viewer.scene().lights().len() {
                     let delete_requested = build_light_editor(ui, viewer, i);
                     if delete_requested {
                         light_to_delete = Some(i);
@@ -195,7 +195,7 @@ fn build_lights_tab(ui: &mut egui::Ui, viewer: &mut Viewer, actions: &mut UiActi
 
                 // Handle deletion after iteration
                 if let Some(idx) = light_to_delete {
-                    viewer.scene_mut().lights.remove(idx);
+                    viewer.scene_mut().remove_light(idx);
                 }
             }
         });
@@ -216,8 +216,8 @@ fn build_environment_tab(ui: &mut egui::Ui, viewer: &Viewer, actions: &mut UiAct
 
     // Show current environment status
     let scene = viewer.scene();
-    if let Some(env_id) = scene.active_environment_map {
-        if let Some(env_map) = scene.environment_maps.get(&env_id) {
+    if let Some(env_id) = scene.active_environment_map() {
+        if let Some(env_map) = scene.get_environment_map(env_id) {
             ui.label(format!("Active: Environment #{}", env_id));
             ui.label(format!("Intensity: {:.2}", env_map.intensity()));
             ui.label(format!("Rotation: {:.1}°", env_map.rotation().to_degrees()));
@@ -235,7 +235,7 @@ fn build_light_editor(ui: &mut egui::Ui, viewer: &mut Viewer, index: usize) -> b
     let mut delete_requested = false;
 
     // Get light info for the header
-    let light_type_name = match &viewer.scene().lights[index] {
+    let light_type_name = match &viewer.scene().lights()[index] {
         Light::Point { .. } => "Point",
         Light::Directional { .. } => "Directional",
         Light::Spot { .. } => "Spot",
@@ -254,7 +254,7 @@ fn build_light_editor(ui: &mut egui::Ui, viewer: &mut Viewer, index: usize) -> b
         })
         .body(|ui| {
             // Edit the light properties
-            let light = &mut viewer.scene_mut().lights[index];
+            let light = &mut viewer.scene_mut().lights_mut()[index];
 
             match light {
                 Light::Point {
@@ -262,6 +262,7 @@ fn build_light_editor(ui: &mut egui::Ui, viewer: &mut Viewer, index: usize) -> b
                     color,
                     intensity,
                     range,
+                    ..
                 } => {
                     build_color_edit(ui, color);
                     build_intensity_edit(ui, intensity);
@@ -272,6 +273,7 @@ fn build_light_editor(ui: &mut egui::Ui, viewer: &mut Viewer, index: usize) -> b
                     direction,
                     color,
                     intensity,
+                    ..
                 } => {
                     build_color_edit(ui, color);
                     build_intensity_edit(ui, intensity);
@@ -285,6 +287,7 @@ fn build_light_editor(ui: &mut egui::Ui, viewer: &mut Viewer, index: usize) -> b
                     range,
                     inner_cone_angle,
                     outer_cone_angle,
+                    ..
                 } => {
                     build_color_edit(ui, color);
                     build_intensity_edit(ui, intensity);
@@ -504,10 +507,10 @@ fn build_selection_section(ui: &mut egui::Ui, viewer: &Viewer) {
 
 fn build_scene_info_section(ui: &mut egui::Ui, viewer: &Viewer) {
     ui.heading("Scene Info");
-    ui.label(format!("Meshes: {}", viewer.scene().meshes.len()));
-    ui.label(format!("Instances: {}", viewer.scene().instances.len()));
-    ui.label(format!("Nodes: {}", viewer.scene().nodes.len()));
-    ui.label(format!("Lights: {}", viewer.scene().lights.len()));
+    ui.label(format!("Meshes: {}", viewer.scene().mesh_count()));
+    ui.label(format!("Instances: {}", viewer.scene().instance_count()));
+    ui.label(format!("Nodes: {}", viewer.scene().node_count()));
+    ui.label(format!("Lights: {}", viewer.scene().lights().len()));
 }
 
 /// Recursively render a node and its children in the scene tree.

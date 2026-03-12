@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc};
 
 use cgmath::{Point3, Vector3};
 use wgpu_engine_scene::CoordinateSpace;
@@ -33,8 +33,8 @@ fn build_material_scene(viewer: &mut Viewer) {
     let scene = viewer.scene_mut();
 
     // Replace default lighting with a three-light setup
-    scene.lights.clear();
-    scene.lights.push(Light::directional(
+    scene.clear_lights();
+    scene.add_light(Light::directional(
         Vector3::new(-0.3, 0.0, -1.0),
         RgbaColor::WHITE,
         3.0,
@@ -272,7 +272,7 @@ impl<'a> App<'a> {
                 .scene_mut()
                 .add_environment_map_from_hdr_path("assets/studio_small_09_4k.hdr");
         self.env_map_id = Some(env_map_id);
-        self.default_lights = viewer.scene().lights.clone();
+        self.default_lights = viewer.scene().lights().to_vec();
 
         window.request_redraw();
         self.window = Some(window);
@@ -331,10 +331,10 @@ impl<'a> ApplicationHandler for App<'a> {
                     let ibl_active = scene.active_environment_map().is_some();
                     if ibl_active {
                         scene.set_active_environment_map(None);
-                        scene.lights = self.default_lights.clone();
+                        scene.set_lights(self.default_lights.clone());
                     } else {
                         scene.set_active_environment_map(Some(env_id));
-                        scene.lights.clear();
+                        scene.clear_lights();
                     }
                 }
             }

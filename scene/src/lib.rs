@@ -524,6 +524,11 @@ impl Scene {
         &self.lights
     }
 
+    /// Returns a mutable slice of all lights in the scene.
+    pub fn lights_mut(&mut self) -> &mut [Light] {
+        &mut self.lights
+    }
+
     /// Adds a light to the scene.
     pub fn add_light(&mut self, light: Light) {
         self.lights.push(light);
@@ -533,6 +538,18 @@ impl Scene {
     /// Replaces all lights in the scene.
     pub fn set_lights(&mut self, lights: Vec<Light>) {
         self.lights = lights;
+        self.light_generation += 1;
+    }
+
+    /// Removes a light from the scene by index.
+    pub fn remove_light(&mut self, light_idx: usize) {
+        self.lights.remove(light_idx);
+        self.light_generation += 1;
+    }
+
+    /// Clears all lights from the scene.
+    pub fn clear_lights(&mut self) {
+        self.lights.clear();
         self.light_generation += 1;
     }
 

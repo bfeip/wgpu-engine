@@ -97,7 +97,7 @@ impl<'a> App<'a> {
     /// Add a new light of the specified type to the scene
     fn add_light(&mut self, light_type: LightType) {
         let viewer = self.viewer_app.as_mut().unwrap().viewer_mut();
-        let lights = &mut viewer.scene_mut().lights;
+        let lights = &mut viewer.scene_mut().lights();
 
         // Check limit
         if lights.len() >= MAX_LIGHTS {
@@ -127,7 +127,7 @@ impl<'a> App<'a> {
             ),
         };
 
-        lights.push(light);
+        viewer.scene_mut().add_light(light);
         log::info!("Added {:?} light", light_type);
     }
 

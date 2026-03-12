@@ -12,11 +12,10 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use wgpu_engine_import_export::format::{
-    FileHeader, FormatError, SectionType, SerializedAnnotation, SerializedInstance,
-    SerializedLight, SerializedMaterial, SerializedMesh, SerializedMetadata, SerializedNode,
+    FileHeader, FormatError, SectionType, SerializedMetadata,
     SerializedTexture, TableOfContents, TocEntry,
 };
-use wgpu_engine_scene::TextureFormat;
+use wgpu_engine_scene::{Instance, Light, Material, Mesh, Node, TextureFormat};
 
 #[derive(Parser)]
 #[command(name = "scene-info")]
@@ -123,7 +122,6 @@ fn analyze_scene(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
         meshes: need_summary || cli.show_meshes(),
         textures: need_summary || cli.show_textures(),
         lights: need_summary,
-        annotations: need_summary,
     };
 
     // Read and analyze each section
@@ -225,13 +223,12 @@ fn print_section_breakdown(toc: &TableOfContents, file_size: u64) {
 
 struct SceneStats {
     metadata: Option<SerializedMetadata>,
-    nodes: Vec<SerializedNode>,
-    instances: Vec<SerializedInstance>,
-    materials: Vec<SerializedMaterial>,
-    meshes: Vec<SerializedMesh>,
+    nodes: Vec<Node>,
+    instances: Vec<Instance>,
+    materials: Vec<Material>,
+    meshes: Vec<Mesh>,
     textures: Vec<SerializedTexture>,
-    lights: Vec<SerializedLight>,
-    annotations: Vec<SerializedAnnotation>,
+    lights: Vec<Light>,
 }
 
 struct SectionsNeeded {
@@ -242,7 +239,6 @@ struct SectionsNeeded {
     meshes: bool,
     textures: bool,
     lights: bool,
-    annotations: bool,
 }
 
 fn gather_statistics(
@@ -258,7 +254,6 @@ fn gather_statistics(
         meshes: Vec::new(),
         textures: Vec::new(),
         lights: Vec::new(),
-        annotations: Vec::new(),
     };
 
     for entry in &toc.entries {
@@ -284,9 +279,6 @@ fn gather_statistics(
             SectionType::Lights if needed.lights => {
                 stats.lights = read_section(bytes, entry)?;
             }
-            SectionType::Annotations if needed.annotations => {
-                stats.annotations = read_section(bytes, entry)?;
-            }
             _ => {
                 // Section not needed or not handled
             }
@@ -300,11 +292,11 @@ fn print_scene_summary(stats: &SceneStats) {
     println!("Scene Contents:");
 
     // Mesh stats
-    let total_vertices: usize = stats.meshes.iter().map(|m| m.vertices.len() / 36).sum();
+    let total_vertices: usize = stats.meshes.iter().map(|m| m.vertices().len()).sum();
     let total_indices: usize = stats
         .meshes
         .iter()
-        .flat_map(|m| m.primitives.iter())
+        .flat_map(|m| m.primitives().iter())
         .map(|p| p.indices.len())
         .sum();
     let total_triangles = total_indices / 3;
@@ -320,9 +312,9 @@ fn print_scene_summary(stats: &SceneStats) {
         .materials
         .iter()
         .filter(|m| {
-            m.base_color_texture_id.is_some()
-                || m.normal_texture_id.is_some()
-                || m.metallic_roughness_texture_id.is_some()
+            m.base_color_texture().is_some()
+                || m.normal_texture().is_some()
+                || m.metallic_roughness_texture().is_some()
         })
         .count();
     println!(
@@ -346,19 +338,17 @@ fn print_scene_summary(stats: &SceneStats) {
     // Lights
     println!("  Lights: {}", stats.lights.len());
 
-    // Annotations
-    println!("  Annotations: {}", stats.annotations.len());
     println!();
 }
 
-fn compute_max_depth(nodes: &[SerializedNode]) -> usize {
+fn compute_max_depth(nodes: &[Node]) -> usize {
     if nodes.is_empty() {
         return 0;
     }
 
     // Build parent map
     let parent_map: HashMap<u32, Option<u32>> =
-        nodes.iter().map(|n| (n.id, n.parent_id)).collect();
+        nodes.iter().map(|n| (n.id, n.parent())).collect();
 
     let mut max_depth = 0;
     for node in nodes {
@@ -385,7 +375,7 @@ fn print_largest_textures(textures: &[SerializedTexture]) {
     sorted.sort_by(|a, b| b.data.len().cmp(&a.data.len()));
 
     for (i, tex) in sorted.iter().take(5).enumerate() {
-        let format_name = match tex.texture_format() {
+        let format_name = match tex.format {
             TextureFormat::Png => "PNG",
             TextureFormat::Jpeg => "JPEG",
             TextureFormat::Raw => "Raw",
@@ -403,42 +393,43 @@ fn print_largest_textures(textures: &[SerializedTexture]) {
     println!();
 }
 
-fn print_largest_meshes(meshes: &[SerializedMesh]) {
+fn print_largest_meshes(meshes: &[Mesh]) {
     println!("Largest Meshes:");
     println!(
-        "  {:>4} {:>10} {:>10} {:>10} {:>12}",
-        "ID", "Vertices", "Triangles", "Lines", "Size"
+        "  {:>4} {:>10} {:>10} {:>10}",
+        "ID", "Vertices", "Triangles", "Lines"
     );
-    println!("  {}", "-".repeat(50));
+    println!("  {}", "-".repeat(38));
+
+    use wgpu_engine_scene::PrimitiveType;
 
     let mut sorted: Vec<_> = meshes.iter().collect();
-    sorted.sort_by(|a, b| b.size().cmp(&a.size()));
+    sorted.sort_by(|a, b| b.vertices().len().cmp(&a.vertices().len()));
 
-    for (i, mesh) in sorted.iter().take(5).enumerate() {
-        let vertex_count = mesh.vertices.len() / 36;
+    for mesh in sorted.iter().take(5) {
+        let vertex_count = mesh.vertices().len();
         let mut tri_count = 0;
         let mut line_count = 0;
-        for prim in &mesh.primitives {
+        for prim in mesh.primitives() {
             match prim.primitive_type {
-                0 => tri_count += prim.indices.len() / 3,
-                1 => line_count += prim.indices.len() / 2,
-                _ => {}
+                PrimitiveType::TriangleList => tri_count += prim.indices.len() / 3,
+                PrimitiveType::LineList => line_count += prim.indices.len() / 2,
+                PrimitiveType::PointList => {}
             }
         }
 
         println!(
-            "  {:>4} {:>10} {:>10} {:>10} {:>12}",
+            "  {:>4} {:>10} {:>10} {:>10}",
             mesh.id,
             format_number(vertex_count),
             format_number(tri_count),
             format_number(line_count),
-            format_bytes(mesh.size() as u64)
         );
     }
     println!();
 }
 
-fn print_mesh_details(meshes: &[SerializedMesh]) {
+fn print_mesh_details(meshes: &[Mesh]) {
     println!("Mesh Details:");
     println!(
         "  {:>4} {:>10} {:>10} {:>10} {:>12}",
@@ -446,31 +437,34 @@ fn print_mesh_details(meshes: &[SerializedMesh]) {
     );
     println!("  {}", "-".repeat(50));
 
+    use wgpu_engine_scene::PrimitiveType;
+
     for mesh in meshes {
-        let vertex_count = mesh.vertices.len() / 36;
+        let vertex_count = mesh.vertices().len();
         let mut tri_count = 0;
         let mut line_count = 0;
-        for prim in &mesh.primitives {
+        for prim in mesh.primitives() {
             match prim.primitive_type {
-                0 => tri_count += prim.indices.len() / 3,
-                1 => line_count += prim.indices.len() / 2,
-                _ => {}
+                PrimitiveType::TriangleList => tri_count += prim.indices.len() / 3,
+                PrimitiveType::LineList => line_count += prim.indices.len() / 2,
+                PrimitiveType::PointList => {}
             }
         }
 
+        let vertex_data_size = vertex_count * std::mem::size_of::<wgpu_engine_scene::Vertex>();
         println!(
             "  {:>4} {:>10} {:>10} {:>10} {:>12}",
             mesh.id,
             format_number(vertex_count),
             format_number(tri_count),
             format_number(line_count),
-            format_bytes(mesh.vertices.len() as u64)
+            format_bytes(vertex_data_size as u64)
         );
     }
     println!();
 }
 
-fn print_material_details(materials: &[SerializedMaterial]) {
+fn print_material_details(materials: &[Material]) {
     println!("Material Details:");
     println!(
         "  {:>4} {:>10} {:>10} {:>10} {:>12}",
@@ -480,23 +474,26 @@ fn print_material_details(materials: &[SerializedMaterial]) {
 
     for mat in materials {
         let base_tex = mat
-            .base_color_texture_id
+            .base_color_texture()
             .map(|id| id.to_string())
             .unwrap_or_else(|| "-".to_string());
         let normal_tex = mat
-            .normal_texture_id
+            .normal_texture()
             .map(|id| id.to_string())
             .unwrap_or_else(|| "-".to_string());
         let mr_tex = mat
-            .metallic_roughness_texture_id
+            .metallic_roughness_texture()
             .map(|id| id.to_string())
             .unwrap_or_else(|| "-".to_string());
-        let base_color = format!(
-            "#{:02X}{:02X}{:02X}",
-            (mat.base_color_factor[0] * 255.0) as u8,
-            (mat.base_color_factor[1] * 255.0) as u8,
-            (mat.base_color_factor[2] * 255.0) as u8,
-        );
+        let base_color = {
+            let c = mat.base_color_factor();
+            format!(
+                "#{:02X}{:02X}{:02X}",
+                (c.r * 255.0) as u8,
+                (c.g * 255.0) as u8,
+                (c.b * 255.0) as u8,
+            )
+        };
 
         println!(
             "  {:>4} {:>10} {:>10} {:>10} {:>12}",
@@ -515,7 +512,7 @@ fn print_texture_details(textures: &[SerializedTexture]) {
     println!("  {}", "-".repeat(40));
 
     for tex in textures {
-        let format_name = match tex.texture_format() {
+        let format_name = match tex.format {
             TextureFormat::Png => "PNG",
             TextureFormat::Jpeg => "JPEG",
             TextureFormat::Raw => "Raw",
@@ -532,33 +529,33 @@ fn print_texture_details(textures: &[SerializedTexture]) {
     println!();
 }
 
-fn print_node_hierarchy(nodes: &[SerializedNode]) {
+fn print_node_hierarchy(nodes: &[Node]) {
     println!("Node Hierarchy:");
 
     // Find root nodes (no parent)
-    let roots: Vec<_> = nodes.iter().filter(|n| n.parent_id.is_none()).collect();
+    let roots: Vec<_> = nodes.iter().filter(|n| n.parent().is_none()).collect();
 
     // Build children map
-    let mut children_map: HashMap<u32, Vec<&SerializedNode>> = HashMap::new();
+    let mut children_map: HashMap<u32, Vec<&Node>> = HashMap::new();
     for node in nodes {
-        if let Some(parent_id) = node.parent_id {
+        if let Some(parent_id) = node.parent() {
             children_map.entry(parent_id).or_default().push(node);
         }
     }
 
     fn print_node(
-        node: &SerializedNode,
-        children_map: &HashMap<u32, Vec<&SerializedNode>>,
+        node: &Node,
+        children_map: &HashMap<u32, Vec<&Node>>,
         prefix: &str,
         is_last: bool,
     ) {
         let connector = if is_last { "`-- " } else { "|-- " };
         let name = node.name.as_deref().unwrap_or("<unnamed>");
         let instance_info = node
-            .instance_id
+            .instance()
             .map(|id| format!(" (instance:{})", id))
             .unwrap_or_default();
-        let visibility = if node.visible { "" } else { " [hidden]" };
+        let visibility = if node.visibility() == wgpu_engine_scene::Visibility::Visible { "" } else { " [hidden]" };
 
         println!(
             "  {}{}[{}] {}{}{}",
