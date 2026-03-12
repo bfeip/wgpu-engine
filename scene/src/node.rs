@@ -217,8 +217,11 @@ impl Node {
         self.parent
     }
 
-    /// Sets the parent node ID (internal use only - use Scene methods to maintain consistency).
-    pub(super) fn set_parent(&mut self, parent: Option<NodeId>) {
+    /// Sets the parent node ID without maintaining tree consistency.
+    ///
+    /// The caller must ensure the parent-child relationship is consistent
+    /// on both sides. Prefer `Scene` methods for safe tree manipulation.
+    pub fn set_parent_unchecked(&mut self, parent: Option<NodeId>) {
         self.parent = parent;
         self.mark_transform_dirty();
         self.mark_bounds_dirty();
@@ -229,17 +232,32 @@ impl Node {
         &self.children
     }
 
-    /// Adds a child node ID to this node's children list (internal use only - use Scene methods to maintain consistency).
-    pub(super) fn add_child(&mut self, child: NodeId) {
+    /// Adds a child node ID without maintaining tree consistency.
+    ///
+    /// The caller must ensure the child's parent pointer is set correspondingly.
+    /// Prefer `Scene` methods for safe tree manipulation.
+    pub fn add_child_unchecked(&mut self, child: NodeId) {
         if !self.children.contains(&child) {
             self.children.push(child);
             self.mark_bounds_dirty();
         }
     }
 
-    /// Removes a child node ID from this node's children list (internal use only - use Scene methods to maintain consistency).
-    pub(super) fn remove_child(&mut self, child: NodeId) {
+    /// Removes a child node ID without maintaining tree consistency.
+    ///
+    /// The caller must ensure the child's parent pointer is updated correspondingly.
+    /// Prefer `Scene` methods for safe tree manipulation.
+    pub fn remove_child_unchecked(&mut self, child: NodeId) {
         self.children.retain(|&id| id != child);
+        self.mark_bounds_dirty();
+    }
+
+    /// Replaces the children list without maintaining tree consistency.
+    ///
+    /// The caller must ensure all child IDs reference valid nodes and that
+    /// their parent pointers are consistent. Prefer `Scene` methods for safe tree manipulation.
+    pub fn set_children_unchecked(&mut self, children: Vec<NodeId>) {
+        self.children = children;
         self.mark_bounds_dirty();
     }
 
@@ -480,10 +498,10 @@ mod tests {
         let mut node = Node::new_default(1);
         assert_eq!(node.parent(), None);
 
-        node.set_parent(Some(10));
+        node.set_parent_unchecked(Some(10));
         assert_eq!(node.parent(), Some(10));
 
-        node.set_parent(None);
+        node.set_parent_unchecked(None);
         assert_eq!(node.parent(), None);
     }
 
@@ -498,16 +516,16 @@ mod tests {
         assert_eq!(child2.parent(), None);
 
         // Add first child (bidirectional setup)
-        parent.add_child(5);
-        child1.set_parent(Some(1));
+        parent.add_child_unchecked(5);
+        child1.set_parent_unchecked(Some(1));
 
         assert_eq!(parent.children().len(), 1);
         assert_eq!(parent.children()[0], 5);
         assert_eq!(child1.parent(), Some(1));
 
         // Add second child (bidirectional setup)
-        parent.add_child(7);
-        child2.set_parent(Some(1));
+        parent.add_child_unchecked(7);
+        child2.set_parent_unchecked(Some(1));
 
         assert_eq!(parent.children().len(), 2);
         assert!(parent.children().contains(&5));
@@ -520,9 +538,9 @@ mod tests {
     fn test_add_child_duplicate_ignored() {
         let mut node = Node::new_default(1);
 
-        node.add_child(5);
-        node.add_child(5); // Duplicate
-        node.add_child(5); // Duplicate
+        node.add_child_unchecked(5);
+        node.add_child_unchecked(5); // Duplicate
+        node.add_child_unchecked(5); // Duplicate
 
         // Should only have one child
         assert_eq!(node.children().len(), 1);
@@ -533,13 +551,13 @@ mod tests {
     fn test_remove_child() {
         let mut node = Node::new_default(1);
 
-        node.add_child(5);
-        node.add_child(10);
-        node.add_child(15);
+        node.add_child_unchecked(5);
+        node.add_child_unchecked(10);
+        node.add_child_unchecked(15);
 
         assert_eq!(node.children().len(), 3);
 
-        node.remove_child(10);
+        node.remove_child_unchecked(10);
         assert_eq!(node.children().len(), 2);
         assert!(node.children().contains(&5));
         assert!(!node.children().contains(&10));
@@ -549,10 +567,10 @@ mod tests {
     #[test]
     fn test_remove_child_nonexistent() {
         let mut node = Node::new_default(1);
-        node.add_child(5);
+        node.add_child_unchecked(5);
 
         // Removing non-existent child should not panic
-        node.remove_child(999);
+        node.remove_child_unchecked(999);
         assert_eq!(node.children().len(), 1);
         assert_eq!(node.children()[0], 5);
     }
@@ -765,7 +783,7 @@ mod tests {
         assert!(!node.transform_dirty());
 
         // Change parent should mark dirty
-        node.set_parent(Some(10));
+        node.set_parent_unchecked(Some(10));
         assert!(node.transform_dirty());
     }
 
@@ -783,7 +801,7 @@ mod tests {
         assert!(!node.bounds_dirty());
 
         // Add child should only mark bounds dirty, not transform
-        node.add_child(2);
+        node.add_child_unchecked(2);
         assert!(!node.transform_dirty());
         assert!(node.bounds_dirty());
     }
@@ -997,7 +1015,7 @@ mod tests {
 
         // Add 1000 children
         for i in 1..=1000 {
-            parent.add_child(i);
+            parent.add_child_unchecked(i);
         }
 
         assert_eq!(parent.children().len(), 1000);

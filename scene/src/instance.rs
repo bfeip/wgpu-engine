@@ -32,6 +32,16 @@ impl Instance {
     pub fn material(&self) -> MaterialId {
         self.material
     }
+
+    /// Sets the mesh ID without validating it exists in the scene.
+    pub fn set_mesh_unchecked(&mut self, mesh: MeshId) {
+        self.mesh = mesh;
+    }
+
+    /// Sets the material ID without validating it exists in the scene.
+    pub fn set_material_unchecked(&mut self, material: MaterialId) {
+        self.material = material;
+    }
 }
 
 

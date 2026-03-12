@@ -588,9 +588,9 @@ impl Scene {
 
         // Set up parent-child relationship
         if let Some(parent_id) = parent {
-            node.set_parent(Some(parent_id));
+            node.set_parent_unchecked(Some(parent_id));
             // Safe to unwrap since we validated parent exists above
-            self.nodes.get_mut(&parent_id).unwrap().add_child(id);
+            self.nodes.get_mut(&parent_id).unwrap().add_child_unchecked(id);
         } else {
             // No parent, so this is a root node
             self.root_nodes.push(id);
@@ -692,7 +692,7 @@ impl Scene {
         // Remove this node from its parent's children list
         if let Some(parent_id) = parent {
             if let Some(parent_node) = self.nodes.get_mut(&parent_id) {
-                parent_node.remove_child(node_id);
+                parent_node.remove_child_unchecked(node_id);
             }
         } else {
             // This is a root node, remove from root_nodes list
