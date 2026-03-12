@@ -36,9 +36,12 @@
 pub mod assimp;
 pub mod format;
 pub mod gltf;
+pub mod importer;
 pub(crate) mod mesh_util;
 #[cfg(feature = "usd")]
 pub mod usd;
+
+pub use importer::{default_importers, detect_importer, Importer, PhaseWeights};
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
@@ -96,7 +99,7 @@ pub struct SceneLoadResult {
 }
 
 /// The file format that was detected and used for loading.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DetectedFormat {
     Wgsc,
     Gltf,
@@ -104,6 +107,8 @@ pub enum DetectedFormat {
     Assimp,
     #[cfg(feature = "usd")]
     Usd,
+    /// A custom format provided by a user-defined [`Importer`].
+    Other(String),
 }
 
 /// Coarse loading phases for progress display.
@@ -121,6 +126,10 @@ pub enum LoadPhase {
 }
 
 impl LoadPhase {
+    // NOTE: `std::mem::variant_count` could be used here to get the number of variants
+    // but it's nightly right now (March 2026)
+    pub const PHASE_COUNT: usize = 8;
+
     fn from_u8(v: u8) -> Self {
         match v {
             0 => Self::Pending,
@@ -163,62 +172,12 @@ pub enum LoadError {
     UnknownFormat,
 }
 
-/// Phase weight table: maps each `LoadPhase` discriminant to a relative weight.
-///
-/// Indexed by `LoadPhase as usize`. The sum of weights determines how overall
-/// percentage is distributed across phases. Only phases with non-zero weights
-/// contribute to progress.
-type PhaseWeights = Vec<u8>;
-
-/// Weights for WGSC loading: Reading(10) + Parsing(10) + DecodingTextures(60) + Assembling(20).
-const WGSC_WEIGHTS: [u8; 8] = weights(&[
-    (LoadPhase::Reading, 10),
-    (LoadPhase::Parsing, 10),
-    (LoadPhase::DecodingTextures, 60),
-    (LoadPhase::Assembling, 20),
-]);
-
-/// Weights for glTF loading: Reading(10) + Parsing(10) + DecodingTextures(50) + Assembling(30).
-const GLTF_WEIGHTS: [u8; 8] = weights(&[
-    (LoadPhase::Reading, 10),
-    (LoadPhase::Parsing, 10),
-    (LoadPhase::DecodingTextures, 50),
-    (LoadPhase::Assembling, 30),
-]);
-
-/// Weights for assimp loading: Reading(10) + Parsing(30) + BuildingMeshes(40) + Assembling(20).
-#[cfg(feature = "assimp")]
-const ASSIMP_WEIGHTS: [u8; 8] = weights(&[
-    (LoadPhase::Reading, 10),
-    (LoadPhase::Parsing, 30),
-    (LoadPhase::BuildingMeshes, 40),
-    (LoadPhase::Assembling, 20),
-]);
-
-/// Weights for USD loading: Reading(10) + Parsing(30) + BuildingMeshes(40) + Assembling(20).
-#[cfg(feature = "usd")]
-const USD_WEIGHTS: [u8; 8] = weights(&[
-    (LoadPhase::Reading, 10),
-    (LoadPhase::Parsing, 30),
-    (LoadPhase::BuildingMeshes, 40),
-    (LoadPhase::Assembling, 20),
-]);
-
-/// Weights for save operations: Parsing/serializing(60) + Assembling/writing(40).
-const SAVE_WEIGHTS: [u8; 8] = weights(&[
-    (LoadPhase::Parsing, 60),
-    (LoadPhase::Assembling, 40),
-]);
-
-/// Build a weight table from (phase, weight) pairs at compile time.
-const fn weights(pairs: &[(LoadPhase, u8)]) -> [u8; 8] {
-    let mut w = [0u8; 8];
-    let mut i = 0;
-    while i < pairs.len() {
-        w[pairs[i].0 as u8 as usize] = pairs[i].1;
-        i += 1;
-    }
-    w
+/// Weights for save operations.
+fn save_weights() -> PhaseWeights {
+    PhaseWeights::new(&[
+        (LoadPhase::Parsing, 60),
+        (LoadPhase::Assembling, 40),
+    ])
 }
 
 /// Shared progress state, readable from any thread.
@@ -241,7 +200,7 @@ impl LoadProgress {
             phase: Arc::new(AtomicU8::new(LoadPhase::Pending as u8)),
             items_total: Arc::new(AtomicU32::new(0)),
             items_complete: Arc::new(AtomicU32::new(0)),
-            weights: Arc::new(Mutex::new(Vec::new())),
+            weights: Arc::new(Mutex::new(PhaseWeights::empty())),
         }
     }
 
@@ -256,29 +215,29 @@ impl LoadProgress {
     /// contributes proportionally to item progress (or 0% if no items are set,
     /// since monolithic phases jump from 0% to 100% when the next phase starts).
     pub fn progress_pct(&self) -> u8 {
-        let w = self.weights.lock().unwrap();
-        let phase = self.phase.load(Ordering::Relaxed) as usize;
+        let weights = self.weights.lock().unwrap();
+        let phase = LoadPhase::from_u8(self.phase.load(Ordering::Relaxed));
 
         // Terminal states
-        if phase == LoadPhase::Complete as usize {
+        if phase == LoadPhase::Complete {
             return 100;
         }
-        if phase == LoadPhase::Failed as usize {
+        if phase == LoadPhase::Failed {
             return 0;
         }
 
-        let total_weight: u16 = w.iter().map(|&x| x as u16).sum();
+        let total_weight = weights.total_weight();
         if total_weight == 0 {
             return 0;
         }
 
         // Sum weights of all completed phases (discriminants below current)
-        let completed_weight: u16 = w.iter().take(phase).map(|&x| x as u16).sum();
+        let completed_weight = weights.completed_weight(phase);
 
         // Fractional progress within current phase from items
         let items_total = self.items_total.load(Ordering::Relaxed);
         let items_complete = self.items_complete.load(Ordering::Relaxed);
-        let current_weight = w.get(phase).copied().unwrap_or(0) as f32;
+        let current_weight = weights.get(phase) as f32;
         let phase_fraction = if items_total > 0 {
             items_complete as f32 / items_total as f32
         } else {
@@ -301,25 +260,25 @@ impl LoadProgress {
     }
 
     /// Bind a weight table for this operation.
-    fn set_weights(&self, weights: &[u8]) {
-        *self.weights.lock().unwrap() = weights.to_vec();
+    pub fn set_weights(&self, weights: &PhaseWeights) {
+        *self.weights.lock().unwrap() = weights.clone();
     }
 
     /// Enter a new phase. Resets item counters.
-    fn enter_phase(&self, phase: LoadPhase) {
+    pub fn enter_phase(&self, phase: LoadPhase) {
         self.items_total.store(0, Ordering::Relaxed);
         self.items_complete.store(0, Ordering::Relaxed);
         self.phase.store(phase as u8, Ordering::Relaxed);
     }
 
     /// Set the total number of items for the current phase.
-    fn set_item_count(&self, total: u32) {
+    pub fn set_item_count(&self, total: u32) {
         self.items_total.store(total, Ordering::Relaxed);
         self.items_complete.store(0, Ordering::Relaxed);
     }
 
     /// Mark one more item complete in the current phase.
-    fn complete_item(&self) {
+    pub fn complete_item(&self) {
         self.items_complete.fetch_add(1, Ordering::Relaxed);
     }
 }
@@ -372,76 +331,34 @@ pub type LoadHandle = AsyncHandle<LoadResult>;
 pub type SaveHandle = AsyncHandle<SaveResult>;
 
 // ============================================================================
-// Format Detection
-// ============================================================================
-
-/// Detect format from magic bytes.
-fn detect_format_from_bytes(bytes: &[u8]) -> Result<DetectedFormat, LoadError> {
-    if bytes.len() < 4 {
-        return Err(LoadError::UnknownFormat);
-    }
-
-    if bytes.starts_with(b"WGSC") {
-        return Ok(DetectedFormat::Wgsc);
-    }
-
-    // USD binary (.usdc) starts with "PXR-USDC"
-    #[cfg(feature = "usd")]
-    if bytes.len() >= 8 && bytes.starts_with(b"PXR-USDC") {
-        return Ok(DetectedFormat::Usd);
-    }
-
-    // USDZ is a ZIP archive starting with "PK"
-    // NOTE: b"PK\x03\x04" denotes *any* zip. If we support another zip format
-    // we'll have to get more creative.
-    #[cfg(feature = "usd")]
-    if bytes.len() >= 2 && bytes[0] == b'P' && bytes[1] == b'K' {
-        return Ok(DetectedFormat::Usd);
-    }
-
-    // glTF binary (.glb) starts with "glTF"
-    if bytes.starts_with(b"glTF") {
-        return Ok(DetectedFormat::Gltf);
-    }
-
-    // glTF JSON starts with '{' (possibly with leading whitespace/BOM)
-    let trimmed = bytes.iter().position(|&b| !b.is_ascii_whitespace());
-    if let Some(pos) = trimmed {
-        if bytes[pos] == b'{' {
-            return Ok(DetectedFormat::Gltf);
-        }
-    }
-
-    Err(LoadError::UnknownFormat)
-}
-
-/// Detect format from file extension as a fallback.
-fn detect_format_from_extension(path: &std::path::Path) -> Result<DetectedFormat, LoadError> {
-    match path.extension().and_then(|e| e.to_str()) {
-        Some("wgsc") => Ok(DetectedFormat::Wgsc),
-        Some("glb") | Some("gltf") => Ok(DetectedFormat::Gltf),
-        #[cfg(feature = "assimp")]
-        Some(ext) if self::assimp::is_assimp_extension(ext) => Ok(DetectedFormat::Assimp),
-        #[cfg(feature = "usd")]
-        Some(ext) if self::usd::is_usd_extension(ext) => Ok(DetectedFormat::Usd),
-        _ => Err(LoadError::UnknownFormat),
-    }
-}
-
-// ============================================================================
 // Sync Loading (core logic)
 // ============================================================================
 
 /// Load a scene synchronously. Useful for CLI tools and tests.
+///
+/// Uses the [default importers](default_importers) for format detection.
 pub fn load_sync(source: SceneSource, options: LoadOptions) -> LoadResult {
+    let importers = default_importers();
+    load_sync_with(source, options, &importers)
+}
+
+/// Load a scene synchronously using a custom set of importers.
+///
+/// The importer list order determines detection priority (first match wins).
+pub fn load_sync_with(
+    source: SceneSource,
+    options: LoadOptions,
+    importers: &[Box<dyn Importer>],
+) -> LoadResult {
     let progress = LoadProgress::new();
-    load_sync_with_progress(source, &options, &progress)
+    load_sync_with_progress(source, &options, &progress, importers)
 }
 
 fn load_sync_with_progress(
     source: SceneSource,
     options: &LoadOptions,
     progress: &LoadProgress,
+    importers: &[Box<dyn Importer>],
 ) -> LoadResult {
     progress.enter_phase(LoadPhase::Reading);
 
@@ -453,132 +370,9 @@ fn load_sync_with_progress(
         SceneSource::Bytes(b) => (b, None),
     };
 
-    let format = detect_format_from_bytes(&bytes).or_else(|_| {
-        path_hint
-            .as_ref()
-            .map(|p| detect_format_from_extension(p))
-            .unwrap_or(Err(LoadError::UnknownFormat))
-    })?;
-
-    match format {
-        DetectedFormat::Wgsc => {
-            progress.set_weights(&WGSC_WEIGHTS);
-            load_wgsc_phased(&bytes, progress)
-        }
-        DetectedFormat::Gltf => {
-            progress.set_weights(&GLTF_WEIGHTS);
-            load_gltf_phased(&bytes, options, progress)
-        }
-        #[cfg(feature = "assimp")]
-        DetectedFormat::Assimp => {
-            progress.set_weights(&ASSIMP_WEIGHTS);
-            load_assimp_phased(&path_hint, &bytes, progress)
-        }
-        #[cfg(feature = "usd")]
-        DetectedFormat::Usd => {
-            progress.set_weights(&USD_WEIGHTS);
-            load_usd_phased(&path_hint, &bytes, progress)
-        }
-    }
-}
-
-fn load_wgsc_phased(bytes: &[u8], progress: &LoadProgress) -> LoadResult {
-    use self::format::{assemble_wgsc_scene, decode_wgsc_texture, parse_wgsc};
-
-    progress.enter_phase(LoadPhase::Parsing);
-    let sections = parse_wgsc(bytes)?;
-
-    progress.enter_phase(LoadPhase::DecodingTextures);
-    progress.set_item_count(sections.textures.len() as u32);
-
-    let mut decoded = Vec::with_capacity(sections.textures.len());
-    for st in &sections.textures {
-        decoded.push(decode_wgsc_texture(st)?);
-        progress.complete_item();
-    }
-
-    progress.enter_phase(LoadPhase::Assembling);
-    let scene = assemble_wgsc_scene(sections, decoded)?;
-
-    progress.enter_phase(LoadPhase::Complete);
-    Ok(SceneLoadResult {
-        scene,
-        camera: None,
-        format: DetectedFormat::Wgsc,
-    })
-}
-
-fn load_gltf_phased(bytes: &[u8], options: &LoadOptions, progress: &LoadProgress) -> LoadResult {
-    use self::gltf::{build_gltf_scene, load_gltf_assets, parse_gltf};
-
-    progress.enter_phase(LoadPhase::Parsing);
-    let parsed = parse_gltf(bytes).map_err(|e| LoadError::Gltf(e.to_string()))?;
-
-    progress.enter_phase(LoadPhase::DecodingTextures);
-    let mut scene = Scene::new();
-    let (_material_map, mesh_map) = load_gltf_assets(&parsed, &mut scene)
-        .map_err(|e| LoadError::Gltf(e.to_string()))?;
-
-    progress.enter_phase(LoadPhase::Assembling);
-    let camera = build_gltf_scene(&parsed, &mut scene, &mesh_map, options.aspect)
-        .map_err(|e| LoadError::Gltf(e.to_string()))?;
-
-    progress.enter_phase(LoadPhase::Complete);
-    Ok(SceneLoadResult {
-        scene,
-        camera,
-        format: DetectedFormat::Gltf,
-    })
-}
-
-#[cfg(feature = "assimp")]
-fn load_assimp_phased(
-    path_hint: &Option<PathBuf>,
-    bytes: &[u8],
-    progress: &LoadProgress,
-) -> LoadResult {
-    progress.enter_phase(LoadPhase::Parsing);
-
-    let result = if let Some(path) = path_hint {
-        // Prefer file path loading so assimp can resolve external textures
-        self::assimp::load_assimp_scene_from_path(path)
-    } else {
-        // Fallback to buffer loading with empty hint
-        self::assimp::load_assimp_scene_from_bytes(bytes, "")
-    };
-
-    let assimp_result = result.map_err(|e| LoadError::Assimp(e.to_string()))?;
-
-    progress.enter_phase(LoadPhase::Complete);
-    Ok(SceneLoadResult {
-        scene: assimp_result.scene,
-        camera: assimp_result.camera,
-        format: DetectedFormat::Assimp,
-    })
-}
-
-#[cfg(feature = "usd")]
-fn load_usd_phased(
-    path_hint: &Option<PathBuf>,
-    bytes: &[u8],
-    progress: &LoadProgress,
-) -> LoadResult {
-    progress.enter_phase(LoadPhase::Parsing);
-
-    let result = if let Some(path) = path_hint {
-        self::usd::load_usd_scene_from_path(path)
-    } else {
-        self::usd::load_usd_scene_from_bytes(bytes, "scene.usd")
-    };
-
-    let usd_result = result.map_err(|e| LoadError::Usd(e.to_string()))?;
-
-    progress.enter_phase(LoadPhase::Complete);
-    Ok(SceneLoadResult {
-        scene: usd_result.scene,
-        camera: usd_result.camera,
-        format: DetectedFormat::Usd,
-    })
+    let importer = detect_importer(&bytes, path_hint.as_deref(), importers)?;
+    progress.set_weights(&importer.phase_weights());
+    importer.load(&bytes, path_hint.as_deref(), options, progress)
 }
 
 // ============================================================================
@@ -663,15 +457,32 @@ where
 
 /// Start loading a scene asynchronously.
 ///
+/// Uses the [default importers](default_importers) for format detection.
+///
 /// On native, spawns a background thread. On WASM, schedules as a microtask
 /// with yield points between loading phases.
 ///
 /// Returns a [`LoadHandle`] to poll for completion and progress.
 pub fn load_async(source: SceneSource, options: LoadOptions) -> LoadHandle {
+    load_async_with(source, options, default_importers())
+}
+
+/// Start loading a scene asynchronously using a custom set of importers.
+///
+/// The importer list order determines detection priority (first match wins).
+///
+/// On native, spawns a background thread. On WASM, schedules as a microtask
+/// with yield points between built-in loading phases; custom importers run
+/// synchronously within a microtask.
+pub fn load_async_with(
+    source: SceneSource,
+    options: LoadOptions,
+    importers: Vec<Box<dyn Importer>>,
+) -> LoadHandle {
     #[cfg(not(target_arch = "wasm32"))]
     {
         spawn_async(LoadProgress::new(), move |progress| {
-            load_sync_with_progress(source, &options, progress)
+            load_sync_with_progress(source, &options, progress, &importers)
         })
     }
     #[cfg(target_arch = "wasm32")]
@@ -679,7 +490,7 @@ pub fn load_async(source: SceneSource, options: LoadOptions) -> LoadHandle {
         let progress = LoadProgress::new();
         let p = progress.clone();
         spawn_async_wasm(progress, async move {
-            load_chunked_wasm(source, &options, &p).await
+            load_chunked_wasm(source, &options, &p, &importers).await
         })
     }
 }
@@ -709,11 +520,16 @@ async fn yield_to_event_loop() {
 }
 
 /// WASM chunked loading: runs loading phases with yields between them.
+///
+/// For built-in formats (WGSC, glTF), uses optimized chunked loading with
+/// yield points between phases. For custom importers, falls back to the
+/// synchronous `Importer::load` within a single microtask.
 #[cfg(target_arch = "wasm32")]
 async fn load_chunked_wasm(
     source: SceneSource,
     options: &LoadOptions,
     progress: &LoadProgress,
+    importers: &[Box<dyn Importer>],
 ) -> LoadResult {
     progress.enter_phase(LoadPhase::Reading);
 
@@ -729,19 +545,14 @@ async fn load_chunked_wasm(
 
     yield_to_event_loop().await;
 
-    let format = detect_format_from_bytes(&bytes).or_else(|_| {
-        path_hint
-            .as_ref()
-            .map(|p| detect_format_from_extension(p))
-            .unwrap_or(Err(LoadError::UnknownFormat))
-    })?;
+    let importer = detect_importer(&bytes, path_hint.as_deref(), importers)?;
+    let weights = importer.phase_weights();
+    progress.set_weights(&weights);
 
-    match format {
-        DetectedFormat::Wgsc => {
-            progress.set_weights(&WGSC_WEIGHTS);
-            load_wgsc_chunked(&bytes, progress).await
-        }
-        DetectedFormat::Gltf => {
+    // Use optimized chunked paths for built-in formats
+    match importer.name() {
+        "WGSC" => load_wgsc_chunked(&bytes, progress).await,
+        "glTF" => {
             if !bytes.starts_with(b"glTF") {
                 // Non-GLB glTF files reference external resources via filesystem
                 // paths, which are not accessible on WASM.
@@ -749,16 +560,11 @@ async fn load_chunked_wasm(
                     "non-GLB glTF (requires filesystem)".into(),
                 ));
             }
-            progress.set_weights(&GLTF_WEIGHTS);
             load_gltf_chunked(&bytes, options, progress).await
         }
-        #[cfg(feature = "assimp")]
-        DetectedFormat::Assimp => {
-            Err(LoadError::UnsupportedPlatform("assimp".into()))
-        }
-        #[cfg(feature = "usd")]
-        DetectedFormat::Usd => {
-            Err(LoadError::UnsupportedPlatform("usd".into()))
+        _ => {
+            // Custom/other importers: run synchronously within this microtask
+            importer.load(&bytes, path_hint.as_deref(), options, progress)
         }
     }
 }
@@ -859,7 +665,7 @@ fn save_sync_with_progress(
     options: &self::format::SaveOptions,
     progress: &LoadProgress,
 ) -> SaveResult {
-    progress.set_weights(&SAVE_WEIGHTS);
+    progress.set_weights(&save_weights());
     progress.enter_phase(LoadPhase::Parsing); // "Parsing" = serializing in export context
     let bytes = format::to_bytes_with_options(scene, options)
         .map_err(LoadError::Format)?;
@@ -943,58 +749,111 @@ mod tests {
 
     #[test]
     fn test_detect_wgsc() {
+        let importers = default_importers();
         let bytes = b"WGSC\x01\x00rest of file";
-        assert_eq!(
-            detect_format_from_bytes(bytes).unwrap(),
-            DetectedFormat::Wgsc
-        );
+        let imp = detect_importer(bytes, None, &importers).unwrap();
+        assert_eq!(imp.name(), "WGSC");
     }
 
     #[test]
     fn test_detect_glb() {
+        let importers = default_importers();
         let bytes = b"glTF\x02\x00\x00\x00rest";
-        assert_eq!(
-            detect_format_from_bytes(bytes).unwrap(),
-            DetectedFormat::Gltf
-        );
+        let imp = detect_importer(bytes, None, &importers).unwrap();
+        assert_eq!(imp.name(), "glTF");
     }
 
     #[test]
     fn test_detect_gltf_json() {
+        let importers = default_importers();
         let bytes = b"  { \"asset\": {} }";
-        assert_eq!(
-            detect_format_from_bytes(bytes).unwrap(),
-            DetectedFormat::Gltf
-        );
+        let imp = detect_importer(bytes, None, &importers).unwrap();
+        assert_eq!(imp.name(), "glTF");
     }
 
     #[test]
     fn test_detect_unknown() {
+        let importers = default_importers();
         let bytes = b"\x00\x00\x00\x00";
-        assert!(detect_format_from_bytes(bytes).is_err());
+        assert!(detect_importer(bytes, None, &importers).is_err());
     }
 
     #[test]
     fn test_detect_from_extension() {
-        assert_eq!(
-            detect_format_from_extension(std::path::Path::new("model.wgsc")).unwrap(),
-            DetectedFormat::Wgsc
-        );
-        assert_eq!(
-            detect_format_from_extension(std::path::Path::new("model.glb")).unwrap(),
-            DetectedFormat::Gltf
-        );
-        assert_eq!(
-            detect_format_from_extension(std::path::Path::new("model.gltf")).unwrap(),
-            DetectedFormat::Gltf
-        );
+        let importers = default_importers();
+        let unknown = b"\x00\x00\x00\x00";
+
+        let imp = detect_importer(unknown, Some(std::path::Path::new("model.wgsc")), &importers).unwrap();
+        assert_eq!(imp.name(), "WGSC");
+
+        let imp = detect_importer(unknown, Some(std::path::Path::new("model.glb")), &importers).unwrap();
+        assert_eq!(imp.name(), "glTF");
+
+        let imp = detect_importer(unknown, Some(std::path::Path::new("model.gltf")), &importers).unwrap();
+        assert_eq!(imp.name(), "glTF");
+
         #[cfg(feature = "assimp")]
-        assert_eq!(
-            detect_format_from_extension(std::path::Path::new("model.obj")).unwrap(),
-            DetectedFormat::Assimp
-        );
+        {
+            let imp = detect_importer(unknown, Some(std::path::Path::new("model.obj")), &importers).unwrap();
+            assert_eq!(imp.name(), "Assimp");
+        }
         #[cfg(not(feature = "assimp"))]
-        assert!(detect_format_from_extension(std::path::Path::new("model.obj")).is_err());
+        assert!(detect_importer(unknown, Some(std::path::Path::new("model.obj")), &importers).is_err());
+    }
+
+    #[test]
+    fn test_custom_importer() {
+        use std::path::Path;
+
+        struct TestImporter;
+        impl Importer for TestImporter {
+            fn name(&self) -> &str { "Test" }
+            fn detect_from_bytes(&self, bytes: &[u8]) -> bool {
+                bytes.starts_with(b"TEST")
+            }
+            fn detect_from_extension(&self, ext: &str) -> bool {
+                ext == "test"
+            }
+            fn phase_weights(&self) -> PhaseWeights {
+                PhaseWeights::new(&[
+                    (LoadPhase::Reading, 50),
+                    (LoadPhase::Assembling, 50),
+                ])
+            }
+            fn load(
+                &self,
+                _bytes: &[u8],
+                _path_hint: Option<&Path>,
+                _options: &LoadOptions,
+                progress: &LoadProgress,
+            ) -> Result<SceneLoadResult, LoadError> {
+                progress.enter_phase(LoadPhase::Assembling);
+                progress.enter_phase(LoadPhase::Complete);
+                Ok(SceneLoadResult {
+                    scene: Scene::new(),
+                    camera: None,
+                    format: DetectedFormat::Other("Test".into()),
+                })
+            }
+        }
+
+        let importers: Vec<Box<dyn Importer>> = vec![Box::new(TestImporter)];
+
+        // Detect from bytes
+        let imp = detect_importer(b"TEST data", None, &importers).unwrap();
+        assert_eq!(imp.name(), "Test");
+
+        // Detect from extension
+        let imp = detect_importer(b"\x00\x00\x00\x00", Some(Path::new("file.test")), &importers).unwrap();
+        assert_eq!(imp.name(), "Test");
+
+        // Load via load_sync_with
+        let result = load_sync_with(
+            SceneSource::Bytes(b"TEST data".to_vec()),
+            LoadOptions::default(),
+            &importers,
+        ).unwrap();
+        assert_eq!(result.format, DetectedFormat::Other("Test".into()));
     }
 
     #[test]
@@ -1020,7 +879,13 @@ mod tests {
     fn test_load_progress_updates() {
         let progress = LoadProgress::new();
         // Simulate a WGSC load: Reading(10) + Parsing(10) + DecodingTextures(60) + Assembling(20)
-        progress.set_weights(&WGSC_WEIGHTS);
+        let wgsc_weights = PhaseWeights::new(&[
+            (LoadPhase::Reading, 10),
+            (LoadPhase::Parsing, 10),
+            (LoadPhase::DecodingTextures, 60),
+            (LoadPhase::Assembling, 20),
+        ]);
+        progress.set_weights(&wgsc_weights);
 
         progress.enter_phase(LoadPhase::Reading);
         assert_eq!(progress.phase(), LoadPhase::Reading);
