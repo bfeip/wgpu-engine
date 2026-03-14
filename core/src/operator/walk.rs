@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use cgmath::{InnerSpace, Vector3};
 
-use crate::camera::Camera;
+use crate::scene::Camera;
 use crate::event::{CallbackId, Event, EventDispatcher, EventKind};
 use crate::input::{ElementState, Key, MouseButton};
 use crate::operator::{Operator, OperatorId};

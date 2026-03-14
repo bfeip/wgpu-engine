@@ -1,7 +1,6 @@
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
-use crate::camera::Camera;
-use crate::scene::{MaterialProperties, PrimitiveType, SceneProperties};
+use crate::scene::{Camera, MaterialProperties, PrimitiveType, SceneProperties};
 
 use super::state::GpuTexture;
 use super::uniforms::{CameraUniform, LightsArrayUniform};

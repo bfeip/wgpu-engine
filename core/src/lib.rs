@@ -8,7 +8,6 @@ pub use wgpu_engine_import_export as loader; // backward compat alias
 // Convenience re-exports from scene crate
 pub use wgpu_engine_scene::common;
 pub use wgpu_engine_scene::geom_query;
-pub use wgpu_engine_scene::camera;
 pub use wgpu_engine_scene::{Camera, EnvironmentMap, EnvironmentMapId, Scene};
 
 // Convenience re-exports from import-export crate

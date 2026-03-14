@@ -141,17 +141,17 @@ impl<'a> Viewer<'a> {
     }
 
     /// Get a reference to the current camera
-    pub fn camera(&self) -> &crate::camera::Camera {
+    pub fn camera(&self) -> &crate::scene::Camera {
         self.renderer.camera()
     }
 
     /// Get a mutable reference to the current camera
-    pub fn camera_mut(&mut self) -> &mut crate::camera::Camera {
+    pub fn camera_mut(&mut self) -> &mut crate::scene::Camera {
         self.renderer.camera_mut()
     }
 
     /// Set the camera to a new value
-    pub fn set_camera(&mut self, camera: crate::camera::Camera) {
+    pub fn set_camera(&mut self, camera: crate::scene::Camera) {
         *self.renderer.camera_mut() = camera;
     }
 

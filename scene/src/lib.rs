@@ -1,11 +1,11 @@
-pub mod camera;
-pub use wgpu_engine_common as common;
-pub mod geom_query;
-pub use camera::Camera;
 
-// Scene submodules (formerly scene/src/scene/)
+pub use wgpu_engine_common as common;
+
+// Scene submodules
+mod camera;
 pub mod annotation;
-pub mod environment;
+mod environment;
+pub mod geom_query;
 mod instance;
 mod coordinate_space;
 mod light;
@@ -14,28 +14,37 @@ mod mesh;
 mod node;
 mod texture;
 
-
 use cgmath::{EuclideanSpace, InnerSpace, Matrix4, Point3, SquareMatrix, Vector3};
 use image::DynamicImage;
 use std::collections::HashMap;
 use std::path::Path;
 
-use annotation::{Annotation, AnnotationId, AnnotationManager};
+// ID types
+pub use annotation::AnnotationId;
+pub use environment::EnvironmentMapId;
+pub use instance::InstanceId;
+pub use material::MaterialId;
+pub use mesh::MeshId;
+pub use node::NodeId;
+pub use texture::TextureId;
 
-// Public API exports
+pub use camera::Camera;
 pub use coordinate_space::CoordinateSpace;
-pub use environment::{EnvironmentMap, EnvironmentMapId, EnvironmentSource};
-pub use instance::{Instance, InstanceId};
+pub use instance::Instance;
 pub use light::{Light, LightType, MAX_LIGHTS};
-pub use material::{AlphaMode, Material, MaterialFlags, MaterialId, DEFAULT_MATERIAL_ID};
-pub use mesh::{Mesh, MeshDescriptor, MeshId, MeshIndex, MeshPrimitive, ObjMesh, PrimitiveType, Vertex};
-pub use node::{EffectiveVisibility, Node, NodeId, Visibility};
-pub use texture::{Texture, TextureFormat, TextureId};
+pub use material::{
+    AlphaMode, Material, MaterialFlags, MaterialProperties, DEFAULT_MATERIAL_ID,
+    DEFAULT_METALLIC, DEFAULT_ROUGHNESS,
+};
+pub use mesh::{
+    Mesh, MeshDescriptor, MeshHit, MeshIndex, MeshPrimitive, MeshVolumeHit, ObjMesh,
+    PrimitiveType, Vertex,
+};
+pub use node::{EffectiveVisibility, Node, Visibility};
+pub use texture::{Texture, TextureFormat};
+pub use environment::{EnvironmentMap, EnvironmentSource};
 
-
-// Items used by core crate for rendering
-pub use material::MaterialProperties;
-
+use annotation::{Annotation, AnnotationManager};
 use crate::common::{Aabb, RgbaColor};
 
 /// Default generation counter value for newly created resources.
@@ -1232,7 +1241,8 @@ impl Scene {
                             &world_transform,
                             local_pos,
                         );
-                        let world_normal = (normal_matrix * local_normal).normalize();
+                        let world_normal: Vector3<f32> = normal_matrix * local_normal;
+                        let world_normal = world_normal.normalize();
 
                         (world_pos, world_normal)
                     })

@@ -69,10 +69,8 @@ impl PickQuery for RayPickQuery {
         // Transform hits to world space and add to results
         for mesh_hit in mesh_hits {
             // Transform hit point to world space
-            let world_hit_point = {
-                let homogeneous = world_transform * mesh_hit.hit_point.to_homogeneous();
-                Point3::from_homogeneous(homogeneous)
-            };
+            let world_hit_point =
+                cgmath::Transform::transform_point(world_transform, mesh_hit.hit_point);
 
             // Compute distance in world space from original ray origin
             let distance = (world_hit_point - self.world_ray.origin).magnitude();

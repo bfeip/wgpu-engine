@@ -1,5 +1,4 @@
-use crate::camera::Camera;
-use crate::scene::{Light, LightType, Material, MAX_LIGHTS};
+use crate::scene::{Camera, Light, LightType, Material, MAX_LIGHTS};
 
 /// GPU uniform buffer layout for camera data.
 ///

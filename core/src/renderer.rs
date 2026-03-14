@@ -9,9 +9,8 @@ use std::collections::HashMap;
 use anyhow::Result;
 
 use crate::{
-    camera::Camera,
     ibl::IblResources,
-    scene::{PrimitiveType, Scene, SceneProperties},
+    scene::{Camera, PrimitiveType, Scene, SceneProperties},
     selection::SelectionManager,
     shaders::ShaderGenerator,
 };

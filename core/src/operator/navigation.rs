@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use cgmath::MetricSpace;
 
-use crate::camera::Camera;
+use crate::scene::Camera;
 use crate::event::{CallbackId, Event, EventDispatcher, EventKind};
 use crate::operator::{Operator, OperatorId};
 use crate::scene_scale;
