@@ -3,16 +3,10 @@ pub use wgpu_engine_scene as scene;
 
 // Re-export import-export crate
 pub use wgpu_engine_import_export as import_export;
-pub use wgpu_engine_import_export as loader; // backward compat alias
 
-// Convenience re-exports from scene crate
+// Re-export common subsystems from scene crate
 pub use wgpu_engine_scene::common;
 pub use wgpu_engine_scene::geom_query;
-pub use wgpu_engine_scene::{Camera, EnvironmentMap, EnvironmentMapId, Scene};
-
-// Convenience re-exports from import-export crate
-pub use wgpu_engine_import_export::gltf;
-pub use wgpu_engine_import_export::gltf::{load_gltf_scene_from_path, load_gltf_scene_from_slice, GltfLoadResult};
 
 // Core modules
 pub mod event;
@@ -25,7 +19,6 @@ mod scene_scale;
 mod shaders;
 mod viewer;
 
-pub use selection::{SelectionItem, SelectionManager};
 pub use viewer::Viewer;
 
 #[cfg(target_arch = "wasm32")]

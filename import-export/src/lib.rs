@@ -6,7 +6,7 @@
 //!
 //! # Submodules
 //!
-//! - [`format`] — Binary scene serialization (.wgsc)
+//! - [`mod@format`] — Binary scene serialization (.wgsc)
 //! - [`gltf`] — glTF loading
 //! - [`usd`] — USD loading (USDC, USDA, USDZ)
 //! - [`assimp`] — Assimp-based loading (feature-gated)

@@ -358,10 +358,10 @@ fn make_key_event(key: &str, code: u32, state: ElementState, repeat: bool) -> Ke
 }
 
 /// Create a camera that fits the scene bounds (same logic as gltf-viewer).
-fn camera_for_scene(scene: &crate::Scene, aspect: f32) -> crate::Camera {
+fn camera_for_scene(scene: &crate::scene::Scene, aspect: f32) -> crate::scene::Camera {
     use cgmath::{Point3, Vector3};
 
-    let mut camera = crate::Camera {
+    let mut camera = crate::scene::Camera {
         eye: Point3::new(1.0, 1.0, 1.0),
         target: Point3::new(0.0, 0.0, 0.0),
         up: Vector3::new(0.0, 1.0, 0.0),
