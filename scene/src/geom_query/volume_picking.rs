@@ -3,6 +3,7 @@ use cgmath::Matrix4;
 use crate::common::{Aabb, ConvexPolyhedron};
 use crate::{InstanceId, Mesh, NodeId, Scene};
 
+use super::mesh_intersection;
 use super::pick_query::{pick_all, PickQuery};
 
 /// Result of a volume-instance intersection test.
@@ -60,7 +61,7 @@ impl PickQuery for VolumePickQuery {
         results: &mut Vec<Self::Result>,
     ) {
         // Test against mesh (volume is already in local space)
-        if let Some(mesh_hit) = mesh.intersect_volume(&self.volume, self.thorough) {
+        if let Some(mesh_hit) = mesh_intersection::intersect_volume(mesh, &self.volume, self.thorough) {
             results.push(VolumePickResult {
                 node_id,
                 instance_id,

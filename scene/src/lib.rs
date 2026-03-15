@@ -36,10 +36,7 @@ pub use material::{
     AlphaMode, Material, MaterialFlags, MaterialProperties, DEFAULT_MATERIAL_ID,
     DEFAULT_METALLIC, DEFAULT_ROUGHNESS,
 };
-pub use mesh::{
-    Mesh, MeshDescriptor, MeshHit, MeshIndex, MeshPrimitive, MeshVolumeHit, ObjMesh,
-    PrimitiveType, Vertex,
-};
+pub use mesh::{Mesh, MeshDescriptor, MeshIndex, MeshPrimitive, ObjMesh, PrimitiveType, Vertex};
 pub use node::{EffectiveVisibility, Node, Visibility};
 pub use texture::{Texture, TextureFormat};
 pub use environment::{EnvironmentMap, EnvironmentSource};

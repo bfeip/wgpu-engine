@@ -3,6 +3,7 @@ use cgmath::{InnerSpace, Matrix4, Point3};
 use crate::common::{Aabb, Ray};
 use crate::{InstanceId, Mesh, NodeId, Scene};
 
+use super::mesh_intersection;
 use super::pick_query::{pick_all, PickQuery};
 
 /// Result of a ray-instance intersection test.
@@ -64,7 +65,7 @@ impl PickQuery for RayPickQuery {
         results: &mut Vec<Self::Result>,
     ) {
         // Test against all triangles in the mesh (ray is already in local space)
-        let mesh_hits = mesh.intersect_ray(&self.ray);
+        let mesh_hits = mesh_intersection::intersect_ray(mesh, &self.ray);
 
         // Transform hits to world space and add to results
         for mesh_hit in mesh_hits {
