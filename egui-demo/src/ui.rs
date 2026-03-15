@@ -1,11 +1,8 @@
 use cgmath::{InnerSpace, Vector3};
 use wgpu_engine::common::RgbaColor;
-use wgpu_engine::operator::BuiltinOperatorId;
+use wgpu_engine::operator::NavigationMode;
 use wgpu_engine::scene::{EffectiveVisibility, Light, LightType, NodeId, Visibility, MAX_LIGHTS};
 use wgpu_engine::Viewer;
-
-const WALK_OPERATOR_ID: u32 = BuiltinOperatorId::Walk as u32;
-const NAV_OPERATOR_ID: u32 = BuiltinOperatorId::Navigation as u32;
 
 /// Tab selection for the left panel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -49,29 +46,17 @@ pub fn build(ctx: &egui::Context, viewer: &mut Viewer) -> UiActions {
 
 /// Information about the current navigation mode.
 struct ModeInfo {
-    is_walk_mode: bool,
-    is_nav_mode: bool,
+    mode: NavigationMode,
 }
 
 fn get_mode_info(viewer: &Viewer) -> ModeInfo {
-    let walk_pos = viewer.operator_manager().position(WALK_OPERATOR_ID);
-    let nav_pos = viewer.operator_manager().position(NAV_OPERATOR_ID);
-
-    let is_walk_mode = match (walk_pos, nav_pos) {
-        (Some(w), Some(n)) => w < n,
-        (Some(_), None) => true,
-        _ => false,
-    };
-    let is_nav_mode = !is_walk_mode && nav_pos.is_some();
-
     ModeInfo {
-        is_walk_mode,
-        is_nav_mode,
+        mode: viewer.navigation_mode(),
     }
 }
 
 /// Top panel showing FPS and current mode.
-fn build_performance_panel(ctx: &egui::Context, mode: &ModeInfo, viewer: &Viewer) {
+fn build_performance_panel(ctx: &egui::Context, mode: &ModeInfo, _viewer: &Viewer) {
     egui::TopBottomPanel::new(egui::panel::TopBottomSide::Top, "Performance")
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -81,13 +66,10 @@ fn build_performance_panel(ctx: &egui::Context, mode: &ModeInfo, viewer: &Viewer
                 ));
                 ui.separator();
 
-                if mode.is_walk_mode {
-                    ui.label("Mode: Walk");
-                } else if mode.is_nav_mode {
-                    ui.label("Mode: Orbit");
-                } else if let Some(front) = viewer.operator_manager().front() {
-                    ui.label(format!("Mode: {}", front.name()));
-                }
+                match mode.mode {
+                    NavigationMode::Walk => ui.label("Mode: Walk"),
+                    NavigationMode::Orbit => ui.label("Mode: Orbit"),
+                };
             });
         });
 }
@@ -433,18 +415,16 @@ fn build_camera_section(ui: &mut egui::Ui, viewer: &Viewer) {
 fn build_controls_section(ui: &mut egui::Ui, mode: &ModeInfo) {
     ui.heading("Controls");
 
-    if mode.is_walk_mode {
-        ui.label("WASD: Move");
-        ui.label("Left Mouse Drag: Look around");
-    } else if mode.is_nav_mode {
-        ui.label("Left Mouse Drag: Orbit camera");
-        ui.label("Right Mouse Drag: Pan camera");
-        ui.label("Mouse Wheel: Zoom in/out");
-    } else {
-        ui.label("WASD: Walk movement");
-        ui.label("Left Mouse Drag: Look around / Orbit");
-        ui.label("Right Mouse Drag: Pan camera");
-        ui.label("Mouse Wheel: Zoom in/out");
+    match mode.mode {
+        NavigationMode::Walk => {
+            ui.label("WASD: Move");
+            ui.label("Left Mouse Drag: Look around");
+        }
+        NavigationMode::Orbit => {
+            ui.label("Left Mouse Drag: Orbit camera");
+            ui.label("Right Mouse Drag: Pan camera");
+            ui.label("Mouse Wheel: Zoom in/out");
+        }
     }
 
     ui.separator();
@@ -453,20 +433,11 @@ fn build_controls_section(ui: &mut egui::Ui, mode: &ModeInfo) {
     ui.label("ESC: Exit application");
 }
 
-fn build_operators_section(ui: &mut egui::Ui, viewer: &Viewer, mode: &ModeInfo) {
+fn build_operators_section(ui: &mut egui::Ui, viewer: &Viewer, _mode: &ModeInfo) {
     ui.heading("Operators");
 
-    let active_nav_id = if mode.is_walk_mode {
-        Some(WALK_OPERATOR_ID)
-    } else if mode.is_nav_mode {
-        Some(NAV_OPERATOR_ID)
-    } else {
-        None
-    };
-
     for op in viewer.operator_manager().iter() {
-        let prefix = if Some(op.id()) == active_nav_id { "> " } else { "  " };
-        ui.label(format!("{}{}", prefix, op.name()));
+        ui.label(format!("  {}", op.name()));
     }
 }
 

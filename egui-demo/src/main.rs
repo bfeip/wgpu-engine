@@ -11,7 +11,7 @@ use cgmath::Vector3;
 use wgpu_engine::common::RgbaColor;
 use wgpu_engine::egui_support::EguiViewerApp;
 use wgpu_engine::input::{ElementState, Key};
-use wgpu_engine::operator::BuiltinOperatorId;
+use wgpu_engine::operator::NavigationMode;
 use wgpu_engine::import_export::{LoadOptions, SceneSource, load_sync};
 use wgpu_engine::scene::{Light, LightType, Scene, MAX_LIGHTS};
 
@@ -262,16 +262,14 @@ impl<'a> App<'a> {
         }
     }
 
-    /// Cycle between Walk and Navigation operators by swapping their positions
+    /// Cycle between Orbit and Walk navigation modes
     fn cycle_operator_mode(&mut self) {
-        let viewer_app = self.viewer_app.as_mut().unwrap();
-        let viewer = viewer_app.viewer_mut();
-        let walk_id: u32 = BuiltinOperatorId::Walk.into();
-        let nav_id: u32 = BuiltinOperatorId::Navigation.into();
-
-        // Swap Walk and Navigation operators, preserving Selection operator position
-        let (op_mgr, dispatcher) = viewer.operator_manager_and_dispatcher_mut();
-        op_mgr.swap(walk_id, nav_id, dispatcher);
+        let viewer = self.viewer_app.as_mut().unwrap().viewer_mut();
+        let new_mode = match viewer.navigation_mode() {
+            NavigationMode::Orbit => NavigationMode::Walk,
+            NavigationMode::Walk => NavigationMode::Orbit,
+        };
+        viewer.set_navigation_mode(new_mode);
     }
 
     /// Toggle between perspective and orthographic projection

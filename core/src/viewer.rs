@@ -1,11 +1,15 @@
 use cgmath::Vector3;
 use web_time::Instant;
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use crate::{
     common::RgbaColor,
     event::{Event, EventContext, EventDispatcher, EventKind},
     operator::{
-        BuiltinOperatorId, NavigationOperator, OperatorManager, SelectionOperator, TransformOperator
+        BuiltinOperatorId, NavigationMode, NavigationOperator, OperatorManager,
+        SelectionOperator, TransformOperator,
     },
     renderer::Renderer,
     scene::Scene,
@@ -19,6 +23,7 @@ pub struct Viewer<'a> {
     selection: SelectionManager,
     dispatcher: EventDispatcher,
     operator_manager: OperatorManager,
+    navigation_mode: Rc<RefCell<NavigationMode>>,
     /// Last time update() was called, for delta_time calculation
     last_update_time: Option<Instant>,
 }
@@ -52,11 +57,10 @@ impl<'a> Viewer<'a> {
             Box::new(TransformOperator::new(BuiltinOperatorId::Transform.into()));
         operator_manager.push_back(transform_operator, &mut dispatcher);
 
-        // Navigation operator for orbit/pan/zoom
-        let nav_operator = Box::new(NavigationOperator::new(
-            BuiltinOperatorId::Navigation.into(),
-        ));
-        operator_manager.push_back(nav_operator, &mut dispatcher);
+        // Navigation operator for orbit/pan/zoom/walk
+        let nav_operator = NavigationOperator::new(BuiltinOperatorId::Navigation.into());
+        let navigation_mode = nav_operator.mode_handle();
+        operator_manager.push_back(Box::new(nav_operator), &mut dispatcher);
 
         // Create viewer
         let mut viewer = Self {
@@ -65,6 +69,7 @@ impl<'a> Viewer<'a> {
             selection: SelectionManager::new(),
             dispatcher,
             operator_manager,
+            navigation_mode,
             last_update_time: None,
         };
 
@@ -121,10 +126,20 @@ impl<'a> Viewer<'a> {
         self.dispatcher.dispatch(event, &mut ctx);
     }
 
+    /// Get the current navigation mode.
+    pub fn navigation_mode(&self) -> NavigationMode {
+        *self.navigation_mode.borrow()
+    }
+
+    /// Set the navigation mode (Orbit or Walk).
+    pub fn set_navigation_mode(&mut self, mode: NavigationMode) {
+        *self.navigation_mode.borrow_mut() = mode;
+    }
+
     /// Dispatch an Update event with delta_time since last update.
     ///
     /// Call this once per frame before rendering to enable smooth continuous
-    /// operations like WASD movement in the WalkOperator.
+    /// operations like WASD movement in walk mode.
     ///
     /// The delta_time is automatically calculated from the time since the
     /// last call to update(). On the first call, a small default delta is used.

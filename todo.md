@@ -21,28 +21,21 @@
 
 ## March quality push
 ### Rendering re-do (2 weeks)
-- Core API + docs review
-
 With the remaining time:
 - Draw order optimization
 - IBL weirdness
 
 ### Crate improvements (2 weeks)
-Three days together:
-- Scene API and docs review
-  - Split scene graph into its own module (Maybe)
-
 One day each:
 - API and docs review
 - Benchmarking and tests
 
 One day together:
-- Merge walk and orbit operators under navigation operator + Middle click orbit
+- Middle click orbit
 - Everything optional behind features + good default features
 
 Stretch:
 - Scene graph expansion plan
-- Extract egui example to replace glTF viewer
 - Performance
 - High-level docs
 - Better WASM API (a redesign of the react demo might be better)
@@ -50,10 +43,3 @@ Stretch:
   - https://github.com/mooman219/fontdue
   - https://github.com/pop-os/cosmic-text
   - https://github.com/nical/lyon
-
-### Material shader re-design
-We need to plan for a refactor or re-design of our material and shader systems. The problem is that currently the system is rather inflexible: e.g. PBR materials must have textures associated with them in order to render correctly, despite base color + metalness roughness factors being a valid workflow.
-
-From what I've seen, the materials themselves in `material.rs` look fine, it's more or less a POD struct that has all the fields we need. My problem is moreso I think with the shaders and how shaders are generated from materials. in `generate_shader` in `shaders.rs` and in `main.wesl` is where I think most of the problems are. These two combined force the shader down one of 4 constrictive pathways (which really just boil down to 2, PBR lit, and everything else).
-
-I'd especially like to do away with the `use_pbr` shader feature. I think it implies a false dichotomy between how our materials work. This was introduced because we were going to also support blinn-phong materials and I wanted the workflows separate. However, the reality of the situation is that we should render the material as best as possible using the Cook-Torrance workflow we've developed. We can introduce other rendering models later.

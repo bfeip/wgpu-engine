@@ -1,12 +1,10 @@
 mod navigation;
 mod selection;
 mod transform;
-mod walk;
 
-pub use navigation::NavigationOperator;
+pub use navigation::{NavigationMode, NavigationOperator};
 pub use selection::SelectionOperator;
 pub use transform::TransformOperator;
-pub use walk::WalkOperator;
 
 use crate::event::{CallbackId, EventDispatcher};
 
@@ -17,7 +15,6 @@ pub type OperatorId = u32;
 pub enum BuiltinOperatorId {
     Navigation = 0,
     Selection = 1,
-    Walk = 2,
     Transform = 3,
 }
 
