@@ -26,7 +26,7 @@ pub const DEFAULT_MATERIAL_ID: MaterialId = u32::MAX;
 /// Material IDs are assigned sequentially by the Scene starting from 0.
 pub type MaterialId = u32;
 
-/// Alpha rendering mode, matching glTF spec.
+/// Alpha rendering mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum AlphaMode {
@@ -40,7 +40,7 @@ pub enum AlphaMode {
 }
 
 bitflags! {
-    /// Additional material rendering flags for extensibility
+    /// Additional material options
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     #[cfg_attr(feature = "serde", serde(transparent))]
@@ -54,11 +54,7 @@ bitflags! {
     }
 }
 
-/// Material properties that determine shader generation and rendering behavior.
-///
-/// This drives:
-/// - Shader generation (ShaderGenerator uses these for conditional compilation)
-/// - Pipeline creation (different properties = different pipelines)
+/// Material properties helpful to know during shader generation
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MaterialProperties {
     /// Whether lighting calculations should be applied

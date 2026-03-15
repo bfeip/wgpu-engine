@@ -4,7 +4,7 @@ use super::mesh::MeshId;
 /// Unique identifier for a mesh instance
 pub type InstanceId = u32;
 
-/// An instance referencing a mesh and material to be rendered.
+/// An instance referencing a mesh and material.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Instance {
