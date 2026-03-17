@@ -1117,7 +1117,7 @@ dependencies = [
  "log",
  "pollster 0.3.0",
  "rfd",
- "wgpu-engine",
+ "wgpu-engine-graphics",
  "winit",
 ]
 
@@ -4912,7 +4912,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "wgpu-engine"
+name = "wgpu-engine-common"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "cgmath",
+ "serde",
+]
+
+[[package]]
+name = "wgpu-engine-graphics"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -4940,15 +4949,6 @@ dependencies = [
  "wgpu-engine-import-export",
  "wgpu-engine-scene",
  "winit",
-]
-
-[[package]]
-name = "wgpu-engine-common"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "cgmath",
- "serde",
 ]
 
 [[package]]

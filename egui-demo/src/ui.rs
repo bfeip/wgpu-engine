@@ -1,8 +1,8 @@
 use cgmath::{InnerSpace, Vector3};
-use wgpu_engine::common::RgbaColor;
-use wgpu_engine::operator::NavigationMode;
-use wgpu_engine::scene::{EffectiveVisibility, Light, LightType, NodeId, Visibility, MAX_LIGHTS};
-use wgpu_engine::Viewer;
+use wgpu_engine_graphics::common::RgbaColor;
+use wgpu_engine_graphics::operator::NavigationMode;
+use wgpu_engine_graphics::scene::{EffectiveVisibility, Light, LightType, NodeId, Visibility, MAX_LIGHTS};
+use wgpu_engine_graphics::Viewer;
 
 /// Tab selection for the left panel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -487,7 +487,7 @@ fn build_scene_info_section(ui: &mut egui::Ui, viewer: &Viewer) {
 /// Recursively render a node and its children in the scene tree.
 fn render_node_tree(
     ui: &mut egui::Ui,
-    scene: &wgpu_engine::scene::Scene,
+    scene: &wgpu_engine_graphics::scene::Scene,
     node_id: NodeId,
     depth: usize,
     actions: &mut UiActions,

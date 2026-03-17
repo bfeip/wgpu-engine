@@ -1,11 +1,11 @@
 [package]
-name = "wgpu-engine"
+name = "wgpu-engine-graphics"
 version = "0.1.0"
 edition = "2024"
 
 
 [lib]
-name = "wgpu_engine"
+name = "wgpu_engine_graphics"
 crate-type = ["cdylib", "rlib"]
 path = "src/lib.rs"
 

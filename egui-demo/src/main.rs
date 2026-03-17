@@ -8,12 +8,13 @@ use winit::{
 };
 
 use cgmath::Vector3;
-use wgpu_engine::common::RgbaColor;
-use wgpu_engine::egui_support::EguiViewerApp;
-use wgpu_engine::input::{ElementState, Key};
-use wgpu_engine::operator::NavigationMode;
-use wgpu_engine::import_export::{LoadOptions, SceneSource, load_sync};
-use wgpu_engine::scene::{Light, LightType, Scene, MAX_LIGHTS};
+use wgpu_engine_graphics::common::RgbaColor;
+use wgpu_engine_graphics::egui_support::EguiViewerApp;
+use wgpu_engine_graphics::input::{ElementState, Key};
+use wgpu_engine_graphics::operator::NavigationMode;
+use wgpu_engine_graphics::import_export;
+use wgpu_engine_graphics::scene::{Light, LightType, Scene, MAX_LIGHTS};
+use wgpu_engine_graphics::winit_support;
 
 /// Debug actions triggered by key presses
 enum DebugAction {
@@ -170,10 +171,10 @@ impl<'a> App<'a> {
         let mut extensions: Vec<&str> = vec!["glb", "gltf", "wgsc"];
 
         #[cfg(feature = "assimp")]
-        extensions.extend_from_slice(wgpu_engine::import_export::assimp::ASSIMP_EXTENSIONS);
+        extensions.extend_from_slice(import_export::assimp::ASSIMP_EXTENSIONS);
 
         #[cfg(feature = "usd")]
-        extensions.extend_from_slice(wgpu_engine::import_export::usd::USD_EXTENSIONS);
+        extensions.extend_from_slice(import_export::usd::USD_EXTENSIONS);
 
         let file = rfd::FileDialog::new()
             .add_filter("3D Scenes", &extensions)
@@ -186,6 +187,7 @@ impl<'a> App<'a> {
 
     /// Load a scene file using the unified loader (auto-detects format)
     fn load_scene_file(&mut self) {
+        use import_export::{load_sync, SceneSource, LoadOptions};
         let Some(path) = self.pending_scene_load_path.take() else {
             return;
         };
@@ -227,7 +229,7 @@ impl<'a> App<'a> {
         let viewer = self.viewer_app.as_mut().unwrap().viewer_mut();
         let path_str = path.display().to_string();
 
-        match wgpu_engine::import_export::format::save_to_file(viewer.scene(), &path) {
+        match import_export::format::save_to_file(viewer.scene(), &path) {
             Ok(()) => {
                 log::info!("Saved scene: {}", path_str);
             }
@@ -246,8 +248,8 @@ impl<'a> App<'a> {
     }
 
     /// Check if event is a debug key press and return the action
-    fn get_debug_key_action(event: &wgpu_engine::event::Event) -> Option<DebugAction> {
-        let wgpu_engine::event::Event::KeyboardInput { event: key_event, .. } = event else {
+    fn get_debug_key_action(event: &wgpu_engine_graphics::event::Event) -> Option<DebugAction> {
+        let wgpu_engine_graphics::event::Event::KeyboardInput { event: key_event, .. } = event else {
             return None;
         };
 
@@ -318,7 +320,7 @@ impl<'a> ApplicationHandler for App<'a> {
                 viewer_app.handle_window_event(&event);
 
                 // Check for debug keys (convert to app event for checking)
-                if let Some(app_event) = wgpu_engine::winit_support::convert_window_event(event) {
+                if let Some(app_event) = winit_support::convert_window_event(event) {
                     if let Some(action) = Self::get_debug_key_action(&app_event) {
                         self.handle_debug_key_action(action, event_loop);
                     }

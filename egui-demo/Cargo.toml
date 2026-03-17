@@ -4,11 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-assimp = ["wgpu-engine/assimp"]
-usd = ["wgpu-engine/usd"]
+assimp = ["wgpu-engine-graphics/assimp"]
+usd = ["wgpu-engine-graphics/usd"]
 
 [dependencies]
-wgpu-engine = { path = "../core", features = ["egui-support"] }
+wgpu-engine-graphics = { path = "../graphics", features = ["egui-support"] }
 cgmath = "0.18"
 egui = "0.33"
 env_logger = "0.10"
