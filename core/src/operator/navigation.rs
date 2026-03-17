@@ -1,10 +1,10 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use cgmath::{InnerSpace, MetricSpace, Vector3};
+use cgmath::{InnerSpace, Point3, Rotation, Vector3};
 
-use crate::scene::Camera;
-use crate::event::{CallbackId, Event, EventDispatcher, EventKind};
+use crate::scene::{Camera, common::quaternion_from_axis_angle_safe, geom_query::pick_all_from_ray};
+use crate::event::{CallbackId, Event, EventContext, EventDispatcher, EventKind};
 use crate::input::{ElementState, Key, MouseButton};
 use crate::operator::{Operator, OperatorId};
 use crate::scene_scale;
@@ -31,6 +31,9 @@ struct OrbitState {
     elevation: f32,
     /// Base distance from camera to target.
     radius: f32,
+    /// Custom orbit pivot point. When set, orbit rotates the camera around
+    /// this point instead of `camera.target`.
+    pivot: Option<Point3<f32>>,
 }
 
 impl OrbitState {
@@ -39,11 +42,13 @@ impl OrbitState {
             azimuth: 0.0,
             elevation: 0.0,
             radius: 5.0,
+            pivot: None,
         }
     }
 
     /// Initialize parameters from current camera state.
-    fn init_from_camera(&mut self, camera: &Camera) {
+    fn init(&mut self, camera: &Camera) {
+        self.pivot = None;
         self.radius = camera.length();
 
         // Calculate direction vector from target to eye
@@ -58,7 +63,18 @@ impl OrbitState {
         self.elevation = f32::atan2(direction.y, horizontal_distance);
     }
 
-    /// Update camera position based on current orbit parameters.
+    /// Initialize orbit parameters for orbiting around an explicit pivot point.
+    fn init_with_pivot(&mut self, camera: &Camera, pivot: Point3<f32>) {
+        self.pivot = Some(pivot);
+
+        // Compute elevation from eye-to-pivot direction (for elevation clamping)
+        let direction = camera.eye - pivot;
+        let horizontal_distance =
+            f32::sqrt(direction.x * direction.x + direction.z * direction.z);
+        self.elevation = f32::atan2(direction.y, horizontal_distance);
+    }
+
+    /// Update camera position based on current orbit parameters (non-pivot orbit only).
     fn update_camera_position(&self, camera: &mut Camera) {
         // Convert spherical coordinates to Cartesian
         let x = camera.target.x + self.radius * self.elevation.cos() * self.azimuth.sin();
@@ -70,6 +86,47 @@ impl OrbitState {
         // Update up vector to maintain proper orientation
         let forward = (camera.target - camera.eye).normalize();
         let world_up = cgmath::vec3(0.0, 1.0, 0.0);
+        let right = world_up.cross(forward).normalize();
+        camera.up = forward.cross(right).normalize();
+    }
+
+    /// Handle orbit around the pivot point using incremental rotations.
+    ///
+    /// Rotates both eye and target around the pivot by the same rotation,
+    /// keeping the pivot visually stationary on screen.
+    fn handle_pivot_orbit(&mut self, dx: f64, dy: f64, camera: &mut Camera) {
+        let pivot = self.pivot.unwrap();
+        const ORBIT_SENSITIVITY: f32 = 0.005;
+
+        let d_azimuth = -(dx as f32) * ORBIT_SENSITIVITY;
+        let d_elevation = dy as f32 * ORBIT_SENSITIVITY;
+
+        // Clamp cumulative elevation to prevent going over the poles
+        let new_elevation = self.elevation + d_elevation;
+        const MAX_ELEVATION: f32 = std::f32::consts::FRAC_PI_2 - 0.01;
+        let clamped = new_elevation.clamp(-MAX_ELEVATION, MAX_ELEVATION);
+        let actual_d_elevation = clamped - self.elevation;
+        self.elevation = clamped;
+
+        // Compute the camera's right axis for elevation rotation
+        let forward = (camera.target - camera.eye).normalize();
+        let world_up = cgmath::vec3(0.0, 1.0, 0.0);
+        let right = world_up.cross(forward).normalize();
+
+        // Build combined rotation quaternion: azimuth (around Y) then elevation (around right)
+        let azimuth_rot = quaternion_from_axis_angle_safe(world_up, d_azimuth);
+        let elevation_rot = quaternion_from_axis_angle_safe(right, actual_d_elevation);
+        let rotation = elevation_rot * azimuth_rot;
+
+        // Rotate both eye and target offsets around the pivot
+        let eye_offset = rotation.rotate_vector(camera.eye - pivot);
+        let target_offset = rotation.rotate_vector(camera.target - pivot);
+
+        camera.eye = pivot + eye_offset;
+        camera.target = pivot + target_offset;
+
+        // Update up vector
+        let forward = (camera.target - camera.eye).normalize();
         let right = world_up.cross(forward).normalize();
         camera.up = forward.cross(right).normalize();
     }
@@ -94,6 +151,10 @@ impl OrbitState {
 
     /// Handle orbit rotation based on mouse movement.
     fn handle_orbit(&mut self, dx: f64, dy: f64, camera: &mut Camera) {
+        if self.pivot.is_some() {
+            return self.handle_pivot_orbit(dx, dy, camera);
+        }
+
         const ORBIT_SENSITIVITY: f32 = 0.005;
 
         let dx = dx as f32 * ORBIT_SENSITIVITY;
@@ -303,10 +364,35 @@ impl NavigationState {
         *self.mode.borrow()
     }
 
-    fn handle_drag_start(&mut self, button: &MouseButton, camera: &Camera) -> bool {
+    fn handle_drag_start(
+        &mut self,
+        button: &MouseButton,
+        start_pos: (f32, f32),
+        ctx: &mut EventContext,
+    ) -> bool {
+        let camera = ctx.renderer.camera();
         match (self.mode(), button) {
             (NavigationMode::Orbit, MouseButton::Left | MouseButton::Right) => {
-                self.orbit.init_from_camera(camera);
+                self.orbit.init(camera);
+                true
+            }
+            (_, MouseButton::Middle) => {
+                let ray = camera.ray_from_screen_point(
+                    start_pos.0,
+                    start_pos.1,
+                    ctx.renderer.size.0,
+                    ctx.renderer.size.1,
+                );
+                let hits = pick_all_from_ray(&ray, ctx.scene);
+                let pivot = if let Some(hit) = hits.first() {
+                    hit.hit_point
+                } else {
+                    ctx.scene
+                        .bounding()
+                        .map(|b| b.center())
+                        .unwrap_or(camera.target)
+                };
+                self.orbit.init_with_pivot(ctx.renderer.camera(), pivot);
                 true
             }
             (NavigationMode::Walk, MouseButton::Left) => {
@@ -335,6 +421,11 @@ impl NavigationState {
                     .handle_pan(delta.0 as f64, delta.1 as f64, camera, model_radius);
                 true
             }
+            (_, MouseButton::Middle) => {
+                self.orbit
+                    .handle_orbit(delta.0 as f64, delta.1 as f64, camera);
+                true
+            }
             (NavigationMode::Walk, MouseButton::Left) => {
                 self.walk.handle_look(delta.0, delta.1, camera);
                 true
@@ -343,11 +434,17 @@ impl NavigationState {
         }
     }
 
+    fn handle_drag_end(&mut self, button: &MouseButton) {
+        if *button == MouseButton::Middle {
+            self.orbit.pivot = None;
+        }
+    }
+
     fn handle_wheel(&mut self, scroll_amount: f32, camera: &mut Camera, model_radius: f32) -> bool {
         if self.mode() != NavigationMode::Orbit {
             return false;
         }
-        self.orbit.init_from_camera(camera);
+        self.orbit.init(camera);
         self.orbit.handle_zoom(scroll_amount, camera, model_radius);
         true
     }
@@ -394,6 +491,7 @@ impl NavigationState {
 /// **Orbit mode** (default):
 /// - Left mouse button + drag: Orbit camera around target
 /// - Right mouse button + drag: Pan camera perpendicular to view direction
+/// - Middle mouse button + drag: Orbit around point under cursor (hit geometry or scene center)
 /// - Mouse wheel: Zoom in/out (adjust camera distance from target)
 ///
 /// **Walk mode**:
@@ -432,8 +530,8 @@ impl Operator for NavigationOperator {
     fn activate(&mut self, dispatcher: &mut EventDispatcher) {
         let s = self.state.clone();
         let drag_start_cb = dispatcher.register(EventKind::MouseDragStart, move |event, ctx| {
-            let Event::MouseDragStart { button, .. } = event else { return false };
-            s.borrow_mut().handle_drag_start(button, ctx.renderer.camera())
+            let Event::MouseDragStart { button, start_pos, .. } = event else { return false };
+            s.borrow_mut().handle_drag_start(button, *start_pos, ctx)
         });
 
         let s = self.state.clone();
@@ -468,7 +566,14 @@ impl Operator for NavigationOperator {
             s.borrow_mut().handle_update(*delta_time, ctx.renderer.camera_mut(), model_radius)
         });
 
-        self.callback_ids = vec![drag_start_cb, drag_cb, wheel_cb, keyboard_cb, update_cb];
+        let s = self.state.clone();
+        let drag_end_cb = dispatcher.register(EventKind::MouseDragEnd, move |event, _ctx| {
+            let Event::MouseDragEnd { button, .. } = event else { return false };
+            s.borrow_mut().handle_drag_end(button);
+            false
+        });
+
+        self.callback_ids = vec![drag_start_cb, drag_cb, drag_end_cb, wheel_cb, keyboard_cb, update_cb];
     }
 
     fn deactivate(&mut self, dispatcher: &mut EventDispatcher) {
