@@ -302,4 +302,5 @@ pub(in crate::renderer) struct PipelineCacheKey {
     pub(in crate::renderer) material_props: MaterialProperties,
     pub(in crate::renderer) scene_props: SceneProperties,
     pub(in crate::renderer) primitive_type: PrimitiveType,
+    pub(in crate::renderer) depth_prepass: bool,
 }

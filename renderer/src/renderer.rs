@@ -10,7 +10,7 @@ use anyhow::Result;
 
 use crate::{
     ibl::IblResources,
-    scene::{Camera, PrimitiveType, Scene, SceneProperties},
+    scene::{AlphaMode, Camera, PrimitiveType, Scene, SceneProperties},
     selection_query::SelectionQuery,
     shaders::ShaderGenerator,
 };
@@ -454,7 +454,48 @@ impl Renderer {
 
         let scene_props = SceneProperties { has_ibl };
 
-        // Track current pipeline key to minimize pipeline changes
+        // Depth pre-pass for transparent objects: render depth-only with alpha test
+        // so opaque portions of blend materials establish correct depth occlusion.
+        let mut prepass_pipeline_key: Option<PipelineCacheKey> = None;
+        for batch in batches {
+            let material = scene.get_material(batch.material_id).unwrap();
+            let material_props = material.get_properties(batch.primitive_type);
+
+            if material_props.alpha_mode != AlphaMode::Blend {
+                continue;
+            }
+
+            let material_gpu = self.gpu_resources
+                .get_material(batch.material_id, batch.primitive_type)
+                .expect("Material GPU resources not initialized");
+            render_pass.set_bind_group(2, &material_gpu.bind_group, &[]);
+
+            let pipeline_key = PipelineCacheKey {
+                material_props: material_props.clone(),
+                scene_props: scene_props.clone(),
+                primitive_type: batch.primitive_type,
+                depth_prepass: true,
+            };
+            if prepass_pipeline_key.as_ref() != Some(&pipeline_key) {
+                let pipeline = self.get_or_create_pipeline(pipeline_key.clone());
+                render_pass.set_pipeline(pipeline);
+                prepass_pipeline_key = Some(pipeline_key);
+            }
+
+            let mesh = scene.get_mesh(batch.mesh_id).unwrap();
+            let gpu_mesh = self.gpu_resources.get_mesh(batch.mesh_id)
+                .expect("Mesh GPU resources not initialized");
+            gpu_resources::draw_mesh_instances(
+                &self.device,
+                &mut render_pass,
+                gpu_mesh,
+                batch.primitive_type,
+                &batch.instances,
+                mesh.index_count(batch.primitive_type),
+            );
+        }
+
+        // Main rendering pass
         let mut current_pipeline_key: Option<PipelineCacheKey> = None;
 
         for batch in batches {
@@ -473,6 +514,7 @@ impl Renderer {
                 material_props: material_props.clone(),
                 scene_props: scene_props.clone(),
                 primitive_type: batch.primitive_type,
+                depth_prepass: false,
             };
             if current_pipeline_key.as_ref() != Some(&pipeline_key) {
                 let pipeline = self.get_or_create_pipeline(pipeline_key.clone());

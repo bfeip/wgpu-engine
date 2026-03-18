@@ -7,7 +7,7 @@ import package::common::{
 };
 import package::camera::camera;
 import package::lighting::{lights, calculate_attenuation, calculate_spot_cone_falloff};
-import package::material_pbr::{get_base_color, get_metallic_roughness};
+import package::material_pbr::{get_base_color, get_metallic_roughness, pbr_params};
 import package::normal_mapping::get_normal;
 import package::pbr::calculate_pbr_direct_light;
 
