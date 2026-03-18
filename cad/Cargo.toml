@@ -1,0 +1,23 @@
+[package]
+name = "wgpu-engine-cad"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+wgpu-engine-scene = { path = "../scene" }
+wgpu-engine-common = { path = "../common" }
+truck-modeling = "0.6"
+truck-meshalgo = "0.4"
+truck-polymesh = "0.6"
+anyhow = "1.0"
+cgmath = "0.18"
+
+[[example]]
+name = "brep"
+path = "examples/brep/main.rs"
+
+[dev-dependencies]
+wgpu-engine-viewer = { path = "../viewer", features = ["winit-support"] }
+winit = "0.30"
+pollster = "0.3"
+env_logger = "0.10"

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["renderer", "viewer", "scene", "common", "import-export", "egui-demo", "scene-info", "scene-converter"]
+members = ["renderer", "viewer", "scene", "common", "import-export", "cad", "egui-demo", "scene-info", "scene-converter"]
 default-members = ["viewer"]
 
 
