@@ -21,7 +21,7 @@ use super::render::render_egui_overlay;
 /// # Example
 ///
 /// ```rust,no_run
-/// use wgpu_engine::egui_support::EguiViewerApp;
+/// use wgpu_engine_viewer::egui_support::EguiViewerApp;
 /// use winit::event_loop::{EventLoop, ActiveEventLoop};
 /// use winit::event::WindowEvent;
 /// use winit::window::WindowId;

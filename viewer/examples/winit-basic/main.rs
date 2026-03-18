@@ -6,7 +6,7 @@ use winit::{
     window::{Window, WindowId},
 };
 
-use wgpu_engine::{Viewer, winit_support};
+use wgpu_engine_viewer::{Viewer, winit_support};
 
 /// Application state for the winit event loop
 struct App<'a> {
@@ -78,10 +78,10 @@ impl<'a> ApplicationHandler for App<'a> {
             viewer.handle_event(&app_event);
 
             // Check for exit on Escape key
-            if let wgpu_engine::event::Event::KeyboardInput { event: key_event, .. } = &app_event {
+            if let wgpu_engine_viewer::event::Event::KeyboardInput { event: key_event, .. } = &app_event {
                 if matches!(
                     key_event.logical_key,
-                    wgpu_engine::input::Key::Named(wgpu_engine::input::NamedKey::Escape)
+                    wgpu_engine_viewer::input::Key::Named(wgpu_engine_viewer::input::NamedKey::Escape)
                 ) {
                     event_loop.exit();
                 }
