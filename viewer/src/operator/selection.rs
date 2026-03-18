@@ -25,15 +25,15 @@ impl SelectionOperator {
     /// Performs selection at the given position and prints results to console.
     fn perform_selection(cursor_x: f32, cursor_y: f32, ctx: &mut EventContext) {
         // Create ray from screen point
-        let ray = ctx.renderer.camera().ray_from_screen_point(
+        let ray = ctx.camera.ray_from_screen_point(
             cursor_x,
             cursor_y,
-            ctx.renderer.size.0,
-            ctx.renderer.size.1,
+            ctx.size.0,
+            ctx.size.1,
         );
 
         // Calculate camera distance for miss visualization
-        let camera_distance = (ctx.renderer.camera().eye - ctx.renderer.camera().target).magnitude();
+        let camera_distance = (ctx.camera.eye - ctx.camera.target).magnitude();
 
         // Perform picking
         let results = pick_all_from_ray(&ray, ctx.scene);

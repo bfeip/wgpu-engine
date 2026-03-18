@@ -213,6 +213,23 @@ impl SelectionManager {
     }
 }
 
+impl crate::selection_query::SelectionQuery for SelectionManager {
+    fn is_empty(&self) -> bool {
+        self.selected.is_empty()
+    }
+
+    fn is_node_selected(&self, node_id: NodeId) -> bool {
+        self.is_node_selected(node_id)
+    }
+
+    fn outline_config(&self) -> crate::selection_query::OutlineConfig {
+        crate::selection_query::OutlineConfig {
+            color: self.config.outline_color,
+            width_pixels: self.config.outline_width,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

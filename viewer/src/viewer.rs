@@ -11,19 +11,26 @@ use crate::{
         BuiltinOperatorId, NavigationMode, NavigationOperator, OperatorManager,
         SelectionOperator, TransformOperator,
     },
-    renderer::Renderer,
-    scene::Scene,
+    scene::{Camera, Scene},
     selection::SelectionManager,
+    selection_query::SelectionQuery,
 };
+
+use wgpu_engine_renderer::Renderer;
 
 /// Main viewer that encapsulates the renderer, scene, and event handling
 pub struct Viewer<'a> {
-    renderer: Renderer<'a>,
+    surface: wgpu::Surface<'a>,
+    surface_config: wgpu::SurfaceConfiguration,
+    renderer: Renderer,
+    camera: Camera,
     scene: Scene,
     selection: SelectionManager,
     dispatcher: EventDispatcher,
     operator_manager: OperatorManager,
     navigation_mode: Rc<RefCell<NavigationMode>>,
+    /// Current cursor position in screen coordinates
+    cursor_position: Option<(f32, f32)>,
     /// Last time update() was called, for delta_time calculation
     last_update_time: Option<Instant>,
 }
@@ -34,7 +41,88 @@ impl<'a> Viewer<'a> {
     where
         T: Into<wgpu::SurfaceTarget<'a>>,
     {
-        let renderer = Renderer::new(surface_target, width, height).await;
+        // Create wgpu instance
+        #[cfg(not(target_arch = "wasm32"))]
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::PRIMARY,
+            ..Default::default()
+        });
+        #[cfg(target_arch = "wasm32")]
+        let instance = wgpu::util::new_instance_with_webgpu_detection(&wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::BROWSER_WEBGPU | wgpu::Backends::GL,
+            ..Default::default()
+        }).await;
+
+        let surface = instance.create_surface(surface_target).unwrap();
+
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::default(),
+                compatible_surface: Some(&surface),
+                force_fallback_adapter: false,
+            })
+            .await
+            .unwrap();
+
+        let is_gl_backend = adapter.get_info().backend == wgpu::Backend::Gl;
+        let has_compute = !is_gl_backend;
+
+        if cfg!(target_arch = "wasm32") {
+            if is_gl_backend {
+                log::info!("WebGPU not available, falling back to WebGL.");
+            } else {
+                log::info!("Using WebGPU backend.");
+            }
+        }
+
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                required_features: wgpu::Features::empty(),
+                required_limits: if is_gl_backend {
+                    wgpu::Limits::downlevel_webgl2_defaults()
+                } else {
+                    wgpu::Limits::default()
+                },
+                label: None,
+                memory_hints: Default::default(),
+                trace: wgpu::Trace::Off,
+                experimental_features: Default::default(),
+            })
+            .await
+            .unwrap();
+
+        let surface_caps = surface.get_capabilities(&adapter);
+        let surface_format = surface_caps
+            .formats
+            .iter()
+            .find(|f| f.is_srgb())
+            .copied()
+            .unwrap_or(surface_caps.formats[0]);
+
+        let present_mode = surface_caps
+            .present_modes
+            .iter()
+            .copied()
+            .find(|mode| *mode == wgpu::PresentMode::Fifo)
+            .unwrap_or(surface_caps.present_modes[0]);
+
+        let surface_config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format: surface_format,
+            width,
+            height,
+            present_mode,
+            alpha_mode: surface_caps.alpha_modes[0],
+            view_formats: vec![],
+            desired_maximum_frame_latency: 2,
+        };
+
+        surface.configure(&device, &surface_config);
+
+        // Use 4x MSAA on native backends, disable on GL
+        let sample_count = if is_gl_backend { 1 } else { 4 };
+
+        let renderer = Renderer::new(device, queue, surface_format, width, height, sample_count, has_compute);
         let mut scene = Scene::new();
 
         // Set up default lighting
@@ -62,14 +150,29 @@ impl<'a> Viewer<'a> {
         let navigation_mode = nav_operator.mode_handle();
         operator_manager.push_back(Box::new(nav_operator), &mut dispatcher);
 
+        let camera = Camera {
+            eye: (0.0, 0.1, 0.2).into(),
+            target: (0.0, 0.0, 0.0).into(),
+            up: cgmath::Vector3::unit_y(),
+            aspect: width as f32 / height as f32,
+            fovy: 45.0,
+            znear: 0.001,
+            zfar: 100.0,
+            ortho: false,
+        };
+
         // Create viewer
         let mut viewer = Self {
+            surface,
+            surface_config,
             renderer,
+            camera,
             scene,
             selection: SelectionManager::new(),
             dispatcher,
             operator_manager,
             navigation_mode,
+            cursor_position: None,
             last_update_time: None,
         };
 
@@ -98,19 +201,11 @@ impl<'a> Viewer<'a> {
 
     /// Register default event handlers for common viewer operations
     fn register_default_handlers(&mut self) {
-        // Register Resized handler
-        self.dispatcher.register(EventKind::Resized, |event, ctx| {
-            if let crate::event::Event::Resized(physical_size) = event {
-                ctx.renderer.resize(*physical_size);
-            }
-            true
-        });
-
         // Register CursorMoved handler to track cursor position
         self.dispatcher
             .register(EventKind::CursorMoved, |event, ctx| {
                 if let Event::CursorMoved { position } = event {
-                    ctx.renderer.cursor_position = Some((position.0 as f32, position.1 as f32));
+                    *ctx.cursor_position = Some((position.0 as f32, position.1 as f32));
                 }
                 false // Don't stop propagation - other handlers may need cursor position too
             });
@@ -118,8 +213,22 @@ impl<'a> Viewer<'a> {
 
     /// Handle a single event by dispatching it to registered handlers
     pub fn handle_event(&mut self, event: &Event) {
+        // Handle resize at the viewer level (needs surface, renderer, and camera)
+        if let Event::Resized(physical_size) = event {
+            let (w, h) = *physical_size;
+            if w > 0 && h > 0 {
+                self.surface_config.width = w;
+                self.surface_config.height = h;
+                self.surface.configure(&self.renderer.device(), &self.surface_config);
+                self.renderer.resize(*physical_size);
+                self.camera.aspect = w as f32 / h as f32;
+            }
+        }
+
         let mut ctx = EventContext {
-            renderer: &mut self.renderer,
+            camera: &mut self.camera,
+            size: self.renderer.size(),
+            cursor_position: &mut self.cursor_position,
             scene: &mut self.scene,
             selection: &mut self.selection,
         };
@@ -156,29 +265,29 @@ impl<'a> Viewer<'a> {
     }
 
     /// Get a reference to the current camera
-    pub fn camera(&self) -> &crate::scene::Camera {
-        self.renderer.camera()
+    pub fn camera(&self) -> &Camera {
+        &self.camera
     }
 
     /// Get a mutable reference to the current camera
-    pub fn camera_mut(&mut self) -> &mut crate::scene::Camera {
-        self.renderer.camera_mut()
+    pub fn camera_mut(&mut self) -> &mut Camera {
+        &mut self.camera
     }
 
     /// Set the camera to a new value
-    pub fn set_camera(&mut self, camera: crate::scene::Camera) {
-        *self.renderer.camera_mut() = camera;
+    pub fn set_camera(&mut self, camera: Camera) {
+        self.camera = camera;
     }
 
     /// Get the current viewport size as (width, height)
     pub fn size(&self) -> (u32, u32) {
-        self.renderer.size
+        self.renderer.size()
     }
 
     /// Get the surface texture format
     /// Useful for creating render pipelines that need to match the surface format
     pub fn surface_format(&self) -> wgpu::TextureFormat {
-        self.renderer.config.format
+        self.renderer.surface_format()
     }
 
     /// Get references to the wgpu device and queue for creating GPU resources
@@ -186,7 +295,7 @@ impl<'a> Viewer<'a> {
     /// # Returns
     /// A tuple of (&Device, &Queue) for creating buffers, pipelines, etc.
     pub fn wgpu_resources(&self) -> (&wgpu::Device, &wgpu::Queue) {
-        (&self.renderer.device, &self.renderer.queue)
+        (&self.renderer.device(), &self.renderer.queue())
     }
 
     /// Get a reference to the scene
@@ -275,7 +384,20 @@ impl<'a> Viewer<'a> {
 
     /// Render the scene using the default rendering path
     pub fn render(&mut self) -> Result<(), anyhow::Error> {
-        self.renderer.render(&mut self.scene, Some(&self.selection))
+        self.renderer.prepare_scene(&self.camera, &mut self.scene)?;
+
+        let output = self.surface.get_current_texture()?;
+        let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = self.renderer.device().create_command_encoder(
+            &wgpu::CommandEncoderDescriptor { label: Some("Render Encoder") },
+        );
+
+        self.renderer.render_scene_to_view(&view, &mut encoder, &self.camera, &self.scene, Self::selection_for_render(&self.selection))?;
+
+        self.renderer.queue().submit(std::iter::once(encoder.finish()));
+        output.present();
+
+        Ok(())
     }
 
     /// Render the 3D scene with a custom overlay
@@ -315,38 +437,47 @@ impl<'a> Viewer<'a> {
         F: FnOnce(&wgpu::Device, &wgpu::Queue, &mut wgpu::CommandEncoder, &wgpu::TextureView),
     {
         // Get surface texture
-        let output = self.renderer.surface.get_current_texture()?;
+        let output = self.surface.get_current_texture()?;
         let view = output
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
         // Create command encoder
-        let mut encoder = self.renderer.device.create_command_encoder(
+        let mut encoder = self.renderer.device().create_command_encoder(
             &wgpu::CommandEncoderDescriptor {
                 label: Some("Render Encoder with Overlay"),
             },
         );
 
         // Render 3D scene first
-        self.renderer.prepare_scene(&mut self.scene).unwrap();
+        self.renderer.prepare_scene(&self.camera, &mut self.scene).unwrap();
         self.renderer
-            .render_scene_to_view(&view, &mut encoder, &mut self.scene, Some(&self.selection))?;
+            .render_scene_to_view(&view, &mut encoder, &self.camera, &self.scene, Self::selection_for_render(&self.selection))?;
 
         // Call user's overlay function
         overlay_fn(
-            &self.renderer.device,
-            &self.renderer.queue,
+            &self.renderer.device(),
+            &self.renderer.queue(),
             &mut encoder,
             &view,
         );
 
         // Submit and present
         self.renderer
-            .queue
+            .queue()
             .submit(std::iter::once(encoder.finish()));
         output.present();
 
         Ok(())
+    }
+
+    /// Returns a selection query for the renderer if outline rendering is enabled.
+    fn selection_for_render(selection: &SelectionManager) -> Option<&dyn SelectionQuery> {
+        if selection.config().outline_enabled {
+            Some(selection)
+        } else {
+            None
+        }
     }
 
     /// Render the 3D scene to a specific view using a specific encoder
@@ -363,6 +494,6 @@ impl<'a> Viewer<'a> {
         encoder: &mut wgpu::CommandEncoder,
     ) -> Result<(), anyhow::Error> {
         self.renderer
-            .render_scene_to_view(view, encoder, &mut self.scene, Some(&self.selection))
+            .render_scene_to_view(view, encoder, &self.camera, &self.scene, Self::selection_for_render(&self.selection))
     }
 }

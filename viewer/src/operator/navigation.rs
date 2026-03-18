@@ -370,7 +370,7 @@ impl NavigationState {
         start_pos: (f32, f32),
         ctx: &mut EventContext,
     ) -> bool {
-        let camera = ctx.renderer.camera();
+        let camera = &*ctx.camera;
         match (self.mode(), button) {
             (NavigationMode::Orbit, MouseButton::Left | MouseButton::Right) => {
                 self.orbit.init(camera);
@@ -380,8 +380,8 @@ impl NavigationState {
                 let ray = camera.ray_from_screen_point(
                     start_pos.0,
                     start_pos.1,
-                    ctx.renderer.size.0,
-                    ctx.renderer.size.1,
+                    ctx.size.0,
+                    ctx.size.1,
                 );
                 let hits = pick_all_from_ray(&ray, ctx.scene);
                 let pivot = if let Some(hit) = hits.first() {
@@ -392,7 +392,7 @@ impl NavigationState {
                         .map(|b| b.center())
                         .unwrap_or(camera.target)
                 };
-                self.orbit.init_with_pivot(ctx.renderer.camera(), pivot);
+                self.orbit.init_with_pivot(ctx.camera, pivot);
                 true
             }
             (NavigationMode::Walk, MouseButton::Left) => {
@@ -538,7 +538,7 @@ impl Operator for NavigationOperator {
         let drag_cb = dispatcher.register(EventKind::MouseDrag, move |event, ctx| {
             let Event::MouseDrag { button, delta, .. } = event else { return false };
             let model_radius = scene_scale::model_radius_from_bounds(ctx.scene.bounding().as_ref());
-            s.borrow_mut().handle_drag(button, delta, ctx.renderer.camera_mut(), model_radius)
+            s.borrow_mut().handle_drag(button, delta, ctx.camera, model_radius)
         });
 
         let s = self.state.clone();
@@ -550,20 +550,20 @@ impl Operator for NavigationOperator {
                 MouseScrollDelta::PixelDelta(_x, y) => *y / 100.0,
             };
             let model_radius = scene_scale::model_radius_from_bounds(ctx.scene.bounding().as_ref());
-            s.borrow_mut().handle_wheel(scroll_amount, ctx.renderer.camera_mut(), model_radius)
+            s.borrow_mut().handle_wheel(scroll_amount, ctx.camera, model_radius)
         });
 
         let s = self.state.clone();
         let keyboard_cb = dispatcher.register(EventKind::KeyboardInput, move |event, ctx| {
             let Event::KeyboardInput { event: key_event, .. } = event else { return false };
-            s.borrow_mut().handle_keyboard(key_event, ctx.renderer.camera())
+            s.borrow_mut().handle_keyboard(key_event, ctx.camera)
         });
 
         let s = self.state.clone();
         let update_cb = dispatcher.register(EventKind::Update, move |event, ctx| {
             let Event::Update { delta_time } = event else { return false };
             let model_radius = scene_scale::model_radius_from_bounds(ctx.scene.bounding().as_ref());
-            s.borrow_mut().handle_update(*delta_time, ctx.renderer.camera_mut(), model_radius)
+            s.borrow_mut().handle_update(*delta_time, ctx.camera, model_radius)
         });
 
         let s = self.state.clone();

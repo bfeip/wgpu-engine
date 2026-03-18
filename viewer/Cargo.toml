@@ -1,11 +1,11 @@
 [package]
-name = "wgpu-engine-graphics"
+name = "wgpu-engine-viewer"
 version = "0.1.0"
 edition = "2024"
 
 
 [lib]
-name = "wgpu_engine_graphics"
+name = "wgpu_engine_viewer"
 crate-type = ["cdylib", "rlib"]
 path = "src/lib.rs"
 
@@ -30,6 +30,7 @@ usd = ["wgpu-engine-import-export/usd"]
 
 # Shared dependencies
 [dependencies]
+wgpu-engine-renderer = { path = "../renderer" }
 wgpu-engine-scene = { path = "../scene" }
 wgpu-engine-import-export = { path = "../import-export" }
 anyhow = "1.0"

@@ -173,9 +173,8 @@ impl TransformState {
         match self.get_constraint_axis() {
             None => {
                 // Free translation: move in camera plane
-                let camera = ctx.renderer.camera();
-                let right = camera.right();
-                let up = camera.up;
+                let right = ctx.camera.right();
+                let up = ctx.camera.up;
                 right * dx * sensitivity + up * (-dy) * sensitivity
             }
             Some(axis) => {
@@ -195,7 +194,7 @@ impl TransformState {
         let axis = match self.get_constraint_axis() {
             None => {
                 // Free rotation: rotate around view axis
-                ctx.renderer.camera().forward()
+                ctx.camera.forward()
             }
             Some(axis) => axis,
         };

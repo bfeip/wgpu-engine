@@ -2,12 +2,12 @@ use anyhow::Result;
 use bytemuck::bytes_of;
 use wgpu::util::DeviceExt;
 
-use crate::scene::{CoordinateSpace, PrimitiveType, Scene};
+use crate::scene::{Camera, CoordinateSpace, PrimitiveType, Scene};
 
 use super::gpu_resources::{LightsArrayUniform, MaterialGpuResources, PbrUniform};
 use super::Renderer;
 
-impl<'a> Renderer<'a> {
+impl Renderer {
     /// Prepare all GPU resources for a scene before rendering.
     ///
     /// This method ensures all textures, materials, and meshes have their GPU resources
@@ -16,7 +16,7 @@ impl<'a> Renderer<'a> {
     // TODO: This iterates more or less everything in the scene. For performance in the future,
     // we should keep track of the need for these updates in the scene. I.e. mark things as
     // dirty if they need to be reified.
-    pub fn prepare_scene(&mut self, scene: &mut Scene) -> Result<()> {
+    pub fn prepare_scene(&mut self, camera: &Camera, scene: &mut Scene) -> Result<()> {
         // 0. Reify any unreified annotations (creates meshes/materials/nodes)
         scene.reify_annotations();
 
@@ -66,7 +66,7 @@ impl<'a> Renderer<'a> {
             .any(|l| l.space() != CoordinateSpace::World);
         let light_generation = scene.light_generation();
         if self.lights.synced_generation != light_generation || has_camera_space_lights {
-            let camera = &self.camera_resources.camera;
+            let camera = camera;
             let world_lights: Vec<_> = scene
                 .lights()
                 .iter()
@@ -109,7 +109,7 @@ impl<'a> Renderer<'a> {
     /// Create GPU resources for a color-based material (uniform buffer + bind group).
     fn create_color_material_resources(
         &self,
-        color: &crate::common::RgbaColor,
+        color: &crate::scene::common::RgbaColor,
         label: &str,
     ) -> MaterialGpuResources {
         let buffer = self

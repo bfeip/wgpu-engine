@@ -8,13 +8,13 @@ use winit::{
 };
 
 use cgmath::Vector3;
-use wgpu_engine_graphics::common::RgbaColor;
-use wgpu_engine_graphics::egui_support::EguiViewerApp;
-use wgpu_engine_graphics::input::{ElementState, Key};
-use wgpu_engine_graphics::operator::NavigationMode;
-use wgpu_engine_graphics::import_export;
-use wgpu_engine_graphics::scene::{Light, LightType, Scene, MAX_LIGHTS};
-use wgpu_engine_graphics::winit_support;
+use wgpu_engine_viewer::common::RgbaColor;
+use wgpu_engine_viewer::egui_support::EguiViewerApp;
+use wgpu_engine_viewer::input::{ElementState, Key};
+use wgpu_engine_viewer::operator::NavigationMode;
+use wgpu_engine_viewer::import_export;
+use wgpu_engine_viewer::scene::{Light, LightType, Scene, MAX_LIGHTS};
+use wgpu_engine_viewer::winit_support;
 
 /// Debug actions triggered by key presses
 enum DebugAction {
@@ -248,8 +248,8 @@ impl<'a> App<'a> {
     }
 
     /// Check if event is a debug key press and return the action
-    fn get_debug_key_action(event: &wgpu_engine_graphics::event::Event) -> Option<DebugAction> {
-        let wgpu_engine_graphics::event::Event::KeyboardInput { event: key_event, .. } = event else {
+    fn get_debug_key_action(event: &wgpu_engine_viewer::event::Event) -> Option<DebugAction> {
+        let wgpu_engine_viewer::event::Event::KeyboardInput { event: key_event, .. } = event else {
             return None;
         };
 

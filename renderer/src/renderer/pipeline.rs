@@ -3,7 +3,7 @@ use crate::scene::{AlphaMode, PrimitiveType};
 use super::gpu_resources::{instance_buffer_layout, vertex_buffer_layout, GpuTexture, PipelineCacheKey};
 use super::Renderer;
 
-impl<'a> Renderer<'a> {
+impl Renderer {
     pub(super) fn get_or_create_pipeline(
         &mut self,
         cache_key: PipelineCacheKey,

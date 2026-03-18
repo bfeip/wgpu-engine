@@ -2,8 +2,7 @@ use std::collections::HashMap;
 use web_time::Instant;
 
 use crate::input::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, TouchId, TouchPhase};
-use crate::renderer::Renderer;
-use crate::scene::Scene;
+use crate::scene::{Camera, Scene};
 use crate::selection::SelectionManager;
 
 /// Movement threshold in pixels before a mouse button hold becomes a drag.
@@ -15,14 +14,14 @@ const CLICK_TIME_THRESHOLD_MS: u64 = 300;
 /// Context passed to event callbacks, providing mutable access to application state.
 ///
 /// This struct bundles all the mutable state that event callbacks need to access,
-/// including the rendering state, scene, and selection.
-///
-/// ## Lifetime Parameters
-/// - `'w`: The surface lifetime - Renderer holds a reference to a rendering surface with this lifetime
-/// - `'c`: The callback lifetime - represents the duration of a single event callback invocation
-pub struct EventContext<'w, 'c> {
-    /// Mutable reference to the renderer
-    pub(crate) renderer: &'c mut Renderer<'w>,
+/// including the camera, scene, and selection.
+pub struct EventContext<'c> {
+    /// Mutable reference to the camera
+    pub camera: &'c mut Camera,
+    /// Current viewport size (width, height)
+    pub size: (u32, u32),
+    /// Current cursor position in screen coordinates (x, y), or None if cursor is not over the window
+    pub cursor_position: &'c mut Option<(f32, f32)>,
     /// Mutable reference to the scene
     pub scene: &'c mut Scene,
     /// Mutable reference to the selection manager
@@ -37,7 +36,7 @@ pub type CallbackId = u32;
 /// Callbacks receive a reference to the event and mutable access to the event context.
 /// They return `true` to stop event propagation or `false` to continue processing
 /// additional callbacks for the same event kind.
-type EventCallback = Box<dyn for<'w, 'c> Fn(&Event, &mut EventContext<'w, 'c>) -> bool>;
+type EventCallback = Box<dyn for<'c> Fn(&Event, &mut EventContext<'c>) -> bool>;
 
 /// enum representing event types.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
@@ -280,7 +279,7 @@ impl EventDispatcher {
     /// Returns a [`CallbackId`] that can be used to unregister or reorder this callback.
     pub fn register<F>(&mut self, kind: EventKind, callback: F) -> CallbackId
     where
-        F: for<'w, 'c> Fn(&Event, &mut EventContext<'w, 'c>) -> bool + 'static
+        F: for<'c> Fn(&Event, &mut EventContext<'c>) -> bool + 'static
     {
         let id = self.next_id;
         self.next_id += 1;
@@ -355,7 +354,7 @@ impl EventDispatcher {
     ///
     /// Callbacks are invoked in registration order. If a callback returns `true`,
     /// no further callbacks are invoked (propagation is stopped).
-    pub fn dispatch<'w, 'c>(&mut self, event: &Event, ctx: &mut EventContext<'w, 'c>) -> bool {
+    pub fn dispatch<'c>(&mut self, event: &Event, ctx: &mut EventContext<'c>) -> bool {
         // First, update state and synthesize high-level events based on the incoming event
         self.process_event(event, ctx);
 
@@ -364,7 +363,7 @@ impl EventDispatcher {
     }
 
     /// Internal method to dispatch an event to callbacks without state processing.
-    fn dispatch_to_callbacks<'w, 'c>(&self, event: &Event, ctx: &mut EventContext<'w, 'c>) -> bool {
+    fn dispatch_to_callbacks<'c>(&self, event: &Event, ctx: &mut EventContext<'c>) -> bool {
         if let Some(callbacks) = self.callback_map.get(&event.kind()) {
             for (_id, callback) in callbacks {
                 if callback(event, ctx) {
@@ -376,7 +375,7 @@ impl EventDispatcher {
     }
 
     /// Processes an event to update internal state and synthesize high-level events.
-    fn process_event<'w, 'c>(&mut self, event: &Event, ctx: &mut EventContext<'w, 'c>) {
+    fn process_event<'c>(&mut self, event: &Event, ctx: &mut EventContext<'c>) {
         match event {
             Event::CursorMoved { position } => {
                 self.process_cursor_moved(*position);
@@ -402,11 +401,11 @@ impl EventDispatcher {
     }
 
     /// Processes MouseInput events to track button press/release and synthesize click events.
-    fn process_mouse_input<'w, 'c>(
+    fn process_mouse_input<'c>(
         &mut self,
         state: ElementState,
         button: MouseButton,
-        ctx: &mut EventContext<'w, 'c>,
+        ctx: &mut EventContext<'c>,
     ) {
         match state {
             ElementState::Pressed => {
@@ -437,11 +436,11 @@ impl EventDispatcher {
     }
 
     /// Synthesizes a MouseDragEnd event when a dragged button is released.
-    fn synthesize_drag_end<'w, 'c>(
+    fn synthesize_drag_end<'c>(
         &self,
         button: MouseButton,
         button_state: ButtonState,
-        ctx: &mut EventContext<'w, 'c>,
+        ctx: &mut EventContext<'c>,
     ) {
         if let Some(end_pos) = self.current_cursor_position {
             let drag_end = Event::MouseDragEnd {
@@ -454,11 +453,11 @@ impl EventDispatcher {
     }
 
     /// Synthesizes a MouseClick event if the button was released quickly.
-    fn synthesize_click_if_quick<'w, 'c>(
+    fn synthesize_click_if_quick<'c>(
         &self,
         button: MouseButton,
         button_state: ButtonState,
-        ctx: &mut EventContext<'w, 'c>,
+        ctx: &mut EventContext<'c>,
     ) {
         let duration = button_state.down_time.elapsed();
         if duration.as_millis() as u64 <= CLICK_TIME_THRESHOLD_MS {
@@ -478,12 +477,12 @@ impl EventDispatcher {
     /// - Two-finger drag → right mouse drag (pan)
     /// - Two-finger pinch → mouse wheel (zoom)
     /// - Single tap → left mouse click (selection)
-    fn process_touch<'w, 'c>(
+    fn process_touch<'c>(
         &mut self,
         id: TouchId,
         phase: TouchPhase,
         position: (f64, f64),
-        ctx: &mut EventContext<'w, 'c>,
+        ctx: &mut EventContext<'c>,
     ) {
         match phase {
             TouchPhase::Started => self.process_touch_started(id, position, ctx),
@@ -493,11 +492,11 @@ impl EventDispatcher {
     }
 
     /// Handles a new finger touching the screen.
-    fn process_touch_started<'w, 'c>(
+    fn process_touch_started<'c>(
         &mut self,
         id: TouchId,
         position: (f64, f64),
-        ctx: &mut EventContext<'w, 'c>,
+        ctx: &mut EventContext<'c>,
     ) {
         self.touch_state.active_touches.insert(id, position);
 
@@ -563,11 +562,11 @@ impl EventDispatcher {
     }
 
     /// Handles a finger moving on the screen.
-    fn process_touch_moved<'w, 'c>(
+    fn process_touch_moved<'c>(
         &mut self,
         id: TouchId,
         position: (f64, f64),
-        ctx: &mut EventContext<'w, 'c>,
+        ctx: &mut EventContext<'c>,
     ) {
         let old_position = self.touch_state.active_touches.get(&id).copied();
         self.touch_state.active_touches.insert(id, position);
@@ -641,10 +640,10 @@ impl EventDispatcher {
     }
 
     /// Handles a finger leaving the screen.
-    fn process_touch_ended<'w, 'c>(
+    fn process_touch_ended<'c>(
         &mut self,
         id: TouchId,
-        ctx: &mut EventContext<'w, 'c>,
+        ctx: &mut EventContext<'c>,
     ) {
         self.touch_state.active_touches.remove(&id);
 
@@ -708,20 +707,20 @@ impl EventDispatcher {
     ///
     /// This calls `process_event` so the synthesized mouse event updates button/cursor
     /// state and triggers further synthesis (e.g., drag and click events).
-    fn dispatch_synthetic_mouse<'w, 'c>(
+    fn dispatch_synthetic_mouse<'c>(
         &mut self,
         event: &Event,
-        ctx: &mut EventContext<'w, 'c>,
+        ctx: &mut EventContext<'c>,
     ) {
         self.process_event(event, ctx);
         self.dispatch_to_callbacks(event, ctx);
     }
 
     /// Processes MouseMotion events to track drag distance and synthesize drag events.
-    fn process_mouse_motion<'w, 'c>(
+    fn process_mouse_motion<'c>(
         &mut self,
         delta: (f64, f64),
-        ctx: &mut EventContext<'w, 'c>,
+        ctx: &mut EventContext<'c>,
     ) {
         let delta_magnitude = ((delta.0 * delta.0 + delta.1 * delta.1) as f32).sqrt();
 
@@ -784,16 +783,29 @@ mod tests {
 
     /// Creates a mock EventContext for testing.
     ///
-    /// SAFETY: This creates dangling references that should NEVER be dereferenced.
-    /// It's only safe to use in test callbacks that don't actually access the context fields.
-    /// We use non-null pointers to avoid triggering the zero-initialization check.
-    #[allow(invalid_reference_casting)]
-    unsafe fn create_mock_context<'w, 'c>() -> EventContext<'w, 'c> {
-        let dangling = std::ptr::NonNull::dangling();
+    /// Uses real stack-allocated values so the context fields are valid.
+    /// Test callbacks that don't access context fields can safely ignore them.
+    fn create_mock_context_parts() -> (Camera, Option<(f32, f32)>, Scene, SelectionManager) {
+        let camera = Camera {
+            eye: (0.0, 0.0, 1.0).into(),
+            target: (0.0, 0.0, 0.0).into(),
+            up: cgmath::Vector3::unit_y(),
+            aspect: 800.0 / 600.0,
+            fovy: 45.0,
+            znear: 0.1,
+            zfar: 100.0,
+            ortho: false,
+        };
+        (camera, None, Scene::new(), SelectionManager::new())
+    }
+
+    fn make_context(parts: &mut (Camera, Option<(f32, f32)>, Scene, SelectionManager)) -> EventContext<'_> {
         EventContext {
-            renderer: unsafe { &mut *(dangling.as_ptr() as *mut Renderer) },
-            scene: unsafe { &mut *(dangling.as_ptr() as *mut Scene) },
-            selection: unsafe { &mut *(dangling.as_ptr() as *mut SelectionManager) },
+            camera: &mut parts.0,
+            size: (800, 600),
+            cursor_position: &mut parts.1,
+            scene: &mut parts.2,
+            selection: &mut parts.3,
         }
     }
 
@@ -885,8 +897,8 @@ mod tests {
         let mut dispatcher = EventDispatcher::new();
         let event = Event::Test;
 
-        // SAFETY: We're creating a mock context that won't be used
-        let mut ctx = unsafe { create_mock_context() };
+        let mut parts = create_mock_context_parts();
+        let mut ctx = make_context(&mut parts);
 
         // Should not panic and should return false
         let result = dispatcher.dispatch(&event, &mut ctx);
@@ -905,7 +917,8 @@ mod tests {
         });
 
         let event = Event::Test;
-        let mut ctx = unsafe { create_mock_context() };
+        let mut parts = create_mock_context_parts();
+        let mut ctx = make_context(&mut parts);
 
         dispatcher.dispatch(&event, &mut ctx);
 
@@ -940,7 +953,8 @@ mod tests {
             state: ElementState::Pressed,
             button: MouseButton::Left,
         };
-        let mut ctx = unsafe { create_mock_context() };
+        let mut parts = create_mock_context_parts();
+        let mut ctx = make_context(&mut parts);
 
         dispatcher.dispatch(&event, &mut ctx);
 
@@ -974,7 +988,8 @@ mod tests {
         let event = Event::CursorMoved {
             position: (100.0, 200.0),
         };
-        let mut ctx = unsafe { create_mock_context() };
+        let mut parts = create_mock_context_parts();
+        let mut ctx = make_context(&mut parts);
 
         let result = dispatcher.dispatch(&event, &mut ctx);
 
@@ -1003,7 +1018,8 @@ mod tests {
         let event = Event::MouseWheel {
             delta: MouseScrollDelta::LineDelta(0.0, 1.0),
         };
-        let mut ctx = unsafe { create_mock_context() };
+        let mut parts = create_mock_context_parts();
+        let mut ctx = make_context(&mut parts);
 
         let result = dispatcher.dispatch(&event, &mut ctx);
 

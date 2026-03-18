@@ -11,28 +11,28 @@ use anyhow::Result;
 use crate::{
     ibl::IblResources,
     scene::{Camera, PrimitiveType, Scene, SceneProperties},
-    selection::SelectionManager,
+    selection_query::SelectionQuery,
     shaders::ShaderGenerator,
 };
 
 use batching::{collect_draw_batches, partition_batches, sort_batches_for_transparency, DrawBatch};
 
 use gpu_resources::{
-    clamp_surface_size, CameraResources, CameraUniform, DefaultTextures, GpuResourceManager,
+    CameraResources, CameraUniform, DefaultTextures, GpuResourceManager,
     GpuTexture, LightResources, MaterialBindGroupLayouts, MaterialPipelineLayouts,
     PipelineCacheKey,
 };
 use outline::{OutlineResources, OutlineUniform};
 
-pub(crate) struct Renderer<'a> {
-    // Core GPU resources
-    pub surface: wgpu::Surface<'a>,
-    pub device: wgpu::Device,
-    pub queue: wgpu::Queue,
-    pub config: wgpu::SurfaceConfiguration,
-    pub size: (u32, u32),
-    /// Current cursor position in screen coordinates (x, y), or None if cursor is not over the window
-    pub cursor_position: Option<(f32, f32)>,
+pub struct Renderer {
+    // Core GPU resources — public for Viewer access
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    size: (u32, u32),
+    surface_format: wgpu::TextureFormat,
+
+    // Internal config used by texture helpers (width/height/format)
+    config: wgpu::SurfaceConfiguration,
 
     // Grouped resources
     camera_resources: CameraResources,
@@ -47,111 +47,43 @@ pub(crate) struct Renderer<'a> {
     ibl_resources: IblResources,
     outline_resources: OutlineResources,
 
-    // Scene GPU resource tracking (for future use)
+    // Scene GPU resource tracking
     gpu_resources: GpuResourceManager,
 
     /// MSAA sample count (1 = no MSAA, 4 = 4x MSAA).
     sample_count: u32,
 }
 
-impl<'a> Renderer<'a> {
-    // Creating some of the wgpu types requires async code
-    // The target parameter can be a Window, Canvas, or any type implementing the necessary traits
-    pub async fn new<T>(target: T, width: u32, height: u32) -> Renderer<'a>
-    where
-        T: Into<wgpu::SurfaceTarget<'a>>,
-    {
-        let size = clamp_surface_size(width, height);
-
-        // On native simply get whatever the best backend is
-        #[cfg(not(target_arch = "wasm32"))]
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::PRIMARY,
-            ..Default::default()
-        });
-        // On web we check if WebGPU is supported, since support is still
-        // experimental on some browsers. If WebGPU is available, we want it,
-        // otherwise fall back to WebGL.
-        #[cfg(target_arch = "wasm32")]
-        let instance = wgpu::util::new_instance_with_webgpu_detection(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::BROWSER_WEBGPU | wgpu::Backends::GL,
-            ..Default::default()
-        }).await;
-
-        let surface = instance.create_surface(target).unwrap();
-
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::default(),
-                compatible_surface: Some(&surface),
-                force_fallback_adapter: false,
-            })
-            .await
-            .unwrap();
-
-        // Detect which backend the adapter is using
-        let is_gl_backend = adapter.get_info().backend == wgpu::Backend::Gl;
-        let has_compute = !is_gl_backend;
-
-        if cfg!(target_arch = "wasm32") {
-            if is_gl_backend {
-                log::info!("WebGPU not available, falling back to WebGL.");
-            } else {
-                log::info!("Using WebGPU backend.");
-            }
-        }
-
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                required_features: wgpu::Features::empty(),
-                // WebGL doesn't support all of wgpu's features, so use
-                // downlevel limits when running on the GL backend.
-                required_limits: if is_gl_backend {
-                    wgpu::Limits::downlevel_webgl2_defaults()
-                } else {
-                    wgpu::Limits::default()
-                },
-                label: None,
-                memory_hints: Default::default(),
-                trace: wgpu::Trace::Off,
-                experimental_features: Default::default(),
-            })
-            .await
-            .unwrap();
-
-        let surface_caps = surface.get_capabilities(&adapter);
-        let surface_format = surface_caps
-            .formats
-            .iter()
-            .find(|f| f.is_srgb())
-            .copied()
-            .unwrap_or(surface_caps.formats[0]);
-
-        // Prefer Fifo (vsync) to avoid tearing/flickering, fallback to first available
-        let present_mode = surface_caps
-            .present_modes
-            .iter()
-            .copied()
-            .find(|mode| *mode == wgpu::PresentMode::Fifo)
-            .unwrap_or(surface_caps.present_modes[0]);
-
+impl Renderer {
+    /// Create a new renderer from pre-created device and queue.
+    ///
+    /// The caller (typically Viewer) is responsible for creating the wgpu instance,
+    /// adapter, device, queue, and surface. The renderer only needs the device, queue,
+    /// surface format, dimensions, and MSAA sample count.
+    pub fn new(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        surface_format: wgpu::TextureFormat,
+        width: u32,
+        height: u32,
+        sample_count: u32,
+        has_compute: bool,
+    ) -> Self {
+        // Build an internal config for texture helpers
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
-            width: size.0,
-            height: size.1,
-            present_mode,
-            alpha_mode: surface_caps.alpha_modes[0],
+            width,
+            height,
+            present_mode: wgpu::PresentMode::Fifo,
+            alpha_mode: wgpu::CompositeAlphaMode::Auto,
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
 
-        surface.configure(&device, &config);
-
         // Create grouped resources
         let material_layouts = MaterialBindGroupLayouts::new(&device);
-        let camera_resources =
-            CameraResources::new(&device, config.width as f32 / config.height as f32);
+        let camera_resources = CameraResources::new(&device);
         let lights = LightResources::new(&device);
         let ibl_resources = IblResources::new(&device, &queue, has_compute);
         let pipelines = MaterialPipelineLayouts::new(
@@ -161,8 +93,6 @@ impl<'a> Renderer<'a> {
             &material_layouts,
             &ibl_resources.bind_group_layout,
         );
-        // Use 4x MSAA on native backends, disable on GL (WebGL2 doesn't support MSAA render targets)
-        let sample_count = if is_gl_backend { 1 } else { 4 };
 
         let default_textures = DefaultTextures::new(&device, &queue, &config, sample_count);
         let mut shader_generator = ShaderGenerator::new();
@@ -175,12 +105,11 @@ impl<'a> Renderer<'a> {
         );
 
         Self {
-            surface,
             device,
             queue,
+            size: (width, height),
+            surface_format,
             config,
-            size,
-            cursor_position: None,
             camera_resources,
             lights,
             material_layouts,
@@ -195,25 +124,179 @@ impl<'a> Renderer<'a> {
         }
     }
 
-    // =========================================================================
-    // Accessors
-    // =========================================================================
+    /// Create a new renderer for headless/offscreen rendering.
+    ///
+    /// This creates its own wgpu instance, adapter, device, and queue without
+    /// requiring a surface. Useful for generating still images, thumbnails,
+    /// or server-side rendering.
+    ///
+    /// Uses `Rgba8UnormSrgb` format and disables MSAA for simplicity.
+    pub async fn new_headless(width: u32, height: u32) -> Self {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::PRIMARY,
+            ..Default::default()
+        });
 
-    /// Get a reference to the camera.
-    pub fn camera(&self) -> &Camera {
-        &self.camera_resources.camera
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::default(),
+                compatible_surface: None,
+                force_fallback_adapter: false,
+            })
+            .await
+            .expect("Failed to find a suitable GPU adapter for headless rendering");
+
+        let has_compute = adapter.get_info().backend != wgpu::Backend::Gl;
+
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::default(),
+                label: Some("Headless Renderer"),
+                memory_hints: Default::default(),
+                trace: wgpu::Trace::Off,
+                experimental_features: Default::default(),
+            })
+            .await
+            .expect("Failed to create GPU device for headless rendering");
+
+        let surface_format = wgpu::TextureFormat::Rgba8UnormSrgb;
+        let sample_count = 1; // No MSAA for headless
+
+        Self::new(device, queue, surface_format, width, height, sample_count, has_compute)
     }
 
-    /// Get a mutable reference to the camera.
-    pub fn camera_mut(&mut self) -> &mut Camera {
-        &mut self.camera_resources.camera
+    /// Render the scene to an image buffer.
+    ///
+    /// This is the primary API for headless rendering. It renders the scene
+    /// from the given camera viewpoint and returns the result as an RGBA image.
+    ///
+    /// The renderer must have been created with dimensions matching the desired
+    /// output size, or resized beforehand.
+    pub fn render_to_image(
+        &mut self,
+        camera: &Camera,
+        scene: &mut Scene,
+        selection: Option<&dyn SelectionQuery>,
+    ) -> Result<image::RgbaImage> {
+        let (width, height) = self.size;
+
+        // Create offscreen render target
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Headless Render Target"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.surface_format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        // Prepare and render
+        self.prepare_scene(camera, scene)?;
+        let mut encoder = self.device.create_command_encoder(
+            &wgpu::CommandEncoderDescriptor {
+                label: Some("Headless Render Encoder"),
+            },
+        );
+        self.render_scene_to_view(&view, &mut encoder, camera, scene, selection)?;
+
+        // Calculate buffer size with alignment
+        // Each row must be aligned to 256 bytes (COPY_BYTES_PER_ROW_ALIGNMENT)
+        let bytes_per_pixel = 4u32; // RGBA8
+        let unpadded_bytes_per_row = width * bytes_per_pixel;
+        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let padded_bytes_per_row = (unpadded_bytes_per_row + align - 1) / align * align;
+        let buffer_size = (padded_bytes_per_row * height) as u64;
+
+        // Create staging buffer for readback
+        let staging_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Headless Staging Buffer"),
+            size: buffer_size,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        // Copy texture to staging buffer
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &staging_buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded_bytes_per_row),
+                    rows_per_image: Some(height),
+                },
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        self.queue.submit(std::iter::once(encoder.finish()));
+
+        // Map the staging buffer and read the data
+        let buffer_slice = staging_buffer.slice(..);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+            sender.send(result).unwrap();
+        });
+        self.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None }).unwrap();
+        receiver.recv().unwrap()?;
+
+        // Copy data, removing row padding
+        let data = buffer_slice.get_mapped_range();
+        let mut image_data = Vec::with_capacity((width * height * bytes_per_pixel) as usize);
+        for row in 0..height {
+            let start = (row * padded_bytes_per_row) as usize;
+            let end = start + (unpadded_bytes_per_row) as usize;
+            image_data.extend_from_slice(&data[start..end]);
+        }
+        drop(data);
+        staging_buffer.unmap();
+
+        image::RgbaImage::from_raw(width, height, image_data)
+            .ok_or_else(|| anyhow::anyhow!("Failed to create image from rendered data"))
+    }
+
+    /// Get a reference to the wgpu device.
+    pub fn device(&self) -> &wgpu::Device {
+        &self.device
+    }
+
+    /// Get a reference to the wgpu queue.
+    pub fn queue(&self) -> &wgpu::Queue {
+        &self.queue
+    }
+
+    /// Get the current viewport size as (width, height).
+    pub fn size(&self) -> (u32, u32) {
+        self.size
+    }
+
+    /// Get the surface texture format.
+    pub fn surface_format(&self) -> wgpu::TextureFormat {
+        self.surface_format
     }
 
     /// Clear all scene-specific GPU resources.
     ///
     /// Call this when the scene is cleared or replaced to ensure stale GPU
     /// buffers (vertex data, textures, material bind groups) are not reused.
-    pub(crate) fn clear_gpu_resources(&mut self) {
+    pub fn clear_gpu_resources(&mut self) {
         self.gpu_resources.clear_scene_resources();
         self.lights.synced_generation = 0;
     }
@@ -221,13 +304,9 @@ impl<'a> Renderer<'a> {
     pub fn resize(&mut self, new_size: (u32, u32)) {
         let (width, height) = new_size;
         if width > 0 && height > 0 {
-            let (clamped_width, clamped_height) = clamp_surface_size(width, height);
-            self.size = (clamped_width, clamped_height);
-            self.config.width = clamped_width;
-            self.config.height = clamped_height;
-            self.surface.configure(&self.device, &self.config);
-
-            self.camera_resources.camera.aspect = width as f32 / height as f32;
+            self.size = (width, height);
+            self.config.width = width;
+            self.config.height = height;
 
             self.default_textures.depth =
                 GpuTexture::depth(&self.device, &self.config, self.sample_count, "depth_texture");
@@ -239,23 +318,24 @@ impl<'a> Renderer<'a> {
             };
 
             self.outline_resources
-                .resize(&self.device, clamped_width, clamped_height, self.sample_count);
+                .resize(&self.device, width, height, self.sample_count);
         }
     }
 
     /// Render the scene to a specific view, updating uniforms and drawing all batches.
     /// If a selection is provided and not empty, selection outlines will be rendered.
     /// The encoder is not submitted - the caller is responsible for that.
-    pub(crate) fn render_scene_to_view(
+    pub fn render_scene_to_view(
         &mut self,
         view: &wgpu::TextureView,
         encoder: &mut wgpu::CommandEncoder,
+        camera: &Camera,
         scene: &Scene,
-        selection: Option<&SelectionManager>,
+        selection: Option<&dyn SelectionQuery>,
     ) -> Result<()> {
         // Update camera uniform
         // TODO: only when needed
-        let camera_uniform_slice = &[CameraUniform::from_camera(&self.camera_resources.camera)];
+        let camera_uniform_slice = &[CameraUniform::from_camera(camera)];
         let camera_buffer_contents: &[u8] = bytemuck::cast_slice(camera_uniform_slice);
         self.queue
             .write_buffer(&self.camera_resources.buffer, 0, camera_buffer_contents);
@@ -267,12 +347,12 @@ impl<'a> Renderer<'a> {
         sort_batches_for_transparency(
             &mut batches,
             scene,
-            self.camera_resources.camera.eye,
+            camera.eye,
         );
 
         // Partition batches by selection state if selection is provided
         let selected_batches = selection
-            .filter(|sel| !sel.is_empty() && sel.config().outline_enabled)
+            .filter(|sel| !sel.is_empty())
             .map(|sel| {
                 let (selected, _) =
                     partition_batches(&batches, |inst| sel.is_node_selected(inst.node_id));
@@ -284,10 +364,10 @@ impl<'a> Renderer<'a> {
         // Update outline uniform if we have a selection
         if has_selection {
             if let Some(sel) = selection {
-                let sel_config = sel.config();
+                let outline_cfg = sel.outline_config();
                 let outline_uniform = OutlineUniform {
-                    color: sel_config.outline_color,
-                    width_pixels: sel_config.outline_width,
+                    color: outline_cfg.color,
+                    width_pixels: outline_cfg.width_pixels,
                     screen_width: self.size.0 as f32,
                     screen_height: self.size.1 as f32,
                     _padding: 0.0,
@@ -497,30 +577,4 @@ impl<'a> Renderer<'a> {
         render_pass.draw(0..3, 0..1); // Fullscreen triangle
     }
 
-    pub fn render(
-        &mut self,
-        scene: &mut Scene,
-        selection: Option<&SelectionManager>,
-    ) -> Result<()> {
-        // Prepare all GPU resources before rendering
-        self.prepare_scene(scene)?;
-
-        let output = self.surface.get_current_texture()?;
-        let view = output
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Render Encoder"),
-            });
-
-        self.render_scene_to_view(&view, &mut encoder, scene, selection)?;
-
-        // submit will accept anything that implements IntoIter
-        self.queue.submit(std::iter::once(encoder.finish()));
-        output.present();
-
-        Ok(())
-    }
 }

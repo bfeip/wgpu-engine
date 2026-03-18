@@ -1,18 +1,12 @@
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
-use crate::scene::{Camera, MaterialProperties, PrimitiveType, SceneProperties};
+use crate::scene::{MaterialProperties, PrimitiveType, SceneProperties};
 
 use super::state::GpuTexture;
 use super::uniforms::{CameraUniform, LightsArrayUniform};
 
-/// Maximum texture dimension for WebGL. When the canvas exceeds this size,
-/// we scale down the surface while preserving aspect ratio.
-#[cfg(target_arch = "wasm32")]
-pub(in crate::renderer) const MAX_TEXTURE_DIMENSION: u32 = 2048;
-
-/// Camera state and GPU resources for view/projection uniforms.
+/// GPU resources for camera view/projection uniforms.
 pub(in crate::renderer) struct CameraResources {
-    pub(in crate::renderer) camera: Camera,
     pub(in crate::renderer) buffer: wgpu::Buffer,
     pub(in crate::renderer) bind_group_layout: wgpu::BindGroupLayout,
     pub(in crate::renderer) bind_group: wgpu::BindGroup,
@@ -20,20 +14,8 @@ pub(in crate::renderer) struct CameraResources {
 
 impl CameraResources {
     /// Create camera resources including bind group layout.
-    pub(in crate::renderer) fn new(device: &wgpu::Device, aspect: f32) -> CameraResources {
-        let camera = Camera {
-            eye: (0.0, 0.1, 0.2).into(),
-            target: (0.0, 0.0, 0.0).into(),
-            up: cgmath::Vector3::unit_y(),
-            aspect,
-            fovy: 45.0,
-            znear: 0.001,
-            zfar: 100.0,
-            ortho: false,
-        };
-
-        let mut camera_uniform = CameraUniform::new();
-        camera_uniform.update_view_proj(&camera);
+    pub(in crate::renderer) fn new(device: &wgpu::Device) -> CameraResources {
+        let camera_uniform = CameraUniform::new();
 
         let buffer = device.create_buffer_init(&BufferInitDescriptor {
             label: Some("Camera Buffer"),
@@ -66,7 +48,6 @@ impl CameraResources {
         });
 
         CameraResources {
-            camera,
             buffer,
             bind_group_layout,
             bind_group,
@@ -321,30 +302,4 @@ pub(in crate::renderer) struct PipelineCacheKey {
     pub(in crate::renderer) material_props: MaterialProperties,
     pub(in crate::renderer) scene_props: SceneProperties,
     pub(in crate::renderer) primitive_type: PrimitiveType,
-}
-
-/// Clamp dimensions to the maximum texture size while preserving aspect ratio.
-/// On native platforms, returns the input dimensions unchanged.
-pub(in crate::renderer) fn clamp_surface_size(width: u32, height: u32) -> (u32, u32) {
-    #[cfg(target_arch = "wasm32")]
-    {
-        if width <= MAX_TEXTURE_DIMENSION && height <= MAX_TEXTURE_DIMENSION {
-            return (width, height);
-        }
-
-        let scale = if width >= height {
-            MAX_TEXTURE_DIMENSION as f32 / width as f32
-        } else {
-            MAX_TEXTURE_DIMENSION as f32 / height as f32
-        };
-
-        let new_width = ((width as f32 * scale).round() as u32).max(1);
-        let new_height = ((height as f32 * scale).round() as u32).max(1);
-        (new_width, new_height)
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        (width, height)
-    }
 }

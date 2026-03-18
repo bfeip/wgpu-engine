@@ -24,6 +24,6 @@ pub(crate) use buffer_layouts::{instance_buffer_layout, vertex_buffer_layout};
 
 // From renderer_resources
 pub(super) use renderer_resources::{
-    clamp_surface_size, CameraResources, DefaultTextures, LightResources,
+    CameraResources, DefaultTextures, LightResources,
     MaterialBindGroupLayouts, MaterialPipelineLayouts, PipelineCacheKey,
 };
