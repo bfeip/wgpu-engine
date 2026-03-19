@@ -413,7 +413,7 @@ impl SerializedTexture {
                 let (w, h) = image.dimensions();
                 let mut buf = Vec::new();
                 JpegEncoder::new_with_quality(&mut buf, compression.jpeg_quality())
-                    .write_image(&rgb, w, h, image::ColorType::Rgb8)
+                    .write_image(&rgb, w, h, image::ExtendedColorType::Rgb8)
                     .map_err(|e| FormatError::TextureError(e.to_string()))?;
                 Ok((TextureFormat::Jpeg, buf))
             }
@@ -428,7 +428,7 @@ impl SerializedTexture {
                     compression.png_compression(),
                     FilterType::Adaptive,
                 )
-                .write_image(&rgba, w, h, image::ColorType::Rgba8)
+                .write_image(&rgba, w, h, image::ExtendedColorType::Rgba8)
                 .map_err(|e| FormatError::TextureError(e.to_string()))?;
                 Ok((TextureFormat::Png, buf))
             }
@@ -561,7 +561,7 @@ pub fn decompress(data: &[u8]) -> Result<Vec<u8>, FormatError> {
 
 /// Serialize and compress a section with a specific compression level.
 pub fn serialize_section_with_level<T: Serialize>(data: &T, level: i32) -> Result<(Vec<u8>, usize), FormatError> {
-    let uncompressed = bincode::serialize(data)
+    let uncompressed = bincode::serde::encode_to_vec(data, bincode::config::legacy())
         .map_err(|e| FormatError::SerializationError(e.to_string()))?;
     let uncompressed_size = uncompressed.len();
     let compressed = compress_with_level(&uncompressed, level)?;
@@ -596,8 +596,9 @@ fn write_section<T: Serialize>(
 /// Decompress and deserialize a section.
 pub fn deserialize_section<T: for<'de> Deserialize<'de>>(compressed: &[u8]) -> Result<T, FormatError> {
     let uncompressed = decompress(compressed)?;
-    bincode::deserialize(&uncompressed)
-        .map_err(|e| FormatError::DeserializationError(e.to_string()))
+    let (value, _) = bincode::serde::decode_from_slice(&uncompressed, bincode::config::legacy())
+        .map_err(|e| FormatError::DeserializationError(e.to_string()))?;
+    Ok(value)
 }
 
 // ============================================================================

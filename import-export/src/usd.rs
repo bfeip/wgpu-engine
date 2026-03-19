@@ -9,7 +9,7 @@ use std::io::{Cursor, Read};
 use std::path::Path;
 
 use anyhow::{Result, anyhow};
-use cgmath::{Deg, Matrix3, Matrix4, Point3, Quaternion, SquareMatrix, Vector3};
+use cgmath::{Deg, Matrix3, Matrix4, Point3, SquareMatrix, Vector3};
 
 use openusd::sdf::{self, AbstractData, Value};
 

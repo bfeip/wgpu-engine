@@ -9,7 +9,7 @@ use std::path::Path;
 use std::rc::Rc;
 
 use anyhow::{Result, anyhow};
-use cgmath::{Matrix4, Point3, Quaternion, Vector3};
+use cgmath::{Matrix4, Point3, Vector3};
 use russimp::material::{Material as RMaterial, TextureType};
 use russimp::node::Node as RNode;
 use russimp::scene::{PostProcess, Scene as RScene};

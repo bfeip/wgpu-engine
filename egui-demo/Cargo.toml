@@ -11,8 +11,8 @@ usd = ["wgpu-engine-viewer/usd"]
 wgpu-engine-viewer = { path = "../viewer", features = ["egui-support"] }
 cgmath = "0.18"
 egui = "0.33"
-env_logger = "0.10"
+env_logger = "0.11"
 log = "0.4"
-pollster = "0.3"
-rfd = "0.15"
+pollster = "0.4"
+rfd = "0.17"
 winit = "0.30"

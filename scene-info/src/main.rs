@@ -173,8 +173,9 @@ fn read_toc(bytes: &[u8], toc_offset: u64) -> Result<TableOfContents, FormatErro
     let toc_data = &bytes[toc_offset as usize..];
     let decompressed =
         zstd::decode_all(toc_data).map_err(|e| FormatError::DecompressionError(e.to_string()))?;
-    bincode::deserialize(&decompressed)
-        .map_err(|e| FormatError::DeserializationError(e.to_string()))
+    let (value, _) = bincode::serde::decode_from_slice(&decompressed, bincode::config::legacy())
+        .map_err(|e| FormatError::DeserializationError(e.to_string()))?;
+    Ok(value)
 }
 
 fn read_section<T: serde::de::DeserializeOwned>(
@@ -188,8 +189,9 @@ fn read_section<T: serde::de::DeserializeOwned>(
     let decompressed =
         zstd::decode_all(compressed).map_err(|e| FormatError::DecompressionError(e.to_string()))?;
 
-    bincode::deserialize(&decompressed)
-        .map_err(|e| FormatError::DeserializationError(e.to_string()))
+    let (value, _) = bincode::serde::decode_from_slice(&decompressed, bincode::config::legacy())
+        .map_err(|e| FormatError::DeserializationError(e.to_string()))?;
+    Ok(value)
 }
 
 fn print_section_breakdown(toc: &TableOfContents, file_size: u64) {
