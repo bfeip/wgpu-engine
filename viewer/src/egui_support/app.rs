@@ -59,12 +59,15 @@ use super::render::render_egui_overlay;
 ///     }
 /// }
 /// ```
+/// Field order matters: Rust drops fields in declaration order, so egui
+/// resources are released before the window and GPU surface. This prevents segfaults
+/// from background threads on Wayland during shutdown.
 pub struct EguiViewerApp<'a> {
-    window: Arc<Window>,
-    viewer: Viewer<'a>,
-    egui_ctx: egui::Context,
-    egui_winit: egui_winit::State,
     egui_renderer: egui_wgpu::Renderer,
+    egui_winit: egui_winit::State,
+    egui_ctx: egui::Context,
+    viewer: Viewer<'a>,
+    window: Arc<Window>,
 }
 
 impl EguiViewerApp<'static> {
