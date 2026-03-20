@@ -10,7 +10,7 @@ use anyhow::Result;
 
 use crate::{
     ibl::IblResources,
-    scene::{AlphaMode, Camera, PrimitiveType, Scene, SceneProperties},
+    scene::{AlphaMode, Camera, MaterialProperties, PrimitiveType, Scene, SceneProperties},
     selection_query::SelectionQuery,
     shaders::ShaderGenerator,
 };
@@ -448,9 +448,16 @@ impl Renderer {
                 .expect("Material GPU resources not initialized");
             render_pass.set_bind_group(2, &material_gpu.bind_group, &[]);
 
+            // Normalize key: only has_lighting (pipeline layout), double_sided
+            // (cull mode), and primitive_type matter for depth-only output.
+            // alpha_mode is always Mask, IBL is unused.
             let pipeline_key = PipelineCacheKey {
-                material_props: material_props.clone(),
-                scene_props: scene_props.clone(),
+                material_props: MaterialProperties {
+                    alpha_mode: AlphaMode::Mask,
+                    has_lighting: material_props.has_lighting,
+                    double_sided: material_props.double_sided,
+                },
+                scene_props: SceneProperties { has_ibl: false },
                 primitive_type: batch.primitive_type,
                 depth_prepass: true,
             };
