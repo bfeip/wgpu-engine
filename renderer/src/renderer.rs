@@ -15,7 +15,7 @@ use crate::{
     shaders::ShaderGenerator,
 };
 
-use batching::{collect_draw_batches, partition_batches, sort_batches_for_transparency, DrawBatch};
+use batching::{DrawBatch, DrawData};
 
 use gpu_resources::{
     CameraResources, CameraUniform, DefaultTextures, GpuResourceManager,
@@ -336,29 +336,11 @@ impl Renderer {
         self.queue
             .write_buffer(&self.camera_resources.buffer, 0, camera_buffer_contents);
 
-        // Collect all instances into batches grouped by mesh and material
-        let mut batches = collect_draw_batches(scene);
-
-        // Sort so opaque batches render first, then transparent back-to-front
-        sort_batches_for_transparency(
-            &mut batches,
-            scene,
-            camera.eye,
-        );
-
-        // Partition batches by selection state if selection is provided
-        let selected_batches = selection
-            .filter(|sel| !sel.is_empty())
-            .map(|sel| {
-                let (selected, _) =
-                    partition_batches(&batches, |inst| sel.is_node_selected(inst.node_id));
-                selected
-            })
-            .unwrap_or_default();
-        let has_selection = !selected_batches.is_empty();
+        // Collect, sort, and partition draw batches for this frame
+        let draw_data = DrawData::new(scene, camera.eye, selection);
 
         // Update outline uniform if we have a selection
-        if has_selection {
+        if draw_data.has_selection() {
             if let Some(sel) = selection {
                 let outline_cfg = sel.outline_config();
                 let outline_uniform = OutlineUniform {
@@ -376,10 +358,10 @@ impl Renderer {
             }
         }
 
-        self.render_main_pass(encoder, view, &batches, scene);
+        self.render_main_pass(encoder, view, draw_data.all_batches(), scene);
 
-        if has_selection {
-            self.render_selection_mask_pass(encoder, &selected_batches, scene);
+        if draw_data.has_selection() {
+            self.render_selection_mask_pass(encoder, draw_data.selected_batches(), scene);
             self.render_outline_pass(encoder, view);
         }
 

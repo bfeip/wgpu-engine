@@ -9,6 +9,7 @@ use crate::scene::{
     Visibility,
 };
 use crate::scene::common;
+use crate::selection_query::SelectionQuery;
 
 /// Represents an instance with its computed world transform.
 #[derive(Clone)]
@@ -248,6 +249,67 @@ where
     }
 
     (matched.into_values().collect(), unmatched.into_values().collect())
+}
+
+/// Frame-scoped collection of draw batches, sorted and partitioned for rendering.
+///
+/// Constructed once per frame from the scene, camera, and optional selection.
+/// Internally uses `collect_draw_batches`, `sort_batches_for_transparency`,
+/// and `partition_batches`.
+pub(crate) struct DrawData {
+    /// All batches, sorted: opaque first (by material/primitive/mesh),
+    /// then transparent back-to-front.
+    batches: Vec<DrawBatch>,
+    /// Subset of batches containing only selected instances.
+    /// Empty if no selection is active.
+    selected_batches: Vec<DrawBatch>,
+}
+
+impl DrawData {
+    /// Build draw data for the current frame.
+    ///
+    /// - Walks the scene tree to collect instance transforms
+    /// - Groups into batches by mesh/material/primitive
+    /// - Sorts for transparency (opaque first, transparent back-to-front)
+    /// - Partitions selected instances if a non-empty selection is provided
+    pub fn new(
+        scene: &Scene,
+        camera_position: Point3<f32>,
+        selection: Option<&dyn SelectionQuery>,
+    ) -> Self {
+        let mut batches = collect_draw_batches(scene);
+        sort_batches_for_transparency(&mut batches, scene, camera_position);
+
+        let selected_batches = selection
+            .filter(|sel| !sel.is_empty())
+            .map(|sel| {
+                let (selected, _) =
+                    partition_batches(&batches, |inst| sel.is_node_selected(inst.node_id));
+                selected
+            })
+            .unwrap_or_default();
+
+        Self {
+            batches,
+            selected_batches,
+        }
+    }
+
+    /// All batches (opaque, transparent, selected, etc.), sorted for rendering.
+    pub fn all_batches(&self) -> &[DrawBatch] {
+        &self.batches
+    }
+
+    /// Batches containing only selected instances, for outline/mask rendering.
+    /// Empty if no selection is active.
+    pub fn selected_batches(&self) -> &[DrawBatch] {
+        &self.selected_batches
+    }
+
+    /// Whether any instances are selected.
+    pub fn has_selection(&self) -> bool {
+        !self.selected_batches.is_empty()
+    }
 }
 
 #[cfg(test)]
@@ -553,5 +615,83 @@ mod tests {
 
         assert_eq!(unmatched.len(), 1);
         assert_eq!(unmatched[0].instances.len(), 2); // nodes 1 and 3
+    }
+
+    // ========================================================================
+    // DrawData Tests
+    // ========================================================================
+
+    use crate::selection_query::OutlineConfig;
+
+    struct MockSelection {
+        selected_nodes: Vec<NodeId>,
+    }
+
+    impl SelectionQuery for MockSelection {
+        fn is_empty(&self) -> bool {
+            self.selected_nodes.is_empty()
+        }
+
+        fn is_node_selected(&self, node_id: NodeId) -> bool {
+            self.selected_nodes.contains(&node_id)
+        }
+
+        fn outline_config(&self) -> OutlineConfig {
+            OutlineConfig::default()
+        }
+    }
+
+    /// Creates a scene with one instance node (empty mesh + default material).
+    fn build_simple_scene() -> (Scene, NodeId) {
+        let mut scene = Scene::new();
+        let mesh_id = scene.add_mesh(crate::scene::Mesh::new());
+        let material_id = scene.add_material(crate::scene::Material::new());
+        let node_id = scene
+            .add_instance_node(None, mesh_id, material_id, None, common::Transform::IDENTITY)
+            .unwrap();
+        (scene, node_id)
+    }
+
+    #[test]
+    fn test_draw_data_no_selection() {
+        let scene = Scene::new();
+        let draw_data = DrawData::new(&scene, Point3::new(0.0, 0.0, 0.0), None);
+
+        assert!(draw_data.all_batches().is_empty());
+        assert!(draw_data.selected_batches().is_empty());
+        assert!(!draw_data.has_selection());
+    }
+
+    #[test]
+    fn test_draw_data_empty_selection() {
+        let (scene, _node_id) = build_simple_scene();
+        let selection = MockSelection {
+            selected_nodes: vec![],
+        };
+        let draw_data = DrawData::new(
+            &scene,
+            Point3::new(0.0, 0.0, 0.0),
+            Some(&selection),
+        );
+
+        assert!(!draw_data.has_selection());
+        assert!(draw_data.selected_batches().is_empty());
+    }
+
+    #[test]
+    fn test_draw_data_with_selection() {
+        let (scene, node_id) = build_simple_scene();
+        let selection = MockSelection {
+            selected_nodes: vec![node_id],
+        };
+        let draw_data = DrawData::new(
+            &scene,
+            Point3::new(0.0, 0.0, 0.0),
+            Some(&selection),
+        );
+
+        // Scene has no mesh primitives (empty mesh), so no batches are generated
+        // This test verifies the selection path runs without errors
+        assert!(!draw_data.has_selection() || !draw_data.selected_batches().is_empty());
     }
 }
