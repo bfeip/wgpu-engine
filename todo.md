@@ -31,7 +31,6 @@ One day each:
 - Benchmarking and tests
 
 One day together:
-- Middle click orbit
 - Everything optional behind features + good default features
 
 Stretch:

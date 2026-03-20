@@ -295,6 +295,63 @@ impl DefaultTextures {
     }
 }
 
+/// Cached GPU resources for headless rendering, reused across frames at the same size.
+pub(in crate::renderer) struct HeadlessResources {
+    pub(in crate::renderer) texture: wgpu::Texture,
+    pub(in crate::renderer) view: wgpu::TextureView,
+    pub(in crate::renderer) staging_buffer: wgpu::Buffer,
+    pub(in crate::renderer) padded_bytes_per_row: u32,
+    pub(in crate::renderer) size: (u32, u32),
+}
+
+impl HeadlessResources {
+    pub(in crate::renderer) fn new(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        surface_format: wgpu::TextureFormat,
+    ) -> Self {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Headless Render Target"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: surface_format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        // wgpu requires buffer copy rows to be aligned to COPY_BYTES_PER_ROW_ALIGNMENT (256).
+        // We pad each row to meet this alignment, then strip the padding when reading back.
+        let bytes_per_pixel = 4u32; // RGBA8
+        let unpadded_bytes_per_row = width * bytes_per_pixel;
+        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let padded_bytes_per_row = (unpadded_bytes_per_row + align - 1) / align * align;
+        let buffer_size = (padded_bytes_per_row * height) as u64;
+
+        let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Headless Staging Buffer"),
+            size: buffer_size,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        Self {
+            texture,
+            view,
+            staging_buffer,
+            padded_bytes_per_row,
+            size: (width, height),
+        }
+    }
+}
+
 /// Cache key for render pipelines, combining all properties that require
 /// a distinct compiled pipeline.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

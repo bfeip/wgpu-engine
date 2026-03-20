@@ -19,8 +19,8 @@ use batching::{collect_draw_batches, partition_batches, sort_batches_for_transpa
 
 use gpu_resources::{
     CameraResources, CameraUniform, DefaultTextures, GpuResourceManager,
-    GpuTexture, LightResources, MaterialBindGroupLayouts, MaterialPipelineLayouts,
-    PipelineCacheKey,
+    GpuTexture, HeadlessResources, LightResources, MaterialBindGroupLayouts,
+    MaterialPipelineLayouts, PipelineCacheKey,
 };
 use outline::{OutlineResources, OutlineUniform};
 
@@ -52,6 +52,9 @@ pub struct Renderer {
 
     /// MSAA sample count (1 = no MSAA, 4 = 4x MSAA).
     sample_count: u32,
+
+    /// Cached GPU resources for headless rendering, reused across frames at the same size.
+    headless_resources: Option<HeadlessResources>,
 }
 
 impl Renderer {
@@ -121,6 +124,7 @@ impl Renderer {
             outline_resources,
             gpu_resources: GpuResourceManager::new(),
             sample_count,
+            headless_resources: None,
         }
     }
 
@@ -164,112 +168,6 @@ impl Renderer {
         let sample_count = 1; // No MSAA for headless
 
         Self::new(device, queue, surface_format, width, height, sample_count, has_compute)
-    }
-
-    /// Render the scene to an image buffer.
-    ///
-    /// This is the primary API for headless rendering. It renders the scene
-    /// from the given camera viewpoint and returns the result as an RGBA image.
-    ///
-    /// The renderer must have been created with dimensions matching the desired
-    /// output size, or resized beforehand.
-    pub fn render_to_image(
-        &mut self,
-        camera: &Camera,
-        scene: &mut Scene,
-        selection: Option<&dyn SelectionQuery>,
-    ) -> Result<image::RgbaImage> {
-        let (width, height) = self.size;
-
-        // Create offscreen render target
-        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Headless Render Target"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: self.surface_format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        // Prepare and render
-        self.prepare_scene(camera, scene)?;
-        let mut encoder = self.device.create_command_encoder(
-            &wgpu::CommandEncoderDescriptor {
-                label: Some("Headless Render Encoder"),
-            },
-        );
-        self.render_scene_to_view(&view, &mut encoder, camera, scene, selection)?;
-
-        // Calculate buffer size with alignment
-        // Each row must be aligned to 256 bytes (COPY_BYTES_PER_ROW_ALIGNMENT)
-        let bytes_per_pixel = 4u32; // RGBA8
-        let unpadded_bytes_per_row = width * bytes_per_pixel;
-        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        let padded_bytes_per_row = (unpadded_bytes_per_row + align - 1) / align * align;
-        let buffer_size = (padded_bytes_per_row * height) as u64;
-
-        // Create staging buffer for readback
-        let staging_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Headless Staging Buffer"),
-            size: buffer_size,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-
-        // Copy texture to staging buffer
-        encoder.copy_texture_to_buffer(
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::TexelCopyBufferInfo {
-                buffer: &staging_buffer,
-                layout: wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(padded_bytes_per_row),
-                    rows_per_image: Some(height),
-                },
-            },
-            wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-        );
-
-        self.queue.submit(std::iter::once(encoder.finish()));
-
-        // Map the staging buffer and read the data
-        let buffer_slice = staging_buffer.slice(..);
-        let (sender, receiver) = std::sync::mpsc::channel();
-        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            sender.send(result).unwrap();
-        });
-        self.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None }).unwrap();
-        receiver.recv().unwrap()?;
-
-        // Copy data, removing row padding
-        let data = buffer_slice.get_mapped_range();
-        let mut image_data = Vec::with_capacity((width * height * bytes_per_pixel) as usize);
-        for row in 0..height {
-            let start = (row * padded_bytes_per_row) as usize;
-            let end = start + (unpadded_bytes_per_row) as usize;
-            image_data.extend_from_slice(&data[start..end]);
-        }
-        drop(data);
-        staging_buffer.unmap();
-
-        image::RgbaImage::from_raw(width, height, image_data)
-            .ok_or_else(|| anyhow::anyhow!("Failed to create image from rendered data"))
     }
 
     /// Get a reference to the wgpu device.
@@ -319,7 +217,105 @@ impl Renderer {
 
             self.outline_resources
                 .resize(&self.device, width, height, self.sample_count);
+
+            self.headless_resources = None;
         }
+    }
+
+    /// Render the scene to an image buffer.
+    ///
+    /// This is the primary API for headless rendering. It renders the scene
+    /// from the given camera viewpoint and returns the result as an RGBA image.
+    ///
+    /// The renderer must have been created with dimensions matching the desired
+    /// output size, or resized beforehand.
+    pub fn render_scene_to_image(
+        &mut self,
+        camera: &Camera,
+        scene: &mut Scene,
+        selection: Option<&dyn SelectionQuery>,
+    ) -> Result<image::RgbaImage> {
+        let (width, height) = self.size;
+
+        // Ensure cached headless resources exist and match the current size
+        if self
+            .headless_resources
+            .as_ref()
+            .is_none_or(|r| r.size != (width, height))
+        {
+            self.headless_resources = Some(HeadlessResources::new(
+                &self.device,
+                width,
+                height,
+                self.surface_format,
+            ));
+        }
+
+        let padded_bytes_per_row = self.headless_resources.as_ref().unwrap().padded_bytes_per_row;
+
+        // Prepare and render — temporarily take resources out of self to avoid
+        // borrow conflict with render_scene_to_view(&mut self)
+        self.prepare_scene(camera, scene)?;
+        let mut encoder = self.device.create_command_encoder(
+            &wgpu::CommandEncoderDescriptor {
+                label: Some("Headless Render Encoder"),
+            },
+        );
+        let resources = self.headless_resources.take().unwrap();
+        self.render_scene_to_view(&resources.view, &mut encoder, camera, scene, selection)?;
+
+        // Copy texture to staging buffer
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &resources.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &resources.staging_buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded_bytes_per_row),
+                    rows_per_image: Some(height),
+                },
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        self.queue.submit(std::iter::once(encoder.finish()));
+
+        // Map the staging buffer and read the data
+        let buffer_slice = resources.staging_buffer.slice(..);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+            sender.send(result).unwrap();
+        });
+        self.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None }).unwrap();
+        receiver.recv().unwrap()?;
+
+        // Copy data, removing row padding
+        let bytes_per_pixel = 4u32;
+        let unpadded_bytes_per_row = width * bytes_per_pixel;
+        let data = buffer_slice.get_mapped_range();
+        let mut image_data = Vec::with_capacity((width * height * bytes_per_pixel) as usize);
+        for row in 0..height {
+            let start = (row * padded_bytes_per_row) as usize;
+            let end = start + (unpadded_bytes_per_row) as usize;
+            image_data.extend_from_slice(&data[start..end]);
+        }
+        drop(data);
+        resources.staging_buffer.unmap();
+
+        // Put resources back for reuse
+        self.headless_resources = Some(resources);
+
+        image::RgbaImage::from_raw(width, height, image_data)
+            .ok_or_else(|| anyhow::anyhow!("Failed to create image from rendered data"))
     }
 
     /// Render the scene to a specific view, updating uniforms and drawing all batches.

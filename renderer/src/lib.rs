@@ -2,7 +2,7 @@
 pub use wgpu_engine_scene as scene;
 
 pub mod ibl;
-pub mod selection_query;
+mod selection_query;
 mod renderer;
 mod shaders;
 
