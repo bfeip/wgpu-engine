@@ -36,7 +36,7 @@ impl Renderer {
 
             let shader = self
                 .shader_generator
-                .generate_shader(&self.device, &shader_material_props, &scene_props)
+                .generate_shader(&self.device, &shader_material_props, &scene_props, depth_prepass)
                 .expect("Failed to generate shader");
 
             let topology = match primitive_type {

@@ -57,10 +57,20 @@ fn get_spot_light_params(
 fn fragment_pbr_lit(in: VertexOutput, front_facing: bool) -> vec4<f32> {
     // Get base color (texture * factor, or just factor)
     let base_color = get_base_color(in.tex_coords);
-    // Alpha mask: discard fragments below cutoff threshold
+    // Alpha mask: discard fragments below cutoff threshold.
+    // Depth prepass uses a high cutoff so only nearly-opaque fragments
+    // of blend materials establish depth; the material's own cutoff is
+    // used for regular alpha-mask rendering.
     @if(alpha_mask) {
-        if (base_color.a < pbr_params.alpha_cutoff) {
-            discard;
+        @if(depth_prepass) {
+            if (base_color.a < 0.95) {
+                discard;
+            }
+        }
+        @if(!depth_prepass) {
+            if (base_color.a < pbr_params.alpha_cutoff) {
+                discard;
+            }
         }
     }
 

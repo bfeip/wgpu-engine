@@ -5,8 +5,8 @@ use wesl::{Wesl, ModulePath, VirtualResolver};
 
 use crate::scene::{AlphaMode, MaterialProperties, SceneProperties};
 
-/// Combined key for shader cache (material + scene properties)
-type ShaderCacheKey = (MaterialProperties, SceneProperties);
+/// Combined key for shader cache (material + scene properties + depth prepass)
+type ShaderCacheKey = (MaterialProperties, SceneProperties, bool);
 
 // Embed shader sources at compile time for WASM compatibility
 const SHADER_MAIN: &str = include_str!("shaders/main.wesl");
@@ -85,9 +85,10 @@ impl ShaderGenerator {
         device: &wgpu::Device,
         material_props: &MaterialProperties,
         scene_props: &SceneProperties,
+        depth_prepass: bool,
     ) -> anyhow::Result<wgpu::ShaderModule> {
         // Check cache first
-        let cache_key = (material_props.clone(), scene_props.clone());
+        let cache_key = (material_props.clone(), scene_props.clone(), depth_prepass);
         if let Some(cached) = self.module_cache.get(&cache_key) {
             return Ok(cached.clone());
         }
@@ -98,6 +99,7 @@ impl ShaderGenerator {
             ("has_ibl", scene_props.has_ibl && material_props.has_lighting),
             ("double_sided", material_props.double_sided),
             ("alpha_mask", material_props.alpha_mode == AlphaMode::Mask),
+            ("depth_prepass", depth_prepass),
         ];
 
         // Set features and compile the main module
