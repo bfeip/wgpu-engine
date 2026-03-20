@@ -11,9 +11,6 @@ pub use wgpu_engine_import_export as import_export;
 pub use wgpu_engine_scene::common;
 pub use wgpu_engine_scene::geom_query;
 
-// Re-export selection_query from renderer crate
-pub use wgpu_engine_renderer::selection_query;
-
 // Core modules
 pub mod event;
 pub mod input;

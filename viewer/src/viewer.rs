@@ -13,7 +13,7 @@ use crate::{
     },
     scene::{Camera, Scene},
     selection::SelectionManager,
-    selection_query::SelectionQuery,
+    renderer::SelectionQuery,
 };
 
 use wgpu_engine_renderer::Renderer;

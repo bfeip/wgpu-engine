@@ -7,6 +7,7 @@
 use std::collections::HashSet;
 
 use crate::scene::NodeId;
+use crate::renderer::{SelectionQuery, OutlineConfig};
 
 /// Configuration for selection visual feedback.
 #[derive(Debug, Clone)]
@@ -213,7 +214,7 @@ impl SelectionManager {
     }
 }
 
-impl crate::selection_query::SelectionQuery for SelectionManager {
+impl SelectionQuery for SelectionManager {
     fn is_empty(&self) -> bool {
         self.selected.is_empty()
     }
@@ -222,8 +223,8 @@ impl crate::selection_query::SelectionQuery for SelectionManager {
         self.is_node_selected(node_id)
     }
 
-    fn outline_config(&self) -> crate::selection_query::OutlineConfig {
-        crate::selection_query::OutlineConfig {
+    fn outline_config(&self) -> OutlineConfig {
+        OutlineConfig {
             color: self.config.outline_color,
             width_pixels: self.config.outline_width,
         }
