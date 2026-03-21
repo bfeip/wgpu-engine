@@ -15,6 +15,19 @@
 - 3D Overlays
 - Make operators optional feature
 
+## glTF material extensions
+Trivial (~1 day total):
+- KHR_materials_unlit (just read the flag, shader path already exists)
+- Emissive factor/texture (core glTF, not even an extension)
+- Occlusion texture (core glTF, multiplies ambient only)
+- KHR_materials_emissive_strength (scalar multiplier on emissive)
+
+Harder but important:
+- KHR_materials_ior (Fresnel F0 from IOR instead of hardcoded 0.04)
+- KHR_materials_transmission (glass/windows — requires multi-pass rendering)
+- KHR_materials_volume (colored glass absorption — requires transmission first)
+- KHR_materials_clearcoat (second specular lobe — needs gltf crate upgrade)
+
 ## Tech debt
 - load_gltf functions rename + docs update
 - wgsl parser compilation issue

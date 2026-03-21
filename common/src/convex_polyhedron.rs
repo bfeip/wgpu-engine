@@ -98,17 +98,17 @@ impl ConvexPolyhedron {
     pub fn from_aabb(aabb: &Aabb) -> Self {
         let planes = vec![
             // -X face (normal points -X, outward from box)
-            Plane::new(Vector3::new(-1.0, 0.0, 0.0), Point3::new(aabb.min.x, 0.0, 0.0)),
+            Plane::from_point(Vector3::new(-1.0, 0.0, 0.0), Point3::new(aabb.min.x, 0.0, 0.0)),
             // +X face
-            Plane::new(Vector3::new(1.0, 0.0, 0.0), Point3::new(aabb.max.x, 0.0, 0.0)),
+            Plane::from_point(Vector3::new(1.0, 0.0, 0.0), Point3::new(aabb.max.x, 0.0, 0.0)),
             // -Y face
-            Plane::new(Vector3::new(0.0, -1.0, 0.0), Point3::new(0.0, aabb.min.y, 0.0)),
+            Plane::from_point(Vector3::new(0.0, -1.0, 0.0), Point3::new(0.0, aabb.min.y, 0.0)),
             // +Y face
-            Plane::new(Vector3::new(0.0, 1.0, 0.0), Point3::new(0.0, aabb.max.y, 0.0)),
+            Plane::from_point(Vector3::new(0.0, 1.0, 0.0), Point3::new(0.0, aabb.max.y, 0.0)),
             // -Z face
-            Plane::new(Vector3::new(0.0, 0.0, -1.0), Point3::new(0.0, 0.0, aabb.min.z)),
+            Plane::from_point(Vector3::new(0.0, 0.0, -1.0), Point3::new(0.0, 0.0, aabb.min.z)),
             // +Z face
-            Plane::new(Vector3::new(0.0, 0.0, 1.0), Point3::new(0.0, 0.0, aabb.max.z)),
+            Plane::from_point(Vector3::new(0.0, 0.0, 1.0), Point3::new(0.0, 0.0, aabb.max.z)),
         ];
 
         Self { planes }
@@ -324,8 +324,8 @@ fn plane_plane_intersection(p1: &Plane, p2: &Plane) -> Option<(Point3<f32>, Vect
         if denom.abs() < EPSILON {
             return None;
         }
-        let y = (-p1.distance * p2.normal.z + p2.distance * p1.normal.z) / denom;
-        let z = (-p1.normal.y * p2.distance + p2.normal.y * p1.distance) / denom;
+        let y = (-p1.d * p2.normal.z + p2.d * p1.normal.z) / denom;
+        let z = (-p1.normal.y * p2.d + p2.normal.y * p1.d) / denom;
         Point3::new(0.0, y, z)
     } else if abs_dir.y >= abs_dir.z {
         // Set y = 0, solve for x and z
@@ -333,8 +333,8 @@ fn plane_plane_intersection(p1: &Plane, p2: &Plane) -> Option<(Point3<f32>, Vect
         if denom.abs() < EPSILON {
             return None;
         }
-        let x = (-p1.distance * p2.normal.z + p2.distance * p1.normal.z) / denom;
-        let z = (-p1.normal.x * p2.distance + p2.normal.x * p1.distance) / denom;
+        let x = (-p1.d * p2.normal.z + p2.d * p1.normal.z) / denom;
+        let z = (-p1.normal.x * p2.d + p2.normal.x * p1.d) / denom;
         Point3::new(x, 0.0, z)
     } else {
         // Set z = 0, solve for x and y
@@ -342,8 +342,8 @@ fn plane_plane_intersection(p1: &Plane, p2: &Plane) -> Option<(Point3<f32>, Vect
         if denom.abs() < EPSILON {
             return None;
         }
-        let x = (-p1.distance * p2.normal.y + p2.distance * p1.normal.y) / denom;
-        let y = (-p1.normal.x * p2.distance + p2.normal.x * p1.distance) / denom;
+        let x = (-p1.d * p2.normal.y + p2.d * p1.normal.y) / denom;
+        let y = (-p1.normal.x * p2.d + p2.normal.x * p1.d) / denom;
         Point3::new(x, y, 0.0)
     };
 

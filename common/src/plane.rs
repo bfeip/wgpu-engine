@@ -1,5 +1,6 @@
 use cgmath::{EuclideanSpace, InnerSpace, Matrix, Matrix4, Point3, SquareMatrix, Vector3, Vector4};
 
+use crate::ray::Ray;
 use crate::EPSILON;
 
 /// A plane in 3D space defined by a normal and distance from origin.
@@ -12,16 +13,23 @@ pub struct Plane {
     /// Unit normal pointing "outside" the half-space
     pub normal: Vector3<f32>,
     /// Signed distance from origin along the normal
-    pub distance: f32,
+    pub d: f32,
 }
 
 impl Plane {
-    /// Creates a new plane from a normal vector and a point on the plane.
+    /// Creates a plane from a normal and a distance.
     /// The normal will be normalized automatically.
-    pub fn new(normal: Vector3<f32>, point: Point3<f32>) -> Self {
+    pub fn new(normal: Vector3<f32>, d: f32) -> Self {
+        let normal = normal.normalize();
+        Self { normal, d }
+    }
+
+    /// Creates a plane from a normal vector and a point on the plane.
+    /// The normal will be normalized automatically.
+    pub fn from_point(normal: Vector3<f32>, point: Point3<f32>) -> Self {
         let normal = normal.normalize();
         let distance = -normal.dot(point.to_vec());
-        Self { normal, distance }
+        Self { normal, d: distance }
     }
 
     /// Creates a plane from the coefficients of the plane equation ax + by + cz + d = 0.
@@ -32,12 +40,12 @@ impl Plane {
             // Degenerate plane, return a default
             return Self {
                 normal: Vector3::new(0.0, 1.0, 0.0),
-                distance: 0.0,
+                d: 0.0,
             };
         }
         Self {
             normal: Vector3::new(a / length, b / length, c / length),
-            distance: d / length,
+            d: d / length,
         }
     }
 
@@ -47,7 +55,7 @@ impl Plane {
     /// - Zero: point is on the plane
     /// - Negative: point is on the "inside" (opposite side from normal)
     pub fn signed_distance(&self, point: Point3<f32>) -> f32 {
-        self.normal.dot(point.to_vec()) + self.distance
+        self.normal.dot(point.to_vec()) + self.d
     }
 
     /// Returns true if the point is on the inside (negative side) of the plane.
@@ -68,11 +76,31 @@ impl Plane {
             .unwrap_or(Matrix4::identity())
             .transpose();
 
-        let plane_vec = Vector4::new(self.normal.x, self.normal.y, self.normal.z, self.distance);
+        let plane_vec = Vector4::new(self.normal.x, self.normal.y, self.normal.z, self.d);
         let transformed = inv_transpose * plane_vec;
 
         // Re-normalize the result
         Self::from_coefficients(transformed.x, transformed.y, transformed.z, transformed.w)
+    }
+
+    /// Finds the intersection of a ray with the plane.
+    /// Returns Some((t, point)) where t is the distance along the ray.
+    /// Returns None if the ray is parallel to the plane or points away from it.
+    pub fn intersect_ray(&self, ray: &Ray) -> Option<(f32, Point3<f32>)> {
+        let denom = self.normal.dot(ray.direction);
+
+        if denom.abs() < EPSILON {
+            return None;
+        }
+
+        let t = -(self.normal.dot(ray.origin.to_vec()) + self.d) / denom;
+
+        if t < 0.0 {
+            return None;
+        }
+
+        let point = ray.origin + ray.direction * t;
+        Some((t, point))
     }
 
     /// Finds the intersection point of a line segment with the plane.
@@ -91,7 +119,7 @@ impl Plane {
             return None;
         }
 
-        let t = -(self.normal.dot(start.to_vec()) + self.distance) / denom;
+        let t = -(self.normal.dot(start.to_vec()) + self.d) / denom;
 
         // Check if intersection is within segment bounds
         if t < 0.0 || t > 1.0 {
@@ -110,7 +138,7 @@ mod tests {
 
     #[test]
     fn test_plane_from_normal_and_point() {
-        let plane = Plane::new(Vector3::new(0.0, 1.0, 0.0), Point3::new(0.0, 5.0, 0.0));
+        let plane = Plane::from_point(Vector3::new(0.0, 1.0, 0.0), Point3::new(0.0, 5.0, 0.0));
 
         // Normal should be normalized (already unit)
         assert!((plane.normal.magnitude() - 1.0).abs() < EPSILON);
@@ -148,7 +176,7 @@ mod tests {
     #[test]
     fn test_plane_signed_distance() {
         // XZ plane at origin (normal pointing +Y)
-        let plane = Plane::new(Vector3::new(0.0, 1.0, 0.0), Point3::origin());
+        let plane = Plane::from_point(Vector3::new(0.0, 1.0, 0.0), Point3::origin());
 
         assert!((plane.signed_distance(Point3::new(0.0, 0.0, 0.0))).abs() < EPSILON);
         assert!((plane.signed_distance(Point3::new(0.0, 3.0, 0.0)) - 3.0).abs() < EPSILON);
@@ -157,7 +185,7 @@ mod tests {
 
     #[test]
     fn test_plane_contains_point() {
-        let plane = Plane::new(Vector3::new(0.0, 1.0, 0.0), Point3::origin());
+        let plane = Plane::from_point(Vector3::new(0.0, 1.0, 0.0), Point3::origin());
 
         // Points on or below the plane are "inside"
         assert!(plane.contains_point(Point3::new(0.0, 0.0, 0.0)));
@@ -170,7 +198,7 @@ mod tests {
 
     #[test]
     fn test_plane_transform_translation() {
-        let plane = Plane::new(Vector3::new(0.0, 1.0, 0.0), Point3::origin());
+        let plane = Plane::from_point(Vector3::new(0.0, 1.0, 0.0), Point3::origin());
         let translation = Matrix4::from_translation(Vector3::new(0.0, 5.0, 0.0));
 
         let transformed = plane.transform(&translation);
@@ -185,7 +213,7 @@ mod tests {
     #[test]
     fn test_plane_transform_rotation() {
         // XZ plane (normal +Y)
-        let plane = Plane::new(Vector3::new(0.0, 1.0, 0.0), Point3::origin());
+        let plane = Plane::from_point(Vector3::new(0.0, 1.0, 0.0), Point3::origin());
 
         // Rotate 90 degrees around X axis: Y -> Z
         let rotation = Matrix4::from_angle_x(Rad(std::f32::consts::FRAC_PI_2));
@@ -198,8 +226,38 @@ mod tests {
     }
 
     #[test]
+    fn test_plane_intersect_ray_hit() {
+        let plane = Plane::from_point(Vector3::new(0.0, 1.0, 0.0), Point3::origin());
+        let ray = Ray::new(Point3::new(0.0, -1.0, 0.0), Vector3::new(0.0, 1.0, 0.0));
+
+        let result = plane.intersect_ray(&ray);
+        assert!(result.is_some());
+
+        let (t, point) = result.unwrap();
+        assert!((t - 1.0).abs() < EPSILON);
+        assert!(point.y.abs() < EPSILON);
+    }
+
+    #[test]
+    fn test_plane_intersect_ray_miss_parallel() {
+        let plane = Plane::from_point(Vector3::new(0.0, 1.0, 0.0), Point3::origin());
+        let ray = Ray::new(Point3::new(0.0, 1.0, 0.0), Vector3::new(1.0, 0.0, 0.0));
+
+        assert!(plane.intersect_ray(&ray).is_none());
+    }
+
+    #[test]
+    fn test_plane_intersect_ray_miss_behind() {
+        let plane = Plane::from_point(Vector3::new(0.0, 1.0, 0.0), Point3::origin());
+        // Ray pointing away from plane
+        let ray = Ray::new(Point3::new(0.0, 1.0, 0.0), Vector3::new(0.0, 1.0, 0.0));
+
+        assert!(plane.intersect_ray(&ray).is_none());
+    }
+
+    #[test]
     fn test_plane_intersect_segment_hit() {
-        let plane = Plane::new(Vector3::new(0.0, 1.0, 0.0), Point3::origin());
+        let plane = Plane::from_point(Vector3::new(0.0, 1.0, 0.0), Point3::origin());
 
         let start = Point3::new(0.0, -1.0, 0.0);
         let end = Point3::new(0.0, 1.0, 0.0);
@@ -214,7 +272,7 @@ mod tests {
 
     #[test]
     fn test_plane_intersect_segment_miss_parallel() {
-        let plane = Plane::new(Vector3::new(0.0, 1.0, 0.0), Point3::origin());
+        let plane = Plane::from_point(Vector3::new(0.0, 1.0, 0.0), Point3::origin());
 
         // Segment parallel to plane
         let start = Point3::new(0.0, 1.0, 0.0);
@@ -225,7 +283,7 @@ mod tests {
 
     #[test]
     fn test_plane_intersect_segment_miss_outside() {
-        let plane = Plane::new(Vector3::new(0.0, 1.0, 0.0), Point3::origin());
+        let plane = Plane::from_point(Vector3::new(0.0, 1.0, 0.0), Point3::origin());
 
         // Segment entirely above plane
         let start = Point3::new(0.0, 1.0, 0.0);
