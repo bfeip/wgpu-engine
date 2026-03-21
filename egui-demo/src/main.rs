@@ -288,7 +288,7 @@ impl<'a> ApplicationHandler for App<'a> {
         if self.viewer_app.is_none() {
             let window_attrs = Window::default_attributes()
                 .with_title("WGPU Engine - egui Example")
-                .with_min_inner_size(winit::dpi::PhysicalSize::new(1600, 800));
+                .with_inner_size(winit::dpi::LogicalSize::new(1600, 800));
 
             let viewer_app = pollster::block_on(EguiViewerApp::with_window_attrs(
                 event_loop,
