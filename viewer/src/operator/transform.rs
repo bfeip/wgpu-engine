@@ -12,7 +12,9 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use cgmath::{EuclideanSpace, Point3, Quaternion, Vector3};
+use cgmath::{EuclideanSpace, InnerSpace, Point3, Quaternion, Vector3};
+use egui::cache::CacheTrait;
+use wgpu_engine_scene::common;
 
 use crate::common::{
     apply_scale, centroid_of_slice, compose_rotation, local_axis_x, local_axis_y, local_axis_z,
@@ -167,20 +169,24 @@ impl TransformState {
 
     /// Compute the translation delta based on mouse movement and constraints.
     fn compute_translation(&self, ctx: &EventContext) -> Vector3<f32> {
-        let sensitivity = self.model_radius * 0.002;
+        let camera = &ctx.camera;
+        let pivot = &self.pivot_world;
+        let (width, height) = ctx.size;
         let (dx, dy) = self.accumulated_delta;
+
+        let movement_plane = common::Plane::from_point(camera.forward(), *pivot);
+        let Point3 { x: screen_x, y: screen_y, .. } = camera.project_point_screen(*pivot, width, height);
+        let diff_ray = camera.ray_from_screen_point(screen_x + dx, screen_y - dy, width, height);
+        let new_pivot = movement_plane.intersect_ray(&diff_ray)
+            .map_or(pivot.clone(), |intersection| intersection.1);
+        let move_vector = new_pivot - pivot;
 
         match self.get_constraint_axis() {
             None => {
-                // Free translation: move in camera plane
-                let right = ctx.camera.right();
-                let up = ctx.camera.up;
-                right * dx * sensitivity + up * (-dy) * sensitivity
+                move_vector
             }
             Some(axis) => {
-                // Constrained: project mouse movement onto axis
-                // Use horizontal mouse movement as primary input
-                axis * dx * sensitivity
+                axis * axis.dot(move_vector)
             }
         }
     }
