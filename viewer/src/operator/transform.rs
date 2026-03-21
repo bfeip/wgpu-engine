@@ -12,14 +12,15 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use cgmath::{EuclideanSpace, InnerSpace, Point3, Quaternion, Vector3};
-use egui::cache::CacheTrait;
+use cgmath::{
+    EuclideanSpace, InnerSpace, Matrix4, Point3, Quaternion, Rotation, SquareMatrix, Vector3,
+};
 use wgpu_engine_scene::common;
 
 use crate::common::{
-    apply_scale, centroid_of_slice, compose_rotation, local_axis_x, local_axis_y, local_axis_z,
-    quaternion_from_axis_angle_safe, rotate_position_about_pivot, scale_position_about_pivot_local,
-    scale_position_about_pivot_world, RgbaColor,
+    apply_scale, centroid_of_slice, compose_rotation, decompose_matrix, local_axis_x, local_axis_y,
+    local_axis_z, quaternion_from_axis_angle_safe, rotate_position_about_pivot,
+    scale_position_about_pivot_local, scale_position_about_pivot_world, RgbaColor, Transform,
 };
 use crate::event::{CallbackId, Event, EventContext, EventDispatcher, EventKind};
 use crate::input::{ElementState, Key, MouseButton, NamedKey};
@@ -79,7 +80,9 @@ impl AxisConstraint {
 #[derive(Debug, Clone)]
 struct OriginalTransform {
     node_id: NodeId,
-    transform: crate::scene::common::Transform,
+    local_transform: Transform,
+    world_transform: Transform,
+    parent_world_transform: Transform,
 }
 
 /// Internal state for the transform operator.
@@ -176,7 +179,7 @@ impl TransformState {
 
         let movement_plane = common::Plane::from_point(camera.forward(), *pivot);
         let Point3 { x: screen_x, y: screen_y, .. } = camera.project_point_screen(*pivot, width, height);
-        let diff_ray = camera.ray_from_screen_point(screen_x + dx, screen_y - dy, width, height);
+        let diff_ray = camera.ray_from_screen_point(screen_x + dx, screen_y + dy, width, height);
         let new_pivot = movement_plane.intersect_ray(&diff_ray)
             .map_or(pivot.clone(), |intersection| intersection.1);
         let move_vector = new_pivot - pivot;
@@ -253,6 +256,12 @@ impl TransformState {
 
         // Now apply transforms to nodes
         for orig in &self.original_transforms {
+            let inv_parent = orig
+                .parent_world_transform
+                .to_matrix()
+                .invert()
+                .unwrap_or(Matrix4::identity());
+
             let node = match ctx.scene.get_node_mut(orig.node_id) {
                 Some(n) => n,
                 None => continue,
@@ -261,39 +270,63 @@ impl TransformState {
             match mode {
                 TransformMode::Translate => {
                     let delta = translation_delta.unwrap();
-                    node.set_position(orig.transform.position + delta);
+                    let new_world_pos = orig.world_transform.position + delta;
+                    let new_local_pos =
+                        Point3::from_homogeneous(inv_parent * new_world_pos.to_homogeneous());
+                    node.set_position(new_local_pos);
                 }
                 TransformMode::Rotate => {
                     let rotation = rotation_quat.unwrap();
-                    let new_position =
-                        rotate_position_about_pivot(orig.transform.position, self.pivot_world, rotation);
-                    let new_rotation = compose_rotation(orig.transform.rotation, rotation);
-                    node.set_position(new_position);
+
+                    // Rotate world position around world pivot, convert to local
+                    let new_world_pos = rotate_position_about_pivot(
+                        orig.world_transform.position,
+                        self.pivot_world,
+                        rotation,
+                    );
+                    let new_local_pos =
+                        Point3::from_homogeneous(inv_parent * new_world_pos.to_homogeneous());
+                    node.set_position(new_local_pos);
+
+                    // Convert world rotation to local space
+                    let pr = orig.parent_world_transform.rotation;
+                    let pr_inv = pr.conjugate();
+                    let local_rotation = pr_inv * rotation * pr;
+                    let new_rotation =
+                        compose_rotation(orig.local_transform.rotation, local_rotation);
                     node.set_rotation(new_rotation);
                 }
                 TransformMode::Scale => {
                     let scale = scale_factor.unwrap();
 
-                    // For local axis constraints, we need to scale in local space
                     if self.axis_constraint.is_local() {
-                        let new_position = scale_position_about_pivot_local(
-                            orig.transform.position,
+                        // Local axis: scale in local space, but use world positions for pivot
+                        let new_world_pos = scale_position_about_pivot_local(
+                            orig.world_transform.position,
                             self.pivot_world,
                             scale,
                             self.primary_rotation,
                         );
-                        let new_scale = apply_scale(orig.transform.scale, scale);
-                        node.set_position(new_position);
+                        let new_local_pos =
+                            Point3::from_homogeneous(inv_parent * new_world_pos.to_homogeneous());
+                        node.set_position(new_local_pos);
+                        let new_scale = apply_scale(orig.local_transform.scale, scale);
                         node.set_scale(new_scale);
                     } else {
-                        // Scale in world space
-                        let new_position = scale_position_about_pivot_world(
-                            orig.transform.position,
+                        // World axis: scale world position around pivot, convert to local
+                        let new_world_pos = scale_position_about_pivot_world(
+                            orig.world_transform.position,
                             self.pivot_world,
                             scale,
                         );
-                        let new_scale = apply_scale(orig.transform.scale, scale);
-                        node.set_position(new_position);
+                        let new_local_pos =
+                            Point3::from_homogeneous(inv_parent * new_world_pos.to_homogeneous());
+                        node.set_position(new_local_pos);
+
+                        // Convert world-axis scale to local space
+                        let pr_inv = orig.parent_world_transform.rotation.conjugate();
+                        let local_scale = world_scale_to_local(scale, pr_inv);
+                        let new_scale = apply_scale(orig.local_transform.scale, local_scale);
                         node.set_scale(new_scale);
                     }
                 }
@@ -305,7 +338,7 @@ impl TransformState {
     fn restore_original_transforms(&self, ctx: &mut EventContext) {
         for orig in &self.original_transforms {
             if let Some(node) = ctx.scene.get_node_mut(orig.node_id) {
-                node.set_transform(orig.transform);
+                node.set_transform(orig.local_transform);
             }
         }
     }
@@ -345,6 +378,35 @@ impl TransformState {
     }
 }
 
+/// Converts a world-axis-constrained scale into the parent's local space.
+///
+/// For uniform scale (no constraint), returns as-is. For single-axis world
+/// constraints, rotates the scale axis into local space and decomposes it
+/// into per-axis scale contributions.
+fn world_scale_to_local(scale: Vector3<f32>, parent_rotation_inv: Quaternion<f32>) -> Vector3<f32> {
+    // For uniform scale (no constraint), return as-is
+    if (scale.x - scale.y).abs() < 1e-6 && (scale.y - scale.z).abs() < 1e-6 {
+        return scale;
+    }
+    // Find the world axis being scaled and its factor
+    let (world_axis, factor) = if (scale.x - 1.0).abs() > 1e-6 {
+        (Vector3::unit_x(), scale.x)
+    } else if (scale.y - 1.0).abs() > 1e-6 {
+        (Vector3::unit_y(), scale.y)
+    } else {
+        (Vector3::unit_z(), scale.z)
+    };
+    // Rotate to local space
+    let local_axis = parent_rotation_inv.rotate_vector(world_axis).normalize();
+    // Decompose into per-axis scale contributions
+    let factor_minus_1 = factor - 1.0;
+    Vector3::new(
+        1.0 + local_axis.x.abs() * factor_minus_1,
+        1.0 + local_axis.y.abs() * factor_minus_1,
+        1.0 + local_axis.z.abs() * factor_minus_1,
+    )
+}
+
 /// Operator for Blender-style transform operations (grab/rotate/scale).
 pub struct TransformOperator {
     id: OperatorId,
@@ -370,24 +432,36 @@ impl TransformOperator {
             return;
         }
 
-        // Store original transforms
-        let mut positions: Vec<Point3<f32>> = Vec::new();
+        // Store original transforms with world-space info
+        let mut world_positions: Vec<Point3<f32>> = Vec::new();
         for node_id in &selected_nodes {
             if let Some(node) = ctx.scene.get_node(*node_id) {
+                let world_matrix = ctx.scene.nodes_transform(*node_id);
+                let world_transform = decompose_matrix(&world_matrix);
+
+                let parent_world_transform = if let Some(parent_id) = node.parent() {
+                    let parent_matrix = ctx.scene.nodes_transform(parent_id);
+                    decompose_matrix(&parent_matrix)
+                } else {
+                    Transform::IDENTITY
+                };
+
+                world_positions.push(world_transform.position);
                 state.original_transforms.push(OriginalTransform {
                     node_id: *node_id,
-                    transform: node.transform(),
+                    local_transform: node.transform(),
+                    world_transform,
+                    parent_world_transform,
                 });
-                positions.push(node.position());
             }
         }
 
-        if positions.is_empty() {
+        if world_positions.is_empty() {
             return;
         }
 
-        // Compute pivot as centroid of selected nodes
-        state.pivot_world = centroid_of_slice(&positions).unwrap_or(Point3::origin());
+        // Compute pivot as centroid of world-space positions
+        state.pivot_world = centroid_of_slice(&world_positions).unwrap_or(Point3::origin());
 
         // Store primary selection's rotation for local axis transforms
         if let Some(primary) = ctx.selection.primary() {
