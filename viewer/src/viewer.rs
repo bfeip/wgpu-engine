@@ -136,14 +136,14 @@ impl<'a> Viewer<'a> {
         let mut operator_manager = OperatorManager::new();
 
         // Add operators in priority order (first added = highest priority)
-        // Selection operator handles picking and must be first
-        let selection_operator =
-            Box::new(SelectionOperator::new(BuiltinOperatorId::Selection.into()));
-        operator_manager.push_back(selection_operator, &mut dispatcher);
-
+        // Selection operator handles picking and must be above navigation
         let transform_operator =
             Box::new(TransformOperator::new(BuiltinOperatorId::Transform.into()));
         operator_manager.push_back(transform_operator, &mut dispatcher);
+        
+        let selection_operator =
+            Box::new(SelectionOperator::new(BuiltinOperatorId::Selection.into()));
+        operator_manager.push_back(selection_operator, &mut dispatcher);
 
         // Navigation operator for orbit/pan/zoom/walk
         let nav_operator = NavigationOperator::new(BuiltinOperatorId::Navigation.into());
