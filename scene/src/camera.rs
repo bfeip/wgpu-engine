@@ -216,6 +216,64 @@ impl Camera {
         cgmath::Point3::new(screen_x, screen_y, screen_z)
     }
 
+
+    /// Unprojects a screen-space pixel coordinate to a point in world space.
+    ///
+    /// # Arguments
+    /// * `screen_x` - X coordinate in screen space (0 = left edge)
+    /// * `screen_y` - Y coordinate in screen space (0 = top edge)
+    /// * `depth` - Depth value in range [0, 1] (0 = near plane, 1 = far plane)
+    /// * `screen_width` - Width of the screen/viewport in pixels
+    /// * `screen_height` - Height of the screen/viewport in pixels
+    ///
+    /// # Returns
+    /// A 3D point in world space, or None if the view-projection matrix is not invertible.
+    pub fn unproject_point_screen(
+        &self,
+        screen_x: f32,
+        screen_y: f32,
+        depth: f32,
+        screen_width: u32,
+        screen_height: u32,
+    ) -> Option<cgmath::Point3<f32>> {
+        // Convert screen coordinates to NDC
+        // Screen: [0, width] × [0, height], Y-down
+        // NDC: [-1, 1] × [-1, 1], Y-up
+        let ndc_x = (screen_x / screen_width as f32) * 2.0 - 1.0;
+        let ndc_y = 1.0 - (screen_y / screen_height as f32) * 2.0; // Flip Y
+        let ndc_z = depth;
+
+        let ndc_point = cgmath::Point3::new(ndc_x, ndc_y, ndc_z);
+        self.unproject_point_ndc(ndc_point)
+    }
+
+    /// Creates a ray from a normalized device coordinate point.
+    ///
+    /// The ray originates at the near plane and points through the specified
+    /// NDC position into the 3D world.
+    ///
+    /// # Arguments
+    /// * `ndc_x` - X coordinate in NDC space [-1, 1] (left to right)
+    /// * `ndc_y` - Y coordinate in NDC space [-1, 1] (bottom to top)
+    ///
+    /// # Returns
+    /// A ray originating at the near plane, pointing through the NDC point
+    /// into the 3D world.
+    pub fn ray_from_ndc_point(&self, ndc_x: f32, ndc_y: f32) -> crate::common::Ray {
+        let world_near = self
+            .unproject_point_ndc(cgmath::Point3::new(ndc_x, ndc_y, 0.0))
+            .expect("Camera view-projection matrix should be invertible");
+
+        let world_far = self
+            .unproject_point_ndc(cgmath::Point3::new(ndc_x, ndc_y, 1.0))
+            .expect("Camera view-projection matrix should be invertible");
+
+        use cgmath::InnerSpace;
+        let direction = (world_far - world_near).normalize();
+
+        crate::common::Ray::new(world_near, direction)
+    }
+
     /// Creates a ray from a screen-space point, unprojecting it to world space.
     ///
     /// The ray originates at the near plane and points through the specified
@@ -259,36 +317,6 @@ impl Camera {
         let direction = (world_far - world_near).normalize();
 
         crate::common::Ray::new(world_near, direction)
-    }
-
-    /// Unprojects a screen-space pixel coordinate to a point in world space.
-    ///
-    /// # Arguments
-    /// * `screen_x` - X coordinate in screen space (0 = left edge)
-    /// * `screen_y` - Y coordinate in screen space (0 = top edge)
-    /// * `depth` - Depth value in range [0, 1] (0 = near plane, 1 = far plane)
-    /// * `screen_width` - Width of the screen/viewport in pixels
-    /// * `screen_height` - Height of the screen/viewport in pixels
-    ///
-    /// # Returns
-    /// A 3D point in world space, or None if the view-projection matrix is not invertible.
-    pub fn unproject_point_screen(
-        &self,
-        screen_x: f32,
-        screen_y: f32,
-        depth: f32,
-        screen_width: u32,
-        screen_height: u32,
-    ) -> Option<cgmath::Point3<f32>> {
-        // Convert screen coordinates to NDC
-        // Screen: [0, width] × [0, height], Y-down
-        // NDC: [-1, 1] × [-1, 1], Y-up
-        let ndc_x = (screen_x / screen_width as f32) * 2.0 - 1.0;
-        let ndc_y = 1.0 - (screen_y / screen_height as f32) * 2.0; // Flip Y
-        let ndc_z = depth;
-
-        let ndc_point = cgmath::Point3::new(ndc_x, ndc_y, ndc_z);
-        self.unproject_point_ndc(ndc_point)
     }
 }
 
