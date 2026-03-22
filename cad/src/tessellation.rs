@@ -15,9 +15,31 @@ pub struct TessellationOptions {
     pub tolerance: f64,
 }
 
+impl TessellationOptions {
+    pub fn very_low_quality() -> Self {
+        Self { tolerance: 0.1 }
+    }
+
+    pub fn low_quality() -> Self {
+        Self { tolerance: 0.01 }
+    }
+
+    pub fn medium_quality() -> Self {
+        Self { tolerance: 0.001 }
+    }
+
+    pub fn high_quality() -> Self {
+        Self { tolerance: 0.0001 }
+    }
+
+    pub fn very_high_quality() -> Self {
+        Self { tolerance: 0.00001 }
+    }
+}
+
 impl Default for TessellationOptions {
     fn default() -> Self {
-        Self { tolerance: 0.01 }
+        Self::medium_quality()
     }
 }
 

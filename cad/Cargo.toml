@@ -9,12 +9,17 @@ wgpu-engine-common = { path = "../common" }
 truck-modeling = "0.6"
 truck-meshalgo = "0.4"
 truck-polymesh = "0.6"
+truck-shapeops = "0.4"
 anyhow = "1.0"
 cgmath = "0.18"
 
 [[example]]
 name = "brep"
 path = "examples/brep/main.rs"
+
+[[example]]
+name = "boolean"
+path = "examples/boolean/main.rs"
 
 [dev-dependencies]
 wgpu-engine-viewer = { path = "../viewer", features = ["winit-support"] }
