@@ -361,6 +361,20 @@ fn load_material(
         }
     }
 
+    // Approximate KHR_materials_transmission by mapping transmission to alpha blending.
+    // A correct implementation would require multi-pass rendering to capture the scene
+    // behind the transmissive surface, so we map transmission to alpha instead.
+    if let Some(transmission) = gltf_material.transmission() {
+        let factor = transmission.transmission_factor();
+        if factor > 0.0 {
+            let mut color = material.base_color_factor();
+            color.a *= f32::max(1.0 - factor, 0.1);
+            material = material
+                .with_base_color_factor(color)
+                .with_alpha_mode(AlphaMode::Blend);
+        }
+    }
+
     let mat_id = scene.add_material(material);
     Ok(mat_id)
 }
