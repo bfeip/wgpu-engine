@@ -38,8 +38,8 @@ fn calculate_ibl(
     let n_dot_v = max(dot(normal, view_dir), 0.0);
 
     // F0 = reflectance at normal incidence
-    // Dielectrics use 0.04, metals use albedo
-    let f0 = mix(vec3<f32>(0.04), albedo, metallic);
+    // Dielectrics use 0.004, metals use albedo
+    let f0 = mix(vec3<f32>(0.004), albedo, metallic);
 
     // Fresnel term for IBL
     let f = fresnel_schlick_roughness(n_dot_v, f0, roughness);

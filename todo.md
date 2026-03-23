@@ -24,7 +24,6 @@ Trivial (~1 day total):
 
 Harder but important:
 - KHR_materials_ior (Fresnel F0 from IOR instead of hardcoded 0.04)
-- KHR_materials_transmission (glass/windows — requires multi-pass rendering)
 - KHR_materials_volume (colored glass absorption — requires transmission first)
 - KHR_materials_clearcoat (second specular lobe — needs gltf crate upgrade)
 

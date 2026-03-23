@@ -267,10 +267,12 @@ impl<'a> App<'a> {
         build_material_scene(&mut viewer);
 
         // Load environment map for IBL (toggled with 'e' key)
+        let env_map_path: std::path::PathBuf =
+            [env!("CARGO_MANIFEST_DIR"), "..", "assets", "studio_small_09_4k.hdr"].iter().collect();
         let env_map_id =
             viewer
                 .scene_mut()
-                .add_environment_map_from_hdr_path("assets/studio_small_09_4k.hdr");
+                .add_environment_map_from_hdr_path(env_map_path);
         self.env_map_id = Some(env_map_id);
         self.default_lights = viewer.scene().lights().to_vec();
 
