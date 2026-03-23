@@ -184,7 +184,7 @@ fn build_lights_tab(ui: &mut egui::Ui, viewer: &mut Viewer, actions: &mut UiActi
 }
 
 /// Environment tab content with HDR loading controls.
-fn build_environment_tab(ui: &mut egui::Ui, viewer: &Viewer, actions: &mut UiActions) {
+fn build_environment_tab(ui: &mut egui::Ui, viewer: &mut Viewer, actions: &mut UiActions) {
     ui.horizontal(|ui| {
         if ui.button("Load HDR...").clicked() {
             actions.load_environment = true;
@@ -196,14 +196,28 @@ fn build_environment_tab(ui: &mut egui::Ui, viewer: &Viewer, actions: &mut UiAct
 
     ui.separator();
 
-    // Show current environment status
-    let scene = viewer.scene();
-    if let Some(env_id) = scene.active_environment_map() {
-        if let Some(env_map) = scene.get_environment_map(env_id) {
-            ui.label(format!("Active: Environment #{}", env_id));
-            ui.label(format!("Intensity: {:.2}", env_map.intensity()));
-            ui.label(format!("Rotation: {:.1}°", env_map.rotation().to_degrees()));
+    // Show current environment status and controls
+    let env_id = viewer.scene().active_environment_map();
+    if let Some(env_id) = env_id {
+        let mut intensity = viewer
+            .scene()
+            .get_environment_map(env_id)
+            .map_or(1.0, |e| e.intensity());
+        let rotation_deg = viewer
+            .scene()
+            .get_environment_map(env_id)
+            .map_or(0.0, |e| e.rotation().to_degrees());
+
+        ui.label(format!("Active: Environment #{}", env_id));
+        if ui
+            .add(egui::Slider::new(&mut intensity, 0.0..=5.0).text("Intensity"))
+            .changed()
+        {
+            if let Some(env_map) = viewer.scene_mut().get_environment_map_mut(env_id) {
+                env_map.set_intensity(intensity);
+            }
         }
+        ui.label(format!("Rotation: {:.1}°", rotation_deg));
     } else {
         ui.label("No environment map active");
         ui.label("");

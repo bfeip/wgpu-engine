@@ -9,9 +9,14 @@ import package::constants::{
     BINDING_IBL_PREFILTERED_SAMPLER,
     BINDING_IBL_BRDF_LUT_TEXTURE,
     BINDING_IBL_BRDF_LUT_SAMPLER,
+    BINDING_IBL_ENV_PARAMS,
     MAX_REFLECTION_LOD
 };
 import package::pbr::fresnel_schlick_roughness;
+
+struct EnvironmentParams {
+    intensity: f32,
+};
 
 // IBL textures and samplers
 @group(GROUP_ENVIRONMENT) @binding(BINDING_IBL_IRRADIANCE_TEXTURE)
@@ -26,6 +31,8 @@ var ibl_prefiltered_sampler: sampler;
 var ibl_brdf_lut: texture_2d<f32>;
 @group(GROUP_ENVIRONMENT) @binding(BINDING_IBL_BRDF_LUT_SAMPLER)
 var ibl_brdf_lut_sampler: sampler;
+@group(GROUP_ENVIRONMENT) @binding(BINDING_IBL_ENV_PARAMS)
+var<uniform> env_params: EnvironmentParams;
 
 // Calculate IBL ambient lighting contribution
 fn calculate_ibl(
@@ -39,7 +46,7 @@ fn calculate_ibl(
 
     // F0 = reflectance at normal incidence
     // Dielectrics use 0.004, metals use albedo
-    let f0 = mix(vec3<f32>(0.004), albedo, metallic);
+    let f0 = mix(vec3<f32>(0.04), albedo, metallic);
 
     // Fresnel term for IBL
     let f = fresnel_schlick_roughness(n_dot_v, f0, roughness);
@@ -68,5 +75,5 @@ fn calculate_ibl(
     // Split-sum approximation for specular
     let specular = prefiltered_color * (f * brdf.x + brdf.y);
 
-    return k_d * diffuse + specular;
+    return (k_d * diffuse + specular) * env_params.intensity;
 }

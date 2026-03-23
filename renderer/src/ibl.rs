@@ -20,8 +20,21 @@ pub(crate) use equirect::EquirectToCubePipeline;
 pub(crate) use irradiance::IrradiancePipeline;
 pub(crate) use prefilter::PrefilterPipeline;
 
+use wgpu::util::DeviceExt;
+
 // Re-export EnvironmentMap types from scene crate
 pub use wgpu_engine_scene::{EnvironmentMap, EnvironmentMapId, EnvironmentSource};
+
+/// GPU uniform for environment map parameters (intensity, etc.).
+///
+/// Bound at binding 6 in the IBL bind group, updated per-frame without
+/// retriggering expensive IBL texture processing.
+#[repr(C)]
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct EnvironmentUniform {
+    intensity: f32,
+    _padding: [u32; 3],
+}
 
 /// Size of the environment cubemap (per face).
 pub const ENVIRONMENT_CUBEMAP_SIZE: u32 = 512;
@@ -47,6 +60,8 @@ pub(crate) struct ProcessedEnvironment {
     pub _irradiance: GpuCubemap,
     /// Pre-filtered specular cubemap.
     pub _prefiltered: GpuCubemap,
+    /// Uniform buffer for environment parameters (intensity).
+    pub params_buffer: wgpu::Buffer,
     /// Bind group for sampling in fragment shader.
     pub bind_group: wgpu::BindGroup,
 }
@@ -142,6 +157,17 @@ impl IblResources {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                // Environment parameters (intensity, etc.)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -179,20 +205,20 @@ impl IblResources {
 
     /// Process an environment map, generating all required GPU resources.
     ///
-    /// When compute shaders are unavailable, marks the environment as processed
-    /// (to avoid repeated warnings) and returns without generating IBL resources.
+    /// If the environment has already been processed (same ID), only updates
+    /// the params buffer (intensity). Full texture reprocessing is skipped
+    /// since the source cannot change on an existing environment map.
+    ///
+    /// When compute shaders are unavailable, returns without generating IBL resources.
     pub fn process_environment(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         env_map: &EnvironmentMap,
     ) -> anyhow::Result<()> {
-        let current_gen = env_map.generation();
-        let synced_gen = self
-            .processed_environments
-            .get(&env_map.id)
-            .map(|(_, g)| *g);
-        if synced_gen == Some(current_gen) {
+        // Already processed — just update params (intensity, etc.)
+        if self.processed_environments.contains_key(&env_map.id) {
+            self.update_env_params(queue, env_map);
             return Ok(());
         }
 
@@ -221,6 +247,17 @@ impl IblResources {
 
         // Generate pre-filtered map
         let prefiltered = prefilter_pipeline.generate(device, queue, &environment);
+
+        // Create uniform buffer for environment parameters
+        let env_uniform = EnvironmentUniform {
+            intensity: env_map.intensity(),
+            _padding: [0; 3],
+        };
+        let params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some(&format!("IBL Params Buffer Env {}", env_map.id)),
+            contents: bytemuck::cast_slice(&[env_uniform]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
 
         // Create bind group for fragment shader sampling
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -251,6 +288,10 @@ impl IblResources {
                     binding: 5,
                     resource: wgpu::BindingResource::Sampler(&brdf_lut.sampler),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: params_buffer.as_entire_binding(),
+                },
             ],
         });
 
@@ -262,13 +303,29 @@ impl IblResources {
                     _environment: environment,
                     _irradiance: irradiance,
                     _prefiltered: prefiltered,
+                    params_buffer,
                     bind_group,
                 },
-                current_gen,
+                env_map.generation(),
             ),
         );
 
         Ok(())
+    }
+
+    /// Update the environment params uniform buffer (intensity) without reprocessing textures.
+    fn update_env_params(&self, queue: &wgpu::Queue, env_map: &EnvironmentMap) {
+        if let Some((processed, _)) = self.processed_environments.get(&env_map.id) {
+            let env_uniform = EnvironmentUniform {
+                intensity: env_map.intensity(),
+                _padding: [0; 3],
+            };
+            queue.write_buffer(
+                &processed.params_buffer,
+                0,
+                bytemuck::cast_slice(&[env_uniform]),
+            );
+        }
     }
 
     /// Get the processed environment for an ID, if available.
