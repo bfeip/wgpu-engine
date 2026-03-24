@@ -190,6 +190,18 @@ impl Renderer {
         self.surface_format
     }
 
+    /// Preprocess an environment map into CPU-side IBL data via GPU compute shaders.
+    ///
+    /// Returns a [`PreprocessedIbl`] that can be attached to the environment map
+    /// and serialized into a scene file. Requires compute shader support.
+    pub fn preprocess_ibl(
+        &self,
+        env_map: &crate::scene::EnvironmentMap,
+    ) -> anyhow::Result<crate::scene::PreprocessedIbl> {
+        self.ibl_resources
+            .preprocess_ibl(&self.device, &self.queue, env_map)
+    }
+
     /// Clear all scene-specific GPU resources.
     ///
     /// Call this when the scene is cleared or replaced to ensure stale GPU
