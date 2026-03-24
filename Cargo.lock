@@ -3830,7 +3830,9 @@ dependencies = [
  "anyhow",
  "clap",
  "image",
+ "pollster 0.4.0",
  "wgpu-engine-import-export",
+ "wgpu-engine-renderer",
  "wgpu-engine-scene",
 ]
 
@@ -5362,6 +5364,7 @@ dependencies = [
  "anyhow",
  "bytemuck",
  "cgmath",
+ "half",
  "image",
  "log",
  "wesl",

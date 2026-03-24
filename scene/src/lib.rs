@@ -39,7 +39,10 @@ pub use material::{
 pub use mesh::{Mesh, MeshDescriptor, MeshIndex, MeshPrimitive, ObjMesh, PrimitiveType, Vertex};
 pub use node::{EffectiveVisibility, Node, Visibility};
 pub use texture::{Texture, TextureFormat};
-pub use environment::{EnvironmentMap, EnvironmentSource};
+pub use environment::{
+    CubemapFaceData, CubemapMipData, EnvironmentMap, EnvironmentSource, PreprocessedCubemap,
+    PreprocessedIbl, CUBEMAP_FACES,
+};
 
 use annotation::{Annotation, AnnotationManager};
 use crate::common::{Aabb, RgbaColor};

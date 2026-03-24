@@ -42,6 +42,7 @@ use wgpu_engine_scene::{
     Node, NodeId,
     Texture, TextureFormat, TextureId,
     EnvironmentMap, EnvironmentMapId, Scene,
+    PreprocessedCubemap, PreprocessedIbl,
 };
 
 // ============================================================================
@@ -187,6 +188,8 @@ pub enum SectionType {
     Annotations = 7,
     /// Environment map data
     EnvironmentMaps = 8,
+    /// Preprocessed IBL cubemap data (irradiance + prefiltered)
+    PreprocessedIblData = 9,
 }
 
 impl TryFrom<u8> for SectionType {
@@ -203,6 +206,7 @@ impl TryFrom<u8> for SectionType {
             6 => Ok(SectionType::Lights),
             7 => Ok(SectionType::Annotations),
             8 => Ok(SectionType::EnvironmentMaps),
+            9 => Ok(SectionType::PreprocessedIblData),
             _ => Err(FormatError::InvalidSectionType(value)),
         }
     }
@@ -470,12 +474,25 @@ impl SerializedTexture {
 pub struct SerializedEnvironmentMap {
     /// Remapped environment map ID.
     pub id: u32,
-    /// Raw .hdr file bytes.
-    pub hdr_data: Vec<u8>,
+    /// Raw .hdr file bytes, or `None` if the HDR source was discarded (e.g. after IBL baking).
+    pub hdr_data: Option<Vec<u8>>,
     /// Intensity multiplier.
     pub intensity: f32,
     /// Rotation around Y axis in radians.
     pub rotation: f32,
+}
+
+/// Serializable preprocessed IBL data for an environment map.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializedPreprocessedIbl {
+    /// Remapped environment map ID this data belongs to.
+    pub env_map_id: u32,
+    /// Diffuse irradiance cubemap.
+    pub irradiance: PreprocessedCubemap,
+    /// Pre-filtered specular cubemap.
+    pub prefiltered: PreprocessedCubemap,
+    /// Optional custom BRDF LUT.
+    pub brdf_lut: Option<Vec<u8>>,
 }
 
 // ============================================================================
@@ -617,6 +634,7 @@ pub struct WgscSections {
     pub nodes: Vec<Node>,
     pub lights: Vec<Light>,
     pub environment_maps: Vec<SerializedEnvironmentMap>,
+    pub preprocessed_ibl: Vec<SerializedPreprocessedIbl>,
 }
 
 /// Parse WGSC header, TOC, and decompress/deserialize all sections.
@@ -662,6 +680,15 @@ pub fn parse_wgsc(bytes: &[u8]) -> Result<WgscSections, FormatError> {
             Vec::new()
         };
 
+    let preprocessed_ibl: Vec<SerializedPreprocessedIbl> =
+        if let Some(entry) = toc.find(SectionType::PreprocessedIblData) {
+            let start = entry.offset as usize;
+            let end = start + entry.compressed_size as usize;
+            deserialize_section(&bytes[start..end])?
+        } else {
+            Vec::new()
+        };
+
     Ok(WgscSections {
         metadata,
         textures,
@@ -671,6 +698,7 @@ pub fn parse_wgsc(bytes: &[u8]) -> Result<WgscSections, FormatError> {
         nodes,
         lights,
         environment_maps,
+        preprocessed_ibl,
     })
 }
 
@@ -752,10 +780,44 @@ pub fn assemble_wgsc_scene(
     scene.set_root_node_order(sections.metadata.root_nodes);
     scene.set_lights(sections.lights);
 
+    // Build a lookup from env_map_id -> preprocessed IBL data
+    let mut preprocessed_map: HashMap<u32, PreprocessedIbl> = HashMap::new();
+    for sibl in sections.preprocessed_ibl {
+        preprocessed_map.insert(sibl.env_map_id, PreprocessedIbl {
+            irradiance: sibl.irradiance,
+            prefiltered: sibl.prefiltered,
+            brdf_lut: sibl.brdf_lut,
+        });
+    }
+
     for sem in sections.environment_maps {
-        let mut em = EnvironmentMap::from_hdr_data(sem.id, sem.hdr_data);
+        let has_preprocessed = preprocessed_map.contains_key(&sem.id);
+        let has_hdr = sem.hdr_data.is_some();
+
+        let mut em = if let Some(hdr_data) = sem.hdr_data {
+            EnvironmentMap::from_hdr_data(sem.id, hdr_data)
+        } else if has_preprocessed {
+            // HDR was dropped; create from preprocessed data
+            EnvironmentMap::from_preprocessed(
+                sem.id,
+                preprocessed_map.remove(&sem.id).unwrap(),
+            )
+        } else {
+            return Err(FormatError::DeserializationError(
+                format!("Environment map {} has neither HDR data nor preprocessed IBL data", sem.id),
+            ));
+        };
+
         em.set_intensity(sem.intensity);
         em.set_rotation(sem.rotation);
+
+        // Attach preprocessed data if HDR source was also kept
+        if has_hdr {
+            if let Some(preprocessed) = preprocessed_map.remove(&sem.id) {
+                em.set_preprocessed_ibl(preprocessed);
+            }
+        }
+
         scene.insert_environment_map_unchecked(em);
     }
 
@@ -815,13 +877,30 @@ pub fn estimate_serialized_size(scene: &Scene) -> usize {
         })
         .sum();
 
-    // Environment maps (HDR data, poorly compressible)
+    // Environment maps (HDR data + preprocessed IBL data)
     let env_estimate: usize = scene.environment_maps()
-        .map(|em| match em.source() {
-            EnvironmentSource::EquirectangularPath(path) => {
-                std::fs::metadata(path).map(|m| m.len() as usize).unwrap_or(0)
-            }
-            EnvironmentSource::EquirectangularHdr(data) => data.len(),
+        .map(|em| {
+            let source_size = match em.source() {
+                EnvironmentSource::EquirectangularPath(path) => {
+                    std::fs::metadata(path).map(|m| m.len() as usize).unwrap_or(0)
+                }
+                EnvironmentSource::EquirectangularHdr(data) => data.len(),
+                EnvironmentSource::Preprocessed => 0,
+            };
+            let preprocessed_size = em.preprocessed_ibl()
+                .map(|p| {
+                    let irr: usize = p.irradiance.mip_data.iter()
+                        .flat_map(|m| m.iter())
+                        .map(|f| f.len())
+                        .sum();
+                    let pre: usize = p.prefiltered.mip_data.iter()
+                        .flat_map(|m| m.iter())
+                        .map(|f| f.len())
+                        .sum();
+                    irr + pre + p.brdf_lut.as_ref().map_or(0, |l| l.len())
+                })
+                .unwrap_or(0);
+            source_size + preprocessed_size
         })
         .sum();
 
@@ -1041,15 +1120,18 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
     // ===== Environment Maps Section =====
     if scene.has_environment_maps() {
         let mut env_maps = Vec::new();
+        let mut preprocessed_ibls = Vec::new();
+
         for env_map in scene.environment_maps() {
             let remapped_id = *env_map_id_map.get(&env_map.id).unwrap_or(&0);
             let hdr_data = match env_map.source() {
                 wgpu_engine_scene::EnvironmentSource::EquirectangularPath(path) => {
-                    std::fs::read(path).map_err(|e| FormatError::IoError(e))?
+                    Some(std::fs::read(path).map_err(|e| FormatError::IoError(e))?)
                 }
                 wgpu_engine_scene::EnvironmentSource::EquirectangularHdr(data) => {
-                    data.clone()
+                    Some(data.clone())
                 }
+                wgpu_engine_scene::EnvironmentSource::Preprocessed => None,
             };
             env_maps.push(SerializedEnvironmentMap {
                 id: remapped_id,
@@ -1057,8 +1139,22 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
                 intensity: env_map.intensity(),
                 rotation: env_map.rotation(),
             });
+
+            // Serialize preprocessed IBL data if present
+            if let Some(preprocessed) = env_map.preprocessed_ibl() {
+                preprocessed_ibls.push(SerializedPreprocessedIbl {
+                    env_map_id: remapped_id,
+                    irradiance: preprocessed.irradiance.clone(),
+                    prefiltered: preprocessed.prefiltered.clone(),
+                    brdf_lut: preprocessed.brdf_lut.clone(),
+                });
+            }
         }
         write_section(&env_maps, SectionType::EnvironmentMaps, compression_level, &mut output, &mut toc)?;
+
+        if !preprocessed_ibls.is_empty() {
+            write_section(&preprocessed_ibls, SectionType::PreprocessedIblData, compression_level, &mut output, &mut toc)?;
+        }
     }
 
     // ===== Write TOC =====

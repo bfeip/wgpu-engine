@@ -47,6 +47,15 @@ struct Cli {
     /// Don't resize textures larger than 2048px
     #[arg(long)]
     no_texture_resize: bool,
+
+    /// Preprocess environment maps into IBL data (irradiance + prefiltered cubemaps)
+    /// so they can be used on platforms without compute shader support
+    #[arg(long)]
+    bake_ibl: bool,
+
+    /// When baking IBL, also keep the raw HDR source bytes in the output file
+    #[arg(long)]
+    keep_hdr: bool,
 }
 
 fn main() -> Result<()> {
@@ -108,6 +117,32 @@ fn main() -> Result<()> {
                 texture.set_image(resized);
             }
         }
+    }
+
+    // Bake IBL data if requested
+    if cli.bake_ibl && scene.has_environment_maps() {
+        eprintln!("Baking IBL data...");
+        let renderer = pollster::block_on(
+            wgpu_engine_renderer::Renderer::new_headless(1, 1)
+        );
+
+        // Process all environments first (immutable borrow), then attach results (mutable)
+        let results: Vec<_> = scene.environment_maps()
+            .map(|env_map| {
+                eprintln!("  Processing environment map {}...", env_map.id);
+                let preprocessed = renderer.preprocess_ibl(env_map)?;
+                Ok((env_map.id, preprocessed))
+            })
+            .collect::<Result<_>>()?;
+
+        for (id, preprocessed) in results {
+            let env_map = scene.get_environment_map_mut(id).unwrap();
+            env_map.set_preprocessed_ibl(preprocessed);
+            if !cli.keep_hdr {
+                env_map.drop_source();
+            }
+        }
+        eprintln!("  IBL baking complete.");
     }
 
     print_stats(&scene);
