@@ -91,7 +91,7 @@ impl IrradiancePipeline {
             IRRADIANCE_CUBEMAP_SIZE,
             wgpu::TextureFormat::Rgba16Float,
             1,
-            wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+            wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
             "Irradiance Cubemap",
         );
 

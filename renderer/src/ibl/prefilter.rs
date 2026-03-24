@@ -114,7 +114,7 @@ impl PrefilterPipeline {
             PREFILTERED_CUBEMAP_SIZE,
             wgpu::TextureFormat::Rgba16Float,
             PREFILTERED_MIP_LEVELS,
-            wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+            wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
             "Prefiltered Cubemap",
         );
 
