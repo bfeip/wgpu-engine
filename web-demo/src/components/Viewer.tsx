@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { LoadStatus, WebLoadPhase, type WebViewer } from "../../pkg/wgpu_engine";
+import { LoadStatus, WebLoadPhase, type WebViewer } from "../../pkg/wgpu_engine_viewer";
 
 interface ViewerProps {
   onReady?: (viewer: WebViewer) => void;
@@ -34,7 +34,7 @@ export function Viewer({ onReady, onLoadProgress, onLoadComplete }: ViewerProps)
       canvas.height = Math.max(1, Math.round(rect.height * dpr));
 
       // Import and initialize WASM
-      const wasm = await import("../../pkg/wgpu_engine");
+      const wasm = await import("../../pkg/wgpu_engine_viewer");
       await wasm.default();
 
       if (disposed) return;
