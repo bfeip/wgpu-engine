@@ -22,6 +22,8 @@ use wgpu_engine_renderer::Renderer;
 pub struct Viewer<'a> {
     surface: wgpu::Surface<'a>,
     surface_config: wgpu::SurfaceConfiguration,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
     renderer: Renderer,
     camera: Camera,
     scene: Scene,
@@ -122,7 +124,7 @@ impl<'a> Viewer<'a> {
         // Use 4x MSAA on native backends, disable on GL
         let sample_count = if is_gl_backend { 1 } else { 4 };
 
-        let renderer = Renderer::new(device, queue, surface_format, width, height, sample_count, has_compute);
+        let renderer = Renderer::new(device.clone(), queue.clone(), surface_format, width, height, sample_count, has_compute);
         let mut scene = Scene::new();
 
         // Set up default lighting
@@ -165,6 +167,8 @@ impl<'a> Viewer<'a> {
         let mut viewer = Self {
             surface,
             surface_config,
+            device,
+            queue,
             renderer,
             camera,
             scene,
@@ -219,7 +223,7 @@ impl<'a> Viewer<'a> {
             if w > 0 && h > 0 {
                 self.surface_config.width = w;
                 self.surface_config.height = h;
-                self.surface.configure(&self.renderer.device(), &self.surface_config);
+                self.surface.configure(&self.device, &self.surface_config);
                 self.renderer.resize(*physical_size);
                 self.camera.aspect = w as f32 / h as f32;
             }
@@ -290,12 +294,14 @@ impl<'a> Viewer<'a> {
         self.renderer.surface_format()
     }
 
-    /// Get references to the wgpu device and queue for creating GPU resources
-    ///
-    /// # Returns
-    /// A tuple of (&Device, &Queue) for creating buffers, pipelines, etc.
-    pub fn wgpu_resources(&self) -> (&wgpu::Device, &wgpu::Queue) {
-        (&self.renderer.device(), &self.renderer.queue())
+    /// Get a reference to the wgpu device
+    pub fn device(&self) -> &wgpu::Device {
+        &self.device
+    }
+
+    /// Get a reference to the wgpu queue
+    pub fn queue(&self) -> &wgpu::Queue {
+        &self.queue
     }
 
     /// Get a reference to the scene
@@ -384,91 +390,33 @@ impl<'a> Viewer<'a> {
 
     /// Render the scene using the default rendering path
     pub fn render(&mut self) -> Result<(), anyhow::Error> {
+        let (output, _view, encoder) = self.render_scene()?;
+        self.present(encoder, output);
+        Ok(())
+    }
+
+    /// Prepare and render the 3D scene, returning the surface output, view, and
+    /// command encoder for further rendering (overlays, post-processing, etc.).
+    ///
+    /// Call [`present()`](Self::present) when done to submit commands and display the frame.
+    pub fn render_scene(&mut self) -> Result<(wgpu::SurfaceTexture, wgpu::TextureView, wgpu::CommandEncoder), anyhow::Error> {
         self.renderer.prepare_scene(&self.camera, &mut self.scene)?;
 
         let output = self.surface.get_current_texture()?;
         let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = self.renderer.device().create_command_encoder(
+        let mut encoder = self.device.create_command_encoder(
             &wgpu::CommandEncoderDescriptor { label: Some("Render Encoder") },
         );
 
         self.renderer.render_scene_to_view(&view, &mut encoder, &self.camera, &self.scene, Self::selection_for_render(&self.selection))?;
 
-        self.renderer.queue().submit(std::iter::once(encoder.finish()));
-        output.present();
-
-        Ok(())
+        Ok((output, view, encoder))
     }
 
-    /// Render the 3D scene with a custom overlay
-    ///
-    /// This method provides a generic way to render any overlay on top of the 3D scene.
-    /// The callback receives references to the device, queue, encoder, and texture view,
-    /// allowing you to create additional render passes for UI, post-processing, etc.
-    ///
-    /// # Example
-    /// ```no_run
-    /// # use wgpu_engine_viewer::Viewer;
-    /// # fn example(viewer: &mut Viewer) {
-    /// viewer.render_with_overlay(|device, queue, encoder, view| {
-    ///     // Create your custom render pass here
-    ///     // For example, render egui, ImGui, debug overlays, etc.
-    ///     let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-    ///         label: Some("Custom Overlay"),
-    ///         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-    ///             view,
-    ///             resolve_target: None,
-    ///             ops: wgpu::Operations {
-    ///                 load: wgpu::LoadOp::Load,  // Load existing 3D content
-    ///                 store: wgpu::StoreOp::Store,
-    ///             },
-    ///             depth_slice: None,
-    ///         })],
-    ///         depth_stencil_attachment: None,
-    ///         occlusion_query_set: None,
-    ///         timestamp_writes: None,
-    ///     });
-    ///     // ... render your overlay ...
-    /// }).unwrap();
-    /// # }
-    /// ```
-    pub fn render_with_overlay<F>(&mut self, overlay_fn: F) -> Result<(), anyhow::Error>
-    where
-        F: FnOnce(&wgpu::Device, &wgpu::Queue, &mut wgpu::CommandEncoder, &wgpu::TextureView),
-    {
-        // Get surface texture
-        let output = self.surface.get_current_texture()?;
-        let view = output
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-
-        // Create command encoder
-        let mut encoder = self.renderer.device().create_command_encoder(
-            &wgpu::CommandEncoderDescriptor {
-                label: Some("Render Encoder with Overlay"),
-            },
-        );
-
-        // Render 3D scene first
-        self.renderer.prepare_scene(&self.camera, &mut self.scene).unwrap();
-        self.renderer
-            .render_scene_to_view(&view, &mut encoder, &self.camera, &self.scene, Self::selection_for_render(&self.selection))?;
-
-        // Call user's overlay function
-        overlay_fn(
-            &self.renderer.device(),
-            &self.renderer.queue(),
-            &mut encoder,
-            &view,
-        );
-
-        // Submit and present
-        self.renderer
-            .queue()
-            .submit(std::iter::once(encoder.finish()));
+    /// Submit the command encoder and present the surface texture.
+    pub fn present(&self, encoder: wgpu::CommandEncoder, output: wgpu::SurfaceTexture) {
+        self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
-
-        Ok(())
     }
 
     /// Returns a selection query for the renderer if outline rendering is enabled.
@@ -486,8 +434,8 @@ impl<'a> Viewer<'a> {
     /// full manual control over the render pipeline (e.g., multiple render targets,
     /// custom command buffer management, deferred rendering).
     ///
-    /// For most overlay use cases, prefer `render_with_overlay()` which handles
-    /// surface management and command submission automatically.
+    /// For most overlay use cases, prefer `render_scene()` + `present()` which
+    /// handle surface management and command submission automatically.
     pub fn render_scene_to_view(
         &mut self,
         view: &wgpu::TextureView,

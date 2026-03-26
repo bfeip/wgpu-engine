@@ -25,7 +25,7 @@ use gpu_resources::{
 use outline::{OutlineResources, OutlineUniform};
 
 pub struct Renderer {
-    // Core GPU resources — public for Viewer access
+    // Core GPU resources
     device: wgpu::Device,
     queue: wgpu::Queue,
     size: (u32, u32),

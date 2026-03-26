@@ -108,9 +108,8 @@ impl EguiViewerApp<'static> {
             None,
         );
 
-        let (device, _queue) = viewer.wgpu_resources();
         let egui_renderer = egui_wgpu::Renderer::new(
-            device,
+            viewer.device(),
             viewer.surface_format(),
             RendererOptions::default(),
         );
@@ -199,9 +198,8 @@ impl<'a> EguiViewerApp<'a> {
         );
 
         // Initialize egui wgpu renderer
-        let (device, _queue) = viewer.wgpu_resources();
         let egui_renderer = egui_wgpu::Renderer::new(
-            device,
+            viewer.device(),
             viewer.surface_format(),
             RendererOptions::default(),
         );
@@ -336,23 +334,27 @@ impl<'a> EguiViewerApp<'a> {
             full_output.platform_output.clone(),
         );
 
-        // Get rendering parameters
         let viewer_size = self.viewer.size();
         let scale_factor = self.window.scale_factor() as f32;
 
-        // Render 3D scene + egui overlay
-        self.viewer.render_with_overlay(|device, queue, encoder, view| {
-            render_egui_overlay(
-                &mut self.egui_renderer,
-                &self.egui_ctx,
-                &full_output,
-                viewer_size,
-                scale_factor,
-                device,
-                queue,
-                encoder,
-                view,
-            );
-        })
+        // Render 3D scene
+        let (output, view, mut encoder) = self.viewer.render_scene()?;
+
+        // Render egui overlay
+        render_egui_overlay(
+            &mut self.egui_renderer,
+            &self.egui_ctx,
+            &full_output,
+            viewer_size,
+            scale_factor,
+            self.viewer.device(),
+            self.viewer.queue(),
+            &mut encoder,
+            &view,
+        );
+
+        // Submit and present
+        self.viewer.present(encoder, output);
+        Ok(())
     }
 }
