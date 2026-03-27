@@ -263,6 +263,8 @@ pub(crate) struct DrawData {
     /// Subset of batches containing only selected instances.
     /// Empty if no selection is active.
     selected_batches: Vec<DrawBatch>,
+    /// Batches with ALWAYS_ON_TOP materials, rendered in a separate overlay pass.
+    overlay_batches: Vec<DrawBatch>,
 }
 
 impl DrawData {
@@ -280,6 +282,18 @@ impl DrawData {
         let mut batches = collect_draw_batches(scene);
         sort_batches_for_transparency(&mut batches, scene, camera_position);
 
+        // Partition out overlay (always-on-top) batches so they render in a separate pass
+        let (overlay_batches, normal_batches) = partition_batches(&batches, |inst| {
+            // Look up the instance's material to check the always_on_top flag.
+            // All instances in a batch share the same material, so this is consistent.
+            scene
+                .get_instance(inst.instance_id)
+                .and_then(|instance| scene.get_material(instance.material()))
+                .map(|mat| mat.flags().contains(crate::scene::MaterialFlags::ALWAYS_ON_TOP))
+                .unwrap_or(false)
+        });
+        batches = normal_batches;
+
         let selected_batches = selection
             .filter(|sel| !sel.is_empty())
             .map(|sel| {
@@ -292,6 +306,7 @@ impl DrawData {
         Self {
             batches,
             selected_batches,
+            overlay_batches,
         }
     }
 
@@ -309,6 +324,16 @@ impl DrawData {
     /// Whether any instances are selected.
     pub fn has_selection(&self) -> bool {
         !self.selected_batches.is_empty()
+    }
+
+    /// Batches with ALWAYS_ON_TOP materials, rendered in a separate overlay pass.
+    pub fn overlay_batches(&self) -> &[DrawBatch] {
+        &self.overlay_batches
+    }
+
+    /// Whether any overlay (always-on-top) batches exist.
+    pub fn has_overlay(&self) -> bool {
+        !self.overlay_batches.is_empty()
     }
 }
 

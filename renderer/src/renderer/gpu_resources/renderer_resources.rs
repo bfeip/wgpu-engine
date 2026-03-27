@@ -258,6 +258,9 @@ impl MaterialPipelineLayouts {
 /// Default fallback textures for rendering.
 pub(in crate::renderer) struct DefaultTextures {
     pub(in crate::renderer) depth: GpuTexture,
+    /// Separate depth buffer for overlay (always-on-top) geometry so it depth-tests
+    /// against itself but not against the main scene.
+    pub(in crate::renderer) overlay_depth: GpuTexture,
     pub(in crate::renderer) white: GpuTexture,
     pub(in crate::renderer) normal: GpuTexture,
     /// Multisampled color attachment for MSAA rendering. None when sample_count == 1.
@@ -273,6 +276,7 @@ impl DefaultTextures {
         sample_count: u32,
     ) -> DefaultTextures {
         let depth = GpuTexture::depth(device, config, sample_count, "depth_texture");
+        let overlay_depth = GpuTexture::depth(device, config, sample_count, "overlay_depth_texture");
         let white = GpuTexture::solid_color(
             device,
             queue,
@@ -291,7 +295,7 @@ impl DefaultTextures {
             None
         };
 
-        DefaultTextures { depth, white, normal, msaa_color_attachment }
+        DefaultTextures { depth, overlay_depth, white, normal, msaa_color_attachment }
     }
 }
 

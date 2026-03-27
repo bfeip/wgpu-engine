@@ -51,6 +51,8 @@ bitflags! {
         const DOUBLE_SIDED = 1 << 1;
         /// Disables face lighting. Faces will appear at a constant luminance
         const DO_NOT_LIGHT = 1 << 2;
+        /// Render on top of all scene geometry (uses separate depth buffer)
+        const ALWAYS_ON_TOP = 1 << 3;
     }
 }
 
@@ -63,6 +65,8 @@ pub struct MaterialProperties {
     pub double_sided: bool,
     /// Alpha rendering mode
     pub alpha_mode: AlphaMode,
+    /// Whether this material renders on top of all scene geometry
+    pub always_on_top: bool,
 }
 
 /// Material that can be rendered as faces, lines, or points.
@@ -404,16 +408,19 @@ impl Material {
     /// This is used by ShaderGenerator and PipelineManager to determine
     /// which shader variant to use.
     pub fn get_properties(&self, primitive_type: PrimitiveType) -> MaterialProperties {
+        let always_on_top = self.flags.contains(MaterialFlags::ALWAYS_ON_TOP);
         match primitive_type {
             PrimitiveType::TriangleList => MaterialProperties {
                 has_lighting: !self.flags.contains(MaterialFlags::DO_NOT_LIGHT),
                 double_sided: self.flags.contains(MaterialFlags::DOUBLE_SIDED),
                 alpha_mode: self.alpha_mode,
+                always_on_top,
             },
             PrimitiveType::LineList | PrimitiveType::PointList => MaterialProperties {
                 has_lighting: false,
                 double_sided: false,
                 alpha_mode: AlphaMode::Opaque,
+                always_on_top,
             },
         }
     }

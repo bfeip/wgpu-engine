@@ -220,6 +220,8 @@ impl Renderer {
 
             self.default_textures.depth =
                 GpuTexture::depth(&self.device, &self.config, self.sample_count, "depth_texture");
+            self.default_textures.overlay_depth =
+                GpuTexture::depth(&self.device, &self.config, self.sample_count, "overlay_depth_texture");
 
             self.default_textures.msaa_color_attachment = if self.sample_count > 1 {
                 Some(GpuTexture::color_attachment(&self.device, &self.config, self.sample_count, "msaa_color_attachment"))
@@ -372,6 +374,10 @@ impl Renderer {
 
         self.render_main_pass(encoder, view, draw_data.all_batches(), scene);
 
+        if draw_data.has_overlay() {
+            self.render_overlay_pass(encoder, view, draw_data.overlay_batches(), scene);
+        }
+
         if draw_data.has_selection() {
             self.render_selection_mask_pass(encoder, draw_data.selected_batches(), scene);
             self.render_outline_pass(encoder, view);
@@ -468,6 +474,7 @@ impl Renderer {
                     alpha_mode: AlphaMode::Mask,
                     has_lighting: material_props.has_lighting,
                     double_sided: material_props.double_sided,
+                    always_on_top: material_props.always_on_top,
                 },
                 scene_props: SceneProperties { has_ibl: false },
                 primitive_type: batch.primitive_type,
@@ -520,6 +527,101 @@ impl Renderer {
             }
 
             // Draw all instances in this batch
+            let gpu_mesh = self.gpu_resources.get_mesh(batch.mesh_id)
+                .expect("Mesh GPU resources not initialized");
+            gpu_resources::draw_mesh_instances(
+                &self.device,
+                &mut render_pass,
+                gpu_mesh,
+                batch.primitive_type,
+                &batch.instances,
+                mesh.index_count(batch.primitive_type),
+            );
+        }
+    }
+
+    /// Overlay pass: renders always-on-top geometry after the main pass.
+    ///
+    /// Uses a separate depth buffer (cleared each frame) so overlay geometry
+    /// depth-tests correctly among itself but not against scene geometry.
+    /// Loads the existing color attachment to composite on top.
+    fn render_overlay_pass(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        batches: &[DrawBatch],
+        scene: &Scene,
+    ) {
+        let (color_view, resolve_target) = match &self.default_textures.msaa_color_attachment {
+            Some(msaa) => (&msaa.view, Some(view as &wgpu::TextureView)),
+            None => (view, None),
+        };
+
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Overlay Render Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: color_view,
+                resolve_target,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &self.default_textures.overlay_depth.view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(0),
+                    store: wgpu::StoreOp::Store,
+                }),
+            }),
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
+
+        render_pass.set_bind_group(0, &self.camera_resources.bind_group, &[]);
+        render_pass.set_bind_group(1, &self.lights.bind_group, &[]);
+
+        let has_ibl = if let Some(env_id) = scene.active_environment_map() {
+            if let Some(processed) = self.ibl_resources.get_processed(env_id) {
+                render_pass.set_bind_group(3, &processed.bind_group, &[]);
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        let scene_props = SceneProperties { has_ibl };
+        let mut current_pipeline_key: Option<PipelineCacheKey> = None;
+
+        for batch in batches {
+            let mesh = scene.get_mesh(batch.mesh_id).unwrap();
+            let material = scene.get_material(batch.material_id).unwrap();
+            let material_props = material.get_properties(batch.primitive_type);
+
+            let material_gpu = self.gpu_resources
+                .get_material(batch.material_id, batch.primitive_type)
+                .expect("Material GPU resources not initialized");
+            render_pass.set_bind_group(2, &material_gpu.bind_group, &[]);
+
+            let pipeline_key = PipelineCacheKey {
+                material_props,
+                scene_props: scene_props.clone(),
+                primitive_type: batch.primitive_type,
+                depth_prepass: false,
+            };
+            if current_pipeline_key.as_ref() != Some(&pipeline_key) {
+                let pipeline = self.get_or_create_pipeline(pipeline_key.clone());
+                render_pass.set_pipeline(pipeline);
+                current_pipeline_key = Some(pipeline_key);
+            }
+
             let gpu_mesh = self.gpu_resources.get_mesh(batch.mesh_id)
                 .expect("Mesh GPU resources not initialized");
             gpu_resources::draw_mesh_instances(
