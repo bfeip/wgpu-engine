@@ -349,6 +349,42 @@ impl Mesh {
         self
     }
 
+    /// Merges another mesh into this one, combining vertices and primitives.
+    ///
+    /// Indices from `other` are offset by the current vertex count. Primitives
+    /// of the same type are combined; new primitive types are appended.
+    pub fn merge(&mut self, other: &Mesh) {
+        let base_index = self.vertices.len() as MeshIndex;
+        self.vertices.extend_from_slice(other.vertices());
+
+        for other_prim in other.primitives() {
+            let offset_indices: Vec<MeshIndex> =
+                other_prim.indices.iter().map(|&i| i + base_index).collect();
+
+            if let Some(existing) = self
+                .primitives
+                .iter_mut()
+                .find(|p| p.primitive_type == other_prim.primitive_type)
+            {
+                existing.indices.extend(offset_indices);
+            } else {
+                self.primitives.push(MeshPrimitive {
+                    primitive_type: other_prim.primitive_type,
+                    indices: offset_indices,
+                });
+            }
+        }
+
+        self.generation += 1;
+        self.cached_bounding.set(None);
+    }
+
+    /// Merges another mesh into this one (consuming variant).
+    pub fn merged(mut self, other: &Mesh) -> Self {
+        self.merge(other);
+        self
+    }
+
     /// Returns the current generation counter.
     ///
     /// This value increments on any mutation to the mesh data.
