@@ -237,6 +237,11 @@ impl Scene {
         self.meshes.len()
     }
 
+    /// Removes a mesh from the scene by ID.
+    pub fn remove_mesh(&mut self, id: MeshId) {
+        self.meshes.remove(&id);
+    }
+
     // ========== Material API ==========
 
     /// Adds a material to the scene.
@@ -279,6 +284,11 @@ impl Scene {
     /// Returns the number of materials in the scene.
     pub fn material_count(&self) -> usize {
         self.materials.len()
+    }
+
+    /// Removes a material from the scene by ID.
+    pub fn remove_material(&mut self, id: MaterialId) {
+        self.materials.remove(&id);
     }
 
     // ========== Texture API ==========
@@ -479,6 +489,11 @@ impl Scene {
     /// Returns the number of instances in the scene.
     pub fn instance_count(&self) -> usize {
         self.instances.len()
+    }
+
+    /// Removes an instance from the scene by ID.
+    pub fn remove_instance(&mut self, id: InstanceId) {
+        self.instances.remove(&id);
     }
 
     // ========== Unchecked Insert API ==========
@@ -804,6 +819,56 @@ impl Scene {
         self.next_material_id = 0;
         self.next_texture_id = 0;
         self.next_environment_map_id = 0;
+    }
+
+    /// Removes orphaned resources not referenced by any node in the scene.
+    ///
+    /// Walks the scene tree to find all referenced instances, meshes, materials,
+    /// and textures, then removes any that are unreferenced. The default material
+    /// is always retained.
+    pub fn cleanup(&mut self) {
+        use std::collections::HashSet;
+
+        // Collect all instance IDs referenced by nodes
+        let referenced_instances: HashSet<InstanceId> = self
+            .nodes
+            .values()
+            .filter_map(|node| node.instance())
+            .collect();
+
+        // Collect mesh and material IDs referenced by retained instances
+        let mut referenced_meshes = HashSet::new();
+        let mut referenced_materials = HashSet::new();
+        for &inst_id in &referenced_instances {
+            if let Some(inst) = self.instances.get(&inst_id) {
+                referenced_meshes.insert(inst.mesh());
+                referenced_materials.insert(inst.material());
+            }
+        }
+        // Always keep the default material
+        referenced_materials.insert(DEFAULT_MATERIAL_ID);
+
+        // Collect texture IDs referenced by retained materials
+        let mut referenced_textures = HashSet::new();
+        for &mat_id in &referenced_materials {
+            if let Some(mat) = self.materials.get(&mat_id) {
+                if let Some(tex) = mat.base_color_texture() {
+                    referenced_textures.insert(tex);
+                }
+                if let Some(tex) = mat.normal_texture() {
+                    referenced_textures.insert(tex);
+                }
+                if let Some(tex) = mat.metallic_roughness_texture() {
+                    referenced_textures.insert(tex);
+                }
+            }
+        }
+
+        // Remove unreferenced resources
+        self.instances.retain(|id, _| referenced_instances.contains(id));
+        self.meshes.retain(|id, _| referenced_meshes.contains(id));
+        self.materials.retain(|id, _| referenced_materials.contains(id));
+        self.textures.retain(|id, _| referenced_textures.contains(id));
     }
 
     /// Invalidates cached bounds for a node and all its ancestors.
