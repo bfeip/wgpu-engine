@@ -157,6 +157,60 @@ pub fn orthonormal_basis(direction: Vector3<f32>) -> (Vector3<f32>, Vector3<f32>
     (right, up)
 }
 
+/// One of the three principal coordinate axes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Axis {
+    X,
+    Y,
+    Z,
+}
+
+impl Axis {
+    /// Unit direction vector for this axis.
+    pub fn direction(&self) -> Vector3<f32> {
+        match self {
+            Axis::X => Vector3::unit_x(),
+            Axis::Y => Vector3::unit_y(),
+            Axis::Z => Vector3::unit_z(),
+        }
+    }
+
+    /// RGB color convention: X=red, Y=green, Z=blue.
+    pub fn color(&self) -> RgbaColor {
+        match self {
+            Axis::X => RgbaColor::RED,
+            Axis::Y => RgbaColor::GREEN,
+            Axis::Z => RgbaColor::BLUE,
+        }
+    }
+
+    /// Rotation matrix that transforms Y-up geometry to align with this axis.
+    ///
+    /// Useful for orienting primitives (cylinders, cones) that are built along +Y
+    /// to instead point along the desired axis.
+    pub fn rotation_from_y(&self) -> Matrix4<f32> {
+        use cgmath::Deg;
+        match self {
+            Axis::Y => Matrix4::from_scale(1.0),
+            Axis::X => Matrix4::from_angle_z(Deg(-90.0)),
+            Axis::Z => Matrix4::from_angle_x(Deg(90.0)),
+        }
+    }
+
+    /// Quaternion that rotates Y-up geometry to align with this axis.
+    pub fn quaternion_from_y(&self) -> Quaternion<f32> {
+        use cgmath::{Deg, Rotation3};
+        match self {
+            Axis::Y => Quaternion::new(1.0, 0.0, 0.0, 0.0),
+            Axis::X => Quaternion::from_angle_z(Deg(-90.0)),
+            Axis::Z => Quaternion::from_angle_x(Deg(90.0)),
+        }
+    }
+
+    /// All three axes in order.
+    pub const ALL: [Axis; 3] = [Axis::X, Axis::Y, Axis::Z];
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
