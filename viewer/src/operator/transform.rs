@@ -22,11 +22,14 @@ use crate::common::{
     local_axis_z, quaternion_from_axis_angle_safe, rotate_position_about_pivot,
     scale_position_about_pivot_local, scale_position_about_pivot_world, RgbaColor, Transform,
 };
+use crate::common::Axis;
 use crate::event::{CallbackId, Event, EventContext, EventDispatcher, EventKind};
+use crate::geom_query::pick_all_from_ray;
 use crate::input::{ElementState, Key, MouseButton, NamedKey};
 use crate::operator::{Operator, OperatorId};
 use crate::scene::annotation::AnnotationId;
-use crate::scene::NodeId;
+use crate::scene::gizmo::{self, GizmoType};
+use crate::scene::{MaterialId, MeshId, NodeId};
 use crate::scene_scale;
 
 /// The type of transform being performed.
@@ -76,6 +79,173 @@ impl AxisConstraint {
     }
 }
 
+/// Tracks gizmo scene resources for cleanup.
+///
+/// Gizmo nodes are parented under the annotation root node so they are grouped
+/// with other overlay content and hidden when annotations are toggled off.
+///
+// TODO: Once we support multiple overlay types beyond annotations and gizmos,
+// consider introducing a dedicated overlay system with its own root node
+// rather than piggy-backing on the annotation root.
+struct GizmoState {
+    /// Node IDs of the gizmo handles (one per axis: X, Y, Z).
+    node_ids: Vec<NodeId>,
+    /// Mesh IDs added to the scene for gizmo geometry.
+    mesh_ids: Vec<MeshId>,
+    /// Material IDs added to the scene for gizmo handles.
+    material_ids: Vec<MaterialId>,
+    /// Which axis is currently highlighted (hovered or active).
+    highlighted_axis: Option<Axis>,
+    /// Current gizmo type being displayed.
+    current_type: Option<GizmoType>,
+}
+
+impl GizmoState {
+    fn new() -> Self {
+        Self {
+            node_ids: Vec::new(),
+            mesh_ids: Vec::new(),
+            material_ids: Vec::new(),
+            highlighted_axis: None,
+            current_type: None,
+        }
+    }
+
+    fn has_gizmo(&self) -> bool {
+        self.current_type.is_some()
+    }
+
+    /// Build and add gizmo handles to the scene at the given pivot point.
+    ///
+    /// Handles are parented under the annotation root so they inherit annotation
+    /// visibility and stay grouped with other overlay geometry.
+    fn show(&mut self, gizmo_type: GizmoType, pivot: Point3<f32>, size: f32, ctx: &mut EventContext) {
+        self.hide(ctx);
+
+        let handles = gizmo::build_handles(gizmo_type, size);
+        let annotation_root = ctx.scene.ensure_annotation_root();
+        let pivot_transform = common::Transform::from_position(pivot);
+
+        for handle in handles {
+            let mesh_id = ctx.scene.add_mesh(handle.mesh);
+            let material_id = ctx.scene.add_material(handle.material);
+            let node_id = ctx
+                .scene
+                .add_instance_node(
+                    Some(annotation_root),
+                    mesh_id,
+                    material_id,
+                    None,
+                    pivot_transform,
+                )
+                .expect("Failed to add gizmo node");
+
+            self.node_ids.push(node_id);
+            self.mesh_ids.push(mesh_id);
+            self.material_ids.push(material_id);
+        }
+
+        self.current_type = Some(gizmo_type);
+    }
+
+    /// Remove all gizmo geometry from the scene.
+    fn hide(&mut self, ctx: &mut EventContext) {
+        for &node_id in &self.node_ids {
+            ctx.scene.remove_node(node_id);
+        }
+        for &mesh_id in &self.mesh_ids {
+            ctx.scene.remove_mesh(mesh_id);
+        }
+        for &material_id in &self.material_ids {
+            ctx.scene.remove_material(material_id);
+        }
+
+        self.node_ids.clear();
+        self.mesh_ids.clear();
+        self.material_ids.clear();
+        self.highlighted_axis = None;
+        self.current_type = None;
+    }
+
+    /// Update the gizmo position (e.g. when pivot changes).
+    fn update_position(&self, pivot: Point3<f32>, ctx: &mut EventContext) {
+        for &node_id in &self.node_ids {
+            if let Some(node) = ctx.scene.get_node_mut(node_id) {
+                node.set_position(pivot);
+            }
+        }
+    }
+
+    /// Pick which gizmo handle (if any) is under the given screen position.
+    fn pick_handle(&self, cursor_x: f32, cursor_y: f32, ctx: &EventContext) -> Option<Axis> {
+        if !self.has_gizmo() {
+            return None;
+        }
+
+        let ray = ctx.camera.ray_from_screen_point(cursor_x, cursor_y, ctx.size.0, ctx.size.1);
+        let results = pick_all_from_ray(&ray, ctx.scene);
+
+        // Find the first hit that matches a gizmo node
+        for result in &results {
+            for (i, &node_id) in self.node_ids.iter().enumerate() {
+                if result.node_id == node_id {
+                    return Some(Axis::ALL[i]);
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Highlight a specific axis handle (or clear highlight with None).
+    fn set_highlight(&mut self, axis: Option<Axis>, ctx: &mut EventContext) {
+        if self.highlighted_axis == axis {
+            return;
+        }
+
+        // Restore previous highlight to normal color
+        if let Some(prev_axis) = self.highlighted_axis {
+            let idx = axis_index(prev_axis);
+            if let Some(&mat_id) = self.material_ids.get(idx) {
+                if let Some(mat) = ctx.scene.get_material_mut(mat_id) {
+                    mat.set_base_color_factor(prev_axis.color());
+                }
+            }
+        }
+
+        // Apply highlight color to new axis
+        if let Some(new_axis) = axis {
+            let idx = axis_index(new_axis);
+            if let Some(&mat_id) = self.material_ids.get(idx) {
+                if let Some(mat) = ctx.scene.get_material_mut(mat_id) {
+                    mat.set_base_color_factor(gizmo::highlight_color(new_axis));
+                }
+            }
+        }
+
+        self.highlighted_axis = axis;
+    }
+}
+
+/// Maps an axis to its index in the gizmo handle arrays (X=0, Y=1, Z=2).
+fn axis_index(axis: Axis) -> usize {
+    match axis {
+        Axis::X => 0,
+        Axis::Y => 1,
+        Axis::Z => 2,
+    }
+}
+
+/// Maps an axis constraint to the corresponding Axis for gizmo highlighting.
+fn axis_from_constraint(constraint: &AxisConstraint) -> Option<Axis> {
+    match constraint {
+        AxisConstraint::WorldX | AxisConstraint::LocalX => Some(Axis::X),
+        AxisConstraint::WorldY | AxisConstraint::LocalY => Some(Axis::Y),
+        AxisConstraint::WorldZ | AxisConstraint::LocalZ => Some(Axis::Z),
+        AxisConstraint::None => None,
+    }
+}
+
 /// Original transform state for a node (used for cancel/restore).
 #[derive(Debug, Clone)]
 struct OriginalTransform {
@@ -110,6 +280,9 @@ struct TransformState {
 
     /// Annotation IDs for visual feedback (cleaned up on finish).
     annotation_ids: Vec<AnnotationId>,
+
+    /// Gizmo handle state (3D visual handles for the active transform).
+    gizmo: GizmoState,
 }
 
 impl TransformState {
@@ -123,6 +296,7 @@ impl TransformState {
             pivot_world: Point3::origin(),
             model_radius: 1.0,
             annotation_ids: Vec::new(),
+            gizmo: GizmoState::new(),
         }
     }
 
@@ -478,18 +652,63 @@ impl TransformOperator {
         state.mode = Some(mode);
         state.axis_constraint = AxisConstraint::None;
         state.accumulated_delta = (0.0, 0.0);
+
+        // Show the gizmo at the pivot point (or update if already showing correct type)
+        let gizmo_type = match mode {
+            TransformMode::Translate => GizmoType::Translate,
+            TransformMode::Rotate => GizmoType::Rotate,
+            TransformMode::Scale => GizmoType::Scale,
+        };
+        if state.gizmo.current_type == Some(gizmo_type) {
+            // Gizmo already showing the right type, just update position
+            state.gizmo.update_position(state.pivot_world, ctx);
+        } else {
+            let gizmo_size = state.model_radius * 0.15;
+            state.gizmo.show(gizmo_type, state.pivot_world, gizmo_size, ctx);
+        }
     }
 
     /// Confirm the transform (keep current state).
+    ///
+    /// The gizmo remains visible at the new position so the user can
+    /// start another drag-based transform immediately.
     fn confirm_transform(state: &mut TransformState, ctx: &mut EventContext) {
         state.cleanup_annotations(ctx);
+
+        // Update gizmo position to follow the transformed selection
+        if state.gizmo.has_gizmo() {
+            // Recompute pivot from the (now-modified) selection positions
+            let world_positions: Vec<Point3<f32>> = ctx
+                .selection
+                .selected_nodes()
+                .iter()
+                .map(|&nid| {
+                    let m = ctx.scene.nodes_transform(nid);
+                    Point3::new(m[3][0], m[3][1], m[3][2])
+                })
+                .collect();
+            if let Some(new_pivot) = centroid_of_slice(&world_positions) {
+                state.gizmo.update_position(new_pivot, ctx);
+            }
+        }
+
+        state.gizmo.set_highlight(None, ctx);
         state.reset();
     }
 
     /// Cancel the transform (restore original state).
+    ///
+    /// The gizmo remains visible at the original position.
     fn cancel_transform(state: &mut TransformState, ctx: &mut EventContext) {
         state.restore_original_transforms(ctx);
         state.cleanup_annotations(ctx);
+        state.gizmo.set_highlight(None, ctx);
+
+        // Update gizmo back to original pivot position
+        if state.gizmo.has_gizmo() {
+            state.gizmo.update_position(state.pivot_world, ctx);
+        }
+
         state.reset();
     }
 }
@@ -543,18 +762,24 @@ impl Operator for TransformOperator {
                             state.cycle_axis_constraint('x');
                             state.apply_preview_transform(ctx);
                             state.update_visual_feedback(ctx);
+                            let highlight = axis_from_constraint(&state.axis_constraint);
+                            state.gizmo.set_highlight(highlight, ctx);
                             true
                         }
                         Key::Character('y') | Key::Character('Y') if state.is_active() => {
                             state.cycle_axis_constraint('y');
                             state.apply_preview_transform(ctx);
                             state.update_visual_feedback(ctx);
+                            let highlight = axis_from_constraint(&state.axis_constraint);
+                            state.gizmo.set_highlight(highlight, ctx);
                             true
                         }
                         Key::Character('z') | Key::Character('Z') if state.is_active() => {
                             state.cycle_axis_constraint('z');
                             state.apply_preview_transform(ctx);
                             state.update_visual_feedback(ctx);
+                            let highlight = axis_from_constraint(&state.axis_constraint);
+                            state.gizmo.set_highlight(highlight, ctx);
                             true
                         }
 
@@ -627,7 +852,115 @@ impl Operator for TransformOperator {
             }
         });
 
-        self.callback_ids = vec![keyboard_callback, motion_callback, click_callback];
+        // Drag start handler: begin gizmo-based transform when dragging a handle
+        let operator_state = self.state.clone();
+        let drag_start_callback =
+            dispatcher.register(EventKind::MouseDragStart, move |event, ctx| {
+                if let Event::MouseDragStart {
+                    button: MouseButton::Left,
+                    start_pos,
+                    ..
+                } = event
+                {
+                    let mut state = operator_state.borrow_mut();
+
+                    // Only handle if no transform is active yet and a gizmo is visible
+                    if state.is_active() || !state.gizmo.has_gizmo() {
+                        return false;
+                    }
+
+                    // Check if drag started on a gizmo handle
+                    if let Some(axis) = state.gizmo.pick_handle(start_pos.0, start_pos.1, ctx) {
+                        // Determine transform mode from the current gizmo type
+                        let mode = match state.gizmo.current_type {
+                            Some(GizmoType::Translate) => TransformMode::Translate,
+                            Some(GizmoType::Rotate) => TransformMode::Rotate,
+                            Some(GizmoType::Scale) => TransformMode::Scale,
+                            None => return false,
+                        };
+
+                        // Start the transform with the clicked axis constraint
+                        TransformOperator::start_transform(&mut state, mode, ctx);
+                        if !state.is_active() {
+                            return false;
+                        }
+
+                        state.axis_constraint = match axis {
+                            Axis::X => AxisConstraint::WorldX,
+                            Axis::Y => AxisConstraint::WorldY,
+                            Axis::Z => AxisConstraint::WorldZ,
+                        };
+                        state.gizmo.set_highlight(Some(axis), ctx);
+                        state.update_visual_feedback(ctx);
+                        return true;
+                    }
+                }
+                false
+            });
+
+        // Drag handler: update transform while dragging a gizmo handle
+        let operator_state = self.state.clone();
+        let drag_callback = dispatcher.register(EventKind::MouseDrag, move |event, ctx| {
+            if let Event::MouseDrag {
+                button: MouseButton::Left,
+                delta,
+                ..
+            } = event
+            {
+                let mut state = operator_state.borrow_mut();
+                if state.is_active() {
+                    state.accumulated_delta.0 += delta.0 as f32;
+                    state.accumulated_delta.1 += delta.1 as f32;
+                    state.apply_preview_transform(ctx);
+                    return true;
+                }
+            }
+            false
+        });
+
+        // Drag end handler: confirm transform when drag finishes
+        let operator_state = self.state.clone();
+        let drag_end_callback =
+            dispatcher.register(EventKind::MouseDragEnd, move |event, ctx| {
+                if let Event::MouseDragEnd {
+                    button: MouseButton::Left,
+                    ..
+                } = event
+                {
+                    let mut state = operator_state.borrow_mut();
+                    if state.is_active() {
+                        TransformOperator::confirm_transform(&mut state, ctx);
+                        return true;
+                    }
+                }
+                false
+            });
+
+        // Cursor move handler: hover highlight on gizmo handles
+        let operator_state = self.state.clone();
+        let cursor_callback =
+            dispatcher.register(EventKind::CursorMoved, move |event, ctx| {
+                if let Event::CursorMoved { position } = event {
+                    let mut state = operator_state.borrow_mut();
+
+                    // Only do hover highlighting when gizmo is visible but no transform active
+                    if state.gizmo.has_gizmo() && !state.is_active() {
+                        let axis = state.gizmo.pick_handle(position.0 as f32, position.1 as f32, ctx);
+                        state.gizmo.set_highlight(axis, ctx);
+                    }
+                }
+                false // Never consume cursor move events
+            });
+
+        self.callback_ids = vec![
+            keyboard_callback,
+            motion_callback,
+            click_callback,
+            drag_start_callback,
+            drag_callback,
+            drag_end_callback,
+            cursor_callback,
+        ];
     }
 
     fn deactivate(&mut self, dispatcher: &mut EventDispatcher) {

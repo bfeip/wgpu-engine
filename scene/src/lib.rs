@@ -6,6 +6,7 @@ mod camera;
 pub mod annotation;
 mod environment;
 pub mod geom_query;
+pub mod gizmo;
 mod instance;
 mod coordinate_space;
 mod light;
@@ -1119,7 +1120,14 @@ impl Scene {
     // ========== Annotation Reification API ==========
 
     /// Ensures the annotation root node exists and returns its ID.
-    fn ensure_annotation_root(&mut self) -> NodeId {
+    ///
+    /// This is also used by overlay systems (e.g. gizmos) that parent their
+    /// geometry under the annotation root to keep it grouped with other
+    /// non-scene overlay content.
+    // TODO: Once we support multiple overlay types beyond annotations and gizmos,
+    // consider introducing a dedicated overlay system with its own root node
+    // rather than piggy-backing on the annotation root.
+    pub fn ensure_annotation_root(&mut self) -> NodeId {
         if let Some(root_id) = self.annotations.root_node() {
             if self.nodes.contains_key(&root_id) {
                 return root_id;
