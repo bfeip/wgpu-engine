@@ -4,10 +4,16 @@
 //! - G: Start grab/translate mode
 //! - R: Start rotate mode
 //! - S: Start scale mode
+//! - H: Cycle gizmo handles (None → Translate → Rotate → Scale → None)
 //! - X/Y/Z: Constrain to axis (toggle: none → world → local → none)
 //! - Left-click / Enter: Confirm transform
 //! - Right-click / Escape: Cancel transform
 //! - Mouse movement: Adjust transform magnitude
+//!
+//! Two independent interaction flows:
+//! 1. **Keyboard**: G/R/S activates a transform driven by mouse motion.
+//! 2. **Gizmo drag**: H shows persistent handles; drag a handle for an
+//!    axis-constrained transform that confirms on mouse release.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -283,6 +289,11 @@ struct TransformState {
 
     /// Gizmo handle state (3D visual handles for the active transform).
     gizmo: GizmoState,
+
+    /// Which gizmo type to display (persists across transforms, cycled by H key).
+    /// Independent of `mode` — the gizmo is a persistent visual tool, while
+    /// `mode` tracks the active keyboard-driven transform.
+    gizmo_mode: Option<GizmoType>,
 }
 
 impl TransformState {
@@ -297,6 +308,7 @@ impl TransformState {
             model_radius: 1.0,
             annotation_ids: Vec::new(),
             gizmo: GizmoState::new(),
+            gizmo_mode: None,
         }
     }
 
@@ -543,6 +555,34 @@ impl TransformState {
         }
     }
 
+    /// Show, reposition, or hide the gizmo based on `gizmo_mode` and selection.
+    fn sync_gizmo(&mut self, ctx: &mut EventContext) {
+        let selected = ctx.selection.selected_nodes();
+        match (self.gizmo_mode, selected.is_empty()) {
+            (Some(gizmo_type), false) => {
+                let positions: Vec<Point3<f32>> = selected
+                    .iter()
+                    .map(|&nid| {
+                        let m = ctx.scene.nodes_transform(nid);
+                        Point3::new(m[3][0], m[3][1], m[3][2])
+                    })
+                    .collect();
+                let pivot = centroid_of_slice(&positions).unwrap_or(Point3::origin());
+                let model_radius =
+                    scene_scale::model_radius_from_bounds(ctx.scene.bounding().as_ref());
+
+                if self.gizmo.current_type == Some(gizmo_type) {
+                    self.gizmo.update_position(pivot, ctx);
+                } else {
+                    self.gizmo.show(gizmo_type, pivot, model_radius * 0.15, ctx);
+                }
+            }
+            _ => {
+                self.gizmo.hide(ctx);
+            }
+        }
+    }
+
     /// Reset state after transform completes (confirm or cancel).
     fn reset(&mut self) {
         self.mode = None;
@@ -652,20 +692,6 @@ impl TransformOperator {
         state.mode = Some(mode);
         state.axis_constraint = AxisConstraint::None;
         state.accumulated_delta = (0.0, 0.0);
-
-        // Show the gizmo at the pivot point (or update if already showing correct type)
-        let gizmo_type = match mode {
-            TransformMode::Translate => GizmoType::Translate,
-            TransformMode::Rotate => GizmoType::Rotate,
-            TransformMode::Scale => GizmoType::Scale,
-        };
-        if state.gizmo.current_type == Some(gizmo_type) {
-            // Gizmo already showing the right type, just update position
-            state.gizmo.update_position(state.pivot_world, ctx);
-        } else {
-            let gizmo_size = state.model_radius * 0.15;
-            state.gizmo.show(gizmo_type, state.pivot_world, gizmo_size, ctx);
-        }
     }
 
     /// Confirm the transform (keep current state).
@@ -674,26 +700,9 @@ impl TransformOperator {
     /// start another drag-based transform immediately.
     fn confirm_transform(state: &mut TransformState, ctx: &mut EventContext) {
         state.cleanup_annotations(ctx);
-
-        // Update gizmo position to follow the transformed selection
-        if state.gizmo.has_gizmo() {
-            // Recompute pivot from the (now-modified) selection positions
-            let world_positions: Vec<Point3<f32>> = ctx
-                .selection
-                .selected_nodes()
-                .iter()
-                .map(|&nid| {
-                    let m = ctx.scene.nodes_transform(nid);
-                    Point3::new(m[3][0], m[3][1], m[3][2])
-                })
-                .collect();
-            if let Some(new_pivot) = centroid_of_slice(&world_positions) {
-                state.gizmo.update_position(new_pivot, ctx);
-            }
-        }
-
         state.gizmo.set_highlight(None, ctx);
         state.reset();
+        state.sync_gizmo(ctx);
     }
 
     /// Cancel the transform (restore original state).
@@ -703,13 +712,8 @@ impl TransformOperator {
         state.restore_original_transforms(ctx);
         state.cleanup_annotations(ctx);
         state.gizmo.set_highlight(None, ctx);
-
-        // Update gizmo back to original pivot position
-        if state.gizmo.has_gizmo() {
-            state.gizmo.update_position(state.pivot_world, ctx);
-        }
-
         state.reset();
+        state.sync_gizmo(ctx);
     }
 }
 
@@ -755,6 +759,18 @@ impl Operator for TransformOperator {
                                 ctx,
                             );
                             state.is_active()
+                        }
+
+                        // Cycle gizmo handles (only when inactive)
+                        Key::Character('h') | Key::Character('H') if !state.is_active() => {
+                            state.gizmo_mode = match state.gizmo_mode {
+                                None => Some(GizmoType::Translate),
+                                Some(GizmoType::Translate) => Some(GizmoType::Rotate),
+                                Some(GizmoType::Rotate) => Some(GizmoType::Scale),
+                                Some(GizmoType::Scale) => None,
+                            };
+                            state.sync_gizmo(ctx);
+                            true
                         }
 
                         // Axis constraints (only when active)
@@ -952,6 +968,16 @@ impl Operator for TransformOperator {
                 false // Never consume cursor move events
             });
 
+        // Update handler: keep gizmo in sync with selection changes
+        let operator_state = self.state.clone();
+        let update_callback = dispatcher.register(EventKind::Update, move |_event, ctx| {
+            let mut state = operator_state.borrow_mut();
+            if state.gizmo_mode.is_some() && !state.is_active() {
+                state.sync_gizmo(ctx);
+            }
+            false // Never consume update events
+        });
+
         self.callback_ids = vec![
             keyboard_callback,
             motion_callback,
@@ -960,6 +986,7 @@ impl Operator for TransformOperator {
             drag_callback,
             drag_end_callback,
             cursor_callback,
+            update_callback,
         ];
     }
 
