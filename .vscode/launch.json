@@ -7,21 +7,6 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug unit tests in library 'wgpu_engine'",
-            "cargo": {
-                "args": [
-                    "test",
-                    "--no-run",
-                    "--lib",
-                    "--package=wgpu-engine"
-                ]
-            },
-            "args": [],
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "type": "lldb",
-            "request": "launch",
             "name": "Debug example 'winit'",
             "cargo": {
                 "args": [
@@ -35,42 +20,23 @@
                 }
             },
             "args": [],
-            "cwd": "${workspaceFolder}/core"
+            "cwd": "${workspaceFolder}/viewer"
         },
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug example 'egui'",
+            "name": "Debug example 'egui-demo'",
             "cargo": {
                 "args": [
                     "build",
-                    "--example=egui",
-                    "--features=egui-support",
+                    "-p=egui-demo",
                 ],
                 "filter": {
-                    "name": "egui",
-                    "kind": "example"
+                    "name": "egui-demo",
                 }
             },
             "args": [],
-            "cwd": "${workspaceFolder}/core"
+            "cwd": "${workspaceFolder}/egui-demo"
         },
-        {
-            "type": "lldb",
-            "request": "launch",
-            "name": "Debug 'gltf-viewer'",
-            "cargo": {
-                "args": [
-                    "build",
-                    "--package=gltf-viewer"
-                ],
-                "filter": {
-                    "name": "gltf-viewer",
-                    "kind": "bin"
-                }
-            },
-            "args": [],
-            "cwd": "${workspaceFolder}/core"
-        }
     ]
 }
