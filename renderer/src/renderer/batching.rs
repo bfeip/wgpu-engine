@@ -11,6 +11,9 @@ use crate::scene::{
 use crate::scene::common;
 use crate::selection_query::SelectionQuery;
 
+/// Key used to group instances into draw batches.
+pub(crate) type BatchKey = (MeshId, MaterialId, PrimitiveType);
+
 /// Represents an instance with its computed world transform.
 #[derive(Clone)]
 pub(crate) struct InstanceTransform {
@@ -53,6 +56,10 @@ impl DrawBatch {
             primitive_type,
             instances: Vec::new(),
         }
+    }
+
+    pub fn key(&self) -> BatchKey {
+        (self.mesh_id, self.material_id, self.primitive_type)
     }
 
     pub fn add_instance(&mut self, instance_transform: InstanceTransform) {
@@ -126,7 +133,7 @@ pub(crate) fn collect_instance_transforms(scene: &Scene) -> Vec<InstanceTransfor
 /// 3. By mesh ID (for GPU cache locality)
 pub(crate) fn collect_draw_batches(scene: &Scene) -> Vec<DrawBatch> {
     let instance_transforms = collect_instance_transforms(scene);
-    let mut batch_map: HashMap<(MeshId, MaterialId, PrimitiveType), DrawBatch> = HashMap::new();
+    let mut batch_map: HashMap<BatchKey, DrawBatch> = HashMap::new();
 
     for inst_transform in instance_transforms {
         let Some(instance) = scene.get_instance(inst_transform.instance_id) else {
@@ -226,8 +233,6 @@ pub(crate) fn partition_batches<F>(batches: &[DrawBatch], predicate: F) -> (Vec<
 where
     F: Fn(&InstanceTransform) -> bool,
 {
-    type BatchKey = (MeshId, MaterialId, PrimitiveType);
-
     // Use Vec + index map instead of HashMap to preserve the input ordering.
     // This is important because batches arrive sorted (e.g. opaque-first,
     // transparent back-to-front) and both partitions must maintain that order.
@@ -237,7 +242,7 @@ where
     let mut unmatched_index: HashMap<BatchKey, usize> = HashMap::new();
 
     for batch in batches {
-        let key = (batch.mesh_id, batch.material_id, batch.primitive_type);
+        let key = batch.key();
 
         for instance in &batch.instances {
             if predicate(instance) {
