@@ -228,27 +228,35 @@ where
 {
     type BatchKey = (MeshId, MaterialId, PrimitiveType);
 
-    let mut matched: HashMap<BatchKey, DrawBatch> = HashMap::new();
-    let mut unmatched: HashMap<BatchKey, DrawBatch> = HashMap::new();
+    // Use Vec + index map instead of HashMap to preserve the input ordering.
+    // This is important because batches arrive sorted (e.g. opaque-first,
+    // transparent back-to-front) and both partitions must maintain that order.
+    let mut matched: Vec<DrawBatch> = Vec::new();
+    let mut unmatched: Vec<DrawBatch> = Vec::new();
+    let mut matched_index: HashMap<BatchKey, usize> = HashMap::new();
+    let mut unmatched_index: HashMap<BatchKey, usize> = HashMap::new();
 
     for batch in batches {
         let key = (batch.mesh_id, batch.material_id, batch.primitive_type);
 
         for instance in &batch.instances {
-            let target = if predicate(instance) {
-                matched.entry(key).or_insert_with(|| {
-                    DrawBatch::new(batch.mesh_id, batch.material_id, batch.primitive_type)
-                })
+            if predicate(instance) {
+                let idx = *matched_index.entry(key).or_insert_with(|| {
+                    matched.push(DrawBatch::new(batch.mesh_id, batch.material_id, batch.primitive_type));
+                    matched.len() - 1
+                });
+                matched[idx].add_instance(instance.clone());
             } else {
-                unmatched.entry(key).or_insert_with(|| {
-                    DrawBatch::new(batch.mesh_id, batch.material_id, batch.primitive_type)
-                })
-            };
-            target.add_instance(instance.clone());
+                let idx = *unmatched_index.entry(key).or_insert_with(|| {
+                    unmatched.push(DrawBatch::new(batch.mesh_id, batch.material_id, batch.primitive_type));
+                    unmatched.len() - 1
+                });
+                unmatched[idx].add_instance(instance.clone());
+            }
         }
     }
 
-    (matched.into_values().collect(), unmatched.into_values().collect())
+    (matched, unmatched)
 }
 
 /// Frame-scoped collection of draw batches, sorted and partitioned for rendering.
