@@ -254,4 +254,307 @@ mod tests {
             assert!(flags.contains(MaterialFlags::ALWAYS_ON_TOP));
         }
     }
+
+    /// Fire a ray at the center of each gizmo handle's AABB and verify
+    /// that both the AABB and mesh triangle intersection succeed.
+    #[test]
+    fn translate_handles_pickable_by_ray() {
+        use crate::common::Ray;
+        use crate::geom_query::intersect_ray;
+        use cgmath::Vector3;
+
+        for handle in build_translate_handles(1.0) {
+            let aabb = handle.mesh.bounding().expect("handle should have bounds");
+            let center = aabb.center();
+
+            // Try rays from all 3 principal directions toward the center
+            let directions = [
+                Vector3::new(0.0, 0.0, -1.0),
+                Vector3::new(0.0, -1.0, 0.0),
+                Vector3::new(-1.0, 0.0, 0.0),
+            ];
+
+            let mut any_mesh_hit = false;
+            for dir in &directions {
+                let origin = center - dir * 10.0;
+                let ray = Ray::new(origin, *dir);
+
+                let aabb_hit = aabb.intersects_ray(&ray);
+
+                if aabb_hit.is_some() {
+                    let mesh_hits = intersect_ray(&handle.mesh, &ray);
+                    if !mesh_hits.is_empty() {
+                        any_mesh_hit = true;
+                    }
+                }
+            }
+
+            assert!(
+                any_mesh_hit,
+                "Axis {:?}: ray through AABB center hit the AABB but missed all triangles. \
+                 vertices={}, triangles={}, aabb_min={:?}, aabb_max={:?}",
+                handle.axis,
+                handle.mesh.vertices().len(),
+                handle.mesh.triangle_indices().len() / 3,
+                aabb.min,
+                aabb.max,
+            );
+        }
+    }
+
+    #[test]
+    fn scale_handles_pickable_by_ray() {
+        use crate::common::Ray;
+        use crate::geom_query::intersect_ray;
+        use cgmath::Vector3;
+
+        for handle in build_scale_handles(1.0) {
+            let aabb = handle.mesh.bounding().expect("handle should have bounds");
+            let center = aabb.center();
+
+            let directions = [
+                Vector3::new(0.0, 0.0, -1.0),
+                Vector3::new(0.0, -1.0, 0.0),
+                Vector3::new(-1.0, 0.0, 0.0),
+            ];
+
+            let mut any_mesh_hit = false;
+            for dir in &directions {
+                let origin = center - dir * 10.0;
+                let ray = Ray::new(origin, *dir);
+
+                if aabb.intersects_ray(&ray).is_some() {
+                    let mesh_hits = intersect_ray(&handle.mesh, &ray);
+                    if !mesh_hits.is_empty() {
+                        any_mesh_hit = true;
+                    }
+                }
+            }
+
+            assert!(
+                any_mesh_hit,
+                "Axis {:?}: ray through AABB center missed all triangles. \
+                 vertices={}, triangles={}",
+                handle.axis,
+                handle.mesh.vertices().len(),
+                handle.mesh.triangle_indices().len() / 3,
+            );
+        }
+    }
+
+    #[test]
+    fn rotate_handles_pickable_by_ray() {
+        use crate::common::Ray;
+        use crate::geom_query::intersect_ray;
+        use cgmath::Vector3;
+
+        for handle in build_rotate_handles(1.0) {
+            let aabb = handle.mesh.bounding().expect("handle should have bounds");
+            let center = aabb.center();
+
+            let directions = [
+                Vector3::new(0.0, 0.0, -1.0),
+                Vector3::new(0.0, -1.0, 0.0),
+                Vector3::new(-1.0, 0.0, 0.0),
+            ];
+
+            let mut any_mesh_hit = false;
+            for dir in &directions {
+                let origin = center - dir * 10.0;
+                let ray = Ray::new(origin, *dir);
+
+                if aabb.intersects_ray(&ray).is_some() {
+                    let mesh_hits = intersect_ray(&handle.mesh, &ray);
+                    if !mesh_hits.is_empty() {
+                        any_mesh_hit = true;
+                    }
+                }
+            }
+
+            assert!(
+                any_mesh_hit,
+                "Axis {:?}: ray through AABB center missed all triangles. \
+                 vertices={}, triangles={}",
+                handle.axis,
+                handle.mesh.vertices().len(),
+                handle.mesh.triangle_indices().len() / 3,
+            );
+        }
+    }
+
+    /// Test picking gizmo handles through the full scene pipeline,
+    /// simulating how GizmoState::show() sets up the handles.
+    #[test]
+    fn translate_handles_pickable_through_scene() {
+        use crate::common::Ray;
+        use crate::geom_query::pick_all_from_ray;
+        use crate::Scene;
+        use cgmath::{Point3, Vector3};
+
+        let pivot = Point3::new(5.0, 3.0, 0.0);
+
+        let mut scene = Scene::new();
+
+        // Add a model cube so the scene isn't empty (like the real app)
+        let cube = crate::Mesh::cube(2.0, crate::PrimitiveType::TriangleList);
+        let cube_mesh_id = scene.add_mesh(cube);
+        let cube_mat_id = scene.add_material(crate::Material::new());
+        scene
+            .add_instance_node(
+                None,
+                cube_mesh_id,
+                cube_mat_id,
+                Some("Cube".to_string()),
+                crate::common::Transform::IDENTITY,
+            )
+            .unwrap();
+
+        // Simulate sync_gizmo: compute scene.bounding() BEFORE showing gizmo
+        // (this is what the real code does — it reads model_radius first)
+        let _ = scene.bounding();
+
+        let annotation_root = scene.ensure_annotation_root();
+        let pivot_transform = crate::common::Transform::from_position(pivot);
+
+        let handles = build_translate_handles(1.0);
+        let mut node_ids = Vec::new();
+
+        for handle in &handles {
+            let mesh_id = scene.add_mesh(handle.mesh.clone());
+            let material_id = scene.add_material(handle.material.clone());
+            let node_id = scene
+                .add_instance_node(
+                    Some(annotation_root),
+                    mesh_id,
+                    material_id,
+                    None,
+                    pivot_transform,
+                )
+                .expect("Failed to add gizmo node");
+            node_ids.push(node_id);
+        }
+
+        // For each handle, fire a ray at its world-space AABB center
+        for (i, handle) in handles.iter().enumerate() {
+            let local_aabb = handle.mesh.bounding().expect("handle should have bounds");
+            let local_center = local_aabb.center();
+            let world_center = Point3::new(
+                local_center.x + pivot.x,
+                local_center.y + pivot.y,
+                local_center.z + pivot.z,
+            );
+
+            let directions = [
+                Vector3::new(0.0, 0.0, -1.0),
+                Vector3::new(0.0, -1.0, 0.0),
+                Vector3::new(-1.0, 0.0, 0.0),
+            ];
+
+            let mut found = false;
+            for dir in &directions {
+                let origin = world_center - dir * 10.0;
+                let ray = Ray::new(origin, *dir);
+
+                let results = pick_all_from_ray(&ray, &scene);
+                for result in &results {
+                    if result.node_id == node_ids[i] {
+                        found = true;
+                        break;
+                    }
+                }
+                if found {
+                    break;
+                }
+            }
+
+            assert!(
+                found,
+                "Axis {:?}: full scene pipeline failed to pick gizmo handle at pivot {:?}",
+                handle.axis, pivot,
+            );
+        }
+    }
+
+    /// Test that picking works after gizmo position is updated
+    /// (simulates update_position path from sync_gizmo).
+    #[test]
+    fn translate_handles_pickable_after_position_update() {
+        use crate::common::Ray;
+        use crate::geom_query::pick_all_from_ray;
+        use crate::Scene;
+        use cgmath::{Point3, Vector3};
+
+        let initial_pivot = Point3::new(0.0, 0.0, 0.0);
+        let new_pivot = Point3::new(10.0, 5.0, 3.0);
+
+        let mut scene = Scene::new();
+        let annotation_root = scene.ensure_annotation_root();
+        let pivot_transform = crate::common::Transform::from_position(initial_pivot);
+
+        let handles = build_translate_handles(1.0);
+        let mut node_ids = Vec::new();
+
+        for handle in &handles {
+            let mesh_id = scene.add_mesh(handle.mesh.clone());
+            let material_id = scene.add_material(handle.material.clone());
+            let node_id = scene
+                .add_instance_node(
+                    Some(annotation_root),
+                    mesh_id,
+                    material_id,
+                    None,
+                    pivot_transform,
+                )
+                .expect("Failed to add gizmo node");
+            node_ids.push(node_id);
+        }
+
+        // Cache bounds (simulates a frame between show and pick)
+        let _ = scene.bounding();
+
+        // Move gizmo to new position (simulates update_position)
+        for &node_id in &node_ids {
+            scene.get_node_mut(node_id).unwrap().set_position(new_pivot);
+        }
+
+        // Try to pick at the NEW position
+        for (i, handle) in handles.iter().enumerate() {
+            let local_aabb = handle.mesh.bounding().expect("handle should have bounds");
+            let local_center = local_aabb.center();
+            let world_center = Point3::new(
+                local_center.x + new_pivot.x,
+                local_center.y + new_pivot.y,
+                local_center.z + new_pivot.z,
+            );
+
+            let directions = [
+                Vector3::new(0.0, 0.0, -1.0),
+                Vector3::new(0.0, -1.0, 0.0),
+                Vector3::new(-1.0, 0.0, 0.0),
+            ];
+
+            let mut found = false;
+            for dir in &directions {
+                let origin = world_center - dir * 10.0;
+                let ray = Ray::new(origin, *dir);
+
+                let results = pick_all_from_ray(&ray, &scene);
+                for result in &results {
+                    if result.node_id == node_ids[i] {
+                        found = true;
+                        break;
+                    }
+                }
+                if found {
+                    break;
+                }
+            }
+
+            assert!(
+                found,
+                "Axis {:?}: picking failed after position update to {:?}",
+                handle.axis, new_pivot,
+            );
+        }
+    }
 }
