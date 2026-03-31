@@ -561,9 +561,8 @@ impl TransformState {
             (Some(gizmo_type), false) => {
                 let positions: Vec<Point3<f32>> = selected
                     .iter()
-                    .map(|&nid| {
-                        let m = ctx.scene.nodes_transform(nid);
-                        Point3::new(m[3][0], m[3][1], m[3][2])
+                    .filter_map(|&nid| {
+                        ctx.scene.nodes_bounding(nid).map(|aabb| aabb.center())
                     })
                     .collect();
                 let pivot = centroid_of_slice(&positions).unwrap_or(Point3::origin());
@@ -659,7 +658,10 @@ impl TransformOperator {
                     Transform::IDENTITY
                 };
 
-                world_positions.push(world_transform.position);
+                let world_pos = ctx.scene.nodes_bounding(*node_id)
+                    .map(|aabb| aabb.center())
+                    .unwrap_or(world_transform.position);
+                world_positions.push(world_pos);
                 state.original_transforms.push(OriginalTransform {
                     node_id: *node_id,
                     local_transform: node.transform(),
