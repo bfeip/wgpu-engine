@@ -54,49 +54,53 @@ impl Ray {
         v1: Point3<f32>,
         v2: Point3<f32>,
     ) -> Option<(f32, f32, f32)> {
-        // Compute edges from v0
         let edge1 = v1 - v0;
         let edge2 = v2 - v0;
-
-        // Begin calculating determinant - also used to calculate u parameter
         let h = self.direction.cross(edge2);
         let det = edge1.dot(h);
 
-        // If determinant is near zero, ray lies in plane of triangle or is parallel
-        // For double-sided intersection, check if det is near zero (positive or negative)
-        if det > -EPSILON && det < EPSILON {
+        // Reject degenerate triangles (ray parallel to triangle plane).
+        // Use a very small threshold to avoid rejecting thin-but-valid triangles.
+        const DET_EPSILON: f32 = 1e-10;
+        if det > -DET_EPSILON && det < DET_EPSILON {
             return None;
         }
 
-        // For double-sided intersection, use det directly (handles both front and back faces)
-        let inv_det = 1.0 / det;
-
-        // Calculate distance from v0 to ray origin
         let s = self.origin - v0;
+        let s_dot_h = s.dot(h);
 
-        // Calculate u parameter and test bounds
-        let u = inv_det * s.dot(h);
-        if u < 0.0 || u > 1.0 {
+        // Division-free bounds check for u parameter.
+        // Equivalent to: u = s_dot_h / det; if u < 0 || u > 1 { reject }
+        // but without dividing by the (potentially small) determinant.
+        if det > 0.0 {
+            if s_dot_h < 0.0 || s_dot_h > det {
+                return None;
+            }
+        } else if s_dot_h > 0.0 || s_dot_h < det {
             return None;
         }
 
-        // Prepare to test v parameter
         let q = s.cross(edge1);
+        let dir_dot_q = self.direction.dot(q);
 
-        // Calculate v parameter and test bounds
-        let v = inv_det * self.direction.dot(q);
-        if v < 0.0 || u + v > 1.0 {
+        // Division-free bounds check for v and u+v parameters.
+        if det > 0.0 {
+            if dir_dot_q < 0.0 || s_dot_h + dir_dot_q > det {
+                return None;
+            }
+        } else if dir_dot_q > 0.0 || s_dot_h + dir_dot_q < det {
             return None;
         }
 
-        // At this stage we can compute t to find out where the intersection point is on the line
+        // Compute final values via division (only on the hit path).
+        let inv_det = 1.0 / det;
         let t = inv_det * edge2.dot(q);
 
-        // Ray intersection
         if t > EPSILON {
+            let u = s_dot_h * inv_det;
+            let v = dir_dot_q * inv_det;
             Some((t, u, v))
         } else {
-            // Line intersection but not a ray intersection (behind ray origin)
             None
         }
     }
@@ -359,6 +363,41 @@ mod tests {
         let (t, _u, _v) = result.unwrap();
         // Distance should be approximately 5
         assert!((t - 5.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_ray_hits_thin_cylinder_triangle() {
+        // Simulates a single face of a 32-segment cylinder with extreme values.
+        // This is the geometry formerly caused precision failures with the
+        // division-based Möller–Trumbore bounds check.
+        use std::f32::consts::PI;
+        let radius: f32 = 1.0e-10;
+        let height: f32 = 10000.0;
+        let segments = 32;
+
+        let angle0 = 2.0 * PI * 0.0 / segments as f32;
+        let angle1 = 2.0 * PI * 1.0 / segments as f32;
+
+        let v0 = Point3::new(radius * angle0.cos(), radius * angle0.sin(), 0.0);
+        let v1 = Point3::new(radius * angle1.cos(), radius * angle1.sin(), 0.0);
+        let v2 = Point3::new(radius * angle0.cos(), radius * angle0.sin(), height);
+
+        // Ray aimed at the midpoint of the triangle from a diagonal direction
+        let mid = Point3::new(
+            (v0.x + v1.x + v2.x) / 3.0,
+            (v0.y + v1.y + v2.y) / 3.0,
+            (v0.z + v1.z + v2.z) / 3.0,
+        );
+        let origin = Point3::new(mid.x + 1.0, mid.y + 1.0, mid.z + 1.0);
+        let direction = Vector3::new(mid.x - origin.x, mid.y - origin.y, mid.z - origin.z);
+        let ray = Ray::new(origin, direction);
+
+        let result = ray.intersect_triangle(v0, v1, v2);
+        assert!(
+            result.is_some(),
+            "Ray should hit thin cylinder triangle (r={}, segments={})",
+            radius, segments
+        );
     }
 
     #[test]
