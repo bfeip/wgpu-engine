@@ -297,6 +297,13 @@ impl<'a> ApplicationHandler for App<'a> {
 
             viewer_app.request_redraw();
             self.viewer_app = Some(viewer_app);
+
+            let default_scene = std::path::PathBuf::from("assets/default-scene.wgsc");
+            if default_scene.exists() {
+                self.pending_scene_load_path = Some(default_scene);
+            } else {
+                log::warn!("Default scene not found: {}", default_scene.display());
+            }
         }
     }
 
