@@ -514,7 +514,7 @@ mod tests {
 
         // Move gizmo to new position (simulates update_position)
         for &node_id in &node_ids {
-            scene.get_node_mut(node_id).unwrap().set_position(new_pivot);
+            scene.set_node_position(node_id, new_pivot);
         }
 
         // Try to pick at the NEW position

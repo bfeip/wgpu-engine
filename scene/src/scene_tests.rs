@@ -321,10 +321,10 @@ fn test_transform_invalidation_on_change() {
     let _transform = scene.nodes_transform(node_id);
 
     // Modify the node
-    let node = scene.get_node_mut(node_id).unwrap();
-    node.set_position(Point3::new(5.0, 5.0, 5.0));
+    scene.set_node_position(node_id, Point3::new(5.0, 5.0, 5.0));
 
     // Cache should be dirty
+    let node = scene.get_node(node_id).unwrap();
     assert!(node.transform_dirty());
 }
 
@@ -442,20 +442,6 @@ fn test_large_tree_consistency() {
         let child_node = scene.get_node(child_id).unwrap();
         assert_eq!(child_node.parent(), Some(root));
     }
-}
-
-#[test]
-fn test_get_node_mut_allows_modification() {
-    let mut scene = Scene::new();
-    let node_id = scene.add_default_node(None, None).unwrap();
-
-    {
-        let node = scene.get_node_mut(node_id).unwrap();
-        node.set_position(Point3::new(10.0, 20.0, 30.0));
-    }
-
-    let node = scene.get_node(node_id).unwrap();
-    assert_eq!(node.position(), Point3::new(10.0, 20.0, 30.0));
 }
 
 // ========================================================================

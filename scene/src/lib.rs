@@ -15,7 +15,7 @@ mod mesh;
 mod node;
 mod texture;
 
-use cgmath::{EuclideanSpace, InnerSpace, Matrix4, Point3, SquareMatrix, Vector3};
+use cgmath::{EuclideanSpace, InnerSpace, Matrix4, Point3, Quaternion, SquareMatrix, Vector3};
 use image::DynamicImage;
 use std::collections::HashMap;
 use std::path::Path;
@@ -607,19 +607,9 @@ impl Scene {
         self.nodes.get(&id)
     }
 
-    /// Gets a mutable reference to a node by ID.
-    pub fn get_node_mut(&mut self, id: NodeId) -> Option<&mut Node> {
-        self.nodes.get_mut(&id)
-    }
-
     /// Returns an iterator over all nodes.
     pub fn nodes(&self) -> impl Iterator<Item = &Node> {
         self.nodes.values()
-    }
-
-    /// Returns a mutable iterator over all nodes.
-    pub fn nodes_mut(&mut self) -> impl Iterator<Item = &mut Node> {
-        self.nodes.values_mut()
     }
 
     /// Returns the number of nodes in the scene.
@@ -892,6 +882,36 @@ impl Scene {
         }
     }
 
+    // ========== Node Transform Mutation API ==========
+
+    /// Sets the full transform of a node and invalidates ancestor bounds.
+    pub fn set_node_transform(&mut self, node_id: NodeId, transform: common::Transform) {
+        let node = self.nodes.get_mut(&node_id).expect("Node not found");
+        node.set_transform(transform);
+        self.invalidate_ancestor_bounds(node_id);
+    }
+
+    /// Sets the position of a node and invalidates ancestor bounds.
+    pub fn set_node_position(&mut self, node_id: NodeId, position: Point3<f32>) {
+        let node = self.nodes.get_mut(&node_id).expect("Node not found");
+        node.set_position(position);
+        self.invalidate_ancestor_bounds(node_id);
+    }
+
+    /// Sets the rotation of a node and invalidates ancestor bounds.
+    pub fn set_node_rotation(&mut self, node_id: NodeId, rotation: Quaternion<f32>) {
+        let node = self.nodes.get_mut(&node_id).expect("Node not found");
+        node.set_rotation(rotation);
+        self.invalidate_ancestor_bounds(node_id);
+    }
+
+    /// Sets the scale of a node and invalidates ancestor bounds.
+    pub fn set_node_scale(&mut self, node_id: NodeId, scale: Vector3<f32>) {
+        let node = self.nodes.get_mut(&node_id).expect("Node not found");
+        node.set_scale(scale);
+        self.invalidate_ancestor_bounds(node_id);
+    }
+
     // ========== Visibility API ==========
 
     /// Sets the visibility of a node and propagates invisibility to descendants.
@@ -901,7 +921,7 @@ impl Scene {
     pub fn set_node_visibility(&mut self, node_id: NodeId, visibility: node::Visibility) {
         match visibility {
             node::Visibility::Visible => {
-                let node = self.get_node_mut(node_id).expect("Node not found");
+                let node = self.nodes.get_mut(&node_id).expect("Node not found");
                 node.set_visibility(node::Visibility::Visible);
                 self.invalidate_ancestor_effective_visibility(node_id);
             }
@@ -918,7 +938,7 @@ impl Scene {
 
     /// Recursively sets visibility for a node and all descendants.
     fn set_subtree_visibility_recursive(&mut self, node_id: NodeId, visibility: node::Visibility) {
-        let Some(node) = self.get_node_mut(node_id) else {
+        let Some(node) = self.nodes.get_mut(&node_id) else {
             return;
         };
         node.set_visibility(visibility);
@@ -1378,10 +1398,8 @@ impl Scene {
     /// Sets visibility for all annotations.
     pub fn set_annotations_visible(&mut self, visible: bool) {
         if let Some(root_id) = self.annotations.root_node() {
-            if let Some(root) = self.get_node_mut(root_id) {
-                let scale = if visible { 1.0 } else { 0.0 };
-                root.set_scale(Vector3::new(scale, scale, scale));
-            }
+            let scale = if visible { 1.0 } else { 0.0 };
+            self.set_node_scale(root_id, Vector3::new(scale, scale, scale));
         }
     }
 }

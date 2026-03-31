@@ -176,8 +176,8 @@ impl GizmoState {
     /// Update the gizmo position (e.g. when pivot changes).
     fn update_position(&self, pivot: Point3<f32>, ctx: &mut EventContext) {
         for &node_id in &self.node_ids {
-            if let Some(node) = ctx.scene.get_node_mut(node_id) {
-                node.set_position(pivot);
+            if ctx.scene.has_node(node_id) {
+                ctx.scene.set_node_position(node_id, pivot);
             }
         }
     }
@@ -448,10 +448,9 @@ impl TransformState {
                 .invert()
                 .unwrap_or(Matrix4::identity());
 
-            let node = match ctx.scene.get_node_mut(orig.node_id) {
-                Some(n) => n,
-                None => continue,
-            };
+            if !ctx.scene.has_node(orig.node_id) {
+                continue;
+            }
 
             match mode {
                 TransformMode::Translate => {
@@ -459,7 +458,7 @@ impl TransformState {
                     let new_world_pos = orig.world_transform.position + delta;
                     let new_local_pos =
                         Point3::from_homogeneous(inv_parent * new_world_pos.to_homogeneous());
-                    node.set_position(new_local_pos);
+                    ctx.scene.set_node_position(orig.node_id, new_local_pos);
                 }
                 TransformMode::Rotate => {
                     let rotation = rotation_quat.unwrap();
@@ -472,7 +471,7 @@ impl TransformState {
                     );
                     let new_local_pos =
                         Point3::from_homogeneous(inv_parent * new_world_pos.to_homogeneous());
-                    node.set_position(new_local_pos);
+                    ctx.scene.set_node_position(orig.node_id, new_local_pos);
 
                     // Convert world rotation to local space
                     let pr = orig.parent_world_transform.rotation;
@@ -480,7 +479,7 @@ impl TransformState {
                     let local_rotation = pr_inv * rotation * pr;
                     let new_rotation =
                         compose_rotation(orig.local_transform.rotation, local_rotation);
-                    node.set_rotation(new_rotation);
+                    ctx.scene.set_node_rotation(orig.node_id, new_rotation);
                 }
                 TransformMode::Scale => {
                     let scale = scale_factor.unwrap();
@@ -495,9 +494,9 @@ impl TransformState {
                         );
                         let new_local_pos =
                             Point3::from_homogeneous(inv_parent * new_world_pos.to_homogeneous());
-                        node.set_position(new_local_pos);
+                        ctx.scene.set_node_position(orig.node_id, new_local_pos);
                         let new_scale = apply_scale(orig.local_transform.scale, scale);
-                        node.set_scale(new_scale);
+                        ctx.scene.set_node_scale(orig.node_id, new_scale);
                     } else {
                         // World axis: scale world position around pivot, convert to local
                         let new_world_pos = scale_position_about_pivot_world(
@@ -507,13 +506,13 @@ impl TransformState {
                         );
                         let new_local_pos =
                             Point3::from_homogeneous(inv_parent * new_world_pos.to_homogeneous());
-                        node.set_position(new_local_pos);
+                        ctx.scene.set_node_position(orig.node_id, new_local_pos);
 
                         // Convert world-axis scale to local space
                         let pr_inv = orig.parent_world_transform.rotation.conjugate();
                         let local_scale = world_scale_to_local(scale, pr_inv);
                         let new_scale = apply_scale(orig.local_transform.scale, local_scale);
-                        node.set_scale(new_scale);
+                        ctx.scene.set_node_scale(orig.node_id, new_scale);
                     }
                 }
             }
@@ -523,8 +522,8 @@ impl TransformState {
     /// Restore all nodes to their original transforms.
     fn restore_original_transforms(&self, ctx: &mut EventContext) {
         for orig in &self.original_transforms {
-            if let Some(node) = ctx.scene.get_node_mut(orig.node_id) {
-                node.set_transform(orig.local_transform);
+            if ctx.scene.has_node(orig.node_id) {
+                ctx.scene.set_node_transform(orig.node_id, orig.local_transform);
             }
         }
     }
