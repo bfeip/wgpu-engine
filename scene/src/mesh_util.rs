@@ -1,16 +1,35 @@
-//! Shared mesh utilities for import/export operations.
+//! Utilities for splitting meshes that exceed the u16 index limit.
 //!
-//! Provides mesh splitting for large meshes that exceed the u16 index limit (65,535 vertices).
+//! `MeshIndex` is `u16`, capping each `Mesh` at 65,535 vertices. Use these
+//! helpers to split larger vertex/index buffers into u16-sized chunks before
+//! constructing `Mesh` objects.
 
 use std::collections::HashMap;
 
-use wgpu_engine_scene::{MeshIndex, MeshPrimitive, PrimitiveType, Vertex};
+use crate::{MeshIndex, MeshPrimitive, PrimitiveType, Vertex};
 
-/// Split a mesh with >65535 vertices into multiple chunks that each fit in u16 indices.
+/// Split a triangle-list mesh with >65535 vertices into multiple chunks that each fit in u16 indices.
 ///
 /// Walks triangles one at a time, maintaining a vertex remap. When adding a triangle
 /// would overflow the current chunk, the chunk is finalized and a new one starts.
 pub fn split_mesh(vertices: &[Vertex], indices: &[u32]) -> Vec<(Vec<Vertex>, MeshPrimitive)> {
+    split_primitives(vertices, indices, PrimitiveType::TriangleList, 3)
+}
+
+/// Split a line-list mesh with >65535 vertices into multiple chunks that each fit in u16 indices.
+///
+/// Walks line segments (pairs of indices) one at a time, maintaining a vertex remap.
+/// When adding a segment would overflow the current chunk, it is finalized and a new one starts.
+pub fn split_line_mesh(vertices: &[Vertex], indices: &[u32]) -> Vec<(Vec<Vertex>, MeshPrimitive)> {
+    split_primitives(vertices, indices, PrimitiveType::LineList, 2)
+}
+
+fn split_primitives(
+    vertices: &[Vertex],
+    indices: &[u32],
+    primitive_type: PrimitiveType,
+    stride: usize,
+) -> Vec<(Vec<Vertex>, MeshPrimitive)> {
     let max_verts = MeshIndex::MAX as usize;
     let mut chunks: Vec<(Vec<Vertex>, MeshPrimitive)> = Vec::new();
 
@@ -18,24 +37,22 @@ pub fn split_mesh(vertices: &[Vertex], indices: &[u32]) -> Vec<(Vec<Vertex>, Mes
     let mut chunk_indices: Vec<MeshIndex> = Vec::new();
     let mut remap: HashMap<u32, MeshIndex> = HashMap::new();
 
-    for triangle in indices.chunks(3) {
-        if triangle.len() < 3 {
+    for primitive in indices.chunks(stride) {
+        if primitive.len() < stride {
             break;
         }
 
-        // Check if adding this triangle would overflow the chunk
-        let new_verts_needed = triangle
+        let new_verts_needed = primitive
             .iter()
             .filter(|&&idx| !remap.contains_key(&idx))
             .count();
 
         if chunk_verts.len() + new_verts_needed > max_verts {
-            // Finalize current chunk
             if !chunk_indices.is_empty() {
                 chunks.push((
                     std::mem::take(&mut chunk_verts),
                     MeshPrimitive {
-                        primitive_type: PrimitiveType::TriangleList,
+                        primitive_type,
                         indices: std::mem::take(&mut chunk_indices),
                     },
                 ));
@@ -43,8 +60,7 @@ pub fn split_mesh(vertices: &[Vertex], indices: &[u32]) -> Vec<(Vec<Vertex>, Mes
             remap.clear();
         }
 
-        // Add triangle to current chunk
-        for &orig_idx in triangle {
+        for &orig_idx in primitive {
             let local_idx = *remap.entry(orig_idx).or_insert_with(|| {
                 let idx = chunk_verts.len() as MeshIndex;
                 chunk_verts.push(vertices[orig_idx as usize]);
@@ -54,12 +70,11 @@ pub fn split_mesh(vertices: &[Vertex], indices: &[u32]) -> Vec<(Vec<Vertex>, Mes
         }
     }
 
-    // Finalize last chunk
     if !chunk_indices.is_empty() {
         chunks.push((
             chunk_verts,
             MeshPrimitive {
-                primitive_type: PrimitiveType::TriangleList,
+                primitive_type,
                 indices: chunk_indices,
             },
         ));
@@ -78,7 +93,6 @@ pub fn to_u16_primitives(
     primitive_type: PrimitiveType,
 ) -> Vec<(Vec<Vertex>, MeshPrimitive)> {
     if vertices.len() <= MeshIndex::MAX as usize {
-        // Simple case: fits in u16
         let u16_indices: Vec<MeshIndex> = indices.iter().map(|&i| i as MeshIndex).collect();
         let primitive = MeshPrimitive {
             primitive_type,
@@ -86,8 +100,14 @@ pub fn to_u16_primitives(
         };
         vec![(vertices.to_vec(), primitive)]
     } else {
-        // Need to split into chunks
-        split_mesh(vertices, indices)
+        match primitive_type {
+            PrimitiveType::TriangleList => split_mesh(vertices, indices),
+            PrimitiveType::LineList => split_line_mesh(vertices, indices),
+            PrimitiveType::PointList => {
+                // Points are independent; just chunk by max_verts
+                split_primitives(vertices, indices, PrimitiveType::PointList, 1)
+            }
+        }
     }
 }
 
@@ -106,10 +126,8 @@ mod tests {
     #[test]
     fn test_split_mesh_no_split_needed() {
         let vertices: Vec<Vertex> = (0..100).map(|i| make_vertex(i as f32)).collect();
-        let indices: Vec<u32> = (0..99).collect();
-        // 33 triangles
         let mut tri_indices = Vec::new();
-        for i in (0..99).step_by(3) {
+        for i in (0..99u32).step_by(3) {
             tri_indices.push(i);
             tri_indices.push(i + 1);
             tri_indices.push(i + 2);
@@ -122,10 +140,8 @@ mod tests {
 
     #[test]
     fn test_split_mesh_splits_large_mesh() {
-        // Create a mesh that needs splitting: vertices > 65535
         let n = 70_000u32;
         let vertices: Vec<Vertex> = (0..n).map(|i| make_vertex(i as f32)).collect();
-        // Create triangles: each uses 3 unique vertices
         let mut indices = Vec::new();
         for i in (0..n - 2).step_by(3) {
             indices.push(i);
@@ -136,14 +152,12 @@ mod tests {
         let chunks = split_mesh(&vertices, &indices);
         assert!(chunks.len() >= 2, "Should split into at least 2 chunks");
 
-        // Verify each chunk respects the u16 limit
         for (verts, prim) in &chunks {
             assert!(verts.len() <= MeshIndex::MAX as usize);
             assert_eq!(prim.primitive_type, PrimitiveType::TriangleList);
             assert_eq!(prim.indices.len() % 3, 0);
         }
 
-        // Verify total triangle count is preserved
         let total_indices: usize = chunks.iter().map(|(_, p)| p.indices.len()).sum();
         assert_eq!(total_indices, indices.len());
     }
@@ -154,6 +168,27 @@ mod tests {
         let indices: Vec<u32> = Vec::new();
         let chunks = split_mesh(&vertices, &indices);
         assert!(chunks.is_empty());
+    }
+
+    #[test]
+    fn test_split_line_mesh_splits_large_mesh() {
+        let n = 70_000u32;
+        let vertices: Vec<Vertex> = (0..n).map(|i| make_vertex(i as f32)).collect();
+        let mut indices = Vec::new();
+        for i in (0..n - 1).step_by(2) {
+            indices.push(i);
+            indices.push(i + 1);
+        }
+
+        let chunks = split_line_mesh(&vertices, &indices);
+        assert!(chunks.len() >= 2);
+        for (verts, prim) in &chunks {
+            assert!(verts.len() <= MeshIndex::MAX as usize);
+            assert_eq!(prim.primitive_type, PrimitiveType::LineList);
+            assert_eq!(prim.indices.len() % 2, 0);
+        }
+        let total: usize = chunks.iter().map(|(_, p)| p.indices.len()).sum();
+        assert_eq!(total, indices.len());
     }
 
     #[test]

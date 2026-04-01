@@ -366,7 +366,7 @@ fn load_single_mesh(
         .collect();
 
     // Split if necessary for u16 index limit, using shared mesh utility
-    let chunks = crate::mesh_util::to_u16_primitives(&vertices, &indices, PrimitiveType::TriangleList);
+    let chunks = wgpu_engine_scene::to_u16_primitives(&vertices, &indices, PrimitiveType::TriangleList);
     chunks
         .into_iter()
         .map(|(chunk_verts, chunk_prim)| {

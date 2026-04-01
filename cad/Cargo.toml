@@ -5,3 +5,5 @@ edition = "2024"
 
 [dependencies]
 opencascade = { git = "https://github.com/bschwind/opencascade-rs.git" }
+wgpu-engine-scene = { path = "../scene" }
+anyhow = "1"

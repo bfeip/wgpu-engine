@@ -626,7 +626,7 @@ pub fn load_gltf_assets(
                 get_material_for_primitive(&primitive, primitive_type, &material_map);
 
             // Convert u32 indices to u16, splitting the mesh if it exceeds the u16 vertex limit
-            let chunks = crate::mesh_util::to_u16_primitives(&vertices, &indices_u32, primitive_type);
+            let chunks = wgpu_engine_scene::to_u16_primitives(&vertices, &indices_u32, primitive_type);
             for (chunk_verts, chunk_prim) in chunks {
                 let mesh_obj = Mesh::from_raw(chunk_verts, vec![chunk_prim]);
                 let mesh_id = scene.add_mesh(mesh_obj);

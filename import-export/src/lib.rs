@@ -10,8 +10,6 @@
 //! - [`gltf`] — glTF loading
 //! - [`usd`] — USD loading (USDC, USDA, USDZ)
 //! - [`assimp`] — Assimp-based loading (feature-gated)
-//! - [`mesh_util`] — Shared mesh utilities (splitting large meshes)
-//!
 //! # Native
 //! Loading runs on a background thread via [`std::thread::spawn`]. The caller
 //! polls [`LoadHandle`] each frame for completion and progress.
@@ -37,7 +35,6 @@ pub mod assimp;
 pub mod format;
 pub mod gltf;
 pub mod importer;
-pub(crate) mod mesh_util;
 #[cfg(feature = "usd")]
 pub mod usd;
 
