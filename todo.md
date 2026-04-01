@@ -17,6 +17,7 @@
 - Viewer trait(s)
   - Any number of viewers can implement the trait and do rendering
   - This will make writing a web viewer and keeping it consistent much easier
+- geom query tests
 
 ## glTF material extensions
 Trivial (~1 day total):
