@@ -9,7 +9,8 @@ members = [
     "truck-experiment",
     "egui-demo",
     "scene-info",
-    "scene-converter"
+    "scene-converter",
+    "cad"
 ]
 default-members = ["viewer"]
 

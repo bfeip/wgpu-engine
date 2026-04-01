@@ -1,0 +1,7 @@
+[package]
+name = "cad"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+opencascade = { git = "https://github.com/bschwind/opencascade-rs.git" }
