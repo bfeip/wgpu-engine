@@ -4,19 +4,7 @@ This document tracks known limitations, roadblocks, and future work items for th
 
 ---
 
-## Active Limitations
-
-### 1. `MeshIndex = u16` vertex cap
-**Status:** Worked around via chunking  
-**File:** `scene/src/mesh.rs` — `pub type MeshIndex = u16`
-
-Each `scene::Mesh` is capped at 65,535 vertices. Complex CAD models can easily exceed this. The importer chunks large meshes into multiple child nodes using `split_mesh` / `split_line_mesh` from `wgpu-engine-scene`.
-
-**Long-term fix:** Change `MeshIndex` to `u32`. Requires updating the renderer's wgpu index format from `Uint16` to `Uint32` and auditing all GPU pipeline code.
-
----
-
-### 2. No color / layer data (XDE not exposed)
+### No color / layer data (XDE not exposed)
 **Status:** Unresolved  
 
 STEP and IGES files encode per-solid and per-face color via the XDE (Extended Data Framework) subsystem of OCCT (`XCAFDoc_ColorTool`, `XCAFDoc_LayerTool`). The `opencascade-rs` bindings do not currently expose XDE.
@@ -27,7 +15,7 @@ All imported geometry receives a single configurable color from `CadImportOption
 
 ---
 
-### 3. Assembly hierarchy lost (flat import)
+### Assembly hierarchy lost (flat import)
 **Status:** Unresolved  
 
 `Shape::read_step` / `Shape::read_iges` returns a single root `Shape` (possibly a `TopoDS_Compound`). `opencascade-rs` only exposes flat face/edge/vertex iterators — there is no API to traverse the compound tree (sub-shapes, part names, instance transforms).
@@ -38,7 +26,7 @@ All geometry is flattened under a single root node with no name or hierarchy pre
 
 ---
 
-### 4. Edge deduplication (wireframe doubling)
+### Edge deduplication (wireframe doubling)
 **Status:** Not yet implemented  
 
 `shape.edges()` traverses all topological edges. Shared edges between adjacent faces appear once per face adjacency, producing doubled line segments in the wireframe.
@@ -47,7 +35,7 @@ All geometry is flattened under a single root node with no name or hierarchy pre
 
 ---
 
-### 5. No unit metadata / coordinate system normalization
+### No unit metadata / coordinate system normalization
 **Status:** Worked around via `scale_factor`  
 
 STEP files typically use millimetres; the engine has no concept of units. `CadImportOptions::scale_factor` (default `1.0`) allows the caller to convert units (e.g. `0.001` for mm → m), but this is manual.
@@ -56,7 +44,7 @@ STEP files typically use millimetres; the engine has no concept of units. `CadIm
 
 ---
 
-### 6. No BREP / parametric data preserved
+### No BREP / parametric data preserved
 **Status:** By design for PoC  
 
 The importer only extracts tessellated triangle/line geometry. The underlying B-Rep topology (surfaces, curves, topology graph) is discarded after tessellation.
