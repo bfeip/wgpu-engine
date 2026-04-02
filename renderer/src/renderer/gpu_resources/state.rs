@@ -445,6 +445,6 @@ pub(crate) fn draw_mesh_instances(
     let n_instances = instance_transforms.len() as u32;
     render_pass.set_vertex_buffer(0, gpu_resources.vertex_buffer.slice(..));
     render_pass.set_vertex_buffer(1, instance_buffer.slice(..));
-    render_pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+    render_pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
     render_pass.draw_indexed(0..index_count, 0, 0..n_instances);
 }

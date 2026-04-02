@@ -15,7 +15,7 @@ use russimp::node::Node as RNode;
 use russimp::scene::{PostProcess, Scene as RScene};
 
 use wgpu_engine_scene::{
-    Camera, DEFAULT_MATERIAL_ID, Light, Material, MaterialId, Mesh, MeshId,
+    Camera, DEFAULT_MATERIAL_ID, Light, Material, MaterialId, Mesh, MeshId, MeshPrimitive,
     NodeId, PrimitiveType, Scene, Texture, TextureId, Vertex, MAX_LIGHTS,
 };
 use wgpu_engine_scene::common::{RgbaColor, Transform, decompose_matrix};
@@ -304,16 +304,12 @@ fn extract_texture(
 // Meshes
 // ============================================================================
 
-/// Loaded mesh info: Vec of (MeshId, MaterialId) pairs.
-/// A single assimp mesh may produce multiple engine meshes if it exceeds the u16 index limit.
-type MeshEntry = Vec<(MeshId, MaterialId)>;
-
-/// Load all assimp meshes, returning a map from assimp mesh index → loaded mesh entries.
+/// Load all assimp meshes, returning a map from assimp mesh index → (MeshId, MaterialId).
 fn load_meshes(
     assimp_meshes: &[russimp::mesh::Mesh],
     material_map: &[MaterialId],
     scene: &mut Scene,
-) -> Vec<MeshEntry> {
+) -> Vec<(MeshId, MaterialId)> {
     assimp_meshes
         .iter()
         .map(|m| load_single_mesh(m, material_map, scene))
@@ -324,7 +320,7 @@ fn load_single_mesh(
     assimp_mesh: &russimp::mesh::Mesh,
     material_map: &[MaterialId],
     scene: &mut Scene,
-) -> MeshEntry {
+) -> (MeshId, MaterialId) {
     let material_id = material_map
         .get(assimp_mesh.material_index as usize)
         .copied()
@@ -365,16 +361,9 @@ fn load_single_mesh(
         .flat_map(|face| face.0.iter().copied())
         .collect();
 
-    // Split if necessary for u16 index limit, using shared mesh utility
-    let chunks = wgpu_engine_scene::to_u16_primitives(&vertices, &indices, PrimitiveType::TriangleList);
-    chunks
-        .into_iter()
-        .map(|(chunk_verts, chunk_prim)| {
-            let mesh = Mesh::from_raw(chunk_verts, vec![chunk_prim]);
-            let mesh_id = scene.add_mesh(mesh);
-            (mesh_id, material_id)
-        })
-        .collect()
+    let primitive = MeshPrimitive { primitive_type: PrimitiveType::TriangleList, indices };
+    let mesh_id = scene.add_mesh(Mesh::from_raw(vertices, vec![primitive]));
+    (mesh_id, material_id)
 }
 
 // ============================================================================
@@ -385,7 +374,7 @@ fn load_single_mesh(
 fn build_node_tree(
     node: &Rc<RNode>,
     scene: &mut Scene,
-    mesh_map: &[MeshEntry],
+    mesh_map: &[(MeshId, MaterialId)],
     material_map: &[MaterialId],
     parent: Option<NodeId>,
 ) -> Result<()> {
@@ -420,33 +409,10 @@ fn build_node_tree(
         if node.meshes.len() == 1 {
             // Single mesh: create one instance node
             let mesh_idx = node.meshes[0] as usize;
-            if let Some(entries) = mesh_map.get(mesh_idx) {
-                if entries.len() == 1 {
-                    let (mesh_id, mat_id) = entries[0];
-                    let node_id = scene.add_instance_node(
-                        parent, mesh_id, mat_id, name, transform,
-                    )?;
-
-                    for child in node.children.borrow().iter() {
-                        build_node_tree(child, scene, mesh_map, material_map, Some(node_id))?;
-                    }
-                } else {
-                    // Split mesh: create a parent transform node, then instance children
-                    let group_id = scene.add_node(parent, name, transform)?;
-                    for (i, &(mesh_id, mat_id)) in entries.iter().enumerate() {
-                        let chunk_name = Some(format!("chunk_{}", i));
-                        scene.add_instance_node(
-                            Some(group_id),
-                            mesh_id,
-                            mat_id,
-                            chunk_name,
-                            Transform::IDENTITY,
-                        )?;
-                    }
-
-                    for child in node.children.borrow().iter() {
-                        build_node_tree(child, scene, mesh_map, material_map, Some(group_id))?;
-                    }
+            if let Some(&(mesh_id, mat_id)) = mesh_map.get(mesh_idx) {
+                let node_id = scene.add_instance_node(parent, mesh_id, mat_id, name, transform)?;
+                for child in node.children.borrow().iter() {
+                    build_node_tree(child, scene, mesh_map, material_map, Some(node_id))?;
                 }
             }
         } else {
@@ -454,16 +420,14 @@ fn build_node_tree(
             let group_id = scene.add_node(parent, name, transform)?;
 
             for &mesh_idx in &node.meshes {
-                if let Some(entries) = mesh_map.get(mesh_idx as usize) {
-                    for &(mesh_id, mat_id) in entries {
-                        scene.add_instance_node(
-                            Some(group_id),
-                            mesh_id,
-                            mat_id,
-                            None,
-                            Transform::IDENTITY,
-                        )?;
-                    }
+                if let Some(&(mesh_id, mat_id)) = mesh_map.get(mesh_idx as usize) {
+                    scene.add_instance_node(
+                        Some(group_id),
+                        mesh_id,
+                        mat_id,
+                        None,
+                        Transform::IDENTITY,
+                    )?;
                 }
             }
 

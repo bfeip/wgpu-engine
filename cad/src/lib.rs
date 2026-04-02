@@ -2,7 +2,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use opencascade::primitives::Shape;
-use wgpu_engine_scene::{split_line_mesh, to_u16_primitives, Mesh, Material, NodeId, PrimitiveType, Scene, Vertex};
+use wgpu_engine_scene::{Mesh, Material, MeshPrimitive, NodeId, PrimitiveType, Scene, Vertex};
 use wgpu_engine_scene::common::{RgbaColor, Transform};
 
 /// Options controlling how a CAD file is imported.
@@ -104,17 +104,15 @@ fn import_faces(
         })
         .collect();
 
-    let indices_u32: Vec<u32> = occt_mesh.indices.iter().map(|&i| i as u32).collect();
-    let chunks = to_u16_primitives(&vertices, &indices_u32, PrimitiveType::TriangleList);
+    let indices: Vec<u32> = occt_mesh.indices.iter().map(|&i| i as u32).collect();
+    let primitive = MeshPrimitive { primitive_type: PrimitiveType::TriangleList, indices };
 
     let face_mat = scene.add_material(Material::new().with_base_color_factor(options.face_color));
 
-    for (chunk_verts, chunk_prim) in chunks {
-        let mesh_id = scene.add_mesh(Mesh::from_raw(chunk_verts, vec![chunk_prim]));
-        scene
-            .add_instance_node(Some(parent), mesh_id, face_mat, None, Transform::IDENTITY)
-            .context("Failed to add face instance node")?;
-    }
+    let mesh_id = scene.add_mesh(Mesh::from_raw(vertices, vec![primitive]));
+    scene
+        .add_instance_node(Some(parent), mesh_id, face_mat, None, Transform::IDENTITY)
+        .context("Failed to add face instance node")?;
 
     Ok(())
 }
@@ -162,13 +160,11 @@ fn import_edges(
     let edge_mat = scene
         .add_material(Material::new().with_line_color(options.edge_color));
 
-    let chunks = split_line_mesh(&edge_verts, &edge_indices);
-    for (chunk_verts, chunk_prim) in chunks {
-        let mesh_id = scene.add_mesh(Mesh::from_raw(chunk_verts, vec![chunk_prim]));
-        scene
-            .add_instance_node(Some(parent), mesh_id, edge_mat, None, Transform::IDENTITY)
-            .context("Failed to add edge instance node")?;
-    }
+    let primitive = MeshPrimitive { primitive_type: PrimitiveType::LineList, indices: edge_indices };
+    let mesh_id = scene.add_mesh(Mesh::from_raw(edge_verts, vec![primitive]));
+    scene
+        .add_instance_node(Some(parent), mesh_id, edge_mat, None, Transform::IDENTITY)
+        .context("Failed to add edge instance node")?;
 
     Ok(())
 }

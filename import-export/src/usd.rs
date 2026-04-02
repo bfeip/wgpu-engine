@@ -14,7 +14,7 @@ use cgmath::{Deg, Matrix3, Matrix4, Point3, SquareMatrix, Vector3};
 use openusd::sdf::{self, AbstractData, Value};
 
 use wgpu_engine_scene::{
-    Camera, DEFAULT_MATERIAL_ID, Light, Material, MaterialId, Mesh, MeshId,
+    Camera, DEFAULT_MATERIAL_ID, Light, Material, MaterialId, Mesh, MeshId, MeshPrimitive,
     NodeId, PrimitiveType, Scene, Vertex, MAX_LIGHTS,
 };
 use wgpu_engine_scene::common::{RgbaColor, Transform, decompose_matrix};
@@ -554,7 +554,7 @@ fn get_float_from_prop(data: &mut dyn AbstractData, prop_path: &sdf::Path) -> Op
 // ============================================================================
 
 /// Extract mesh geometry from a Mesh prim.
-/// Returns Vec of (MeshId, MaterialId) pairs (may be split for u16 indices).
+/// Returns a Vec of (MeshId, MaterialId) pairs (one per material binding found).
 fn extract_mesh(
     data: &mut dyn AbstractData,
     mesh_path: &sdf::Path,
@@ -629,17 +629,9 @@ fn extract_mesh(
         return Vec::new();
     }
 
-    // Split if needed for u16 index limit
-    let chunks =
-        wgpu_engine_scene::to_u16_primitives(&vertices, &indices, PrimitiveType::TriangleList);
-    chunks
-        .into_iter()
-        .map(|(chunk_verts, chunk_prim)| {
-            let mesh = Mesh::from_raw(chunk_verts, vec![chunk_prim]);
-            let mesh_id = scene.add_mesh(mesh);
-            (mesh_id, material_id)
-        })
-        .collect()
+    let primitive = MeshPrimitive { primitive_type: PrimitiveType::TriangleList, indices };
+    let mesh_id = scene.add_mesh(Mesh::from_raw(vertices, vec![primitive]));
+    vec![(mesh_id, material_id)]
 }
 
 /// Try reading UV coordinates from various primvar names.

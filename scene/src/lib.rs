@@ -12,7 +12,6 @@ mod coordinate_space;
 mod light;
 mod material;
 mod mesh;
-mod mesh_util;
 mod node;
 mod texture;
 
@@ -39,7 +38,6 @@ pub use material::{
     DEFAULT_METALLIC, DEFAULT_ROUGHNESS,
 };
 pub use mesh::{Mesh, MeshDescriptor, MeshIndex, MeshPrimitive, ObjMesh, PrimitiveType, Vertex};
-pub use mesh_util::{split_line_mesh, split_mesh, to_u16_primitives};
 pub use node::{EffectiveVisibility, Node, Visibility};
 pub use texture::{Texture, TextureFormat};
 pub use environment::{

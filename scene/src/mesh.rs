@@ -10,8 +10,8 @@ use crate::common::Aabb;
 /// Unique identifier for a mesh in the scene.
 pub type MeshId = u32;
 
-/// Index type used for mesh index buffers (u16 supports up to 65,536 vertices per mesh).
-pub type MeshIndex = u16;
+/// Index type used for mesh index buffers.
+pub type MeshIndex = u32;
 
 /// Primitive types for mesh rendering
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
@@ -269,7 +269,7 @@ impl Mesh {
         // OBJ files contain triangles, so create a triangle primitive
         let primitives = vec![MeshPrimitive {
             primitive_type: PrimitiveType::TriangleList,
-            indices: obj.indices,
+            indices: obj.indices.iter().map(|&i| i as MeshIndex).collect(),
         }];
 
         Ok(Self::from_raw(vertices, primitives))

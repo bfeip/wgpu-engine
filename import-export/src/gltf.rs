@@ -1,7 +1,7 @@
 use std::path::Path;
 use wgpu_engine_scene::{
-    AlphaMode, Camera, Material, MaterialFlags, Texture, TextureFormat, Mesh, MeshId, PrimitiveType,
-    Scene, Vertex, MaterialId, DEFAULT_MATERIAL_ID,
+    AlphaMode, Camera, Material, MaterialFlags, Texture, TextureFormat, Mesh, MeshId, MeshPrimitive,
+    PrimitiveType, Scene, Vertex, MaterialId, DEFAULT_MATERIAL_ID,
 };
 
 /// A loaded primitive from a glTF mesh, containing the scene mesh ID and its material ID.
@@ -625,13 +625,9 @@ pub fn load_gltf_assets(
             let material_id =
                 get_material_for_primitive(&primitive, primitive_type, &material_map);
 
-            // Convert u32 indices to u16, splitting the mesh if it exceeds the u16 vertex limit
-            let chunks = wgpu_engine_scene::to_u16_primitives(&vertices, &indices_u32, primitive_type);
-            for (chunk_verts, chunk_prim) in chunks {
-                let mesh_obj = Mesh::from_raw(chunk_verts, vec![chunk_prim]);
-                let mesh_id = scene.add_mesh(mesh_obj);
-                primitives_data.push((mesh_id, material_id));
-            }
+            let primitive = MeshPrimitive { primitive_type, indices: indices_u32 };
+            let mesh_id = scene.add_mesh(Mesh::from_raw(vertices, vec![primitive]));
+            primitives_data.push((mesh_id, material_id));
         }
 
         mesh_map.push(primitives_data);

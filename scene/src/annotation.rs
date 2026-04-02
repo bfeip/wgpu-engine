@@ -111,11 +111,11 @@ impl PolylineAnnotation {
 
         let mut indices = Vec::new();
         for i in 0..self.points.len().saturating_sub(1) {
-            indices.push(i as u16);
-            indices.push((i + 1) as u16);
+            indices.push(i as u32);
+            indices.push((i + 1) as u32);
         }
         if self.closed && self.points.len() > 2 {
-            indices.push((self.points.len() - 1) as u16);
+            indices.push((self.points.len() - 1) as u32);
             indices.push(0);
         }
 
@@ -159,7 +159,7 @@ impl PointsAnnotation {
             })
             .collect();
 
-        let indices: Vec<u16> = (0..self.positions.len() as u16).collect();
+        let indices: Vec<u32> = (0..self.positions.len() as u32).collect();
 
         let primitives = vec![MeshPrimitive {
             primitive_type: PrimitiveType::PointList,
@@ -305,7 +305,7 @@ impl GridAnnotation {
             let start = self.center + Vector3::new(-half_size, 0.0, z);
             let end = self.center + Vector3::new(half_size, 0.0, z);
 
-            let idx = vertices.len() as u16;
+            let idx = vertices.len() as u32;
             vertices.push(Vertex {
                 position: start.into(),
                 tex_coords: [0.0; 3],
@@ -326,7 +326,7 @@ impl GridAnnotation {
             let start = self.center + Vector3::new(x, 0.0, -half_size);
             let end = self.center + Vector3::new(x, 0.0, half_size);
 
-            let idx = vertices.len() as u16;
+            let idx = vertices.len() as u32;
             vertices.push(Vertex {
                 position: start.into(),
                 tex_coords: [0.0; 3],
@@ -510,8 +510,8 @@ impl NormalsAnnotation {
                         tex_coords: [0.0; 3],
                         normal: [0.0, 1.0, 0.0],
                     });
-                    indices.push((i * 2) as u16);
-                    indices.push((i * 2 + 1) as u16);
+                    indices.push((i * 2) as u32);
+                    indices.push((i * 2 + 1) as u32);
                 }
 
                 let primitives = vec![MeshPrimitive {
