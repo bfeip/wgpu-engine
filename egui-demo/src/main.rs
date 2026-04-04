@@ -27,6 +27,7 @@ enum DebugAction {
 /// Application state for the winit event loop with egui integration
 struct App<'a> {
     viewer_app: Option<EguiViewerApp<'a>>,
+    ui: ui::UiState,
     /// Pending HDR environment path to load
     pending_hdr_path: Option<std::path::PathBuf>,
     /// Pending scene file path to load
@@ -53,8 +54,9 @@ impl<'a> App<'a> {
         let mut ui_actions = ui::UiActions::default();
         {
             let viewer_app = self.viewer_app.as_mut().unwrap();
+            let ui = &mut self.ui;
             if let Err(e) = viewer_app.render(|ctx, viewer| {
-                ui_actions = ui::build(ctx, viewer);
+                ui_actions = ui.build(ctx, viewer);
             }) {
                 log::error!("Render error: {}", e);
             }
@@ -366,6 +368,7 @@ fn main() {
     // Create application state
     let mut app = App {
         viewer_app: None,
+        ui: ui::UiState::default(),
         pending_hdr_path: None,
         pending_scene_load_path: None,
         pending_scene_save_path: None,
