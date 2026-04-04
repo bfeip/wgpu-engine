@@ -5492,6 +5492,7 @@ dependencies = [
  "anyhow",
  "bincode",
  "bytemuck",
+ "cad",
  "cgmath",
  "criterion",
  "gltf",

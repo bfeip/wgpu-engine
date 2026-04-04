@@ -32,6 +32,8 @@
 
 #[cfg(feature = "assimp")]
 pub mod assimp;
+#[cfg(feature = "cad")]
+pub mod cad;
 pub mod format;
 pub mod gltf;
 pub mod importer;
@@ -102,6 +104,10 @@ pub enum DetectedFormat {
     Gltf,
     #[cfg(feature = "assimp")]
     Assimp,
+    #[cfg(feature = "cad")]
+    Step,
+    #[cfg(feature = "cad")]
+    Iges,
     #[cfg(feature = "usd")]
     Usd,
     /// A custom format provided by a user-defined [`Importer`].
@@ -157,6 +163,10 @@ pub enum LoadError {
     #[cfg(feature = "assimp")]
     #[error("Assimp error: {0}")]
     Assimp(String),
+
+    #[cfg(feature = "cad")]
+    #[error("CAD error: {0}")]
+    Cad(String),
 
     #[cfg(feature = "usd")]
     #[error("USD error: {0}")]

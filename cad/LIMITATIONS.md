@@ -50,3 +50,12 @@ STEP files typically use millimetres; the engine has no concept of units. `CadIm
 The importer only extracts tessellated triangle/line geometry. The underlying B-Rep topology (surfaces, curves, topology graph) is discarded after tessellation.
 
 **Future work:** If parametric re-tessellation or CAD editing is needed, retain the OCCT shape tree alongside the scene representation.
+
+---
+
+### No in-memory (bytes) loading
+**Status:** Unresolved
+
+`opencascade-rs` only exposes `ReadFile(filename)` — the underlying OCCT C++ bindings have no stream or memory-based read path for STEP or IGES. Loading CAD files from `SceneSource::Bytes` (with no filesystem path) is therefore unsupported. The `import-export` `CadImporter` returns `LoadError::UnsupportedPlatform` in this case.
+
+**Future work:** Expose OCCT's in-memory stream reading in `opencascade-rs` (e.g. via `OSD_MemStream`) and update `cad::load_step` / `load_iges` to accept `&[u8]` directly.

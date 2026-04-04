@@ -178,6 +178,9 @@ impl<'a> App<'a> {
         #[cfg(feature = "usd")]
         extensions.extend_from_slice(import_export::usd::USD_EXTENSIONS);
 
+        #[cfg(feature = "cad")]
+        extensions.extend_from_slice(import_export::cad::CAD_EXTENSIONS);
+
         let file = rfd::FileDialog::new()
             .add_filter("3D Scenes", &extensions)
             .pick_file();

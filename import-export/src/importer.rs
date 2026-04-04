@@ -359,16 +359,103 @@ impl Importer for AssimpImporter {
 // Importer Registry
 // ============================================================================
 
+/// Importer for STEP and IGES CAD files.
+///
+/// Uses OpenCASCADE via the `wgpu-engine-cad` crate for tessellation.
+/// Requires a filesystem path (`path_hint`); loading from raw bytes is not
+/// supported by the underlying `opencascade-rs` bindings.
+#[cfg(feature = "cad")]
+pub struct CadImporter;
+
+#[cfg(feature = "cad")]
+impl Importer for CadImporter {
+    fn name(&self) -> &str {
+        "CAD"
+    }
+
+    fn detect_from_bytes(&self, bytes: &[u8]) -> bool {
+        // STEP files begin with the ISO 10303-21 exchange format header.
+        // IGES has no reliable magic bytes; it falls back to extension detection.
+        bytes.starts_with(b"ISO-10303-21")
+    }
+
+    fn detect_from_extension(&self, ext: &str) -> bool {
+        crate::cad::is_cad_extension(ext)
+    }
+
+    fn phase_weights(&self) -> PhaseWeights {
+        // OCCT tessellation is a monolithic step with no item-level progress,
+        // so we give it the bulk of the weight under Parsing.
+        PhaseWeights::new(&[
+            (LoadPhase::Reading, 10),
+            (LoadPhase::Parsing, 80),
+            (LoadPhase::Assembling, 10),
+        ])
+    }
+
+    fn load(
+        &self,
+        bytes: &[u8],
+        path_hint: Option<&Path>,
+        _options: &LoadOptions,
+        progress: &LoadProgress,
+    ) -> Result<SceneLoadResult, LoadError> {
+        let path = path_hint.ok_or_else(|| {
+            LoadError::UnsupportedPlatform(
+                "CAD loading requires a file path (in-memory loading is not supported by opencascade-rs)".into(),
+            )
+        })?;
+
+        progress.enter_phase(LoadPhase::Parsing);
+
+        let is_step = bytes.starts_with(b"ISO-10303-21")
+            || path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(crate::cad::is_step_extension)
+                .unwrap_or(false);
+
+        let mut scene = wgpu_engine_scene::Scene::new();
+        let options = cad::CadImportOptions::default();
+
+        let result = if is_step {
+            cad::load_step(path, &mut scene, &options)
+                .map_err(|e| LoadError::Cad(e.to_string()))
+        } else {
+            cad::load_iges(path, &mut scene, &options)
+                .map_err(|e| LoadError::Cad(e.to_string()))
+        };
+        result?;
+
+        progress.enter_phase(LoadPhase::Assembling);
+        progress.enter_phase(LoadPhase::Complete);
+
+        let format = if is_step {
+            DetectedFormat::Step
+        } else {
+            DetectedFormat::Iges
+        };
+
+        Ok(SceneLoadResult {
+            scene,
+            camera: None,
+            format,
+        })
+    }
+}
+
 /// Returns the default set of built-in importers.
 ///
 /// The order determines detection priority (first match wins):
-/// WGSC, glTF, USD (if enabled), Assimp (if enabled).
+/// WGSC, glTF, CAD (if enabled), USD (if enabled), Assimp (if enabled).
 pub fn default_importers() -> Vec<Box<dyn Importer>> {
     #[allow(unused_mut)]
     let mut importers: Vec<Box<dyn Importer>> = vec![
         Box::new(WgscImporter),
         Box::new(GltfImporter),
     ];
+    #[cfg(feature = "cad")]
+    importers.push(Box::new(CadImporter));
     #[cfg(feature = "usd")]
     importers.push(Box::new(UsdImporter));
     #[cfg(feature = "assimp")]

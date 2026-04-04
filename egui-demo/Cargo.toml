@@ -5,6 +5,7 @@ edition = "2024"
 
 [features]
 assimp = ["wgpu-engine-viewer/assimp"]
+cad = ["wgpu-engine-viewer/cad"]
 usd = ["wgpu-engine-viewer/usd"]
 
 [dependencies]

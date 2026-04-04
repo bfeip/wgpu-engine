@@ -4,9 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = []
+default = ["assimp", "usd"]
 assimp = ["dep:russimp"]
 usd = ["dep:openusd", "dep:zip"]
+cad = ["dep:cad"]
 
 [dependencies]
 wgpu-engine-scene = { path = "../scene", features = ["serde"] }
@@ -25,6 +26,7 @@ zstd = "0.13"
 russimp = { version = "3", features = ["prebuilt"], optional = true }
 openusd = { version = "0.1", optional = true }
 zip = { version = "8", optional = true, default-features = false, features = ["deflate"] }
+cad = { package = "cad", path = "../cad", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 rayon = "1.10"
