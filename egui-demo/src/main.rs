@@ -204,6 +204,8 @@ impl<'a> App<'a> {
                 viewer.set_scene(result.scene);
                 if let Some(camera) = result.camera {
                     viewer.set_camera(camera);
+                } else if let Some(bounds) = viewer.scene().bounding() {
+                    viewer.camera_mut().fit_to_bounds(&bounds);
                 }
                 log::info!("Loaded scene: {}", path_str);
             }
