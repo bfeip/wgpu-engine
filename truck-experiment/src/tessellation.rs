@@ -108,8 +108,8 @@ fn tessellate_edges(body: &Body, options: &TessellationOptions) -> HashMap<EdgeI
         }
 
         for i in 0..n_segments {
-            indices.push(i as u16);
-            indices.push((i + 1) as u16);
+            indices.push(i as u32);
+            indices.push((i + 1) as u32);
         }
 
         let primitive = MeshPrimitive {
@@ -133,7 +133,7 @@ fn polygon_mesh_to_scene_mesh(polygon: &truck_polymesh::PolygonMesh) -> Mesh {
     // Truck uses indexed attributes; we flatten to per-vertex data.
     let mut vertices = Vec::new();
     let mut indices = Vec::new();
-    let mut vertex_map: HashMap<(usize, usize), u16> = HashMap::new();
+    let mut vertex_map: HashMap<(usize, usize), u32> = HashMap::new();
 
     for tri in polygon.tri_faces() {
         for sv in tri {
@@ -144,7 +144,7 @@ fn polygon_mesh_to_scene_mesh(polygon: &truck_polymesh::PolygonMesh) -> Mesh {
             let vertex_idx = if let Some(&idx) = vertex_map.get(&key) {
                 idx
             } else {
-                let idx = vertices.len() as u16;
+                let idx = vertices.len() as u32;
                 let pos = positions[pos_idx];
                 let nor = if sv.nor.is_some() && nor_idx < normals.len() {
                     normals[nor_idx]

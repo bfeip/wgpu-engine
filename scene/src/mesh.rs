@@ -499,7 +499,7 @@ mod tests {
         assert_eq!(lines.indices.len(), 10);
 
         // Collect edges as pairs for verification
-        let edges: Vec<(u16, u16)> = lines
+        let edges: Vec<(u32, u32)> = lines
             .indices
             .chunks_exact(2)
             .map(|e| {
