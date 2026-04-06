@@ -1,5 +1,5 @@
 
-pub use wgpu_engine_common as common;
+pub use duck_engine_common as common;
 
 // Scene submodules
 mod camera;
@@ -71,8 +71,8 @@ pub struct SceneProperties {
 /// # Examples
 ///
 /// ```
-/// use wgpu_engine_scene::{Scene, Mesh, MeshPrimitive, Vertex, Material, PrimitiveType, common};
-/// use wgpu_engine_scene::common::RgbaColor;
+/// use duck_engine_scene::{Scene, Mesh, MeshPrimitive, Vertex, Material, PrimitiveType, common};
+/// use duck_engine_scene::common::RgbaColor;
 ///
 /// let mut scene = Scene::new();
 ///

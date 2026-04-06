@@ -1,14 +1,14 @@
 [package]
-name = "wgpu-engine-renderer"
+name = "duck-engine-renderer"
 version = "0.1.0"
 edition = "2024"
 
 [lib]
-name = "wgpu_engine_renderer"
+name = "duck_engine_renderer"
 path = "src/lib.rs"
 
 [dependencies]
-wgpu-engine-scene = { path = "../scene" }
+duck-engine-scene = { path = "../scene" }
 anyhow = "1.0"
 bytemuck = { version = "1.16", features = ["derive"] }
 cgmath = "0.18"

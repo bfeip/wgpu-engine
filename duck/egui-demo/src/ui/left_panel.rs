@@ -1,4 +1,4 @@
-use wgpu_engine_viewer::Viewer;
+use duck_engine_viewer::Viewer;
 
 use super::{environment_tab, lights_tab, scene_tab, UiActions};
 

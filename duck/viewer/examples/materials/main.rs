@@ -1,7 +1,7 @@
 use std::{sync::Arc};
 
 use cgmath::{Point3, Vector3};
-use wgpu_engine_scene::CoordinateSpace;
+use duck_engine_scene::CoordinateSpace;
 use winit::{
     application::ApplicationHandler,
     event::{DeviceEvent, DeviceId, WindowEvent},
@@ -9,10 +9,10 @@ use winit::{
     window::{Window, WindowId},
 };
 
-use wgpu_engine_viewer::common::{RgbaColor, Transform};
-use wgpu_engine_viewer::input::{ElementState, Key};
-use wgpu_engine_viewer::scene::{EnvironmentMapId, Light, Material, MaterialFlags, Mesh, PrimitiveType};
-use wgpu_engine_viewer::{Viewer, winit_support};
+use duck_engine_viewer::common::{RgbaColor, Transform};
+use duck_engine_viewer::input::{ElementState, Key};
+use duck_engine_viewer::scene::{EnvironmentMapId, Light, Material, MaterialFlags, Mesh, PrimitiveType};
+use duck_engine_viewer::{Viewer, winit_support};
 
 const SPHERE_RADIUS: f32 = 0.4;
 const SPHERE_SEGMENTS: u32 = 32;
@@ -316,7 +316,7 @@ impl<'a> ApplicationHandler for App<'a> {
         let viewer = self.viewer.as_mut().unwrap();
         viewer.handle_event(&app_event);
 
-        let wgpu_engine_viewer::event::Event::KeyboardInput {
+        let duck_engine_viewer::event::Event::KeyboardInput {
             event: key_event, ..
         } = &app_event
         else {
@@ -326,7 +326,7 @@ impl<'a> ApplicationHandler for App<'a> {
             return;
         }
         match &key_event.logical_key {
-            Key::Named(wgpu_engine_viewer::input::NamedKey::Escape) => event_loop.exit(),
+            Key::Named(duck_engine_viewer::input::NamedKey::Escape) => event_loop.exit(),
             Key::Character('e') => {
                 if let Some(env_id) = self.env_map_id {
                     let scene = viewer.scene_mut();

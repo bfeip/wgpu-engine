@@ -16,7 +16,7 @@ use crate::{
     renderer::SelectionQuery,
 };
 
-use wgpu_engine_renderer::Renderer;
+use duck_engine_renderer::Renderer;
 
 /// Main viewer that encapsulates the renderer, scene, and event handling
 pub struct Viewer<'a> {
@@ -378,7 +378,7 @@ impl<'a> Viewer<'a> {
     ///
     /// # Example
     /// ```no_run
-    /// # use wgpu_engine_viewer::Viewer;
+    /// # use duck_engine_viewer::Viewer;
     /// # fn example(viewer: &mut Viewer, id1: u32, id2: u32) {
     /// let (op_mgr, dispatcher) = viewer.operator_manager_and_dispatcher_mut();
     /// op_mgr.swap(id1, id2, dispatcher);

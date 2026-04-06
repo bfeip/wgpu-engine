@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use truck_meshalgo::tessellation::{MeshableShape, MeshedShape};
 use truck_modeling::{self as truck, ParametricCurve};
-use wgpu_engine_scene::{Mesh, MeshPrimitive, PrimitiveType, Vertex};
+use duck_engine_scene::{Mesh, MeshPrimitive, PrimitiveType, Vertex};
 
 use crate::body::Body;
 use crate::edge::EdgeId;

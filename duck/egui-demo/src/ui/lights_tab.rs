@@ -1,7 +1,7 @@
 use cgmath::{InnerSpace, Vector3};
-use wgpu_engine_viewer::common::RgbaColor;
-use wgpu_engine_viewer::scene::{Light, LightType, MAX_LIGHTS};
-use wgpu_engine_viewer::Viewer;
+use duck_engine_viewer::common::RgbaColor;
+use duck_engine_viewer::scene::{Light, LightType, MAX_LIGHTS};
+use duck_engine_viewer::Viewer;
 
 use super::UiActions;
 

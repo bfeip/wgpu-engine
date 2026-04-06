@@ -2,8 +2,8 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use opencascade::primitives::Shape;
-use wgpu_engine_scene::{Mesh, Material, MeshPrimitive, NodeId, PrimitiveType, Scene, Vertex};
-use wgpu_engine_scene::common::{RgbaColor, Transform};
+use duck_engine_scene::{Mesh, Material, MeshPrimitive, NodeId, PrimitiveType, Scene, Vertex};
+use duck_engine_scene::common::{RgbaColor, Transform};
 
 /// Options controlling how a CAD file is imported.
 pub struct CadImportOptions {

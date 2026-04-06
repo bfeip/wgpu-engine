@@ -1,4 +1,4 @@
-import { WebLoadPhase } from "../../pkg/wgpu_engine_viewer";
+import { WebLoadPhase } from "../../pkg/duck_engine_viewer";
 
 interface LoadingOverlayProps {
   pct: number;

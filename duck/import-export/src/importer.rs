@@ -215,7 +215,7 @@ impl Importer for GltfImporter {
         progress: &LoadProgress,
     ) -> Result<SceneLoadResult, LoadError> {
         use crate::gltf::{build_gltf_scene, load_gltf_assets, parse_gltf, parse_gltf_from_path};
-        use wgpu_engine_scene::Scene;
+        use duck_engine_scene::Scene;
 
         progress.enter_phase(LoadPhase::Parsing);
         let parsed = if let Some(path) = path_hint {
@@ -415,7 +415,7 @@ impl Importer for CadImporter {
                 .map(crate::cad::is_step_extension)
                 .unwrap_or(false);
 
-        let mut scene = wgpu_engine_scene::Scene::new();
+        let mut scene = duck_engine_scene::Scene::new();
         let options = cad::CadImportOptions::default();
 
         let result = if is_step {

@@ -8,9 +8,9 @@ mod scene_tab;
 pub use left_panel::LeftPanel;
 pub use right_panel::RightPanel;
 
-use wgpu_engine_viewer::operator::NavigationMode;
-use wgpu_engine_viewer::scene::{LightType, NodeId, Visibility};
-use wgpu_engine_viewer::Viewer;
+use duck_engine_viewer::operator::NavigationMode;
+use duck_engine_viewer::scene::{LightType, NodeId, Visibility};
+use duck_engine_viewer::Viewer;
 
 /// A visibility change requested by the UI.
 pub struct VisibilityChange {

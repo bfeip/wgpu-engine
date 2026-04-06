@@ -1,11 +1,11 @@
 [package]
-name = "wgpu-engine-viewer"
+name = "duck-engine-viewer"
 version = "0.1.0"
 edition = "2024"
 
 
 [lib]
-name = "wgpu_engine_viewer"
+name = "duck_engine_viewer"
 crate-type = ["cdylib", "rlib"]
 path = "src/lib.rs"
 
@@ -24,16 +24,16 @@ required-features = ["winit-support"]
 [features]
 winit-support = ["winit"]
 egui-support = ["winit-support", "egui", "egui-wgpu", "egui-winit"]
-assimp = ["wgpu-engine-import-export/assimp"]
-cad = ["wgpu-engine-import-export/cad"]
-usd = ["wgpu-engine-import-export/usd"]
+assimp = ["duck-engine-import-export/assimp"]
+cad = ["duck-engine-import-export/cad"]
+usd = ["duck-engine-import-export/usd"]
 
 
 # Shared dependencies
 [dependencies]
-wgpu-engine-renderer = { path = "../renderer" }
-wgpu-engine-scene = { path = "../scene" }
-wgpu-engine-import-export = { path = "../import-export" }
+duck-engine-renderer = { path = "../renderer" }
+duck-engine-scene = { path = "../scene" }
+duck-engine-import-export = { path = "../import-export" }
 anyhow = "1.0"
 bitflags = "2.0"
 bytemuck = { version = "1.16", features = ["derive"] }

@@ -1,5 +1,5 @@
 use truck_modeling::builder;
-use wgpu_engine_scene::{Material, PrimitiveType, Scene};
+use duck_engine_scene::{Material, PrimitiveType, Scene};
 
 use crate::{add_body_to_scene, tessellate_body, Body, TessellationOptions};
 
@@ -88,7 +88,7 @@ fn add_body_to_scene_creates_nodes() {
     let mut scene = Scene::new();
     let face_material = scene.add_material(Material::default());
     let line_material = scene.add_material(Material::default().with_line_color(
-        wgpu_engine_common::RgbaColor::BLACK,
+        duck_engine_common::RgbaColor::BLACK,
     ));
 
     let map = add_body_to_scene(&body, &tessellated, &mut scene, face_material, line_material)
@@ -128,7 +128,7 @@ fn scene_nodes_are_children_of_body_root() {
     let mut scene = Scene::new();
     let face_material = scene.add_material(Material::default());
     let line_material = scene.add_material(Material::default().with_line_color(
-        wgpu_engine_common::RgbaColor::BLACK,
+        duck_engine_common::RgbaColor::BLACK,
     ));
 
     let map = add_body_to_scene(&body, &tessellated, &mut scene, face_material, line_material)

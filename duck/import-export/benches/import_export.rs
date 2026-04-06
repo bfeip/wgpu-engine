@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use wgpu_engine_import_export::{LoadOptions, SceneSource, format, load_sync};
+use duck_engine_import_export::{LoadOptions, SceneSource, format, load_sync};
 
 fn assets_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets")
@@ -85,7 +85,7 @@ fn bench_wgsc_file_io(c: &mut Criterion) {
     let scene = result.scene;
 
     // Write a WGSC file once for load benchmarks
-    let tmp_dir = std::env::temp_dir().join("wgpu_engine_bench");
+    let tmp_dir = std::env::temp_dir().join("duck_engine_bench");
     std::fs::create_dir_all(&tmp_dir).unwrap();
     let wgsc_path = tmp_dir.join("bench_scene.wgsc");
     format::save_to_file(&scene, &wgsc_path).unwrap();

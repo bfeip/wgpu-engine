@@ -1,11 +1,11 @@
 [package]
-name = "wgpu-engine-cad"
+name = "duck-engine-cad"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-wgpu-engine-scene = { path = "../scene" }
-wgpu-engine-common = { path = "../common" }
+duck-engine-scene = { path = "../scene" }
+duck-engine-common = { path = "../common" }
 truck-modeling = "0.6"
 truck-meshalgo = "0.4"
 truck-polymesh = "0.6"
@@ -22,7 +22,7 @@ name = "boolean"
 path = "examples/boolean/main.rs"
 
 [dev-dependencies]
-wgpu-engine-viewer = { path = "../viewer", features = ["winit-support"] }
+duck-engine-viewer = { path = "../viewer", features = ["winit-support"] }
 winit = "0.30"
 pollster = "0.3"
 env_logger = "0.10"

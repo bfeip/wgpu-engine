@@ -23,7 +23,7 @@ pub(crate) use prefilter::PrefilterPipeline;
 use wgpu::util::DeviceExt;
 
 // Re-export EnvironmentMap types from scene crate
-pub use wgpu_engine_scene::{
+pub use duck_engine_scene::{
     EnvironmentMap, EnvironmentMapId, EnvironmentSource, PreprocessedCubemap, PreprocessedIbl,
 };
 

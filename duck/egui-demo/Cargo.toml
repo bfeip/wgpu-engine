@@ -4,12 +4,12 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-assimp = ["wgpu-engine-viewer/assimp"]
-cad = ["wgpu-engine-viewer/cad"]
-usd = ["wgpu-engine-viewer/usd"]
+assimp = ["duck-engine-viewer/assimp"]
+cad = ["duck-engine-viewer/cad"]
+usd = ["duck-engine-viewer/usd"]
 
 [dependencies]
-wgpu-engine-viewer = { path = "../viewer", features = ["egui-support"] }
+duck-engine-viewer = { path = "../viewer", features = ["egui-support"] }
 cgmath = "0.18"
 egui = "0.33"
 env_logger = "0.11"

@@ -142,7 +142,7 @@ pub enum MeshDescriptor<'a> {
 /// # Examples
 ///
 /// ```
-/// use wgpu_engine_scene::{Mesh, MeshPrimitive, Vertex, Scene, PrimitiveType};
+/// use duck_engine_scene::{Mesh, MeshPrimitive, Vertex, Scene, PrimitiveType};
 ///
 /// // Create from raw data (no device needed)
 /// let vertices = vec![

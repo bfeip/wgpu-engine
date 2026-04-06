@@ -1,5 +1,5 @@
-use wgpu_engine_viewer::operator::NavigationMode;
-use wgpu_engine_viewer::Viewer;
+use duck_engine_viewer::operator::NavigationMode;
+use duck_engine_viewer::Viewer;
 
 use super::ModeInfo;
 

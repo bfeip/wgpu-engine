@@ -1,5 +1,5 @@
-use wgpu_engine_viewer::scene::{EffectiveVisibility, NodeId, Visibility};
-use wgpu_engine_viewer::Viewer;
+use duck_engine_viewer::scene::{EffectiveVisibility, NodeId, Visibility};
+use duck_engine_viewer::Viewer;
 
 use super::{UiActions, VisibilityChange};
 
@@ -36,7 +36,7 @@ pub fn show(ui: &mut egui::Ui, viewer: &Viewer, actions: &mut UiActions) {
 /// Recursively render a node and its children in the scene tree.
 pub fn render_node_tree(
     ui: &mut egui::Ui,
-    scene: &wgpu_engine_viewer::scene::Scene,
+    scene: &duck_engine_viewer::scene::Scene,
     node_id: NodeId,
     depth: usize,
     actions: &mut UiActions,

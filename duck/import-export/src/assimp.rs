@@ -14,11 +14,11 @@ use russimp::material::{Material as RMaterial, TextureType};
 use russimp::node::Node as RNode;
 use russimp::scene::{PostProcess, Scene as RScene};
 
-use wgpu_engine_scene::{
+use duck_engine_scene::{
     Camera, DEFAULT_MATERIAL_ID, Light, Material, MaterialId, Mesh, MeshId, MeshPrimitive,
     NodeId, PrimitiveType, Scene, Texture, TextureId, Vertex, MAX_LIGHTS,
 };
-use wgpu_engine_scene::common::{RgbaColor, Transform, decompose_matrix};
+use duck_engine_scene::common::{RgbaColor, Transform, decompose_matrix};
 
 /// Result of loading a scene via assimp.
 pub struct AssimpLoadResult {

@@ -22,7 +22,7 @@
 //! # Examples
 //!
 //! ```no_run
-//! use wgpu_engine_import_export::{load_async, LoadOptions, SceneSource};
+//! use duck_engine_import_export::{load_async, LoadOptions, SceneSource};
 //!
 //! let handle = load_async(SceneSource::Path("model.glb".into()), LoadOptions::default());
 //!
@@ -48,9 +48,9 @@ use std::sync::{Arc, Mutex};
 
 use thiserror::Error;
 
-use wgpu_engine_scene::Camera;
+use duck_engine_scene::Camera;
 use self::format::FormatError;
-use wgpu_engine_scene::Scene;
+use duck_engine_scene::Scene;
 
 // ============================================================================
 // Type Aliases
@@ -731,7 +731,7 @@ pub fn save_async(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wgpu_engine_scene::{Material, Mesh, PrimitiveType};
+    use duck_engine_scene::{Material, Mesh, PrimitiveType};
 
     fn create_test_scene() -> Scene {
         let mut scene = Scene::new();
@@ -744,7 +744,7 @@ mod tests {
                 mesh_id,
                 mat_id,
                 Some("TestNode".into()),
-                wgpu_engine_scene::common::Transform::IDENTITY,
+                duck_engine_scene::common::Transform::IDENTITY,
             )
             .unwrap();
         scene

@@ -77,8 +77,8 @@ pub struct MaterialProperties {
 /// # Examples
 ///
 /// ```
-/// use wgpu_engine_scene::{Material, Scene};
-/// use wgpu_engine_scene::common::RgbaColor;
+/// use duck_engine_scene::{Material, Scene};
+/// use duck_engine_scene::common::RgbaColor;
 ///
 /// // Create a simple colored material
 /// let material = Material::new()

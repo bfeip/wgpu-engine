@@ -1,5 +1,5 @@
-pub use wgpu_engine_common as common;
-pub use wgpu_engine_scene as scene;
+pub use duck_engine_common as common;
+pub use duck_engine_scene as scene;
 
 mod body;
 mod edge;

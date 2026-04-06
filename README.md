@@ -1,4 +1,4 @@
-# WGPU-Engine
+# Duck Engine
 
 This is my project graphics engine written in Rust with WGPU. It's currently in
 active development as of January 2026.

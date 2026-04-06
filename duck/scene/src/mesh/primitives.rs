@@ -15,7 +15,7 @@ impl Mesh {
     ///
     /// # Example
     /// ```
-    /// use wgpu_engine_scene::{Mesh, PrimitiveType};
+    /// use duck_engine_scene::{Mesh, PrimitiveType};
     /// let cube = Mesh::box_mesh(1.0, 1.0, 1.0, PrimitiveType::TriangleList);
     /// let rectangular = Mesh::box_mesh(2.0, 1.0, 0.5, PrimitiveType::TriangleList);
     /// ```
@@ -134,7 +134,7 @@ impl Mesh {
     ///
     /// # Example
     /// ```
-    /// use wgpu_engine_scene::{Mesh, PrimitiveType};
+    /// use duck_engine_scene::{Mesh, PrimitiveType};
     /// let sphere = Mesh::sphere(1.0, 32, 16, PrimitiveType::TriangleList);
     /// ```
     pub fn sphere(radius: f32, segments: u32, rings: u32, primitive_type: PrimitiveType) -> Self {
@@ -237,7 +237,7 @@ impl Mesh {
     ///
     /// # Example
     /// ```
-    /// use wgpu_engine_scene::{Mesh, PrimitiveType};
+    /// use duck_engine_scene::{Mesh, PrimitiveType};
     /// let cylinder = Mesh::cylinder(0.5, 2.0, 32, true, PrimitiveType::TriangleList);
     /// ```
     pub fn cylinder(
@@ -418,7 +418,7 @@ impl Mesh {
     ///
     /// # Example
     /// ```
-    /// use wgpu_engine_scene::{Mesh, PrimitiveType};
+    /// use duck_engine_scene::{Mesh, PrimitiveType};
     /// let cone = Mesh::cone(0.5, 1.0, 32, true, PrimitiveType::TriangleList);
     /// ```
     pub fn cone(
@@ -610,7 +610,7 @@ impl Mesh {
     ///
     /// # Example
     /// ```
-    /// use wgpu_engine_scene::{Mesh, PrimitiveType};
+    /// use duck_engine_scene::{Mesh, PrimitiveType};
     /// let torus = Mesh::torus(1.0, 0.3, 32, 16, PrimitiveType::TriangleList);
     /// ```
     pub fn torus(
@@ -721,7 +721,7 @@ impl Mesh {
     ///
     /// # Example
     /// ```
-    /// use wgpu_engine_scene::{Mesh, PrimitiveType};
+    /// use duck_engine_scene::{Mesh, PrimitiveType};
     /// let plane = Mesh::plane(10.0, 10.0, 1, 1, PrimitiveType::TriangleList);
     /// let detailed_plane = Mesh::plane(10.0, 10.0, 10, 10, PrimitiveType::TriangleList);
     /// ```
@@ -819,7 +819,7 @@ impl Mesh {
     ///
     /// # Example
     /// ```
-    /// use wgpu_engine_scene::{Mesh, PrimitiveType};
+    /// use duck_engine_scene::{Mesh, PrimitiveType};
     /// let quad = Mesh::quad(2.0, 1.0, PrimitiveType::TriangleList);
     /// ```
     pub fn quad(width: f32, height: f32, primitive_type: PrimitiveType) -> Self {

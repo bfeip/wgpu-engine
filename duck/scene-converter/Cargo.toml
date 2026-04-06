@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-wgpu-engine-scene = { path = "../scene" }
-wgpu-engine-import-export = { path = "../import-export" }
-wgpu-engine-renderer = { path = "../renderer" }
+duck-engine-scene = { path = "../scene" }
+duck-engine-import-export = { path = "../import-export" }
+duck-engine-renderer = { path = "../renderer" }
 clap = { version = "4", features = ["derive"] }
 anyhow = "1.0"
 image = { version = "0.25", default-features = false }

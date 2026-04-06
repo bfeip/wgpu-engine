@@ -3,7 +3,7 @@
 //! Cubemaps are used to store environment maps, irradiance maps, and pre-filtered
 //! specular maps for image-based lighting.
 
-use wgpu_engine_scene::{CubemapFaceData, PreprocessedCubemap, CUBEMAP_FACES};
+use duck_engine_scene::{CubemapFaceData, PreprocessedCubemap, CUBEMAP_FACES};
 
 /// GPU resources for a cubemap texture.
 ///

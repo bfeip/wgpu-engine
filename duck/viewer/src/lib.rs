@@ -1,15 +1,15 @@
 // Re-export renderer crate
-pub use wgpu_engine_renderer as renderer;
+pub use duck_engine_renderer as renderer;
 
 // Re-export scene crate as `scene` module
-pub use wgpu_engine_scene as scene;
+pub use duck_engine_scene as scene;
 
 // Re-export import-export crate
-pub use wgpu_engine_import_export as import_export;
+pub use duck_engine_import_export as import_export;
 
 // Re-export common subsystems from scene crate
-pub use wgpu_engine_scene::common;
-pub use wgpu_engine_scene::geom_query;
+pub use duck_engine_scene::common;
+pub use duck_engine_scene::geom_query;
 
 // Core modules
 pub mod event;

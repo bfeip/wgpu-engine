@@ -1,5 +1,5 @@
 use std::path::Path;
-use wgpu_engine_scene::{
+use duck_engine_scene::{
     AlphaMode, Camera, Material, MaterialFlags, Texture, TextureFormat, Mesh, MeshId, MeshPrimitive,
     PrimitiveType, Scene, Vertex, MaterialId, DEFAULT_MATERIAL_ID,
 };
@@ -268,7 +268,7 @@ fn load_gltf_texture(
     buffers: &[gltf::buffer::Data],
     base_path: Option<&Path>,
     scene: &mut Scene,
-) -> anyhow::Result<wgpu_engine_scene::TextureId> {
+) -> anyhow::Result<duck_engine_scene::TextureId> {
     // For external files, use path-based texture (lazy loading, preserves original format)
     if let Some(path) = resolve_image_path(image_index, document, base_path) {
         let texture = Texture::from_path(path);
@@ -306,7 +306,7 @@ fn load_material(
 
     // Base color factor (always present, defaults to white in glTF)
     let base_color = pbr.base_color_factor();
-    material = material.with_base_color_factor(wgpu_engine_scene::common::RgbaColor {
+    material = material.with_base_color_factor(duck_engine_scene::common::RgbaColor {
         r: base_color[0],
         g: base_color[1],
         b: base_color[2],
@@ -385,8 +385,8 @@ fn transform_to_matrix(transform: &gltf::scene::Transform) -> cgmath::Matrix4<f3
 }
 
 /// Decomposes a glTF transform into position, rotation, and scale.
-fn decompose_transform(transform: &gltf::scene::Transform) -> wgpu_engine_scene::common::Transform {
-    wgpu_engine_scene::common::decompose_matrix(&transform_to_matrix(transform))
+fn decompose_transform(transform: &gltf::scene::Transform) -> duck_engine_scene::common::Transform {
+    duck_engine_scene::common::decompose_matrix(&transform_to_matrix(transform))
 }
 
 /// Extracts camera data from a glTF camera node.
@@ -656,7 +656,7 @@ pub fn build_gltf_scene(
         .default_scene()
         .or_else(|| parsed.document.scenes().next())
     {
-        let mut node_map: HashMap<usize, wgpu_engine_scene::NodeId> = HashMap::new();
+        let mut node_map: HashMap<usize, duck_engine_scene::NodeId> = HashMap::new();
 
         for gltf_node in gltf_scene.nodes() {
             load_node_recursive(&gltf_node, None, scene, mesh_map, &mut node_map)?;
@@ -701,10 +701,10 @@ fn load_gltf_from_data(
 /// Recursively loads a glTF node and its children.
 fn load_node_recursive(
     gltf_node: &gltf::Node,
-    parent: Option<wgpu_engine_scene::NodeId>,
-    scene: &mut wgpu_engine_scene::Scene,
+    parent: Option<duck_engine_scene::NodeId>,
+    scene: &mut duck_engine_scene::Scene,
     mesh_map: &[Vec<LoadedPrimitive>],
-    node_map: &mut std::collections::HashMap<usize, wgpu_engine_scene::NodeId>,
+    node_map: &mut std::collections::HashMap<usize, duck_engine_scene::NodeId>,
 ) -> anyhow::Result<()> {
 
     // Decompose transform
@@ -731,7 +731,7 @@ fn load_node_recursive(
                     *mesh_id,
                     *material_id,
                     None,
-                    wgpu_engine_scene::common::Transform::IDENTITY,
+                    duck_engine_scene::common::Transform::IDENTITY,
                 )?;
             }
 

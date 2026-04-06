@@ -471,8 +471,8 @@ name = "cad"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "duck-engine-scene",
  "opencascade",
- "wgpu-engine-scene",
 ]
 
 [[package]]
@@ -1136,6 +1136,122 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 
 [[package]]
+name = "duck-engine-cad"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cgmath",
+ "duck-engine-common",
+ "duck-engine-scene",
+ "duck-engine-viewer",
+ "env_logger 0.10.2",
+ "pollster 0.3.0",
+ "truck-meshalgo",
+ "truck-modeling",
+ "truck-polymesh",
+ "truck-shapeops",
+ "winit",
+]
+
+[[package]]
+name = "duck-engine-common"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "cgmath",
+ "serde",
+]
+
+[[package]]
+name = "duck-engine-import-export"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bincode",
+ "bytemuck",
+ "cad",
+ "cgmath",
+ "criterion",
+ "duck-engine-scene",
+ "gltf",
+ "image",
+ "js-sys",
+ "log",
+ "openusd",
+ "rayon",
+ "russimp",
+ "serde",
+ "thiserror 2.0.18",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "zip",
+ "zstd",
+]
+
+[[package]]
+name = "duck-engine-renderer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytemuck",
+ "cgmath",
+ "duck-engine-scene",
+ "half",
+ "image",
+ "log",
+ "wesl",
+ "wgpu",
+]
+
+[[package]]
+name = "duck-engine-scene"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bitflags 2.11.0",
+ "bytemuck",
+ "cgmath",
+ "duck-engine-common",
+ "image",
+ "log",
+ "obj-rs",
+ "serde",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "duck-engine-viewer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bitflags 2.11.0",
+ "bytemuck",
+ "cfg-if",
+ "cgmath",
+ "console_error_panic_hook",
+ "console_log",
+ "duck-engine-import-export",
+ "duck-engine-renderer",
+ "duck-engine-scene",
+ "egui",
+ "egui-wgpu",
+ "egui-winit",
+ "env_logger 0.11.9",
+ "image",
+ "log",
+ "pollster 0.4.0",
+ "rayon",
+ "thiserror 2.0.18",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "web-time",
+ "wesl",
+ "wgpu",
+ "winit",
+]
+
+[[package]]
 name = "ecolor"
 version = "0.33.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1167,12 +1283,12 @@ name = "egui-demo"
 version = "0.1.0"
 dependencies = [
  "cgmath",
+ "duck-engine-viewer",
  "egui",
  "env_logger 0.11.9",
  "log",
  "pollster 0.4.0",
  "rfd",
- "wgpu-engine-viewer",
  "winit",
 ]
 
@@ -3970,11 +4086,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "duck-engine-import-export",
+ "duck-engine-renderer",
+ "duck-engine-scene",
  "image",
  "pollster 0.4.0",
- "wgpu-engine-import-export",
- "wgpu-engine-renderer",
- "wgpu-engine-scene",
 ]
 
 [[package]]
@@ -3983,9 +4099,9 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "clap",
+ "duck-engine-import-export",
+ "duck-engine-scene",
  "serde",
- "wgpu-engine-import-export",
- "wgpu-engine-scene",
  "zstd",
 ]
 
@@ -5456,122 +5572,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "71197027d61a71748e4120f05a9242b2ad142e3c01f8c1b47707945a879a03c3"
 dependencies = [
  "wgpu-hal",
-]
-
-[[package]]
-name = "wgpu-engine-cad"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "cgmath",
- "env_logger 0.10.2",
- "pollster 0.3.0",
- "truck-meshalgo",
- "truck-modeling",
- "truck-polymesh",
- "truck-shapeops",
- "wgpu-engine-common",
- "wgpu-engine-scene",
- "wgpu-engine-viewer",
- "winit",
-]
-
-[[package]]
-name = "wgpu-engine-common"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "cgmath",
- "serde",
-]
-
-[[package]]
-name = "wgpu-engine-import-export"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bincode",
- "bytemuck",
- "cad",
- "cgmath",
- "criterion",
- "gltf",
- "image",
- "js-sys",
- "log",
- "openusd",
- "rayon",
- "russimp",
- "serde",
- "thiserror 2.0.18",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "wgpu-engine-scene",
- "zip",
- "zstd",
-]
-
-[[package]]
-name = "wgpu-engine-renderer"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bytemuck",
- "cgmath",
- "half",
- "image",
- "log",
- "wesl",
- "wgpu",
- "wgpu-engine-scene",
-]
-
-[[package]]
-name = "wgpu-engine-scene"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bitflags 2.11.0",
- "bytemuck",
- "cgmath",
- "image",
- "log",
- "obj-rs",
- "serde",
- "thiserror 2.0.18",
- "wgpu-engine-common",
-]
-
-[[package]]
-name = "wgpu-engine-viewer"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bitflags 2.11.0",
- "bytemuck",
- "cfg-if",
- "cgmath",
- "console_error_panic_hook",
- "console_log",
- "egui",
- "egui-wgpu",
- "egui-winit",
- "env_logger 0.11.9",
- "image",
- "log",
- "pollster 0.4.0",
- "rayon",
- "thiserror 2.0.18",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
- "web-time",
- "wesl",
- "wgpu",
- "wgpu-engine-import-export",
- "wgpu-engine-renderer",
- "wgpu-engine-scene",
- "winit",
 ]
 
 [[package]]

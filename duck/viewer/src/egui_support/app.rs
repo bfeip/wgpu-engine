@@ -21,7 +21,7 @@ use super::render::render_egui_overlay;
 /// # Example
 ///
 /// ```rust,no_run
-/// use wgpu_engine_viewer::egui_support::EguiViewerApp;
+/// use duck_engine_viewer::egui_support::EguiViewerApp;
 /// use winit::event_loop::{EventLoop, ActiveEventLoop};
 /// use winit::event::WindowEvent;
 /// use winit::window::WindowId;
@@ -85,7 +85,7 @@ impl EguiViewerApp<'static> {
     ///
     /// ```rust,ignore
     /// use std::sync::Arc;
-    /// use wgpu_engine::egui_support::EguiViewerApp;
+    /// use duck_engine::egui_support::EguiViewerApp;
     /// use winit::window::Window;
     ///
     /// // Create window separately
@@ -137,7 +137,7 @@ impl<'a> EguiViewerApp<'a> {
     /// # Example
     ///
     /// ```rust,ignore
-    /// use wgpu_engine::egui_support::EguiViewerApp;
+    /// use duck_engine::egui_support::EguiViewerApp;
     ///
     /// let app = pollster::block_on(EguiViewerApp::new(event_loop));
     /// ```
@@ -157,7 +157,7 @@ impl<'a> EguiViewerApp<'a> {
     /// # Example
     ///
     /// ```rust,ignore
-    /// use wgpu_engine::egui_support::EguiViewerApp;
+    /// use duck_engine::egui_support::EguiViewerApp;
     /// use winit::window::Window;
     /// use winit::dpi::LogicalSize;
     ///

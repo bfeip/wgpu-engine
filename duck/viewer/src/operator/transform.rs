@@ -21,7 +21,7 @@ use std::rc::Rc;
 use cgmath::{
     EuclideanSpace, InnerSpace, Matrix4, Point3, Quaternion, Rotation, SquareMatrix, Vector3,
 };
-use wgpu_engine_scene::common;
+use duck_engine_scene::common;
 
 use crate::common::{
     apply_scale, centroid_of_slice, compose_rotation, decompose_matrix, local_axis_x, local_axis_y,

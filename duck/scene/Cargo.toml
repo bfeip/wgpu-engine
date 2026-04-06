@@ -1,13 +1,13 @@
 [package]
-name = "wgpu-engine-scene"
+name = "duck-engine-scene"
 version = "0.1.0"
 edition = "2024"
 
 [features]
-serde = ["dep:serde", "wgpu-engine-common/serde", "cgmath/serde", "bitflags/serde"]
+serde = ["dep:serde", "duck-engine-common/serde", "cgmath/serde", "bitflags/serde"]
 
 [dependencies]
-wgpu-engine-common = { path = "../common" }
+duck-engine-common = { path = "../common" }
 anyhow = "1.0"
 bitflags = "2.0"
 serde = { version = "1.0", features = ["derive"], optional = true }

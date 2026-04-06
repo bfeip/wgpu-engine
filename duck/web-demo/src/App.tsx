@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import { Viewer } from "./components/Viewer";
 import { LoadingOverlay } from "./components/LoadingOverlay";
-import { WebLoadPhase, type WebViewer } from "../pkg/wgpu_engine_viewer";
+import { WebLoadPhase, type WebViewer } from "../pkg/duck_engine_viewer";
 import "./App.css";
 
 export function App() {

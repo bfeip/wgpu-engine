@@ -19,7 +19,7 @@ pub(crate) const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::
 ///
 /// ```
 /// use cgmath::{Point3, Vector3};
-/// use wgpu_engine_scene::Camera;
+/// use duck_engine_scene::Camera;
 ///
 /// let camera = Camera {
 ///     eye: Point3::new(0.0, 0.0, 5.0),

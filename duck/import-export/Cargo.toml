@@ -1,5 +1,5 @@
 [package]
-name = "wgpu-engine-import-export"
+name = "duck-engine-import-export"
 version = "0.1.0"
 edition = "2024"
 
@@ -10,7 +10,7 @@ usd = ["dep:openusd", "dep:zip"]
 cad = ["dep:cad"]
 
 [dependencies]
-wgpu-engine-scene = { path = "../scene", features = ["serde"] }
+duck-engine-scene = { path = "../scene", features = ["serde"] }
 anyhow = "1.0"
 bincode = { version = "2.0.1", features = ["serde"] }
 bytemuck = { version = "1.16", features = ["derive"] }

@@ -11,11 +11,11 @@ use std::io::Cursor;
 use std::path::PathBuf;
 
 use clap::Parser;
-use wgpu_engine_import_export::format::{
+use duck_engine_import_export::format::{
     FileHeader, FormatError, SectionType, SerializedMetadata,
     SerializedTexture, TableOfContents, TocEntry,
 };
-use wgpu_engine_scene::{Instance, Light, Material, Mesh, Node, TextureFormat};
+use duck_engine_scene::{Instance, Light, Material, Mesh, Node, TextureFormat};
 
 #[derive(Parser)]
 #[command(name = "scene-info")]
@@ -403,7 +403,7 @@ fn print_largest_meshes(meshes: &[Mesh]) {
     );
     println!("  {}", "-".repeat(38));
 
-    use wgpu_engine_scene::PrimitiveType;
+    use duck_engine_scene::PrimitiveType;
 
     let mut sorted: Vec<_> = meshes.iter().collect();
     sorted.sort_by(|a, b| b.vertices().len().cmp(&a.vertices().len()));
@@ -439,7 +439,7 @@ fn print_mesh_details(meshes: &[Mesh]) {
     );
     println!("  {}", "-".repeat(50));
 
-    use wgpu_engine_scene::PrimitiveType;
+    use duck_engine_scene::PrimitiveType;
 
     for mesh in meshes {
         let vertex_count = mesh.vertices().len();
@@ -453,7 +453,7 @@ fn print_mesh_details(meshes: &[Mesh]) {
             }
         }
 
-        let vertex_data_size = vertex_count * std::mem::size_of::<wgpu_engine_scene::Vertex>();
+        let vertex_data_size = vertex_count * std::mem::size_of::<duck_engine_scene::Vertex>();
         println!(
             "  {:>4} {:>10} {:>10} {:>10} {:>12}",
             mesh.id,
@@ -557,7 +557,7 @@ fn print_node_hierarchy(nodes: &[Node]) {
             .instance()
             .map(|id| format!(" (instance:{})", id))
             .unwrap_or_default();
-        let visibility = if node.visibility() == wgpu_engine_scene::Visibility::Visible { "" } else { " [hidden]" };
+        let visibility = if node.visibility() == duck_engine_scene::Visibility::Visible { "" } else { " [hidden]" };
 
         println!(
             "  {}{}[{}] {}{}{}",

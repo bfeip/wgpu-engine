@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use wgpu_engine_scene::{MaterialId, NodeId, Scene};
+use duck_engine_scene::{MaterialId, NodeId, Scene};
 
 use crate::body::{Body, BodyId};
 use crate::edge::EdgeId;
@@ -74,7 +74,7 @@ pub fn add_body_to_scene(
             mesh_id,
             face_material,
             None,
-            wgpu_engine_common::Transform::IDENTITY,
+            duck_engine_common::Transform::IDENTITY,
         )?;
         map.face_to_node.insert(face_id, node_id);
         map.node_to_face.insert(node_id, face_id);
@@ -88,7 +88,7 @@ pub fn add_body_to_scene(
             mesh_id,
             line_material,
             None,
-            wgpu_engine_common::Transform::IDENTITY,
+            duck_engine_common::Transform::IDENTITY,
         )?;
         map.edge_to_node.insert(edge_id, node_id);
         map.node_to_edge.insert(node_id, edge_id);

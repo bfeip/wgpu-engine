@@ -1,5 +1,5 @@
 // Re-export scene crate so internal modules can use `crate::scene::*`
-pub use wgpu_engine_scene as scene;
+pub use duck_engine_scene as scene;
 
 pub mod ibl;
 mod selection_query;

@@ -34,7 +34,7 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use wgpu_engine_scene::{
+use duck_engine_scene::{
     Instance, InstanceId,
     Light,
     Material, MaterialId, DEFAULT_MATERIAL_ID,
@@ -837,7 +837,7 @@ pub fn assemble_wgsc_scene(
 /// smaller.
 pub fn estimate_serialized_size(scene: &Scene) -> usize {
     use std::mem::size_of;
-    use wgpu_engine_scene::{EnvironmentSource, Vertex};
+    use duck_engine_scene::{EnvironmentSource, Vertex};
 
     const GOOD_COMPRESSION_RATIO: f64 = 0.6;
 
@@ -1125,13 +1125,13 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
         for env_map in scene.environment_maps() {
             let remapped_id = *env_map_id_map.get(&env_map.id).unwrap_or(&0);
             let hdr_data = match env_map.source() {
-                wgpu_engine_scene::EnvironmentSource::EquirectangularPath(path) => {
+                duck_engine_scene::EnvironmentSource::EquirectangularPath(path) => {
                     Some(std::fs::read(path).map_err(|e| FormatError::IoError(e))?)
                 }
-                wgpu_engine_scene::EnvironmentSource::EquirectangularHdr(data) => {
+                duck_engine_scene::EnvironmentSource::EquirectangularHdr(data) => {
                     Some(data.clone())
                 }
-                wgpu_engine_scene::EnvironmentSource::Preprocessed => None,
+                duck_engine_scene::EnvironmentSource::Preprocessed => None,
             };
             env_maps.push(SerializedEnvironmentMap {
                 id: remapped_id,
@@ -1212,8 +1212,8 @@ pub fn load_from_file(path: impl AsRef<std::path::Path>) -> Result<Scene, Format
 mod tests {
     use super::*;
     use cgmath::{Point3, Quaternion, Vector3};
-    use wgpu_engine_scene::common::{RgbaColor, Transform};
-    use wgpu_engine_scene::PrimitiveType;
+    use duck_engine_scene::common::{RgbaColor, Transform};
+    use duck_engine_scene::PrimitiveType;
 
     /// Creates a simple test scene with various elements.
     fn create_test_scene() -> Scene {

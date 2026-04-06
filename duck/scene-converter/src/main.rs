@@ -4,9 +4,9 @@ use anyhow::{bail, Result};
 use clap::{Parser, ValueEnum};
 use image::imageops::FilterType;
 use image::GenericImageView;
-use wgpu_engine_import_export::format::{CompressionLevel, SaveOptions, save_to_file_with_options};
-use wgpu_engine_import_export::gltf::load_gltf_scene_from_path;
-use wgpu_engine_scene::Scene;
+use duck_engine_import_export::format::{CompressionLevel, SaveOptions, save_to_file_with_options};
+use duck_engine_import_export::gltf::load_gltf_scene_from_path;
+use duck_engine_scene::Scene;
 
 const MAX_TEXTURE_DIMENSION: u32 = 2048;
 
@@ -123,7 +123,7 @@ fn main() -> Result<()> {
     if cli.bake_ibl && scene.has_environment_maps() {
         eprintln!("Baking IBL data...");
         let renderer = pollster::block_on(
-            wgpu_engine_renderer::Renderer::new_headless(1, 1)
+            duck_engine_renderer::Renderer::new_headless(1, 1)
         );
 
         // Process all environments first (immutable borrow), then attach results (mutable)

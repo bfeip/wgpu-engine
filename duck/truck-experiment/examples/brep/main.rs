@@ -9,11 +9,11 @@ use winit::{
     window::{Window, WindowId},
 };
 
-use wgpu_engine_cad::{add_body_to_scene, tessellate_body, Body, TessellationOptions};
-use wgpu_engine_viewer::common::RgbaColor;
-use wgpu_engine_viewer::input::{ElementState, Key, NamedKey};
-use wgpu_engine_viewer::scene::{CoordinateSpace, Light, Material};
-use wgpu_engine_viewer::{Viewer, winit_support};
+use duck_engine_cad::{add_body_to_scene, tessellate_body, Body, TessellationOptions};
+use duck_engine_viewer::common::RgbaColor;
+use duck_engine_viewer::input::{ElementState, Key, NamedKey};
+use duck_engine_viewer::scene::{CoordinateSpace, Light, Material};
+use duck_engine_viewer::{Viewer, winit_support};
 
 /// Build a B-rep cube using the Truck CAD kernel, tessellate it, and add it to the scene.
 fn build_brep_scene(viewer: &mut Viewer) {
@@ -125,7 +125,7 @@ impl<'a> ApplicationHandler for App<'a> {
         let viewer = self.viewer.as_mut().unwrap();
         viewer.handle_event(&app_event);
 
-        let wgpu_engine_viewer::event::Event::KeyboardInput {
+        let duck_engine_viewer::event::Event::KeyboardInput {
             event: key_event, ..
         } = &app_event
         else {

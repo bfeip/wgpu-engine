@@ -13,11 +13,11 @@ use cgmath::{Deg, Matrix3, Matrix4, Point3, SquareMatrix, Vector3};
 
 use openusd::sdf::{self, AbstractData, Value};
 
-use wgpu_engine_scene::{
+use duck_engine_scene::{
     Camera, DEFAULT_MATERIAL_ID, Light, Material, MaterialId, Mesh, MeshId, MeshPrimitive,
     NodeId, PrimitiveType, Scene, Vertex, MAX_LIGHTS,
 };
-use wgpu_engine_scene::common::{RgbaColor, Transform, decompose_matrix};
+use duck_engine_scene::common::{RgbaColor, Transform, decompose_matrix};
 
 /// Result of loading a scene from USD.
 pub struct UsdLoadResult {
