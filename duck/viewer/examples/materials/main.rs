@@ -268,7 +268,7 @@ impl<'a> App<'a> {
 
         // Load environment map for IBL (toggled with 'e' key)
         let env_map_path: std::path::PathBuf =
-            [env!("CARGO_MANIFEST_DIR"), "..", "assets", "studio_small_09_4k.hdr"].iter().collect();
+            [env!("CARGO_MANIFEST_DIR"), "..", "..", "assets", "studio_small_09_4k.hdr"].iter().collect();
         let env_map_id =
             viewer
                 .scene_mut()

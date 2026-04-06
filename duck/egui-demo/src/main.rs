@@ -307,7 +307,7 @@ impl<'a> ApplicationHandler for App<'a> {
             viewer_app.request_redraw();
             self.viewer_app = Some(viewer_app);
 
-            let assets_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../assets");
+            let assets_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets");
             let default_scene = assets_dir.join("default-scene.wgsc");
             if default_scene.exists() {
                 self.pending_scene_load_path = Some(default_scene);

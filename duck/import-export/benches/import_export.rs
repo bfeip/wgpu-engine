@@ -4,7 +4,7 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use wgpu_engine_import_export::{LoadOptions, SceneSource, format, load_sync};
 
 fn assets_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../assets")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets")
 }
 
 fn glb_path() -> PathBuf {
