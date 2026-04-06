@@ -467,15 +467,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 
 [[package]]
-name = "cad"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "duck-engine-scene",
- "opencascade",
-]
-
-[[package]]
 name = "calloop"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1140,17 +1131,8 @@ name = "duck-engine-cad"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "cgmath",
- "duck-engine-common",
  "duck-engine-scene",
- "duck-engine-viewer",
- "env_logger 0.10.2",
- "pollster 0.3.0",
- "truck-meshalgo",
- "truck-modeling",
- "truck-polymesh",
- "truck-shapeops",
- "winit",
+ "opencascade",
 ]
 
 [[package]]
@@ -1169,9 +1151,9 @@ dependencies = [
  "anyhow",
  "bincode",
  "bytemuck",
- "cad",
  "cgmath",
  "criterion",
+ "duck-engine-cad",
  "duck-engine-scene",
  "gltf",
  "image",
@@ -1217,6 +1199,24 @@ dependencies = [
  "obj-rs",
  "serde",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "duck-engine-truck-experiment"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cgmath",
+ "duck-engine-common",
+ "duck-engine-scene",
+ "duck-engine-viewer",
+ "env_logger 0.10.2",
+ "pollster 0.3.0",
+ "truck-meshalgo",
+ "truck-modeling",
+ "truck-polymesh",
+ "truck-shapeops",
+ "winit",
 ]
 
 [[package]]
