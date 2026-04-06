@@ -1,0 +1,3 @@
+[submodule "third-party/opencascade-rs"]
+	path = third-party/opencascade-rs
+	url = https://github.com/bfeip/opencascade-rs.git
