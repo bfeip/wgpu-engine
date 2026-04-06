@@ -1,7 +1,7 @@
 //! Scene file format serialization.
 //!
 //! This module provides serialization and deserialization of scenes to a custom
-//! binary format (.wgsc). The format is designed to be:
+//! binary format (.duck). The format is designed to be:
 //! - Concise: Uses Zstd compression for large data sections
 //! - Flexible: Section-based structure allows adding new data types
 //! - Future-proof: Magic number and version header for compatibility
@@ -11,7 +11,7 @@
 //! ```text
 //! ┌──────────────────────────────────────────────────────────────┐
 //! │ FIXED HEADER (16 bytes)                                      │
-//! │  [0..4]   Magic: b"WGSC"                                     │
+//! │  [0..4]   Magic: b"DUCK"                                     │
 //! │  [4..6]   Version: u16 (major << 8 | minor)                  │
 //! │  [6..8]   Flags: u16 (reserved)                              │
 //! │  [8..16]  TOC offset: u64                                    │
@@ -49,8 +49,8 @@ use duck_engine_scene::{
 // Constants
 // ============================================================================
 
-/// Magic number identifying WGSC files: "WGSC" in ASCII
-pub const MAGIC: [u8; 4] = *b"WGSC";
+/// Magic number identifying Duck files: "DUCK" in ASCII
+pub const MAGIC: [u8; 4] = *b"DUCK";
 
 /// Current format version (major.minor encoded as single u16)
 /// major = version >> 8, minor = version & 0xFF
@@ -216,7 +216,7 @@ impl TryFrom<u8> for SectionType {
 // File Header & TOC
 // ============================================================================
 
-/// Fixed-size file header at the start of every .wgsc file.
+/// Fixed-size file header at the start of every .duck file.
 #[derive(Debug, Clone)]
 pub struct FileHeader {
     /// Magic number (must be MAGIC)
@@ -333,7 +333,7 @@ pub struct SerializedMetadata {
     pub name: Option<String>,
     /// Unix timestamp of creation
     pub created_at: u64,
-    /// Generator string (e.g., "wgpu-engine 0.1.0")
+    /// Generator string (e.g., "duck-engine 0.1.0")
     pub generator: String,
     /// Root node IDs (remapped)
     pub root_nodes: Vec<u32>,
@@ -622,10 +622,10 @@ pub fn deserialize_section<T: for<'de> Deserialize<'de>>(compressed: &[u8]) -> R
 // Phased Deserialization
 // ============================================================================
 
-/// All deserialized sections from a WGSC file, prior to texture decoding
-/// and scene assembly. Produced by [`parse_wgsc`], consumed by
-/// [`decode_wgsc_textures`] and [`assemble_wgsc_scene`].
-pub struct WgscSections {
+/// All deserialized sections from a Duck file, prior to texture decoding
+/// and scene assembly. Produced by [`parse_duck`], consumed by
+/// [`decode_duck_textures`] and [`assemble_duck_scene`].
+pub struct DuckSections {
     pub metadata: SerializedMetadata,
     pub textures: Vec<SerializedTexture>,
     pub materials: Vec<Material>,
@@ -637,11 +637,11 @@ pub struct WgscSections {
     pub preprocessed_ibl: Vec<SerializedPreprocessedIbl>,
 }
 
-/// Parse WGSC header, TOC, and decompress/deserialize all sections.
+/// Parse Duck header, TOC, and decompress/deserialize all sections.
 ///
 /// This is relatively fast (decompression + bincode deserialization).
-/// The heavy texture image decoding happens in [`decode_wgsc_textures`].
-pub fn parse_wgsc(bytes: &[u8]) -> Result<WgscSections, FormatError> {
+/// The heavy texture image decoding happens in [`decode_duck_textures`].
+pub fn parse_duck(bytes: &[u8]) -> Result<DuckSections, FormatError> {
     let mut cursor = Cursor::new(bytes);
     let header = FileHeader::read(&mut cursor)?;
 
@@ -689,7 +689,7 @@ pub fn parse_wgsc(bytes: &[u8]) -> Result<WgscSections, FormatError> {
             Vec::new()
         };
 
-    Ok(WgscSections {
+    Ok(DuckSections {
         metadata,
         textures,
         materials,
@@ -712,7 +712,7 @@ pub struct DecodedTexture {
 ///
 /// On native this uses rayon for parallelism. On WASM it decodes sequentially.
 /// This is typically the most expensive phase of loading.
-pub fn decode_wgsc_textures(
+pub fn decode_duck_textures(
     serialized: &[SerializedTexture],
 ) -> Result<Vec<DecodedTexture>, FormatError> {
     #[cfg(not(target_arch = "wasm32"))]
@@ -740,7 +740,7 @@ pub fn decode_wgsc_textures(
 
 /// Decode a single serialized texture. Useful for per-item progress reporting
 /// and WASM chunked yielding.
-pub fn decode_wgsc_texture(
+pub fn decode_duck_texture(
     serialized: &SerializedTexture,
 ) -> Result<DecodedTexture, FormatError> {
     serialized
@@ -749,8 +749,8 @@ pub fn decode_wgsc_texture(
 }
 
 /// Assemble a [`Scene`] from parsed sections and decoded textures.
-pub fn assemble_wgsc_scene(
-    sections: WgscSections,
+pub fn assemble_duck_scene(
+    sections: DuckSections,
     decoded_textures: Vec<DecodedTexture>,
 ) -> Result<Scene, FormatError> {
     let mut scene = Scene::new();
@@ -920,12 +920,12 @@ pub fn estimate_serialized_size(scene: &Scene) -> usize {
     total + total / 10
 }
 
-/// Serializes the scene to bytes in WGSC format with default options.
+/// Serializes the scene to bytes in Duck format with default options.
 pub fn to_bytes(scene: &Scene) -> Result<Vec<u8>, FormatError> {
     to_bytes_with_options(scene, &SaveOptions::default())
 }
 
-/// Serializes the scene to bytes in WGSC format with custom options.
+/// Serializes the scene to bytes in Duck format with custom options.
 pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec<u8>, FormatError> {
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -994,7 +994,7 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0),
-        generator: format!("wgpu-engine {}", env!("CARGO_PKG_VERSION")),
+        generator: format!("duck-engine {}", env!("CARGO_PKG_VERSION")),
         root_nodes: scene.root_nodes()
             .iter()
             .filter_map(|&id| node_id_map.get(&id).copied())
@@ -1171,15 +1171,15 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
     Ok(output)
 }
 
-/// Deserializes a scene from WGSC format bytes.
+/// Deserializes a scene from Duck format bytes.
 ///
-/// This is a convenience method that calls [`parse_wgsc`],
-/// [`decode_wgsc_textures`], and [`assemble_wgsc_scene`] sequentially.
+/// This is a convenience method that calls [`parse_duck`],
+/// [`decode_duck_textures`], and [`assemble_duck_scene`] sequentially.
 /// For progress reporting or async loading, call those phases individually.
 pub fn from_bytes(bytes: &[u8]) -> Result<Scene, FormatError> {
-    let sections = parse_wgsc(bytes)?;
-    let textures = decode_wgsc_textures(&sections.textures)?;
-    assemble_wgsc_scene(sections, textures)
+    let sections = parse_duck(bytes)?;
+    let textures = decode_duck_textures(&sections.textures)?;
+    assemble_duck_scene(sections, textures)
 }
 
 /// Saves the scene to a file with default options.
@@ -1269,7 +1269,7 @@ mod tests {
         let bytes = to_bytes(&original).expect("Failed to serialize scene");
 
         // Check magic number
-        assert_eq!(&bytes[0..4], b"WGSC");
+        assert_eq!(&bytes[0..4], b"DUCK");
 
         // Deserialize
         let loaded = from_bytes(&bytes).expect("Failed to deserialize scene");

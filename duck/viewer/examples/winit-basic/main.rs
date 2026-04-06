@@ -18,7 +18,7 @@ impl<'a> App<'a> {
     /// Initialize the window and viewer
     fn initialize(&mut self, event_loop: &ActiveEventLoop) {
         let window_attrs = Window::default_attributes()
-            .with_title("WGPU Engine - Winit Basic Example");
+            .with_title("Duck Engine - Winit Basic Example");
 
         let window = Arc::new(event_loop.create_window(window_attrs).unwrap());
 

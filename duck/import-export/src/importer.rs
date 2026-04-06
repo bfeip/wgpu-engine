@@ -1,7 +1,7 @@
 //! Trait-based importer system for scene file formats.
 //!
 //! Implement [`Importer`] to add support for a new file format. The built-in
-//! importers ([`WgscImporter`], [`GltfImporter`], [`UsdImporter`], [`AssimpImporter`])
+//! importers ([`DuckImporter`], [`GltfImporter`], [`UsdImporter`], [`AssimpImporter`])
 //! cover the standard formats; custom importers can be passed to
 //! [`load_sync_with`](crate::load_sync_with) / [`load_async_with`](crate::load_async_with).
 
@@ -79,7 +79,7 @@ impl PhaseWeights {
 /// Use [`default_importers`] to get the built-in set, or supply your own list
 /// to [`load_sync_with`](crate::load_sync_with) / [`load_async_with`](crate::load_async_with).
 pub trait Importer: Send + Sync {
-    /// Human-readable format name (e.g., `"glTF"`, `"WGSC"`).
+    /// Human-readable format name (e.g., `"glTF"`, `"Duck"`).
     fn name(&self) -> &str;
 
     /// Try to detect this format from the first bytes of a file.
@@ -115,20 +115,20 @@ pub trait Importer: Send + Sync {
 // Built-in Importers
 // ============================================================================
 
-/// Importer for the WGSC binary scene format.
-pub struct WgscImporter;
+/// Importer for the Duck binary scene format.
+pub struct DuckImporter;
 
-impl Importer for WgscImporter {
+impl Importer for DuckImporter {
     fn name(&self) -> &str {
-        "WGSC"
+        "Duck"
     }
 
     fn detect_from_bytes(&self, bytes: &[u8]) -> bool {
-        bytes.len() >= 4 && bytes.starts_with(b"WGSC")
+        bytes.len() >= 4 && bytes.starts_with(&crate::format::MAGIC)
     }
 
     fn detect_from_extension(&self, ext: &str) -> bool {
-        ext.eq_ignore_ascii_case("wgsc")
+        ext.eq_ignore_ascii_case("duck")
     }
 
     fn phase_weights(&self) -> PhaseWeights {
@@ -147,28 +147,28 @@ impl Importer for WgscImporter {
         _options: &LoadOptions,
         progress: &LoadProgress,
     ) -> Result<SceneLoadResult, LoadError> {
-        use crate::format::{assemble_wgsc_scene, decode_wgsc_texture, parse_wgsc};
+        use crate::format::{assemble_duck_scene, decode_duck_texture, parse_duck};
 
         progress.enter_phase(LoadPhase::Parsing);
-        let sections = parse_wgsc(bytes)?;
+        let sections = parse_duck(bytes)?;
 
         progress.enter_phase(LoadPhase::DecodingTextures);
         progress.set_item_count(sections.textures.len() as u32);
 
         let mut decoded = Vec::with_capacity(sections.textures.len());
         for st in &sections.textures {
-            decoded.push(decode_wgsc_texture(st)?);
+            decoded.push(decode_duck_texture(st)?);
             progress.complete_item();
         }
 
         progress.enter_phase(LoadPhase::Assembling);
-        let scene = assemble_wgsc_scene(sections, decoded)?;
+        let scene = assemble_duck_scene(sections, decoded)?;
 
         progress.enter_phase(LoadPhase::Complete);
         Ok(SceneLoadResult {
             scene,
             camera: None,
-            format: DetectedFormat::Wgsc,
+            format: DetectedFormat::Duck,
         })
     }
 }
@@ -361,7 +361,7 @@ impl Importer for AssimpImporter {
 
 /// Importer for STEP and IGES CAD files.
 ///
-/// Uses OpenCASCADE via the `wgpu-engine-cad` crate for tessellation.
+/// Uses OpenCASCADE via the `duck-engine-cad` crate for tessellation.
 /// Requires a filesystem path (`path_hint`); loading from raw bytes is not
 /// supported by the underlying `opencascade-rs` bindings.
 #[cfg(feature = "cad")]
@@ -447,11 +447,11 @@ impl Importer for CadImporter {
 /// Returns the default set of built-in importers.
 ///
 /// The order determines detection priority (first match wins):
-/// WGSC, glTF, CAD (if enabled), USD (if enabled), Assimp (if enabled).
+/// Duck, glTF, CAD (if enabled), USD (if enabled), Assimp (if enabled).
 pub fn default_importers() -> Vec<Box<dyn Importer>> {
     #[allow(unused_mut)]
     let mut importers: Vec<Box<dyn Importer>> = vec![
-        Box::new(WgscImporter),
+        Box::new(DuckImporter),
         Box::new(GltfImporter),
     ];
     #[cfg(feature = "cad")]

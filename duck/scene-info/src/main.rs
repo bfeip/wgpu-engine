@@ -1,6 +1,6 @@
 //! Scene file analyzer tool.
 //!
-//! Displays detailed information about .wgsc scene files including:
+//! Displays detailed information about .duck scene files including:
 //! - File structure and section sizes
 //! - Compression ratios
 //! - Mesh, material, texture, and node statistics
@@ -19,10 +19,10 @@ use duck_engine_scene::{Instance, Light, Material, Mesh, Node, TextureFormat};
 
 #[derive(Parser)]
 #[command(name = "scene-info")]
-#[command(about = "Analyze .wgsc scene files and display detailed statistics")]
+#[command(about = "Analyze .duck scene files and display detailed statistics")]
 #[command(version)]
 struct Cli {
-    /// Path to the .wgsc scene file
+    /// Path to the .duck scene file
     file: PathBuf,
 
     /// Show detailed mesh information (vertices, triangles, indices per mesh)

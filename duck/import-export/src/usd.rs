@@ -100,7 +100,7 @@ fn open_usdz_from_bytes(bytes: &[u8]) -> Result<Box<dyn AbstractData>> {
 
 /// Parse USDA text format from bytes (writes to temp file since TextReader needs a path).
 fn open_usda_from_bytes(bytes: &[u8], name: &str) -> Result<Box<dyn AbstractData>> {
-    let tmp_path = std::env::temp_dir().join(format!("wgpu_usd_{}", name));
+    let tmp_path = std::env::temp_dir().join(format!("duck_usd_{}", name));
     std::fs::write(&tmp_path, bytes)?;
     let result = openusd::usda::TextReader::read(
         tmp_path

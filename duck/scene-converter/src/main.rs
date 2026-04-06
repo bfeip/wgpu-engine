@@ -29,14 +29,14 @@ impl From<CliCompressionLevel> for CompressionLevel {
 
 #[derive(Parser)]
 #[command(name = "scene-converter")]
-#[command(about = "Convert glTF and HDR files to .wgsc scene format")]
+#[command(about = "Convert models and HDR files to .duck scene format")]
 #[command(version)]
 struct Cli {
-    /// Input files (.gltf, .glb, or .hdr)
+    /// Input files (models or hdrs)
     #[arg(required = true)]
     inputs: Vec<PathBuf>,
 
-    /// Output path (defaults to first input filename with .wgsc extension)
+    /// Output path (defaults to first input filename with .duck extension)
     #[arg(short, long)]
     output: Option<PathBuf>,
 
@@ -67,29 +67,29 @@ fn main() -> Result<()> {
     };
 
     // Classify inputs by extension
-    let mut gltf_files = Vec::new();
+    let mut model_files = Vec::new();
     let mut hdr_files = Vec::new();
 
     for path in &cli.inputs {
         match path.extension().and_then(|e| e.to_str()) {
-            Some("gltf" | "glb") => gltf_files.push(path),
+            Some("gltf" | "glb") => model_files.push(path),
             Some("hdr") => hdr_files.push(path),
             _ => bail!("Unsupported file type: {}", path.display()),
         }
     }
 
-    if gltf_files.is_empty() {
-        bail!("At least one glTF file (.gltf or .glb) is required");
+    if model_files.is_empty() {
+        bail!("At least one model file is required");
     }
-    if gltf_files.len() > 1 {
-        bail!("Only one glTF file can be specified");
+    if model_files.len() > 1 {
+        bail!("Only one model file can be specified (right now)");
     }
 
-    let gltf_path = gltf_files[0];
-    let output = cli.output.unwrap_or_else(|| gltf_path.with_extension("wgsc"));
+    let model_path = model_files[0];
+    let output = cli.output.unwrap_or_else(|| model_path.with_extension("duck"));
 
-    eprintln!("Loading {}...", gltf_path.display());
-    let result = load_gltf_scene_from_path(gltf_path, 1.0)?;
+    eprintln!("Loading {}...", model_path.display());
+    let result = load_gltf_scene_from_path(model_path, 1.0)?;
     let mut scene = result.scene;
 
     // Add environment maps from HDR files

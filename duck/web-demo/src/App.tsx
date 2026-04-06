@@ -12,7 +12,7 @@ export function App() {
   const handleViewerReady = useCallback(async (viewer: WebViewer) => {
     viewerRef.current = viewer;
     try {
-      const resp = await fetch("/default-scene.wgsc");
+      const resp = await fetch("/default-scene.duck");
       if (resp.ok) {
         const data = new Uint8Array(await resp.arrayBuffer());
         viewer.start_load(data);
@@ -46,7 +46,7 @@ export function App() {
 
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = ".gltf,.glb,.wgsc";
+    input.accept = ".gltf,.glb,.duck";
     input.onchange = async () => {
       const file = input.files?.[0];
       if (!file) return;
@@ -67,8 +67,7 @@ export function App() {
   return (
     <div className="app">
       <div className="sidebar">
-        <h1>wgpu-engine</h1>
-        <p className="subtitle">Web Demo</p>
+        <h1>Duck Engine</h1>
 
         <div className="controls">
           <button onClick={handleLoadFile}>Load Scene</button>

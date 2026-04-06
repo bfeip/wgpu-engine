@@ -1,12 +1,12 @@
 //! Scene import/export library.
 //!
 //! Provides format-agnostic loading and saving of scenes with progress reporting.
-//! Supports glTF (.glb/.gltf), USD (.usdc/.usda/.usdz), WGSC (.wgsc), and
+//! Supports glTF (.glb/.gltf), USD (.usdc/.usda/.usdz), Duck (.duck), and
 //! optionally assimp-based formats.
 //!
 //! # Submodules
 //!
-//! - [`mod@format`] — Binary scene serialization (.wgsc)
+//! - [`mod@format`] — Binary scene serialization (.duck)
 //! - [`gltf`] — glTF loading
 //! - [`usd`] — USD loading (USDC, USDA, USDZ)
 //! - [`assimp`] — Assimp-based loading (feature-gated)
@@ -100,7 +100,7 @@ pub struct SceneLoadResult {
 /// The file format that was detected and used for loading.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DetectedFormat {
-    Wgsc,
+    Duck,
     Gltf,
     #[cfg(feature = "assimp")]
     Assimp,
@@ -528,7 +528,7 @@ async fn yield_to_event_loop() {
 
 /// WASM chunked loading: runs loading phases with yields between them.
 ///
-/// For built-in formats (WGSC, glTF), uses optimized chunked loading with
+/// For built-in formats (Duck, glTF), uses optimized chunked loading with
 /// yield points between phases. For custom importers, falls back to the
 /// synchronous `Importer::load` within a single microtask.
 #[cfg(target_arch = "wasm32")]
@@ -558,7 +558,7 @@ async fn load_chunked_wasm(
 
     // Use optimized chunked paths for built-in formats
     match importer.name() {
-        "WGSC" => load_wgsc_chunked(&bytes, progress).await,
+        "Duck" => load_duck_chunked(&bytes, progress).await,
         "glTF" => {
             if !bytes.starts_with(b"glTF") {
                 // Non-GLB glTF files reference external resources via filesystem
@@ -577,11 +577,11 @@ async fn load_chunked_wasm(
 }
 
 #[cfg(target_arch = "wasm32")]
-async fn load_wgsc_chunked(bytes: &[u8], progress: &LoadProgress) -> LoadResult {
-    use self::format::{assemble_wgsc_scene, decode_wgsc_texture, parse_wgsc};
+async fn load_duck_chunked(bytes: &[u8], progress: &LoadProgress) -> LoadResult {
+    use self::format::{assemble_duck_scene, decode_duck_texture, parse_duck};
 
     progress.enter_phase(LoadPhase::Parsing);
-    let sections = parse_wgsc(bytes)?;
+    let sections = parse_duck(bytes)?;
     yield_to_event_loop().await;
 
     progress.enter_phase(LoadPhase::DecodingTextures);
@@ -589,7 +589,7 @@ async fn load_wgsc_chunked(bytes: &[u8], progress: &LoadProgress) -> LoadResult 
 
     let mut decoded = Vec::with_capacity(sections.textures.len());
     for st in &sections.textures {
-        decoded.push(decode_wgsc_texture(st)?);
+        decoded.push(decode_duck_texture(st)?);
         progress.complete_item();
         yield_to_event_loop().await;
     }
@@ -597,13 +597,13 @@ async fn load_wgsc_chunked(bytes: &[u8], progress: &LoadProgress) -> LoadResult 
     progress.enter_phase(LoadPhase::Assembling);
     yield_to_event_loop().await;
 
-    let scene = assemble_wgsc_scene(sections, decoded)?;
+    let scene = assemble_duck_scene(sections, decoded)?;
 
     progress.enter_phase(LoadPhase::Complete);
     Ok(SceneLoadResult {
         scene,
         camera: None,
-        format: DetectedFormat::Wgsc,
+        format: DetectedFormat::Duck,
     })
 }
 
@@ -755,11 +755,11 @@ mod tests {
     }
 
     #[test]
-    fn test_detect_wgsc() {
+    fn test_detect_duck() {
         let importers = default_importers();
-        let bytes = b"WGSC\x01\x00rest of file";
+        let bytes = b"DUCK\x01\x00rest of file";
         let imp = detect_importer(bytes, None, &importers).unwrap();
-        assert_eq!(imp.name(), "WGSC");
+        assert_eq!(imp.name(), "Duck");
     }
 
     #[test]
@@ -790,8 +790,8 @@ mod tests {
         let importers = default_importers();
         let unknown = b"\x00\x00\x00\x00";
 
-        let imp = detect_importer(unknown, Some(std::path::Path::new("model.wgsc")), &importers).unwrap();
-        assert_eq!(imp.name(), "WGSC");
+        let imp = detect_importer(unknown, Some(std::path::Path::new("model.duck")), &importers).unwrap();
+        assert_eq!(imp.name(), "Duck");
 
         let imp = detect_importer(unknown, Some(std::path::Path::new("model.glb")), &importers).unwrap();
         assert_eq!(imp.name(), "glTF");
@@ -864,10 +864,10 @@ mod tests {
     }
 
     #[test]
-    fn test_load_sync_wgsc_from_bytes() {
+    fn test_load_sync_duck_from_bytes() {
         let bytes = create_test_scene_bytes();
         let result = load_sync(SceneSource::Bytes(bytes), LoadOptions::default()).unwrap();
-        assert_eq!(result.format, DetectedFormat::Wgsc);
+        assert_eq!(result.format, DetectedFormat::Duck);
         assert!(result.camera.is_none());
         assert_eq!(result.scene.mesh_count(), 1);
         assert_eq!(result.scene.node_count(), 1);
@@ -885,14 +885,14 @@ mod tests {
     #[test]
     fn test_load_progress_updates() {
         let progress = LoadProgress::new();
-        // Simulate a WGSC load: Reading(10) + Parsing(10) + DecodingTextures(60) + Assembling(20)
-        let wgsc_weights = PhaseWeights::new(&[
+        // Simulate a Duck load: Reading(10) + Parsing(10) + DecodingTextures(60) + Assembling(20)
+        let duck_weights = PhaseWeights::new(&[
             (LoadPhase::Reading, 10),
             (LoadPhase::Parsing, 10),
             (LoadPhase::DecodingTextures, 60),
             (LoadPhase::Assembling, 20),
         ]);
-        progress.set_weights(&wgsc_weights);
+        progress.set_weights(&duck_weights);
 
         progress.enter_phase(LoadPhase::Reading);
         assert_eq!(progress.phase(), LoadPhase::Reading);
@@ -927,7 +927,7 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn test_load_async_wgsc() {
+    fn test_load_async_duck() {
         let bytes = create_test_scene_bytes();
         let handle = load_async(SceneSource::Bytes(bytes), LoadOptions::default());
 
@@ -935,7 +935,7 @@ mod tests {
         loop {
             if let Some(result) = handle.try_get() {
                 let result = result.unwrap();
-                assert_eq!(result.format, DetectedFormat::Wgsc);
+                assert_eq!(result.format, DetectedFormat::Duck);
                 assert_eq!(result.scene.mesh_count(), 1);
                 break;
             }
@@ -970,7 +970,7 @@ mod tests {
         )
         .unwrap();
         let bytes = result.expect("Should return bytes");
-        assert!(bytes.starts_with(b"WGSC"));
+        assert!(bytes.starts_with(b"DUCK"));
 
         // Verify round-trip
         let loaded = load_sync(SceneSource::Bytes(bytes), LoadOptions::default()).unwrap();
@@ -990,7 +990,7 @@ mod tests {
         loop {
             if let Some(result) = handle.try_get() {
                 let bytes = result.unwrap().expect("Should return bytes");
-                assert!(bytes.starts_with(b"WGSC"));
+                assert!(bytes.starts_with(b"DUCK"));
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(1));

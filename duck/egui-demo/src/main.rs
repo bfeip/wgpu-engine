@@ -172,7 +172,7 @@ impl<'a> App<'a> {
     /// Open a file dialog to select a scene file to load
     fn open_scene_file_dialog(&mut self) {
         #[allow(unused_mut)]
-        let mut extensions: Vec<&str> = vec!["glb", "gltf", "wgsc"];
+        let mut extensions: Vec<&str> = vec!["glb", "gltf", "duck"];
 
         #[cfg(feature = "assimp")]
         extensions.extend_from_slice(import_export::assimp::ASSIMP_EXTENSIONS);
@@ -220,8 +220,8 @@ impl<'a> App<'a> {
     /// Open a file dialog to select where to save the scene
     fn save_scene_file_dialog(&mut self) {
         let file = rfd::FileDialog::new()
-            .add_filter("WGPU Scene", &["wgsc"])
-            .set_file_name("scene.wgsc")
+            .add_filter("Duck Scene", &["duck"])
+            .set_file_name("scene.duck")
             .save_file();
 
         if let Some(path) = file {
@@ -296,7 +296,7 @@ impl<'a> ApplicationHandler for App<'a> {
         // Initialize on first resume
         if self.viewer_app.is_none() {
             let window_attrs = Window::default_attributes()
-                .with_title("WGPU Engine - egui Example")
+                .with_title("Duck Engine - egui Example")
                 .with_inner_size(winit::dpi::LogicalSize::new(1600, 800));
 
             let viewer_app = pollster::block_on(EguiViewerApp::with_window_attrs(
@@ -308,7 +308,7 @@ impl<'a> ApplicationHandler for App<'a> {
             self.viewer_app = Some(viewer_app);
 
             let assets_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets");
-            let default_scene = assets_dir.join("default-scene.wgsc");
+            let default_scene = assets_dir.join("default-scene.duck");
             if default_scene.exists() {
                 self.pending_scene_load_path = Some(default_scene);
             } else {

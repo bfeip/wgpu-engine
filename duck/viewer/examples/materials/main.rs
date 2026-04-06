@@ -254,7 +254,7 @@ struct App<'a> {
 impl<'a> App<'a> {
     fn initialize(&mut self, event_loop: &ActiveEventLoop) {
         let window_attrs =
-            Window::default_attributes().with_title("WGPU Engine - PBR Materials Showcase");
+            Window::default_attributes().with_title("Duck Engine - PBR Materials Showcase");
 
         let window = Arc::new(event_loop.create_window(window_attrs).unwrap());
         let size = window.inner_size();
