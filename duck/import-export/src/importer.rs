@@ -362,8 +362,6 @@ impl Importer for AssimpImporter {
 /// Importer for STEP and IGES CAD files.
 ///
 /// Uses OpenCASCADE via the `duck-engine-cad` crate for tessellation.
-/// Requires a filesystem path (`path_hint`); loading from raw bytes is not
-/// supported by the underlying `opencascade-rs` bindings.
 #[cfg(feature = "cad")]
 pub struct CadImporter;
 
@@ -400,32 +398,33 @@ impl Importer for CadImporter {
         _options: &LoadOptions,
         progress: &LoadProgress,
     ) -> Result<SceneLoadResult, LoadError> {
-        let path = path_hint.ok_or_else(|| {
-            LoadError::UnsupportedPlatform(
-                "CAD loading requires a file path (in-memory loading is not supported by opencascade-rs)".into(),
-            )
-        })?;
-
         progress.enter_phase(LoadPhase::Parsing);
 
         let is_step = bytes.starts_with(b"ISO-10303-21")
-            || path
-                .extension()
-                .and_then(|e| e.to_str())
+            || path_hint
+                .and_then(|p| p.extension()?.to_str())
                 .map(crate::cad::is_step_extension)
                 .unwrap_or(false);
 
         let mut scene = duck_engine_scene::Scene::new();
-        let options = cad::CadImportOptions::default();
+        let options = duck_engine_cad::CadImportOptions::default();
 
-        let result = if is_step {
-            cad::load_step(path, &mut scene, &options)
-                .map_err(|e| LoadError::Cad(e.to_string()))
+        let result = if let Some(path) = path_hint {
+            if is_step {
+                duck_engine_cad::load_step(path, &mut scene, &options)
+            } else {
+                duck_engine_cad::load_iges(path, &mut scene, &options)
+            }
         } else {
-            cad::load_iges(path, &mut scene, &options)
-                .map_err(|e| LoadError::Cad(e.to_string()))
+            let text = std::str::from_utf8(bytes)
+                .map_err(|_| LoadError::Cad("CAD file is not valid UTF-8 text".into()))?;
+            if is_step {
+                duck_engine_cad::load_step_from_str(text, &mut scene, &options)
+            } else {
+                duck_engine_cad::load_iges_from_str(text, &mut scene, &options)
+            }
         };
-        result?;
+        result.map_err(|e| LoadError::Cad(e.to_string()))?;
 
         progress.enter_phase(LoadPhase::Assembling);
         progress.enter_phase(LoadPhase::Complete);

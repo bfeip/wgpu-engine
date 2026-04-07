@@ -42,7 +42,7 @@ pub fn load_step(
     scene: &mut Scene,
     options: &CadImportOptions,
 ) -> Result<NodeId> {
-    let shape = Shape::read_step(path.as_ref())
+    let shape = Shape::read_step_from_file(path.as_ref())
         .with_context(|| format!("Failed to read STEP file: {}", path.as_ref().display()))?;
     import_shape(shape, scene, options)
 }
@@ -56,8 +56,28 @@ pub fn load_iges(
     scene: &mut Scene,
     options: &CadImportOptions,
 ) -> Result<NodeId> {
-    let shape = Shape::read_iges(path.as_ref())
+    let shape = Shape::read_iges_from_file(path.as_ref())
         .with_context(|| format!("Failed to read IGES file: {}", path.as_ref().display()))?;
+    import_shape(shape, scene, options)
+}
+
+/// Import a STEP file from its text content into `scene`, returning the root [`NodeId`].
+pub fn load_step_from_str(
+    s: &str,
+    scene: &mut Scene,
+    options: &CadImportOptions,
+) -> Result<NodeId> {
+    let shape = Shape::read_step_from_str(s).context("Failed to read STEP data")?;
+    import_shape(shape, scene, options)
+}
+
+/// Import an IGES file from its text content into `scene`, returning the root [`NodeId`].
+pub fn load_iges_from_str(
+    s: &str,
+    scene: &mut Scene,
+    options: &CadImportOptions,
+) -> Result<NodeId> {
+    let shape = Shape::read_iges_from_str(s).context("Failed to read IGES data")?;
     import_shape(shape, scene, options)
 }
 
