@@ -188,3 +188,42 @@ fn import_edges(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn step_file() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../assets/NIST-PMI-STEP-Files/nist_ctc_01_asme1_ap242-e1.stp")
+    }
+
+    #[test]
+    fn load_step_from_file_produces_meshes() {
+        let path = step_file();
+        let mut scene = duck_engine_scene::Scene::new();
+        let options = CadImportOptions::default();
+        load_step(&path, &mut scene, &options).expect("load_step failed");
+        assert!(scene.mesh_count() > 0, "expected at least one mesh");
+    }
+
+    #[test]
+    fn load_step_from_str_matches_file_load() {
+        let path = step_file();
+        let text = std::fs::read_to_string(&path).expect("could not read STEP file");
+        let options = CadImportOptions::default();
+
+        let mut scene_file = duck_engine_scene::Scene::new();
+        load_step(&path, &mut scene_file, &options).expect("file load failed");
+
+        let mut scene_str = duck_engine_scene::Scene::new();
+        load_step_from_str(&text, &mut scene_str, &options).expect("str load failed");
+
+        assert_eq!(
+            scene_file.mesh_count(),
+            scene_str.mesh_count(),
+            "mesh counts differ between file and string load"
+        );
+    }
+}
