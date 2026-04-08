@@ -138,6 +138,16 @@ fn import_node(
     entity_map: &mut HashMap<NodeId, CadEntityInfo>,
     name: Option<String>,
 ) -> Result<NodeId> {
+    // Null shapes appear when the file format is unsupported (e.g. IFC uses the STEP wire format
+    // but a different schema) or as placeholders for partially-transferred entities.
+    if shape.is_null() {
+        let node_id = scene
+            .add_node(parent, name.clone(), Transform::IDENTITY)
+            .context("Failed to add null CAD node")?;
+        entity_map.insert(node_id, CadEntityInfo { name, is_assembly: false });
+        return Ok(node_id);
+    }
+
     let transform = matrix_to_transform(shape.location_as_matrix());
 
     // Only recurse into Compound/CompoundSolid shapes — these represent assembly nodes.
