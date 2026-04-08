@@ -27,16 +27,18 @@
             "request": "launch",
             "name": "Debug example 'egui-demo'",
             "cargo": {
+                "cwd": "${workspaceFolder}/duck",
                 "args": [
                     "build",
                     "-p=egui-demo",
+                    "--all-features"
                 ],
                 "filter": {
                     "name": "egui-demo",
                 }
             },
             "args": [],
-            "cwd": "${workspaceFolder}/egui-demo"
+            "cwd": "${workspaceFolder}/duck/egui-demo"
         },
     ]
 }

@@ -15,17 +15,6 @@ All imported geometry receives a single configurable color from `CadImportOption
 
 ---
 
-### Assembly hierarchy lost (flat import)
-**Status:** Unresolved  
-
-`Shape::read_step` / `Shape::read_iges` returns a single root `Shape` (possibly a `TopoDS_Compound`). `opencascade-rs` only exposes flat face/edge/vertex iterators — there is no API to traverse the compound tree (sub-shapes, part names, instance transforms).
-
-All geometry is flattened under a single root node with no name or hierarchy preservation.
-
-**Future work:** Expose `TopoDS_Compound` sub-shape traversal in `opencascade-rs`. Use XDE's `XCAFDoc_DocumentTool` to recover assembly structure with part names and transforms.
-
----
-
 ### Edge deduplication (wireframe doubling)
 **Status:** Not yet implemented  
 
