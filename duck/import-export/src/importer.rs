@@ -424,7 +424,7 @@ impl Importer for CadImporter {
                 duck_engine_cad::load_iges_from_str(text, &mut scene, &options)
             }
         };
-        result.map_err(|e| LoadError::Cad(e.to_string()))?;
+        result.map_err(|e| LoadError::Cad(e.to_string()))?; // CadImportResult is intentionally discarded here
 
         progress.enter_phase(LoadPhase::Assembling);
         progress.enter_phase(LoadPhase::Complete);

@@ -1131,6 +1131,8 @@ name = "duck-engine-cad"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "cgmath",
+ "duck-engine-common",
  "duck-engine-scene",
  "opencascade",
 ]

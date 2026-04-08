@@ -6,4 +6,6 @@ edition = "2024"
 [dependencies]
 opencascade = { path = "../../third-party/opencascade-rs/crates/opencascade" }
 duck-engine-scene = { path = "../scene" }
+duck-engine-common = { path = "../common" }
+cgmath = "0.18"
 anyhow = "1"
