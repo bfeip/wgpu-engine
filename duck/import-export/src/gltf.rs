@@ -671,7 +671,9 @@ pub fn build_gltf_scene(
         }
     }
 
-    scene.set_default_lights();
+    if scene.lights().is_empty() {
+        scene.set_default_lights();
+    }
 
     Ok(camera)
 }

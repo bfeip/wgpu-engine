@@ -585,19 +585,26 @@ impl Scene {
         self.light_generation
     }
 
-    /// Sets up default lighting for the scene if no lights are present.
+    /// Adds a two-light camera-space setup to the scene.
     ///
-    /// Adds a single white point light at position (3, 3, 3) with intensity 1.0.
-    /// This is useful when loading scenes that don't define their own lights.
+    /// Adds a key light (intensity 1.0, upper-left) and a fill light (intensity 0.3,
+    /// lower-right), both as camera-space directional lights. Camera-space lights move
+    /// with the camera, so the result looks correct regardless of scene orientation or scale.
+    ///
+    /// This function unconditionally appends the two lights. Callers that want to apply
+    /// default lighting only when no lights exist should check `scene.lights().is_empty()`
+    /// before calling.
     pub fn set_default_lights(&mut self) {
-        if self.lights.is_empty() {
-            self.lights.push(Light::point(
-                cgmath::Vector3::new(3.0, 3.0, 3.0),
-                crate::common::RgbaColor { r: 1.0, g: 1.0, b: 1.0, a: 1.0 },
-                1.0,
-            ));
-            self.light_generation += 1;
-        }
+        let white = crate::common::RgbaColor { r: 1.0, g: 1.0, b: 1.0, a: 1.0 };
+        self.lights.push(
+            Light::directional(cgmath::Vector3::new(-1.0, -1.0, -1.0).normalize(), white, 1.0)
+                .in_space(CoordinateSpace::Camera),
+        );
+        self.lights.push(
+            Light::directional(cgmath::Vector3::new(1.0, 1.0, -1.0).normalize(), white, 0.3)
+                .in_space(CoordinateSpace::Camera),
+        );
+        self.light_generation += 1;
     }
 
     // ========== Node API ==========

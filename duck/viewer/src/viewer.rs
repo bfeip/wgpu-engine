@@ -1,11 +1,9 @@
-use cgmath::Vector3;
 use web_time::Instant;
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::{
-    common::RgbaColor,
     event::{Event, EventContext, EventDispatcher, EventKind},
     operator::{
         BuiltinOperatorId, NavigationMode, NavigationOperator, OperatorManager,
@@ -13,10 +11,8 @@ use crate::{
     },
     scene::{Camera, Scene},
     selection::SelectionManager,
-    renderer::SelectionQuery,
+    renderer::{Renderer, SelectionQuery},
 };
-
-use duck_engine_renderer::Renderer;
 
 /// Main viewer that encapsulates the renderer, scene, and event handling
 pub struct Viewer<'a> {
@@ -125,14 +121,7 @@ impl<'a> Viewer<'a> {
         let sample_count = if is_gl_backend { 1 } else { 4 };
 
         let renderer = Renderer::new(device.clone(), queue.clone(), surface_format, width, height, sample_count, has_compute);
-        let mut scene = Scene::new();
-
-        // Set up default lighting
-        scene.set_lights(vec![crate::scene::Light::point(
-            Vector3::new(1.0, -1.0, 1.0),
-            RgbaColor{ r: 1.0, g: 1.0, b: 1.0, a: 1.0 },
-            100.0
-        )]);
+        let scene = Scene::new();
 
         let mut dispatcher = EventDispatcher::new();
         let mut operator_manager = OperatorManager::new();

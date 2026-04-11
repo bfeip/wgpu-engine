@@ -221,7 +221,9 @@ fn convert_scene(data: &mut dyn AbstractData) -> Result<UsdLoadResult> {
     }
 
     // Phase 3: Set default lights if none were loaded
-    scene.set_default_lights();
+    if scene.lights().is_empty() {
+        scene.set_default_lights();
+    }
 
     Ok(UsdLoadResult { scene, camera })
 }
