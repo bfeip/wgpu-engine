@@ -84,12 +84,7 @@ fn convert_scene(assimp_scene: &RScene, base_path: Option<&Path>) -> Result<Assi
     // Phase 5: Load lights
     load_lights(&assimp_scene.lights, &mut scene);
 
-    // Phase 6: Set default lights if none were loaded
-    if scene.lights().is_empty() {
-        scene.set_default_lights();
-    }
-
-    // Phase 7: Extract camera
+    // Phase 6: Extract camera
     let camera = extract_camera(&assimp_scene.cameras);
 
     Ok(AssimpLoadResult { scene, camera })
