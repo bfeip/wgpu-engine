@@ -12,7 +12,7 @@ use winit::{
     window::{Window, WindowId},
 };
 
-use duck_engine_cad::{add_body_to_scene, tessellate_body, Body, TessellationOptions};
+use duck_engine_truck_experiment::{add_body_to_scene, tessellate_body, Body, TessellationOptions};
 use duck_engine_viewer::common::RgbaColor;
 use duck_engine_viewer::input::{ElementState, Key, NamedKey};
 use duck_engine_viewer::scene::{CoordinateSpace, Light, Material};
