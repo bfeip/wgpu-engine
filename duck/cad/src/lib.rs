@@ -8,6 +8,7 @@ use duck_engine_scene::common::Transform;
 use duck_engine_scene::{Material, Mesh, MeshPrimitive, NodeId, PrimitiveType, Scene, Vertex};
 use duck_engine_scene::common::RgbaColor;
 use opencascade::primitives::{EdgeType, Shape, ShapeType};
+use opencascade::xcaf::{XcafColorTool, XcafDocument, XcafLabel, XcafShapeTool};
 
 /// Options controlling how a CAD file is imported.
 pub struct CadImportOptions {
@@ -61,9 +62,9 @@ pub fn load_step(
     scene: &mut Scene,
     options: &CadImportOptions,
 ) -> Result<CadImportResult> {
-    let shape = Shape::read_step_from_file(path.as_ref())
+    let doc = XcafDocument::read_step(path.as_ref())
         .with_context(|| format!("Failed to read STEP file: {}", path.as_ref().display()))?;
-    import_shape_hierarchical(shape, scene, options)
+    import_xcaf_document(&doc, scene, options)
 }
 
 /// Import a STEP file from its text content into `scene`.
@@ -82,9 +83,9 @@ pub fn load_iges(
     scene: &mut Scene,
     options: &CadImportOptions,
 ) -> Result<CadImportResult> {
-    let shape = Shape::read_iges_from_file(path.as_ref())
+    let doc = XcafDocument::read_iges(path.as_ref())
         .with_context(|| format!("Failed to read IGES file: {}", path.as_ref().display()))?;
-    import_shape_hierarchical(shape, scene, options)
+    import_xcaf_document(&doc, scene, options)
 }
 
 /// Import an IGES file from its text content into `scene`.
@@ -105,6 +106,67 @@ fn import_shape_hierarchical(
     let mut entity_map = HashMap::new();
     let root = import_node(&shape, scene, options, None, &mut entity_map, Some("cad_import".to_string()))?;
     Ok(CadImportResult { root, entity_map })
+}
+
+fn import_xcaf_document(
+    doc: &XcafDocument,
+    scene: &mut Scene,
+    options: &CadImportOptions,
+) -> Result<CadImportResult> {
+    let shape_tool = doc.shape_tool();
+    let color_tool = doc.color_tool();
+    let mut entity_map = HashMap::new();
+
+    let root = scene
+        .add_node(None, Some("cad_import".to_string()), Transform::IDENTITY)
+        .context("Failed to add root CAD node")?;
+    entity_map.insert(root, CadEntityInfo { name: Some("cad_import".to_string()), is_assembly: true });
+
+    for label in shape_tool.free_shapes() {
+        import_xcaf_label(&label, &shape_tool, &color_tool, scene, options, Some(root), &mut entity_map)?;
+    }
+
+    Ok(CadImportResult { root, entity_map })
+}
+
+fn import_xcaf_label(
+    label: &XcafLabel,
+    shape_tool: &XcafShapeTool,
+    color_tool: &XcafColorTool,
+    scene: &mut Scene,
+    options: &CadImportOptions,
+    parent: Option<NodeId>,
+    entity_map: &mut HashMap<NodeId, CadEntityInfo>,
+) -> Result<NodeId> {
+    let name = label.name();
+    let transform = matrix_to_transform(shape_tool.location_matrix(label));
+    let is_assembly = shape_tool.is_assembly(label);
+
+    let node_id = scene
+        .add_node(parent, name.clone(), transform)
+        .context("Failed to add XCAF node")?;
+    entity_map.insert(node_id, CadEntityInfo { name, is_assembly });
+
+    if is_assembly {
+        for child in shape_tool.components(label) {
+            import_xcaf_label(&child, shape_tool, color_tool, scene, options, Some(node_id), entity_map)?;
+        }
+    } else {
+        let shape = shape_tool.shape(label);
+
+        let face_color = color_tool
+            .color_of_label(label)
+            .or_else(|| color_tool.color_of_shape(&shape))
+            .map(|(r, g, b)| RgbaColor { r, g, b, a: 1.0 })
+            .unwrap_or(options.face_color);
+
+        import_faces(&shape, scene, options, node_id, face_color)?;
+        if options.include_edges {
+            import_edges(&shape, scene, options, node_id)?;
+        }
+    }
+
+    Ok(node_id)
 }
 
 /// Converts a row-major `[[f64; 4]; 4]` matrix (as returned by `Shape::location_as_matrix`)
@@ -166,7 +228,7 @@ fn import_node(
             import_node(child, scene, options, Some(node_id), entity_map, Some(format!("part_{i}")))?;
         }
     } else {
-        import_faces(shape, scene, options, node_id)?;
+        import_faces(shape, scene, options, node_id, options.face_color)?;
         if options.include_edges {
             import_edges(shape, scene, options, node_id)?;
         }
@@ -180,6 +242,7 @@ fn import_faces(
     scene: &mut Scene,
     options: &CadImportOptions,
     parent: NodeId,
+    face_color: RgbaColor,
 ) -> Result<()> {
     let occt_mesh = shape
         .mesh_with_tolerance(options.tessellation_tolerance)
@@ -207,7 +270,7 @@ fn import_faces(
     let indices: Vec<u32> = occt_mesh.indices.iter().map(|&i| i as u32).collect();
     let primitive = MeshPrimitive { primitive_type: PrimitiveType::TriangleList, indices };
 
-    let face_mat = scene.add_material(Material::new().with_base_color_factor(options.face_color));
+    let face_mat = scene.add_material(Material::new().with_base_color_factor(face_color));
     let mesh_id = scene.add_mesh(Mesh::from_raw(vertices, vec![primitive]));
     scene
         .add_instance_node(Some(parent), mesh_id, face_mat, None, Transform::IDENTITY)
