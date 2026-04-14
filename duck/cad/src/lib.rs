@@ -7,7 +7,7 @@ use duck_engine_common::decompose_matrix;
 use duck_engine_scene::common::Transform;
 use duck_engine_scene::{Material, Mesh, MeshPrimitive, NodeId, PrimitiveType, Scene, Vertex};
 use duck_engine_scene::common::RgbaColor;
-use opencascade::primitives::{EdgeType, Shape, ShapeType};
+use opencascade::primitives::{EdgeType, Shape};
 use opencascade::xcaf::{XcafColorTool, XcafDimTolTool, XcafDocument, XcafLabel, XcafShapeTool};
 
 /// Options controlling how a CAD file is imported.
@@ -82,14 +82,14 @@ pub fn load_step(
     import_xcaf_document(&doc, scene, options)
 }
 
-/// Import a STEP file from its text content into `scene`.
+/// Import STEP data from a string into `scene`.
 pub fn load_step_from_str(
     s: &str,
     scene: &mut Scene,
     options: &CadImportOptions,
 ) -> Result<CadImportResult> {
-    let shape = Shape::read_step_from_str(s).context("Failed to read STEP data")?;
-    import_shape_hierarchical(shape, scene, options)
+    let doc = XcafDocument::read_step_from_str(s).context("Failed to read STEP data")?;
+    import_xcaf_document(&doc, scene, options)
 }
 
 /// Import an IGES file into `scene`, returning a [`CadImportResult`].
@@ -103,24 +103,14 @@ pub fn load_iges(
     import_xcaf_document(&doc, scene, options)
 }
 
-/// Import an IGES file from its text content into `scene`.
+/// Import IGES data from a string into `scene`.
 pub fn load_iges_from_str(
     s: &str,
     scene: &mut Scene,
     options: &CadImportOptions,
 ) -> Result<CadImportResult> {
-    let shape = Shape::read_iges_from_str(s).context("Failed to read IGES data")?;
-    import_shape_hierarchical(shape, scene, options)
-}
-
-fn import_shape_hierarchical(
-    shape: Shape,
-    scene: &mut Scene,
-    options: &CadImportOptions,
-) -> Result<CadImportResult> {
-    let mut entity_map = HashMap::new();
-    let root = import_node(&shape, scene, options, None, &mut entity_map, Some("cad_import".to_string()))?;
-    Ok(CadImportResult { root, entity_map, pmi_root: None })
+    let doc = XcafDocument::read_iges_from_str(s).context("Failed to read IGES data")?;
+    import_xcaf_document(&doc, scene, options)
 }
 
 fn import_xcaf_document(
@@ -190,10 +180,7 @@ fn import_xcaf_label(
     Ok(node_id)
 }
 
-/// Converts a row-major `[[f64; 4]; 4]` matrix (as returned by `Shape::location_as_matrix`)
-/// into a [`Transform`] via matrix decomposition.
-///
-/// This is reusable for any future matrix-to-transform conversion (XDE, etc.).
+/// Converts a row-major `[[f64; 4]; 4]` matrix into a [`Transform`] via matrix decomposition.
 fn matrix_to_transform(mat: [[f64; 4]; 4]) -> Transform {
     // cgmath::Matrix4::new takes arguments in column-major order:
     //   new(c0r0, c0r1, c0r2, c0r3,  c1r0, c1r1, ...)
@@ -205,57 +192,6 @@ fn matrix_to_transform(mat: [[f64; 4]; 4]) -> Transform {
         mat[0][3] as f32, mat[1][3] as f32, mat[2][3] as f32, mat[3][3] as f32, // col 3
     );
     decompose_matrix(&m)
-}
-
-/// Recursively imports `shape` as a scene node (and its sub-tree) under `parent`.
-///
-/// - If the shape has direct sub-shapes it is treated as an assembly node and the
-///   function recurses into each child.
-/// - If it has no sub-shapes it is treated as leaf geometry: faces are tessellated
-///   and edges are extracted as children of the node.
-fn import_node(
-    shape: &Shape,
-    scene: &mut Scene,
-    options: &CadImportOptions,
-    parent: Option<NodeId>,
-    entity_map: &mut HashMap<NodeId, CadEntityInfo>,
-    name: Option<String>,
-) -> Result<NodeId> {
-    // Null shapes appear when the file format is unsupported (e.g. IFC uses the STEP wire format
-    // but a different schema) or as placeholders for partially-transferred entities.
-    if shape.is_null() {
-        let node_id = scene
-            .add_node(parent, name.clone(), Transform::IDENTITY)
-            .context("Failed to add null CAD node")?;
-        entity_map.insert(node_id, CadEntityInfo { name, is_assembly: false });
-        return Ok(node_id);
-    }
-
-    let transform = matrix_to_transform(shape.location_as_matrix());
-
-    // Only recurse into Compound/CompoundSolid shapes — these represent assembly nodes.
-    // Solid, Shell, Face, etc. are leaf geometry and should be tessellated directly.
-    let is_assembly = matches!(shape.shape_type(), ShapeType::Compound | ShapeType::CompoundSolid);
-    let children: Vec<Shape> = if is_assembly { shape.sub_shapes().collect() } else { vec![] };
-    let is_assembly = !children.is_empty(); // treat an empty compound as a leaf
-
-    let node_id = scene
-        .add_node(parent, name.clone(), transform)
-        .context("Failed to add CAD node")?;
-    entity_map.insert(node_id, CadEntityInfo { name, is_assembly });
-
-    if is_assembly {
-        for (i, child) in children.iter().enumerate() {
-            import_node(child, scene, options, Some(node_id), entity_map, Some(format!("part_{i}")))?;
-        }
-    } else {
-        import_faces(shape, scene, options, node_id, options.face_color)?;
-        if options.include_edges {
-            import_edges(shape, scene, options, node_id)?;
-        }
-    }
-
-    Ok(node_id)
 }
 
 fn import_faces(
@@ -449,6 +385,7 @@ mod tests {
         let mut scene = duck_engine_scene::Scene::new();
         load_step_from_str(&text, &mut scene, &options).expect("str load failed");
         assert!(scene.mesh_count() > 0, "expected at least one mesh");
+        assert!(scene.node_count() > 1, "expected hierarchy preserved via XCAF");
     }
 
     #[test]
