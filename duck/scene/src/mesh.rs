@@ -86,6 +86,51 @@ impl MeshPrimitive {
     }
 }
 
+/// Index range within a mesh primitive's index list.
+///
+/// Units depend on the primitive type:
+/// - `TriangleList`: `start` and `count` are in **triangles** (multiply by 3 for raw index offset)
+/// - `LineList`: `start` and `count` are in **segments** (multiply by 2 for raw index offset)
+/// - `PointList`: `start` and `count` are in **points** (1:1 with raw indices)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct SubMeshRange {
+    /// First element (in primitive-type units) within the primitive's index list.
+    pub start: u32,
+    /// Number of elements.
+    pub count: u32,
+}
+
+/// Semantic grouping of a mesh's index ranges into named sub-geometry elements.
+///
+/// A mesh with topology knows which triangles form "face 3", which line segments
+/// form "edge 7", etc. This enables sub-geometry selection and highlighting.
+/// All fields are optional — set only the slices that are meaningful for a given mesh.
+///
+/// Ranges are parallel with the primitives list: `face_ranges` index into the first
+/// `TriangleList` primitive, `edge_ranges` into the first `LineList` primitive, and
+/// `point_ranges` into the first `PointList` primitive.
+#[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Topology {
+    /// One entry per face element, in tessellation order.
+    /// Indexes into the mesh's first `TriangleList` primitive's indices (in triangles).
+    pub face_ranges: Vec<SubMeshRange>,
+    /// One entry per edge/wire element, in iteration order.
+    /// Indexes into the mesh's first `LineList` primitive's indices (in segments).
+    pub edge_ranges: Vec<SubMeshRange>,
+    /// One entry per point element.
+    /// Indexes into the mesh's first `PointList` primitive's indices.
+    pub point_ranges: Vec<SubMeshRange>,
+}
+
+impl Topology {
+    /// Returns `true` if there are no face, edge, or point ranges.
+    pub fn is_empty(&self) -> bool {
+        self.face_ranges.is_empty() && self.edge_ranges.is_empty() && self.point_ranges.is_empty()
+    }
+}
+
 /// GPU-compatible vertex structure containing position, texture coordinates, and normal.
 ///
 /// This struct is laid out in memory to match the vertex shader's expectations.
@@ -177,6 +222,8 @@ pub struct Mesh {
     /// Cached local-space axis-aligned bounding box
     #[cfg_attr(feature = "serde", serde(skip))]
     cached_bounding: Cell<Option<Aabb>>,
+    /// Optional sub-geometry topology: maps faces/edges/points to index ranges.
+    topology: Option<Topology>,
 }
 
 impl Mesh {
@@ -188,6 +235,7 @@ impl Mesh {
             primitives: Vec::new(),
             generation: crate::initial_generation(),
             cached_bounding: Cell::new(None),
+            topology: None,
         }
     }
 
@@ -203,6 +251,7 @@ impl Mesh {
             primitives,
             generation: crate::initial_generation(),
             cached_bounding: Cell::new(None),
+            topology: None,
         }
     }
 
@@ -458,6 +507,46 @@ impl Mesh {
         let bounding = Aabb::from_points(&positions);
         self.cached_bounding.set(bounding);
         bounding
+    }
+
+    /// Returns the mesh's sub-geometry topology, if any.
+    pub fn topology(&self) -> Option<&Topology> {
+        self.topology.as_ref()
+    }
+
+    /// Sets the sub-geometry topology for this mesh.
+    ///
+    /// Does not increment the generation counter because topology does not affect
+    /// GPU buffer contents — it is CPU-side metadata used for picking and selection.
+    ///
+    /// Note: if mesh editing is ever supported, topology changes may need to trigger
+    /// a generation increment (and GPU re-upload) if the vertex/index layout changes.
+    pub fn set_topology(&mut self, topology: Topology) {
+        self.topology = Some(topology);
+    }
+
+    /// Returns the face index that contains `triangle_index` (counting individual
+    /// triangles in the first `TriangleList` primitive).
+    ///
+    /// Returns `None` if this mesh has no topology or `triangle_index` is out of range.
+    pub fn face_for_triangle(&self, triangle_index: u32) -> Option<u32> {
+        let topo = self.topology.as_ref()?;
+        topo.face_ranges
+            .iter()
+            .position(|r| triangle_index >= r.start && triangle_index < r.start + r.count)
+            .map(|i| i as u32)
+    }
+
+    /// Returns the edge index that contains `segment_index` (counting individual
+    /// 2-vertex segments in the first `LineList` primitive).
+    ///
+    /// Returns `None` if this mesh has no topology or `segment_index` is out of range.
+    pub fn edge_for_segment(&self, segment_index: u32) -> Option<u32> {
+        let topo = self.topology.as_ref()?;
+        topo.edge_ranges
+            .iter()
+            .position(|r| segment_index >= r.start && segment_index < r.start + r.count)
+            .map(|i| i as u32)
     }
 
 }

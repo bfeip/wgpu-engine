@@ -5,7 +5,10 @@ use anyhow::{Context, Result};
 use cgmath::Matrix4;
 use duck_engine_common::decompose_matrix;
 use duck_engine_scene::common::Transform;
-use duck_engine_scene::{Material, Mesh, MeshPrimitive, NodeId, PrimitiveType, Scene, Vertex};
+use duck_engine_scene::{
+    InstanceId, Material, Mesh, MeshPrimitive, NodeId, PrimitiveType, Scene, SubMeshRange, Topology,
+    Vertex,
+};
 use duck_engine_scene::common::RgbaColor;
 use opencascade::primitives::{EdgeType, Shape};
 use opencascade::xcaf::{XcafColorTool, XcafDimTolTool, XcafDocument, XcafLabel, XcafShapeTool};
@@ -46,11 +49,14 @@ impl Default for CadImportOptions {
 
 /// CAD-specific metadata for a node created during import.
 pub struct CadEntityInfo {
-    /// Part name from CAD file metadata. Always `None` until XDE support is added.
+    /// Part name from CAD file metadata.
     pub name: Option<String>,
     /// `true` when this node is an assembly node (has sub-components).
     /// `false` for leaf geometry nodes.
     pub is_assembly: bool,
+    /// For leaf geometry nodes, the instance that holds the combined face+edge mesh.
+    /// `None` for assembly nodes and the root.
+    pub instance_id: Option<InstanceId>,
 }
 
 /// Result of a hierarchy-preserving CAD import.
@@ -125,7 +131,7 @@ fn import_xcaf_document(
     let root = scene
         .add_node(None, Some("cad_import".to_string()), Transform::IDENTITY)
         .context("Failed to add root CAD node")?;
-    entity_map.insert(root, CadEntityInfo { name: Some("cad_import".to_string()), is_assembly: true });
+    entity_map.insert(root, CadEntityInfo { name: Some("cad_import".to_string()), is_assembly: true, instance_id: None });
 
     for label in shape_tool.free_shapes() {
         import_xcaf_label(&label, &shape_tool, &color_tool, scene, options, Some(root), &mut entity_map)?;
@@ -156,12 +162,11 @@ fn import_xcaf_label(
     let node_id = scene
         .add_node(parent, name.clone(), transform)
         .context("Failed to add XCAF node")?;
-    entity_map.insert(node_id, CadEntityInfo { name, is_assembly });
-
-    if is_assembly {
+    let instance_id = if is_assembly {
         for child in shape_tool.components(label) {
             import_xcaf_label(&child, shape_tool, color_tool, scene, options, Some(node_id), entity_map)?;
         }
+        None
     } else {
         let shape = shape_tool.shape(label);
 
@@ -171,11 +176,11 @@ fn import_xcaf_label(
             .map(|(r, g, b)| RgbaColor { r, g, b, a: 1.0 })
             .unwrap_or(options.face_color);
 
-        import_faces(&shape, scene, options, node_id, face_color)?;
-        if options.include_edges {
-            import_edges(&shape, scene, options, node_id)?;
-        }
-    }
+        let iid = import_leaf_part(&shape, scene, options, node_id, face_color)?;
+        Some(iid)
+    };
+
+    entity_map.insert(node_id, CadEntityInfo { name, is_assembly, instance_id });
 
     Ok(node_id)
 }
@@ -194,24 +199,26 @@ fn matrix_to_transform(mat: [[f64; 4]; 4]) -> Transform {
     decompose_matrix(&m)
 }
 
-fn import_faces(
+/// Tessellates a leaf B-Rep shape into a single mesh containing both face triangles and
+/// edge lines, sets sub-geometry topology on the mesh, and attaches it directly to `node`.
+///
+/// Returns the [`InstanceId`] of the created instance so callers can record it in the
+/// entity map.
+fn import_leaf_part(
     shape: &Shape,
     scene: &mut Scene,
     options: &CadImportOptions,
-    parent: NodeId,
+    node: NodeId,
     face_color: RgbaColor,
-) -> Result<()> {
-    let occt_mesh = shape
-        .mesh_with_tolerance(options.tessellation_tolerance)
-        .context("OCCT tessellation failed")?;
-
-    if occt_mesh.vertices.is_empty() {
-        return Ok(());
-    }
-
+) -> Result<InstanceId> {
     let s = options.scale_factor;
 
-    let vertices: Vec<Vertex> = (0..occt_mesh.vertices.len())
+    // --- Faces ---
+    let (occt_mesh, occt_face_ranges) = shape
+        .mesh_with_tolerance_and_ranges(options.tessellation_tolerance)
+        .context("OCCT tessellation failed")?;
+
+    let mut vertices: Vec<Vertex> = (0..occt_mesh.vertices.len())
         .map(|i| {
             let pos = occt_mesh.vertices[i];
             let norm = occt_mesh.normals.get(i).copied().unwrap_or_default();
@@ -224,64 +231,77 @@ fn import_faces(
         })
         .collect();
 
-    let indices: Vec<u32> = occt_mesh.indices.iter().map(|&i| i as u32).collect();
-    let primitive = MeshPrimitive { primitive_type: PrimitiveType::TriangleList, indices };
+    let face_indices: Vec<u32> = occt_mesh.indices.iter().map(|&i| i as u32).collect();
+    let face_ranges: Vec<SubMeshRange> = occt_face_ranges
+        .iter()
+        .map(|r| SubMeshRange { start: r.start, count: r.count })
+        .collect();
 
-    let face_mat = scene.add_material(Material::new().with_base_color_factor(face_color));
-    let mesh_id = scene.add_mesh(Mesh::from_raw(vertices, vec![primitive]));
-    scene
-        .add_instance_node(Some(parent), mesh_id, face_mat, None, Transform::IDENTITY)
-        .context("Failed to add face instance node")?;
-
-    Ok(())
-}
-
-fn import_edges(
-    shape: &Shape,
-    scene: &mut Scene,
-    options: &CadImportOptions,
-    parent: NodeId,
-) -> Result<()> {
-    let s = options.scale_factor;
-    let mut edge_verts: Vec<Vertex> = Vec::new();
+    // --- Edges ---
+    // Edge vertices are appended after face vertices; absolute vertex indices are used
+    // so the LineList primitive correctly references into the combined vertex buffer.
+    // TODO: de-duplicate edge vertices that coincide with existing face vertices.
+    // This requires a spatial lookup (e.g. a HashMap keyed on quantized position)
+    // since OCCT's face and edge tessellations are independent.
     let mut edge_indices: Vec<u32> = Vec::new();
+    let mut edge_ranges: Vec<SubMeshRange> = Vec::new();
 
-    for edge in shape.edges() {
-        let points: Vec<_> = match edge.edge_type() {
-            EdgeType::Line => vec![edge.start_point(), edge.end_point()],
-            _ => edge.approximation_segments().collect(),
-        };
+    if options.include_edges {
+        for edge in shape.edges() {
+            let points: Vec<_> = match edge.edge_type() {
+                EdgeType::Line => vec![edge.start_point(), edge.end_point()],
+                _ => edge.approximation_segments().collect(),
+            };
 
-        if points.len() < 2 {
-            continue;
-        }
-
-        for window in points.windows(2) {
-            let base = edge_verts.len() as u32;
-            for p in window {
-                edge_verts.push(Vertex {
-                    position: [p.x as f32 * s, p.y as f32 * s, p.z as f32 * s],
-                    normal: [0.0, 0.0, 0.0],
-                    tex_coords: [0.0, 0.0, 0.0],
-                });
+            if points.len() < 2 {
+                continue;
             }
-            edge_indices.push(base);
-            edge_indices.push(base + 1);
+
+            let seg_start = (edge_indices.len() / 2) as u32;
+            let mut seg_count = 0u32;
+
+            for window in points.windows(2) {
+                let base = vertices.len() as u32;
+                for p in window {
+                    vertices.push(Vertex {
+                        position: [p.x as f32 * s, p.y as f32 * s, p.z as f32 * s],
+                        normal: [0.0, 0.0, 0.0],
+                        tex_coords: [0.0, 0.0, 0.0],
+                    });
+                }
+                edge_indices.push(base);
+                edge_indices.push(base + 1);
+                seg_count += 1;
+            }
+
+            if seg_count > 0 {
+                edge_ranges.push(SubMeshRange { start: seg_start, count: seg_count });
+            }
         }
     }
 
-    if edge_verts.is_empty() {
-        return Ok(());
+    // --- Assemble mesh ---
+    let mut primitives = Vec::new();
+    if !face_indices.is_empty() {
+        primitives.push(MeshPrimitive { primitive_type: PrimitiveType::TriangleList, indices: face_indices });
+    }
+    if !edge_indices.is_empty() {
+        primitives.push(MeshPrimitive { primitive_type: PrimitiveType::LineList, indices: edge_indices });
     }
 
-    let edge_mat = scene.add_material(Material::new().with_line_color(options.edge_color));
-    let primitive = MeshPrimitive { primitive_type: PrimitiveType::LineList, indices: edge_indices };
-    let mesh_id = scene.add_mesh(Mesh::from_raw(edge_verts, vec![primitive]));
-    scene
-        .add_instance_node(Some(parent), mesh_id, edge_mat, None, Transform::IDENTITY)
-        .context("Failed to add edge instance node")?;
+    let mut mesh = Mesh::from_raw(vertices, primitives);
+    mesh.set_topology(Topology { face_ranges, edge_ranges, point_ranges: Vec::new() });
 
-    Ok(())
+    let mat = scene.add_material(
+        Material::new()
+            .with_base_color_factor(face_color)
+            .with_line_color(options.edge_color),
+    );
+    let mesh_id = scene.add_mesh(mesh);
+    let instance_id = scene.add_instance(mesh_id, mat);
+    scene.set_node_instance(node, instance_id);
+
+    Ok(instance_id)
 }
 
 /// Extract PMI graphical presentation geometry from `dim_tol_tool` and add it to the scene

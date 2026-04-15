@@ -37,7 +37,7 @@ pub use material::{
     AlphaMode, Material, MaterialFlags, MaterialProperties, DEFAULT_MATERIAL_ID,
     DEFAULT_METALLIC, DEFAULT_ROUGHNESS,
 };
-pub use mesh::{Mesh, MeshDescriptor, MeshIndex, MeshPrimitive, ObjMesh, PrimitiveType, Vertex};
+pub use mesh::{Mesh, MeshDescriptor, MeshIndex, MeshPrimitive, ObjMesh, PrimitiveType, SubMeshRange, Topology, Vertex};
 pub use node::{EffectiveVisibility, Node, Visibility};
 pub use texture::{Texture, TextureFormat};
 pub use environment::{
@@ -892,6 +892,13 @@ impl Scene {
     // ========== Node Transform Mutation API ==========
 
     /// Sets the full transform of a node and invalidates ancestor bounds.
+    /// Attaches an instance to an existing node, replacing any previous instance.
+    pub fn set_node_instance(&mut self, node_id: NodeId, instance_id: InstanceId) {
+        let node = self.nodes.get_mut(&node_id).expect("Node not found");
+        node.set_instance(Some(instance_id));
+        self.invalidate_ancestor_bounds(node_id);
+    }
+
     pub fn set_node_transform(&mut self, node_id: NodeId, transform: common::Transform) {
         let node = self.nodes.get_mut(&node_id).expect("Node not found");
         node.set_transform(transform);
