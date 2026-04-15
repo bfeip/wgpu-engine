@@ -15,7 +15,7 @@ use crate::{
     shaders::ShaderGenerator,
 };
 
-use batching::{DrawBatch, DrawData};
+use batching::{DrawBatch, DrawData, SubGeomBatch};
 
 use gpu_resources::{
     CameraResources, CameraUniform, DefaultTextures, GpuResourceManager,
@@ -379,7 +379,12 @@ impl Renderer {
         }
 
         if draw_data.has_selection() {
-            self.render_selection_mask_pass(encoder, draw_data.selected_batches(), scene);
+            self.render_selection_mask_pass(
+                encoder,
+                draw_data.selected_batches(),
+                draw_data.selection_sub_geom_batches(),
+                scene,
+            );
             self.render_outline_pass(encoder, view);
         }
 
@@ -636,10 +641,14 @@ impl Renderer {
     }
 
     /// Pass 2: Render selected objects to mask texture for outline detection.
+    ///
+    /// Renders both whole-node selections (`selected_batches`) and sub-geometry selections
+    /// (`sub_geom_batches`) into the same mask texture in a single pass.
     fn render_selection_mask_pass(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         selected_batches: &[DrawBatch],
+        sub_geom_batches: &[SubGeomBatch],
         scene: &Scene,
     ) {
         let (mask_view, mask_resolve_target) = match &self.outline_resources.msaa_color_attachment {
@@ -687,6 +696,23 @@ impl Renderer {
                 batch.primitive_type,
                 &batch.instances,
                 mesh.index_count(batch.primitive_type),
+            );
+        }
+
+        for batch in sub_geom_batches {
+            if batch.primitive_type != PrimitiveType::TriangleList {
+                continue; // Only outline triangle sub-geometry
+            }
+            let gpu_mesh = self.gpu_resources.get_mesh(batch.mesh_id)
+                .expect("Mesh GPU resources not initialized");
+            gpu_resources::draw_mesh_subgeom(
+                &self.device,
+                &mut render_pass,
+                gpu_mesh,
+                batch.primitive_type,
+                &batch.instance_transform,
+                batch.first_index,
+                batch.index_count,
             );
         }
     }

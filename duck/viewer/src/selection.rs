@@ -1,8 +1,7 @@
 //! Selection management for scene elements.
 //!
-//! This module provides types and utilities for managing selection state in the viewer.
-//! Currently supports node-level selection, with the design allowing for future expansion
-//! to more granular selection (faces, edges, points).
+//! Supports node-level selection as well as sub-geometry selection (faces, edges) for
+//! meshes that carry [`Topology`](crate::scene::Topology) metadata.
 
 use std::collections::HashSet;
 
@@ -34,23 +33,23 @@ impl Default for SelectionConfig {
 }
 
 /// Represents a selectable element in the scene.
-///
-/// Designed for future expansion to support different selection granularities.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SelectionItem {
-    /// A complete scene node
+    /// A complete scene node.
     Node(NodeId),
-    // Future expansion:
-    // Face { node_id: NodeId, face_index: u32 },
-    // Edge { node_id: NodeId, edge_index: u32 },
-    // Point { node_id: NodeId, point_index: u32 },
+    /// A single face within a node's mesh topology.
+    Face { node_id: NodeId, face_index: u32 },
+    /// A single edge within a node's mesh topology.
+    Edge { node_id: NodeId, edge_index: u32 },
 }
 
 impl SelectionItem {
-    /// Returns the NodeId associated with this selection item.
+    /// Returns the [`NodeId`] associated with this selection item.
     pub fn node_id(&self) -> NodeId {
         match self {
             SelectionItem::Node(id) => *id,
+            SelectionItem::Face { node_id, .. } => *node_id,
+            SelectionItem::Edge { node_id, .. } => *node_id,
         }
     }
 }
@@ -142,6 +141,38 @@ impl SelectionManager {
             .collect()
     }
 
+    /// Returns true if the given face is selected.
+    pub fn is_face_selected(&self, node_id: NodeId, face_index: u32) -> bool {
+        self.selected.contains(&SelectionItem::Face { node_id, face_index })
+    }
+
+    /// Returns true if the given edge is selected.
+    pub fn is_edge_selected(&self, node_id: NodeId, edge_index: u32) -> bool {
+        self.selected.contains(&SelectionItem::Edge { node_id, edge_index })
+    }
+
+    /// Returns an iterator over face indices currently selected on `node_id`.
+    pub fn selected_faces_for_node(&self, node_id: NodeId) -> impl Iterator<Item = u32> + '_ {
+        self.selection_order.iter().filter_map(move |item| {
+            if let SelectionItem::Face { node_id: nid, face_index } = item {
+                if *nid == node_id { Some(*face_index) } else { None }
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Returns an iterator over edge indices currently selected on `node_id`.
+    pub fn selected_edges_for_node(&self, node_id: NodeId) -> impl Iterator<Item = u32> + '_ {
+        self.selection_order.iter().filter_map(move |item| {
+            if let SelectionItem::Edge { node_id: nid, edge_index } = item {
+                if *nid == node_id { Some(*edge_index) } else { None }
+            } else {
+                None
+            }
+        })
+    }
+
     // ========== Mutation API ==========
 
     /// Clears all selections.
@@ -221,6 +252,40 @@ impl SelectionQuery for SelectionManager {
 
     fn is_node_selected(&self, node_id: NodeId) -> bool {
         self.is_node_selected(node_id)
+    }
+
+    fn selected_faces_for_node(&self, node_id: NodeId) -> Vec<u32> {
+        self.selected_faces_for_node(node_id).collect()
+    }
+
+    fn selected_edges_for_node(&self, node_id: NodeId) -> Vec<u32> {
+        self.selected_edges_for_node(node_id).collect()
+    }
+
+    fn nodes_with_face_selection(&self) -> Vec<NodeId> {
+        let mut nodes: Vec<NodeId> = self
+            .selected
+            .iter()
+            .filter_map(|item| {
+                if let SelectionItem::Face { node_id, .. } = item { Some(*node_id) } else { None }
+            })
+            .collect();
+        nodes.sort_unstable();
+        nodes.dedup();
+        nodes
+    }
+
+    fn nodes_with_edge_selection(&self) -> Vec<NodeId> {
+        let mut nodes: Vec<NodeId> = self
+            .selected
+            .iter()
+            .filter_map(|item| {
+                if let SelectionItem::Edge { node_id, .. } = item { Some(*node_id) } else { None }
+            })
+            .collect();
+        nodes.sort_unstable();
+        nodes.dedup();
+        nodes
     }
 
     fn outline_config(&self) -> OutlineConfig {

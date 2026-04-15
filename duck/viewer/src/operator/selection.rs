@@ -48,7 +48,8 @@ impl SelectionOperator {
 
         // Update selection based on pick results
         if let Some(closest_hit) = results.first() {
-            ctx.selection.set(SelectionItem::Node(closest_hit.node_id));
+            let item = resolve_hit_to_selection(closest_hit, ctx.scene);
+            ctx.selection.set(item);
         } else {
             ctx.selection.clear();
         }
@@ -98,6 +99,23 @@ impl Operator for SelectionOperator {
 
     fn is_active(&self) -> bool {
         !self.callback_ids.is_empty()
+    }
+}
+
+/// Resolves a ray pick result to the most specific [`SelectionItem`] available.
+///
+/// If the hit mesh carries [`Topology`](crate::scene::Topology) and the triangle maps
+/// to a known face, returns `SelectionItem::Face`. Otherwise falls back to
+/// `SelectionItem::Node`.
+fn resolve_hit_to_selection(hit: &RayPickResult, scene: &crate::scene::Scene) -> SelectionItem {
+    let face_index = scene
+        .get_instance(hit.instance_id)
+        .and_then(|inst| scene.get_mesh(inst.mesh()))
+        .and_then(|mesh| mesh.face_for_triangle(hit.triangle_index as u32));
+
+    match face_index {
+        Some(fi) => SelectionItem::Face { node_id: hit.node_id, face_index: fi },
+        None => SelectionItem::Node(hit.node_id),
     }
 }
 

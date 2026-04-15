@@ -11,6 +11,22 @@ use crate::scene::{
 use crate::scene::common;
 use crate::selection_query::SelectionQuery;
 
+/// A draw call targeting a sub-range of a mesh's index buffer for a single instance.
+///
+/// Used to render individual faces or edges (e.g. for selection highlighting), but
+/// applicable wherever only part of a mesh needs to be drawn.
+pub(crate) struct SubGeomBatch {
+    pub mesh_id: MeshId,
+    pub instance_transform: InstanceTransform,
+    pub primitive_type: PrimitiveType,
+    /// First raw index within the primitive's index buffer.
+    /// For `TriangleList`: `range.start * 3`. For `LineList`: `range.start * 2`.
+    pub first_index: u32,
+    /// Number of raw indices to draw.
+    /// For `TriangleList`: `range.count * 3`. For `LineList`: `range.count * 2`.
+    pub index_count: u32,
+}
+
 /// Key used to group instances into draw batches.
 pub(crate) type BatchKey = (MeshId, MaterialId, PrimitiveType);
 
@@ -264,6 +280,43 @@ where
     (matched, unmatched)
 }
 
+/// Builds sub-geometry draw calls for all face selections in the current frame.
+///
+/// For each node with face selections, looks up the instance's mesh topology and converts
+/// each selected face index into a `SubGeomBatch` targeting that face's triangle range.
+fn collect_selection_sub_geom_batches(
+    batches: &[DrawBatch],
+    scene: &Scene,
+    sel: &dyn SelectionQuery,
+) -> Vec<SubGeomBatch> {
+    // Build a node_id → InstanceTransform index so we can resolve faces by node
+    let instance_by_node: HashMap<NodeId, &InstanceTransform> = batches
+        .iter()
+        .flat_map(|b| b.instances.iter())
+        .map(|it| (it.node_id, it))
+        .collect();
+
+    let mut sub_geom: Vec<SubGeomBatch> = Vec::new();
+    for node_id in sel.nodes_with_face_selection() {
+        let Some(it) = instance_by_node.get(&node_id) else { continue };
+        let Some(instance) = scene.get_instance(it.instance_id) else { continue };
+        let Some(mesh) = scene.get_mesh(instance.mesh()) else { continue };
+        let Some(topology) = mesh.topology() else { continue };
+
+        for face_index in sel.selected_faces_for_node(node_id) {
+            let Some(range) = topology.face_ranges.get(face_index as usize) else { continue };
+            sub_geom.push(SubGeomBatch {
+                mesh_id: instance.mesh(),
+                instance_transform: (*it).clone(),
+                primitive_type: PrimitiveType::TriangleList,
+                first_index: range.start * 3,
+                index_count: range.count * 3,
+            });
+        }
+    }
+    sub_geom
+}
+
 /// Frame-scoped collection of draw batches, sorted and partitioned for rendering.
 ///
 /// Constructed once per frame from the scene, camera, and optional selection.
@@ -278,6 +331,9 @@ pub(crate) struct DrawData {
     selected_batches: Vec<DrawBatch>,
     /// Batches with ALWAYS_ON_TOP materials, rendered in a separate overlay pass.
     overlay_batches: Vec<DrawBatch>,
+    /// Sub-geometry draw calls for selected faces/edges.
+    /// Each entry targets a specific index range within a mesh's index buffer.
+    selection_sub_geom_batches: Vec<SubGeomBatch>,
 }
 
 impl DrawData {
@@ -307,19 +363,22 @@ impl DrawData {
         });
         batches = normal_batches;
 
-        let selected_batches = selection
-            .filter(|sel| !sel.is_empty())
-            .map(|sel| {
-                let (selected, _) =
-                    partition_batches(&batches, |inst| sel.is_node_selected(inst.node_id));
-                selected
-            })
-            .unwrap_or_default();
+        let (selected_batches, selection_sub_geom_batches) =
+            match selection.filter(|sel| !sel.is_empty()) {
+                None => (Vec::new(), Vec::new()),
+                Some(sel) => {
+                    let (selected, _) =
+                        partition_batches(&batches, |inst| sel.is_node_selected(inst.node_id));
+                    let sub_geom = collect_selection_sub_geom_batches(&batches, scene, sel);
+                    (selected, sub_geom)
+                }
+            };
 
         Self {
             batches,
             selected_batches,
             overlay_batches,
+            selection_sub_geom_batches,
         }
     }
 
@@ -334,9 +393,14 @@ impl DrawData {
         &self.selected_batches
     }
 
-    /// Whether any instances are selected.
+    /// Whether any instances or sub-geometry are selected.
     pub fn has_selection(&self) -> bool {
-        !self.selected_batches.is_empty()
+        !self.selected_batches.is_empty() || !self.selection_sub_geom_batches.is_empty()
+    }
+
+    /// Sub-geometry draw calls for selected faces/edges.
+    pub fn selection_sub_geom_batches(&self) -> &[SubGeomBatch] {
+        &self.selection_sub_geom_batches
     }
 
     /// Batches with ALWAYS_ON_TOP materials, rendered in a separate overlay pass.
@@ -672,6 +736,22 @@ mod tests {
 
         fn is_node_selected(&self, node_id: NodeId) -> bool {
             self.selected_nodes.contains(&node_id)
+        }
+
+        fn selected_faces_for_node(&self, _node_id: NodeId) -> Vec<u32> {
+            Vec::new()
+        }
+
+        fn selected_edges_for_node(&self, _node_id: NodeId) -> Vec<u32> {
+            Vec::new()
+        }
+
+        fn nodes_with_face_selection(&self) -> Vec<NodeId> {
+            Vec::new()
+        }
+
+        fn nodes_with_edge_selection(&self) -> Vec<NodeId> {
+            Vec::new()
         }
 
         fn outline_config(&self) -> OutlineConfig {

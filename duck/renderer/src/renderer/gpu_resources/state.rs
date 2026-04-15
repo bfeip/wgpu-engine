@@ -401,6 +401,46 @@ fn create_texture_gpu_resources(
     })
 }
 
+/// Draw a single sub-range of a mesh's index buffer for one instance.
+///
+/// Used to render individual faces or edges (e.g. for selection highlighting).
+/// `first_index` and `index_count` are raw index counts (not triangle/segment counts).
+pub(crate) fn draw_mesh_subgeom(
+    device: &wgpu::Device,
+    render_pass: &mut wgpu::RenderPass,
+    gpu_resources: &MeshGpuResources,
+    primitive_type: PrimitiveType,
+    instance_transform: &InstanceTransform,
+    first_index: u32,
+    index_count: u32,
+) {
+    if index_count == 0 {
+        return;
+    }
+
+    let instance_raw = GpuInstance {
+        transform: instance_transform.world_transform.into(),
+        normal_mat: instance_transform.normal_matrix.into(),
+    };
+
+    let instance_buffer = device.create_buffer_init(&BufferInitDescriptor {
+        label: Some("SubGeom Instance Buffer"),
+        contents: bytemuck::cast_slice(&[instance_raw]),
+        usage: wgpu::BufferUsages::VERTEX,
+    });
+
+    let index_buffer = match primitive_type {
+        PrimitiveType::TriangleList => &gpu_resources.triangle_index_buffer,
+        PrimitiveType::LineList => &gpu_resources.line_index_buffer,
+        PrimitiveType::PointList => &gpu_resources.point_index_buffer,
+    };
+
+    render_pass.set_vertex_buffer(0, gpu_resources.vertex_buffer.slice(..));
+    render_pass.set_vertex_buffer(1, instance_buffer.slice(..));
+    render_pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+    render_pass.draw_indexed(first_index..(first_index + index_count), 0, 0..1);
+}
+
 /// Draw mesh instances using the provided GPU resources.
 ///
 /// This function creates an instance buffer and issues a draw call.

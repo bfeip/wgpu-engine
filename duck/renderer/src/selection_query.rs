@@ -35,6 +35,18 @@ pub trait SelectionQuery {
     /// Returns true if the given node is selected.
     fn is_node_selected(&self, node_id: NodeId) -> bool;
 
+    /// Returns the face indices selected on `node_id`, if any.
+    fn selected_faces_for_node(&self, node_id: NodeId) -> Vec<u32>;
+
+    /// Returns the edge indices selected on `node_id`, if any.
+    fn selected_edges_for_node(&self, node_id: NodeId) -> Vec<u32>;
+
+    /// Returns all nodes that have at least one face selected.
+    fn nodes_with_face_selection(&self) -> Vec<NodeId>;
+
+    /// Returns all nodes that have at least one edge selected.
+    fn nodes_with_edge_selection(&self) -> Vec<NodeId>;
+
     /// Returns the outline rendering configuration.
     fn outline_config(&self) -> OutlineConfig;
 }

@@ -16,7 +16,7 @@ pub use uniforms::{CameraUniform, LightsArrayUniform, PbrUniform};
 
 // From state
 pub(crate) use state::{
-    draw_mesh_instances, GpuResourceManager, GpuTexture, MaterialGpuResources,
+    draw_mesh_instances, draw_mesh_subgeom, GpuResourceManager, GpuTexture, MaterialGpuResources,
 };
 
 // From buffer_layouts
