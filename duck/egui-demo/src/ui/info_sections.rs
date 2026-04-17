@@ -1,4 +1,5 @@
 use duck_engine_viewer::operator::NavigationMode;
+use duck_engine_viewer::selection::SelectionItem;
 use duck_engine_viewer::Viewer;
 
 use super::ModeInfo;
@@ -62,6 +63,21 @@ fn build_operators_section(ui: &mut egui::Ui, viewer: &Viewer) {
     }
 }
 
+fn selection_item_label(item: SelectionItem, viewer: &Viewer) -> String {
+    let node_id = item.node_id();
+    let node_label = viewer
+        .scene()
+        .get_node(node_id)
+        .and_then(|n| n.name.clone())
+        .unwrap_or_else(|| format!("Node #{}", node_id));
+
+    match item {
+        SelectionItem::Node(_) => node_label,
+        SelectionItem::Face { face_index, .. } => format!("Face #{} ({})", face_index, node_label),
+        SelectionItem::Edge { edge_index, .. } => format!("Edge #{} ({})", edge_index, node_label),
+    }
+}
+
 fn build_selection_section(ui: &mut egui::Ui, viewer: &Viewer) {
     ui.heading("Selection");
 
@@ -73,24 +89,12 @@ fn build_selection_section(ui: &mut egui::Ui, viewer: &Viewer) {
         ui.label(format!("Count: {}", selection.len()));
 
         if let Some(primary) = selection.primary() {
-            let node_id = primary.node_id();
-            let node_label = viewer
-                .scene()
-                .get_node(node_id)
-                .and_then(|n| n.name.clone())
-                .unwrap_or_else(|| format!("Node #{}", node_id));
-            ui.label(format!("Primary: {}", node_label));
+            ui.label(format!("Primary: {}", selection_item_label(primary, viewer)));
         }
 
         ui.label("Selected:");
         for item in selection.iter() {
-            let node_id = item.node_id();
-            let node_label = viewer
-                .scene()
-                .get_node(node_id)
-                .and_then(|n| n.name.clone())
-                .unwrap_or_else(|| format!("Node #{}", node_id));
-            ui.label(format!("  • {}", node_label));
+            ui.label(format!("  • {}", selection_item_label(*item, viewer)));
         }
     }
 }
