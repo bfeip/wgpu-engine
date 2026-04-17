@@ -179,7 +179,10 @@ pub(crate) fn collect_draw_batches(scene: &Scene) -> Vec<DrawBatch> {
 
     // Convert to Vec and sort for optimal rendering
     let mut batches: Vec<DrawBatch> = batch_map.into_values().collect();
-    batches.sort_by_key(|b| (b.material_id, b.primitive_type as u8, b.mesh_id));
+    // Sort by primitive type first so all triangles are drawn before lines/points.
+    // This ensures the depth buffer is fully populated with triangle depths before
+    // coplanar lines test against it.
+    batches.sort_by_key(|b| (b.primitive_type as u8, b.material_id, b.mesh_id));
     batches
 }
 

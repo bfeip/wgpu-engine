@@ -55,6 +55,32 @@ impl Renderer {
                 )
             };
 
+            // Lines/points use LessEqual so they render correctly on coplanar triangles
+            // (drawn after triangles, same depth buffer value). Blend materials also use
+            // LessEqual so the main pass can render at the depth the prepass established.
+            let is_blend = material_props.alpha_mode == AlphaMode::Blend;
+            let is_non_triangle = matches!(primitive_type, PrimitiveType::LineList | PrimitiveType::PointList);
+            let depth_compare = if !depth_prepass && (is_blend || is_non_triangle) {
+                wgpu::CompareFunction::LessEqual
+            } else {
+                wgpu::CompareFunction::Less
+            };
+
+            // Push triangle faces slightly away from the camera so edge lines on curved
+            // surfaces remain visible. Tessellated chords sit above the true curve at
+            // chord midpoints, so without a bias the face depth genuinely wins over the
+            // line. slope_scale accounts for grazing angles where chord error is worst.
+            // clamp=0 avoids the DEPTH_BIAS_CLAMP feature requirement.
+            let depth_bias = if primitive_type == PrimitiveType::TriangleList {
+                wgpu::DepthBiasState {
+                    constant: 2,
+                    slope_scale: 2.0,
+                    clamp: 0.0,
+                }
+            } else {
+                wgpu::DepthBiasState::default()
+            };
+
             self.device
                 .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                     label: Some(if depth_prepass {
@@ -104,17 +130,9 @@ impl Renderer {
                     depth_stencil: Some(wgpu::DepthStencilState {
                         format: GpuTexture::DEPTH_FORMAT,
                         depth_write_enabled,
-                        // Blend materials use LessEqual so the main blending pass can
-                        // render at the same depth the prepass established.
-                        depth_compare: if !depth_prepass
-                            && material_props.alpha_mode == AlphaMode::Blend
-                        {
-                            wgpu::CompareFunction::LessEqual
-                        } else {
-                            wgpu::CompareFunction::Less
-                        },
+                        depth_compare,
                         stencil: wgpu::StencilState::default(),
-                        bias: wgpu::DepthBiasState::default(),
+                        bias: depth_bias,
                     }),
                     multisample: wgpu::MultisampleState {
                         count: self.sample_count,
