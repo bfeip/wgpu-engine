@@ -51,7 +51,7 @@ impl UiState {
 
         build_performance_panel(ctx, &mode_info);
         self.left.show(ctx, viewer, &mut actions);
-        self.right.show(ctx, viewer, &mode_info);
+        self.right.show(ctx, viewer);
 
         actions
     }

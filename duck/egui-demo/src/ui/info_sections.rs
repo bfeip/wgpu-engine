@@ -1,13 +1,8 @@
-use duck_engine_viewer::operator::NavigationMode;
 use duck_engine_viewer::selection::SelectionItem;
 use duck_engine_viewer::Viewer;
 
-use super::ModeInfo;
-
-pub fn show(ui: &mut egui::Ui, viewer: &Viewer, mode: &ModeInfo) {
+pub fn show(ui: &mut egui::Ui, viewer: &Viewer) {
     build_camera_section(ui, viewer);
-    ui.separator();
-    build_controls_section(ui, mode);
     ui.separator();
     build_operators_section(ui, viewer);
     ui.separator();
@@ -34,27 +29,6 @@ fn build_camera_section(ui: &mut egui::Ui, viewer: &Viewer) {
     ));
     ui.label(format!("Near: {:.4}", camera.znear));
     ui.label(format!("Far: {:.4}", camera.zfar));
-}
-
-fn build_controls_section(ui: &mut egui::Ui, mode: &ModeInfo) {
-    ui.heading("Controls");
-
-    match mode.mode {
-        NavigationMode::Walk => {
-            ui.label("WASD: Move");
-            ui.label("Left Mouse Drag: Look around");
-        }
-        NavigationMode::Orbit => {
-            ui.label("Left Mouse Drag: Orbit camera");
-            ui.label("Right Mouse Drag: Pan camera");
-            ui.label("Mouse Wheel: Zoom in/out");
-        }
-    }
-
-    ui.separator();
-    ui.label("C: Cycle mode");
-    ui.label("O: Toggle ortho/perspective");
-    ui.label("ESC: Exit application");
 }
 
 fn build_operators_section(ui: &mut egui::Ui, viewer: &Viewer) {
