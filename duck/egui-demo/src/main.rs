@@ -87,6 +87,9 @@ impl<'a> App<'a> {
                 .scene_mut()
                 .set_node_visibility(change.node_id, change.new_visibility);
         }
+        if let Some(camera) = ui_actions.set_camera {
+            self.viewer_app.as_mut().unwrap().viewer_mut().set_camera(camera);
+        }
 
         // Request next frame
         self.viewer_app.as_ref().unwrap().request_redraw();

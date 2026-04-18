@@ -33,6 +33,7 @@ pub(crate) const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::
 /// };
 /// ```
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Camera {
     /// The position of the camera in world space.
     pub eye: cgmath::Point3<f32>,

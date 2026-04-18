@@ -14,6 +14,7 @@ mod material;
 mod mesh;
 mod node;
 mod texture;
+mod view;
 
 use cgmath::{EuclideanSpace, InnerSpace, Matrix4, Point3, Quaternion, SquareMatrix, Vector3};
 use image::DynamicImage;
@@ -28,9 +29,11 @@ pub use material::MaterialId;
 pub use mesh::MeshId;
 pub use node::NodeId;
 pub use texture::TextureId;
+pub use view::ViewId;
 
 pub use camera::Camera;
 pub use coordinate_space::CoordinateSpace;
+pub use view::View;
 pub use instance::Instance;
 pub use light::{Light, LightType, MAX_LIGHTS};
 pub use material::{
@@ -114,6 +117,9 @@ pub struct Scene {
     /// The currently active environment map for IBL lighting.
     active_environment_map: Option<EnvironmentMapId>,
 
+    /// Named views (saved camera states).
+    views: HashMap<ViewId, View>,
+
     /// Annotation manager
     pub annotations: AnnotationManager,
 
@@ -126,6 +132,7 @@ pub struct Scene {
     next_material_id: MaterialId,
     next_texture_id: TextureId,
     next_environment_map_id: EnvironmentMapId,
+    next_view_id: ViewId,
 }
 
 impl Scene {
@@ -153,6 +160,8 @@ impl Scene {
             environment_maps: HashMap::new(),
             active_environment_map: None,
 
+            views: HashMap::new(),
+
             annotations: AnnotationManager::new(),
 
             light_generation: 1,
@@ -163,6 +172,7 @@ impl Scene {
             next_material_id: 0,
             next_texture_id: 0,
             next_environment_map_id: 0,
+            next_view_id: 0,
         };
 
         // Insert default material at the sentinel ID (not via add_material,
@@ -540,6 +550,50 @@ impl Scene {
     pub fn insert_environment_map_unchecked(&mut self, env_map: EnvironmentMap) {
         self.next_environment_map_id = self.next_environment_map_id.max(env_map.id + 1);
         self.environment_maps.insert(env_map.id, env_map);
+    }
+
+    // ========== View API ==========
+
+    /// Adds a named view (saved camera state) to the scene.
+    ///
+    /// # Returns
+    /// The unique [`ViewId`] assigned to the new view.
+    pub fn add_view(&mut self, name: impl Into<String>, camera: Camera) -> ViewId {
+        let id = self.next_view_id;
+        self.next_view_id += 1;
+        self.views.insert(id, View::new(id, name, camera));
+        id
+    }
+
+    /// Gets a reference to a view by ID.
+    pub fn get_view(&self, id: ViewId) -> Option<&View> {
+        self.views.get(&id)
+    }
+
+    /// Gets a mutable reference to a view by ID.
+    pub fn get_view_mut(&mut self, id: ViewId) -> Option<&mut View> {
+        self.views.get_mut(&id)
+    }
+
+    /// Returns an iterator over all views.
+    pub fn views(&self) -> impl Iterator<Item = &View> {
+        self.views.values()
+    }
+
+    /// Returns the number of views in the scene.
+    pub fn view_count(&self) -> usize {
+        self.views.len()
+    }
+
+    /// Removes a view by ID. Returns the removed view, or `None` if not found.
+    pub fn remove_view(&mut self, id: ViewId) -> Option<View> {
+        self.views.remove(&id)
+    }
+
+    /// Inserts a view using its existing `id` (used during deserialization).
+    pub fn insert_view_unchecked(&mut self, view: View) {
+        self.next_view_id = self.next_view_id.max(view.id + 1);
+        self.views.insert(view.id, view);
     }
 
     // ========== Light Methods ==========

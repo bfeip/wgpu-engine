@@ -32,6 +32,8 @@ fn build_camera_section(ui: &mut egui::Ui, viewer: &Viewer) {
         "Target: ({:.2}, {:.2}, {:.2})",
         camera.target.x, camera.target.y, camera.target.z
     ));
+    ui.label(format!("Near: {:.4}", camera.znear));
+    ui.label(format!("Far: {:.4}", camera.zfar));
 }
 
 fn build_controls_section(ui: &mut egui::Ui, mode: &ModeInfo) {
@@ -105,4 +107,5 @@ fn build_scene_info_section(ui: &mut egui::Ui, viewer: &Viewer) {
     ui.label(format!("Instances: {}", viewer.scene().instance_count()));
     ui.label(format!("Nodes: {}", viewer.scene().node_count()));
     ui.label(format!("Lights: {}", viewer.scene().lights().len()));
+    ui.label(format!("Views: {}", viewer.scene().view_count()));
 }

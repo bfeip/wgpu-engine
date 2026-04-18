@@ -43,6 +43,7 @@ use duck_engine_scene::{
     Texture, TextureFormat, TextureId,
     EnvironmentMap, EnvironmentMapId, Scene,
     PreprocessedCubemap, PreprocessedIbl,
+    View,
 };
 
 // ============================================================================
@@ -190,6 +191,8 @@ pub enum SectionType {
     EnvironmentMaps = 8,
     /// Preprocessed IBL cubemap data (irradiance + prefiltered)
     PreprocessedIblData = 9,
+    /// Named view (saved camera state) data
+    Views = 10,
 }
 
 impl TryFrom<u8> for SectionType {
@@ -207,6 +210,7 @@ impl TryFrom<u8> for SectionType {
             7 => Ok(SectionType::Annotations),
             8 => Ok(SectionType::EnvironmentMaps),
             9 => Ok(SectionType::PreprocessedIblData),
+            10 => Ok(SectionType::Views),
             _ => Err(FormatError::InvalidSectionType(value)),
         }
     }
@@ -635,6 +639,7 @@ pub struct DuckSections {
     pub lights: Vec<Light>,
     pub environment_maps: Vec<SerializedEnvironmentMap>,
     pub preprocessed_ibl: Vec<SerializedPreprocessedIbl>,
+    pub views: Vec<View>,
 }
 
 /// Parse Duck header, TOC, and decompress/deserialize all sections.
@@ -689,6 +694,15 @@ pub fn parse_duck(bytes: &[u8]) -> Result<DuckSections, FormatError> {
             Vec::new()
         };
 
+    let views: Vec<View> =
+        if let Some(entry) = toc.find(SectionType::Views) {
+            let start = entry.offset as usize;
+            let end = start + entry.compressed_size as usize;
+            deserialize_section(&bytes[start..end])?
+        } else {
+            Vec::new()
+        };
+
     Ok(DuckSections {
         metadata,
         textures,
@@ -699,6 +713,7 @@ pub fn parse_duck(bytes: &[u8]) -> Result<DuckSections, FormatError> {
         lights,
         environment_maps,
         preprocessed_ibl,
+        views,
     })
 }
 
@@ -822,6 +837,10 @@ pub fn assemble_duck_scene(
     }
 
     scene.set_active_environment_map(sections.metadata.active_environment_map);
+
+    for view in sections.views {
+        scene.insert_view_unchecked(view);
+    }
 
     Ok(scene)
 }
@@ -1155,6 +1174,12 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
         if !preprocessed_ibls.is_empty() {
             write_section(&preprocessed_ibls, SectionType::PreprocessedIblData, compression_level, &mut output, &mut toc)?;
         }
+    }
+
+    // ===== Views Section =====
+    let views: Vec<View> = scene.views().cloned().collect();
+    if !views.is_empty() {
+        write_section(&views, SectionType::Views, compression_level, &mut output, &mut toc)?;
     }
 
     // ===== Write TOC =====

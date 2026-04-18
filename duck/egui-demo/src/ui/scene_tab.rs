@@ -18,6 +18,17 @@ pub fn show(ui: &mut egui::Ui, viewer: &Viewer, actions: &mut UiActions) {
 
     ui.separator();
 
+    // ===== Views =====
+    if viewer.scene().view_count() > 0 {
+        ui.heading("Views");
+        for view in viewer.scene().views() {
+            if ui.button(view.name()).clicked() {
+                actions.set_camera = Some(view.apply_to(viewer.camera()));
+            }
+        }
+        ui.separator();
+    }
+
     ui.heading("Scene Tree");
 
     egui::ScrollArea::vertical()

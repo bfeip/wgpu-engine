@@ -6,12 +6,14 @@ use cgmath::Matrix4;
 use duck_engine_common::decompose_matrix;
 use duck_engine_scene::common::Transform;
 use duck_engine_scene::{
-    InstanceId, Material, Mesh, MeshPrimitive, NodeId, PrimitiveType, Scene, SubMeshRange, Topology,
-    Vertex,
+    Camera, InstanceId, Material, Mesh, MeshPrimitive, NodeId, PrimitiveType, Scene, SubMeshRange,
+    Topology, Vertex, ViewId,
 };
 use duck_engine_scene::common::RgbaColor;
 use opencascade::primitives::{EdgeType, Shape};
-use opencascade::xcaf::{XcafColorTool, XcafDimTolTool, XcafDocument, XcafLabel, XcafShapeTool};
+use opencascade::xcaf::{
+    XcafColorTool, XcafDimTolTool, XcafDocument, XcafLabel, XcafShapeTool, ViewProjection,
+};
 
 /// Options controlling how a CAD file is imported.
 pub struct CadImportOptions {
@@ -74,6 +76,10 @@ pub struct CadImportResult {
     /// under this node. Per-annotation nodes (for individual visibility control) are
     /// planned as a future extension.
     pub pmi_root: Option<NodeId>,
+    /// Named views imported from the CAD file, added to the scene.
+    ///
+    /// Empty when the file contains no view definitions.
+    pub views: Vec<ViewId>,
 }
 
 /// Import a STEP file into `scene`, returning a [`CadImportResult`] that mirrors
@@ -143,7 +149,9 @@ fn import_xcaf_document(
         None
     };
 
-    Ok(CadImportResult { root, entity_map, pmi_root })
+    let views = import_views(&doc.view_tool(), scene, options);
+
+    Ok(CadImportResult { root, entity_map, pmi_root, views })
 }
 
 fn import_xcaf_label(
@@ -376,6 +384,66 @@ fn import_pmi(
         .context("Failed to add PMI geometry node")?;
 
     Ok(Some(pmi_root))
+}
+
+/// Extract named views from `view_tool` and add them to the scene.
+///
+/// Only views with camera data (parallel or perspective projection) are imported.
+/// Views with `NoCamera` projection are skipped — these typically encode clipping
+/// plane configurations without a viewpoint. When clipping plane support is added,
+/// this function should be extended to handle them.
+///
+/// Returns the [`ViewId`]s of all views that were successfully added.
+fn import_views(
+    view_tool: &opencascade::xcaf::XcafViewTool,
+    scene: &mut Scene,
+    options: &CadImportOptions,
+) -> Vec<ViewId> {
+    let mut view_ids = Vec::new();
+    for label in view_tool.view_labels() {
+        let Some(data) = view_tool.view_data(&label) else { continue };
+        if data.projection() == ViewProjection::NoCamera {
+            continue;
+        }
+        let name = data
+            .name
+            .clone()
+            .unwrap_or_else(|| format!("View {}", view_ids.len() + 1));
+        let camera = view_data_to_camera(&data, options.scale_factor);
+        view_ids.push(scene.add_view(name, camera));
+    }
+    view_ids
+}
+
+/// Convert XCAF [`ViewData`] to a Duck [`Camera`].
+///
+/// `eye` is scaled from OCCT model units to scene units via `scale` (e.g. 0.001 for mm→m),
+/// matching how vertex positions are scaled in [`import_leaf_part`].
+///
+/// The resulting camera captures only the view's orientation (eye, direction, up, ortho).
+/// Clipping planes and fov are rough defaults; callers should use [`View::apply_to`] with
+/// the active camera when they need a properly calibrated result for rendering.
+fn view_data_to_camera(data: &opencascade::xcaf::ViewData, scale: f32) -> Camera {
+    use cgmath::{EuclideanSpace, InnerSpace, MetricSpace, Point3, Vector3};
+
+    let s = scale as f64;
+    let ep = data.projection_point;
+    let eye = Point3::new((ep[0] * s) as f32, (ep[1] * s) as f32, (ep[2] * s) as f32);
+
+    let vd = data.view_direction;
+    let dir = Vector3::new(vd[0] as f32, vd[1] as f32, vd[2] as f32);
+    let dir = if dir.magnitude2() > 1e-12 { dir.normalize() } else { Vector3::new(0.0, 0.0, -1.0) };
+
+    let ud = data.up_direction;
+    let up = Vector3::new(ud[0] as f32, ud[1] as f32, ud[2] as f32);
+    let up = if up.magnitude2() > 1e-12 { up.normalize() } else { Vector3::new(0.0, 1.0, 0.0) };
+
+    let ortho = data.projection() == ViewProjection::Parallel;
+
+    let orbit_dist = eye.distance(Point3::origin()).max(1.0);
+    let target = eye + dir * orbit_dist;
+
+    Camera { eye, target, up, aspect: 1.0, fovy: 45.0, znear: 0.1, zfar: 100_000.0, ortho }
 }
 
 #[cfg(test)]

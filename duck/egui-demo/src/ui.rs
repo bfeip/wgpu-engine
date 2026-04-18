@@ -9,7 +9,7 @@ pub use left_panel::LeftPanel;
 pub use right_panel::RightPanel;
 
 use duck_engine_viewer::operator::NavigationMode;
-use duck_engine_viewer::scene::{LightType, NodeId, Visibility};
+use duck_engine_viewer::scene::{Camera, LightType, NodeId, Visibility};
 use duck_engine_viewer::Viewer;
 
 /// A visibility change requested by the UI.
@@ -28,6 +28,8 @@ pub struct UiActions {
     pub load_environment: bool,
     pub clear_environment: bool,
     pub visibility_changes: Vec<VisibilityChange>,
+    /// When set, replace the active camera with this value.
+    pub set_camera: Option<Camera>,
 }
 
 /// Information about the current navigation mode, shared across panels.
