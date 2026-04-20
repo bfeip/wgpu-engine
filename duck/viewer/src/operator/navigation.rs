@@ -17,6 +17,25 @@ use walk::WalkState;
 
 pub(super) const ORBIT_SENSITIVITY: f32 = 0.005;
 
+pub(super) fn pan(dx: f64, dy: f64, camera: &mut Camera, model_radius: f32) {
+    let dx = dx as f32;
+    let dy = dy as f32;
+    let right = camera.right();
+    let pan_scale = scene_scale::pan_sensitivity(model_radius);
+    let offset = right * (-dx * pan_scale) + camera.up * (dy * pan_scale);
+    camera.eye += offset;
+    camera.target += offset;
+}
+
+pub(super) fn zoom_radius(radius: f32, delta: f32, model_radius: f32) -> f32 {
+    let zoom_factor = scene_scale::zoom_factor();
+    let factor = if delta > 0.0 { 1.0 - zoom_factor } else { 1.0 + zoom_factor };
+    (radius * factor.powf(delta.abs())).clamp(
+        scene_scale::min_camera_radius(model_radius),
+        scene_scale::max_camera_radius(model_radius),
+    )
+}
+
 // ── Navigation mode ─────────────────────────────────────────────────────────
 
 /// The navigation interaction mode.

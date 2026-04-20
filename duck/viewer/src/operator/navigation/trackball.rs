@@ -1,7 +1,6 @@
 use cgmath::{InnerSpace, Point3, Rotation};
 
 use crate::scene::{Camera, common::quaternion_from_axis_angle_safe};
-use crate::scene_scale;
 
 use super::ORBIT_SENSITIVITY;
 
@@ -65,27 +64,13 @@ impl TrackballState {
 
     /// Handle zoom via mouse wheel by adjusting camera distance.
     pub fn handle_zoom(&mut self, delta: f32, camera: &mut Camera, model_radius: f32) {
-        let zoom_factor = scene_scale::zoom_factor();
-        let factor = if delta > 0.0 { 1.0 - zoom_factor } else { 1.0 + zoom_factor };
-        self.radius = camera.length();
-        self.radius *= factor.powf(delta.abs());
-        self.radius = self.radius.clamp(
-            scene_scale::min_camera_radius(model_radius),
-            scene_scale::max_camera_radius(model_radius),
-        );
+        self.radius = super::zoom_radius(camera.length(), delta, model_radius);
         let dir = (camera.eye - camera.target).normalize();
         camera.eye = camera.target + dir * self.radius;
     }
 
     /// Handle panning based on mouse movement.
     pub fn handle_pan(&self, dx: f64, dy: f64, camera: &mut Camera, model_radius: f32) {
-        let dx = dx as f32;
-        let dy = dy as f32;
-        let right = camera.right();
-        let up_view = camera.up;
-        let pan_scale = scene_scale::pan_sensitivity(model_radius);
-        let offset = right * (-dx * pan_scale) + up_view * (dy * pan_scale);
-        camera.eye += offset;
-        camera.target += offset;
+        super::pan(dx, dy, camera, model_radius);
     }
 }
