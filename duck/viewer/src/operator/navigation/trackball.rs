@@ -18,12 +18,7 @@ impl TrackballState {
         Self { radius: 5.0, pivot: None }
     }
 
-    pub fn init(&mut self, camera: &Camera) {
-        self.pivot = None;
-        self.radius = camera.length();
-    }
-
-    pub fn init_with_pivot(&mut self, camera: &Camera, pivot: Point3<f32>) {
+    pub fn init(&mut self, camera: &Camera, pivot: Point3<f32>) {
         self.pivot = Some(pivot);
         self.radius = camera.length();
     }
@@ -40,7 +35,7 @@ impl TrackballState {
 
         let right = camera.right();
         let yaw_rot = quaternion_from_axis_angle_safe(camera.up, -dx);
-        let pitch_rot = quaternion_from_axis_angle_safe(right, dy);
+        let pitch_rot = quaternion_from_axis_angle_safe(right, -dy);
         let rotation = pitch_rot * yaw_rot;
 
         let offset = camera.eye - camera.target;
@@ -60,7 +55,7 @@ impl TrackballState {
 
         let right = camera.right();
         let yaw_rot = quaternion_from_axis_angle_safe(camera.up, -dx);
-        let pitch_rot = quaternion_from_axis_angle_safe(right, dy);
+        let pitch_rot = quaternion_from_axis_angle_safe(right, -dy);
         let rotation = pitch_rot * yaw_rot;
 
         camera.eye = pivot + rotation.rotate_vector(camera.eye - pivot);

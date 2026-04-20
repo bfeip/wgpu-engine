@@ -65,11 +65,13 @@ impl NavigationState {
         let camera = &*ctx.camera;
         match (self.mode(), button) {
             (NavigationMode::Turntable, MouseButton::Left | MouseButton::Right) => {
-                self.turntable.init(camera);
+                let pivot = ctx.scene.bounding().map(|b| b.center()).unwrap_or(camera.target);
+                self.turntable.init_with_pivot(ctx.camera, pivot);
                 true
             }
             (NavigationMode::Trackball, MouseButton::Left | MouseButton::Right) => {
-                self.trackball.init(camera);
+                let pivot = ctx.scene.bounding().map(|b| b.center()).unwrap_or(camera.target);
+                self.trackball.init(ctx.camera, pivot);
                 true
             }
             (_, MouseButton::Middle) => {
@@ -90,7 +92,7 @@ impl NavigationState {
                 };
                 match self.mode() {
                     NavigationMode::Turntable => self.turntable.init_with_pivot(ctx.camera, pivot),
-                    NavigationMode::Trackball => self.trackball.init_with_pivot(ctx.camera, pivot),
+                    NavigationMode::Trackball => self.trackball.init(ctx.camera, pivot),
                     NavigationMode::Walk => {}
                 }
                 true
