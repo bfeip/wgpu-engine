@@ -65,7 +65,8 @@ fn build_performance_panel(ctx: &egui::Context, mode: &ModeInfo) {
                 ui.separator();
                 match mode.mode {
                     NavigationMode::Walk => ui.label("Mode: Walk"),
-                    NavigationMode::Orbit => ui.label("Mode: Orbit"),
+                    NavigationMode::Turntable => ui.label("Mode: Turntable"),
+                    NavigationMode::Trackball => ui.label("Mode: Trackball"),
                 };
             });
         });

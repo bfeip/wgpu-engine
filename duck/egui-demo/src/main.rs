@@ -280,8 +280,9 @@ impl<'a> App<'a> {
     fn cycle_operator_mode(&mut self) {
         let viewer = self.viewer_app.as_mut().unwrap().viewer_mut();
         let new_mode = match viewer.navigation_mode() {
-            NavigationMode::Orbit => NavigationMode::Walk,
-            NavigationMode::Walk => NavigationMode::Orbit,
+            NavigationMode::Turntable => NavigationMode::Walk,
+            NavigationMode::Walk => NavigationMode::Trackball,
+            NavigationMode::Trackball => NavigationMode::Turntable,
         };
         viewer.set_navigation_mode(new_mode);
     }

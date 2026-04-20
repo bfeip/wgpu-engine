@@ -1,345 +1,35 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use cgmath::{InnerSpace, Point3, Rotation, Vector3};
-
-use crate::scene::{Camera, common::quaternion_from_axis_angle_safe, geom_query::pick_all_from_ray};
+use crate::scene::{Camera, geom_query::pick_all_from_ray};
 use crate::event::{CallbackId, Event, EventContext, EventDispatcher, EventKind};
-use crate::input::{ElementState, Key, MouseButton};
+use crate::input::MouseButton;
 use crate::operator::{Operator, OperatorId};
 use crate::scene_scale;
+
+mod turntable;
+mod trackball;
+mod walk;
+
+use turntable::TurntableState;
+use trackball::TrackballState;
+use walk::WalkState;
+
+pub(super) const ORBIT_SENSITIVITY: f32 = 0.005;
 
 // ── Navigation mode ─────────────────────────────────────────────────────────
 
 /// The navigation interaction mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum NavigationMode {
-    /// Orbit/pan/zoom around a target point (default).
+    /// Orbit/pan/zoom around a target point with the camera kept upright (default).
     #[default]
-    Orbit,
+    Turntable,
+    /// Orbit/pan/zoom allowing unrestricted camera roll. Good for CAD workflows
+    /// where parts may be in arbitrary orientations.
+    Trackball,
     /// First-person walk with WASD movement and mouse look.
     Walk,
-}
-
-// ======== Orbit State ========
-
-/// Internal state for orbit-style navigation (orbit / pan / zoom).
-struct OrbitState {
-    /// Azimuth angle in radians (horizontal rotation around target).
-    azimuth: f32,
-    /// Elevation angle in radians (vertical rotation).
-    elevation: f32,
-    /// Base distance from camera to target.
-    radius: f32,
-    /// Custom orbit pivot point. When set, orbit rotates the camera around
-    /// this point instead of `camera.target`.
-    pivot: Option<Point3<f32>>,
-}
-
-impl OrbitState {
-    fn new() -> Self {
-        Self {
-            azimuth: 0.0,
-            elevation: 0.0,
-            radius: 5.0,
-            pivot: None,
-        }
-    }
-
-    /// Initialize parameters from current camera state.
-    fn init(&mut self, camera: &Camera) {
-        self.pivot = None;
-        self.radius = camera.length();
-
-        // Calculate direction vector from target to eye
-        let direction = camera.eye - camera.target;
-
-        // Calculate azimuth (horizontal angle around Y-axis)
-        self.azimuth = f32::atan2(direction.x, direction.z);
-
-        // Calculate elevation (vertical angle from horizontal plane)
-        let horizontal_distance =
-            f32::sqrt(direction.x * direction.x + direction.z * direction.z);
-        self.elevation = f32::atan2(direction.y, horizontal_distance);
-    }
-
-    /// Initialize orbit parameters for orbiting around an explicit pivot point.
-    fn init_with_pivot(&mut self, camera: &Camera, pivot: Point3<f32>) {
-        self.pivot = Some(pivot);
-
-        // Compute elevation from eye-to-pivot direction (for elevation clamping)
-        let direction = camera.eye - pivot;
-        let horizontal_distance =
-            f32::sqrt(direction.x * direction.x + direction.z * direction.z);
-        self.elevation = f32::atan2(direction.y, horizontal_distance);
-    }
-
-    /// Update camera position based on current orbit parameters (non-pivot orbit only).
-    fn update_camera_position(&self, camera: &mut Camera) {
-        // Convert spherical coordinates to Cartesian
-        let x = camera.target.x + self.radius * self.elevation.cos() * self.azimuth.sin();
-        let y = camera.target.y + self.radius * self.elevation.sin();
-        let z = camera.target.z + self.radius * self.elevation.cos() * self.azimuth.cos();
-
-        camera.eye = cgmath::point3(x, y, z);
-
-        // Update up vector to maintain proper orientation
-        let forward = (camera.target - camera.eye).normalize();
-        let world_up = cgmath::vec3(0.0, 1.0, 0.0);
-        let right = world_up.cross(forward).normalize();
-        camera.up = forward.cross(right).normalize();
-    }
-
-    /// Handle orbit around the pivot point using incremental rotations.
-    ///
-    /// Rotates both eye and target around the pivot by the same rotation,
-    /// keeping the pivot visually stationary on screen.
-    fn handle_pivot_orbit(&mut self, dx: f64, dy: f64, camera: &mut Camera) {
-        let pivot = self.pivot.unwrap();
-        const ORBIT_SENSITIVITY: f32 = 0.005;
-
-        let d_azimuth = -(dx as f32) * ORBIT_SENSITIVITY;
-        let d_elevation = dy as f32 * ORBIT_SENSITIVITY;
-
-        // Clamp cumulative elevation to prevent going over the poles
-        let new_elevation = self.elevation + d_elevation;
-        const MAX_ELEVATION: f32 = std::f32::consts::FRAC_PI_2 - 0.01;
-        let clamped = new_elevation.clamp(-MAX_ELEVATION, MAX_ELEVATION);
-        let actual_d_elevation = clamped - self.elevation;
-        self.elevation = clamped;
-
-        // Compute the camera's right axis for elevation rotation
-        let forward = (camera.target - camera.eye).normalize();
-        let world_up = cgmath::vec3(0.0, 1.0, 0.0);
-        let right = world_up.cross(forward).normalize();
-
-        // Build combined rotation quaternion: azimuth (around Y) then elevation (around right)
-        let azimuth_rot = quaternion_from_axis_angle_safe(world_up, d_azimuth);
-        let elevation_rot = quaternion_from_axis_angle_safe(right, actual_d_elevation);
-        let rotation = elevation_rot * azimuth_rot;
-
-        // Rotate both eye and target offsets around the pivot
-        let eye_offset = rotation.rotate_vector(camera.eye - pivot);
-        let target_offset = rotation.rotate_vector(camera.target - pivot);
-
-        camera.eye = pivot + eye_offset;
-        camera.target = pivot + target_offset;
-
-        // Update up vector
-        let forward = (camera.target - camera.eye).normalize();
-        let right = world_up.cross(forward).normalize();
-        camera.up = forward.cross(right).normalize();
-    }
-
-    /// Handle zoom via mouse wheel by adjusting camera distance.
-    fn handle_zoom(&mut self, delta: f32, camera: &mut Camera, model_radius: f32) {
-        let zoom_factor = scene_scale::zoom_factor();
-        let factor = if delta > 0.0 {
-            1.0 - zoom_factor // zoom in
-        } else {
-            1.0 + zoom_factor // zoom out
-        };
-
-        self.radius *= factor.powf(delta.abs());
-        self.radius = self.radius.clamp(
-            scene_scale::min_camera_radius(model_radius),
-            scene_scale::max_camera_radius(model_radius),
-        );
-
-        self.update_camera_position(camera);
-    }
-
-    /// Handle orbit rotation based on mouse movement.
-    fn handle_orbit(&mut self, dx: f64, dy: f64, camera: &mut Camera) {
-        if self.pivot.is_some() {
-            return self.handle_pivot_orbit(dx, dy, camera);
-        }
-
-        const ORBIT_SENSITIVITY: f32 = 0.005;
-
-        let dx = dx as f32 * ORBIT_SENSITIVITY;
-        let dy = dy as f32 * ORBIT_SENSITIVITY;
-
-        self.azimuth -= dx;
-
-        self.elevation += dy;
-        const MAX_ELEVATION: f32 = std::f32::consts::FRAC_PI_2 - 0.01;
-        self.elevation = self.elevation.clamp(-MAX_ELEVATION, MAX_ELEVATION);
-
-        self.update_camera_position(camera);
-    }
-
-    /// Handle panning based on mouse movement.
-    fn handle_pan(&self, dx: f64, dy: f64, camera: &mut Camera, model_radius: f32) {
-        let dx = dx as f32;
-        let dy = dy as f32;
-
-        let right = camera.right();
-        let up_view = camera.up;
-
-        let pan_scale = scene_scale::pan_sensitivity(model_radius);
-
-        let offset = right * (-dx * pan_scale) + up_view * (dy * pan_scale);
-        camera.eye += offset;
-        camera.target += offset;
-    }
-}
-
-// ======== Walk State ========
-
-/// Mouse look sensitivity in radians per pixel of mouse movement.
-const LOOK_SENSITIVITY: f32 = 0.003;
-
-/// Maximum pitch angle (looking up/down) in radians. Just under 90 degrees.
-const MAX_PITCH: f32 = std::f32::consts::FRAC_PI_2 - 0.01;
-
-/// Internal state for walk-style navigation (WASD + mouse look).
-struct WalkState {
-    /// Current yaw angle (horizontal rotation) in radians.
-    yaw: f32,
-    /// Current pitch angle (vertical rotation) in radians.
-    pitch: f32,
-    /// Whether the W key is pressed.
-    forward_pressed: bool,
-    /// Whether the S key is pressed.
-    backward_pressed: bool,
-    /// Whether the A key is pressed.
-    left_pressed: bool,
-    /// Whether the D key is pressed.
-    right_pressed: bool,
-}
-
-impl WalkState {
-    fn new() -> Self {
-        Self {
-            yaw: 0.0,
-            pitch: 0.0,
-            forward_pressed: false,
-            backward_pressed: false,
-            left_pressed: false,
-            right_pressed: false,
-        }
-    }
-
-    /// Initialize yaw and pitch from current camera orientation.
-    fn init_from_camera(&mut self, camera: &Camera) {
-        let forward = camera.forward();
-
-        // Calculate yaw from forward vector projected onto XZ plane
-        self.yaw = f32::atan2(forward.x, forward.z);
-
-        // Calculate pitch from forward vector's Y component
-        let horizontal_length = (forward.x * forward.x + forward.z * forward.z).sqrt();
-        self.pitch = f32::atan2(forward.y, horizontal_length);
-    }
-
-    /// Handle mouse look based on mouse drag delta.
-    fn handle_look(&mut self, dx: f32, dy: f32, camera: &mut Camera) {
-        // Update yaw (horizontal rotation) - inverted so mouse left turns view left
-        self.yaw -= dx * LOOK_SENSITIVITY;
-
-        // Update pitch (vertical rotation) with clamping
-        self.pitch -= dy * LOOK_SENSITIVITY;
-        self.pitch = self.pitch.clamp(-MAX_PITCH, MAX_PITCH);
-
-        // Update camera target based on new orientation
-        self.update_camera_target(camera);
-    }
-
-    /// Update camera target based on current yaw and pitch.
-    fn update_camera_target(&self, camera: &mut Camera) {
-        // Preserve the current eye-to-target distance
-        let distance = (camera.target - camera.eye).magnitude();
-
-        // Calculate new forward direction from yaw and pitch
-        let forward = Vector3::new(
-            self.pitch.cos() * self.yaw.sin(),
-            self.pitch.sin(),
-            self.pitch.cos() * self.yaw.cos(),
-        );
-
-        // Set target at the preserved distance in front of eye
-        camera.target = camera.eye + forward * distance;
-
-        // Update up vector to maintain proper orientation
-        let world_up = Vector3::new(0.0, 1.0, 0.0);
-        let right = forward.cross(world_up).normalize();
-        camera.up = right.cross(forward).normalize();
-    }
-
-    /// Apply movement based on currently pressed keys.
-    /// Returns true if any movement was applied.
-    fn apply_movement(&self, camera: &mut Camera, delta_time: f32, model_radius: f32) -> bool {
-        let mut movement = Vector3::new(0.0, 0.0, 0.0);
-
-        // Get horizontal forward direction (project onto XZ plane)
-        let forward_flat = Vector3::new(self.yaw.sin(), 0.0, self.yaw.cos()).normalize();
-
-        // Get right direction (perpendicular to forward on XZ plane)
-        let right = Vector3::new(-self.yaw.cos(), 0.0, self.yaw.sin());
-
-        if self.forward_pressed {
-            movement += forward_flat;
-        }
-        if self.backward_pressed {
-            movement -= forward_flat;
-        }
-        if self.right_pressed {
-            movement += right;
-        }
-        if self.left_pressed {
-            movement -= right;
-        }
-
-        if movement.magnitude2() > 0.0 {
-            let walk_speed = scene_scale::walk_speed(model_radius);
-            movement = movement.normalize() * walk_speed * delta_time;
-            camera.eye += movement;
-            camera.target += movement;
-            return true;
-        }
-
-        false
-    }
-
-    /// Handle key press/release for movement keys.
-    /// Returns true if the key was handled.
-    fn handle_key(&mut self, key: &Key, state: ElementState) -> bool {
-        let pressed = state == ElementState::Pressed;
-
-        match key {
-            Key::Character('w') | Key::Character('W') => {
-                self.forward_pressed = pressed;
-                true
-            }
-            Key::Character('s') | Key::Character('S') => {
-                self.backward_pressed = pressed;
-                true
-            }
-            Key::Character('a') | Key::Character('A') => {
-                self.left_pressed = pressed;
-                true
-            }
-            Key::Character('d') | Key::Character('D') => {
-                self.right_pressed = pressed;
-                true
-            }
-            _ => false,
-        }
-    }
-
-    /// Check if any movement key is currently pressed.
-    fn is_moving(&self) -> bool {
-        self.forward_pressed || self.backward_pressed || self.left_pressed || self.right_pressed
-    }
-
-    /// Reset all pressed key state.
-    fn reset_keys(&mut self) {
-        self.forward_pressed = false;
-        self.backward_pressed = false;
-        self.left_pressed = false;
-        self.right_pressed = false;
-    }
 }
 
 // ── Combined state ──────────────────────────────────────────────────────────
@@ -347,7 +37,8 @@ impl WalkState {
 /// Combined internal state for the navigation operator.
 struct NavigationState {
     mode: Rc<RefCell<NavigationMode>>,
-    orbit: OrbitState,
+    turntable: TurntableState,
+    trackball: TrackballState,
     walk: WalkState,
 }
 
@@ -355,7 +46,8 @@ impl NavigationState {
     fn new(mode: Rc<RefCell<NavigationMode>>) -> Self {
         Self {
             mode,
-            orbit: OrbitState::new(),
+            turntable: TurntableState::new(),
+            trackball: TrackballState::new(),
             walk: WalkState::new(),
         }
     }
@@ -372,8 +64,12 @@ impl NavigationState {
     ) -> bool {
         let camera = &*ctx.camera;
         match (self.mode(), button) {
-            (NavigationMode::Orbit, MouseButton::Left | MouseButton::Right) => {
-                self.orbit.init(camera);
+            (NavigationMode::Turntable, MouseButton::Left | MouseButton::Right) => {
+                self.turntable.init(camera);
+                true
+            }
+            (NavigationMode::Trackball, MouseButton::Left | MouseButton::Right) => {
+                self.trackball.init(camera);
                 true
             }
             (_, MouseButton::Middle) => {
@@ -392,7 +88,11 @@ impl NavigationState {
                         .map(|b| b.center())
                         .unwrap_or(camera.target)
                 };
-                self.orbit.init_with_pivot(ctx.camera, pivot);
+                match self.mode() {
+                    NavigationMode::Turntable => self.turntable.init_with_pivot(ctx.camera, pivot),
+                    NavigationMode::Trackball => self.trackball.init_with_pivot(ctx.camera, pivot),
+                    NavigationMode::Walk => {}
+                }
                 true
             }
             (NavigationMode::Walk, MouseButton::Left) => {
@@ -411,19 +111,32 @@ impl NavigationState {
         model_radius: f32,
     ) -> bool {
         match (self.mode(), button) {
-            (NavigationMode::Orbit, MouseButton::Left) => {
-                self.orbit
-                    .handle_orbit(delta.0 as f64, delta.1 as f64, camera);
+            (NavigationMode::Turntable, MouseButton::Left) => {
+                self.turntable.handle_orbit(delta.0 as f64, delta.1 as f64, camera);
                 true
             }
-            (NavigationMode::Orbit, MouseButton::Right) => {
-                self.orbit
-                    .handle_pan(delta.0 as f64, delta.1 as f64, camera, model_radius);
+            (NavigationMode::Turntable, MouseButton::Right) => {
+                self.turntable.handle_pan(delta.0 as f64, delta.1 as f64, camera, model_radius);
+                true
+            }
+            (NavigationMode::Trackball, MouseButton::Left) => {
+                self.trackball.handle_orbit(delta.0 as f64, delta.1 as f64, camera);
+                true
+            }
+            (NavigationMode::Trackball, MouseButton::Right) => {
+                self.trackball.handle_pan(delta.0 as f64, delta.1 as f64, camera, model_radius);
                 true
             }
             (_, MouseButton::Middle) => {
-                self.orbit
-                    .handle_orbit(delta.0 as f64, delta.1 as f64, camera);
+                match self.mode() {
+                    NavigationMode::Turntable => {
+                        self.turntable.handle_orbit(delta.0 as f64, delta.1 as f64, camera)
+                    }
+                    NavigationMode::Trackball => {
+                        self.trackball.handle_orbit(delta.0 as f64, delta.1 as f64, camera)
+                    }
+                    NavigationMode::Walk => {}
+                }
                 true
             }
             (NavigationMode::Walk, MouseButton::Left) => {
@@ -436,17 +149,24 @@ impl NavigationState {
 
     fn handle_drag_end(&mut self, button: &MouseButton) {
         if *button == MouseButton::Middle {
-            self.orbit.pivot = None;
+            self.turntable.pivot = None;
+            self.trackball.pivot = None;
         }
     }
 
     fn handle_wheel(&mut self, scroll_amount: f32, camera: &mut Camera, model_radius: f32) -> bool {
-        if self.mode() != NavigationMode::Orbit {
-            return false;
+        match self.mode() {
+            NavigationMode::Turntable => {
+                self.turntable.init(camera);
+                self.turntable.handle_zoom(scroll_amount, camera, model_radius);
+                true
+            }
+            NavigationMode::Trackball => {
+                self.trackball.handle_zoom(scroll_amount, camera, model_radius);
+                true
+            }
+            NavigationMode::Walk => false,
         }
-        self.orbit.init(camera);
-        self.orbit.handle_zoom(scroll_amount, camera, model_radius);
-        true
     }
 
     fn handle_keyboard(
@@ -457,7 +177,7 @@ impl NavigationState {
         if self.mode() != NavigationMode::Walk {
             return false;
         }
-        if key_event.state == ElementState::Pressed && !key_event.repeat {
+        if key_event.state == crate::input::ElementState::Pressed && !key_event.repeat {
             self.walk.init_from_camera(camera);
         }
         self.walk.handle_key(&key_event.logical_key, key_event.state)
@@ -486,9 +206,9 @@ impl NavigationState {
 
 // ── Operator ────────────────────────────────────────────────────────────────
 
-/// Operator for camera navigation with two modes:
+/// Operator for camera navigation. See [`NavigationMode`] for available modes.
 ///
-/// **Orbit mode** (default):
+/// **Turntable / Trackball mode** (default: Turntable):
 /// - Left mouse button + drag: Orbit camera around target
 /// - Right mouse button + drag: Pan camera perpendicular to view direction
 /// - Middle mouse button + drag: Orbit around point under cursor (hit geometry or scene center)
