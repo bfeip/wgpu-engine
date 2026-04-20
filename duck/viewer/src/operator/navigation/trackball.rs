@@ -70,7 +70,7 @@ impl TrackballState {
     }
 
     /// Handle panning based on mouse movement.
-    pub fn handle_pan(&self, dx: f64, dy: f64, camera: &mut Camera, model_radius: f32) {
-        super::pan(dx, dy, camera, model_radius);
+    pub fn handle_pan(&self, dx: f32, dy: f32, camera: &mut Camera, viewport: (u32, u32)) {
+        super::pan(dx, dy, camera, viewport);
     }
 }

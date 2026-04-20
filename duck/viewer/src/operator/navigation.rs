@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use crate::common;
 use crate::scene::{Camera, geom_query::pick_all_from_ray};
 use crate::event::{CallbackId, Event, EventContext, EventDispatcher, EventKind};
 use crate::input::MouseButton;
@@ -17,14 +18,17 @@ use walk::WalkState;
 
 pub(super) const ORBIT_SENSITIVITY: f32 = 0.005;
 
-pub(super) fn pan(dx: f64, dy: f64, camera: &mut Camera, model_radius: f32) {
-    let dx = dx as f32;
-    let dy = dy as f32;
-    let right = camera.right();
-    let pan_scale = scene_scale::pan_sensitivity(model_radius);
-    let offset = right * (-dx * pan_scale) + camera.up * (dy * pan_scale);
-    camera.eye += offset;
-    camera.target += offset;
+pub(super) fn pan(dx: f32, dy: f32, camera: &mut Camera, viewport: (u32, u32)) {
+    let (width, height) = viewport;
+    let pivot = camera.target;
+    let movement_plane = common::Plane::from_point(camera.forward(), pivot);
+    let screen = camera.project_point_screen(pivot, width, height);
+    let diff_ray = camera.ray_from_screen_point(screen.x - dx, screen.y - dy, width, height);
+    if let Some((_, new_pivot)) = movement_plane.intersect_ray(&diff_ray) {
+        let offset = new_pivot - pivot;
+        camera.eye += offset;
+        camera.target += offset;
+    }
 }
 
 pub(super) fn zoom_radius(radius: f32, delta: f32, model_radius: f32) -> f32 {
@@ -129,7 +133,7 @@ impl NavigationState {
         button: &MouseButton,
         delta: &(f32, f32),
         camera: &mut Camera,
-        model_radius: f32,
+        viewport: (u32, u32),
     ) -> bool {
         match (self.mode(), button) {
             (NavigationMode::Turntable, MouseButton::Left) => {
@@ -137,7 +141,7 @@ impl NavigationState {
                 true
             }
             (NavigationMode::Turntable, MouseButton::Right) => {
-                self.turntable.handle_pan(delta.0 as f64, delta.1 as f64, camera, model_radius);
+                self.turntable.handle_pan(delta.0, delta.1, camera, viewport);
                 true
             }
             (NavigationMode::Trackball, MouseButton::Left) => {
@@ -145,7 +149,7 @@ impl NavigationState {
                 true
             }
             (NavigationMode::Trackball, MouseButton::Right) => {
-                self.trackball.handle_pan(delta.0 as f64, delta.1 as f64, camera, model_radius);
+                self.trackball.handle_pan(delta.0, delta.1, camera, viewport);
                 true
             }
             (_, MouseButton::Middle) => {
@@ -278,8 +282,7 @@ impl Operator for NavigationOperator {
         let s = self.state.clone();
         let drag_cb = dispatcher.register(EventKind::MouseDrag, move |event, ctx| {
             let Event::MouseDrag { button, delta, .. } = event else { return false };
-            let model_radius = scene_scale::model_radius_from_bounds(ctx.scene.bounding().as_ref());
-            s.borrow_mut().handle_drag(button, delta, ctx.camera, model_radius)
+            s.borrow_mut().handle_drag(button, delta, ctx.camera, ctx.size)
         });
 
         let s = self.state.clone();
