@@ -417,18 +417,27 @@ fn import_views(
 
 /// Convert XCAF [`ViewData`] to a Duck [`Camera`].
 ///
-/// `eye` is scaled from OCCT model units to scene units via `scale` (e.g. 0.001 for mm→m),
-/// matching how vertex positions are scaled in [`import_leaf_part`].
+/// All positions are scaled from OCCT model units to scene units via `scale`
+/// (e.g. 0.001 for mm→m), matching how vertex positions are scaled in [`import_leaf_part`].
 ///
-/// The resulting camera captures only the view's orientation (eye, direction, up, ortho).
+/// **Perspective views**: `projection_point` is the eye position; `target` is placed
+/// ahead of it along `view_direction`.
+///
+/// **Orthographic views**: CAD software treats `projection_point` as the center of
+/// interest (our `target`), not the camera origin — parallel projection has no
+/// meaningful eye position. The eye is placed behind the target along `-view_direction`
+/// at a distance derived from `window_vertical_size` so the zoom level matches the
+/// saved view. The fallback when `window_vertical_size` is zero is the target's
+/// distance from the scene origin.
+///
 /// Clipping planes and fov are rough defaults; callers should use [`View::apply_to`] with
 /// the active camera when they need a properly calibrated result for rendering.
 fn view_data_to_camera(data: &opencascade::xcaf::ViewData, scale: f32) -> Camera {
     use cgmath::{EuclideanSpace, InnerSpace, MetricSpace, Point3, Vector3};
 
     let s = scale as f64;
-    let ep = data.projection_point;
-    let eye = Point3::new((ep[0] * s) as f32, (ep[1] * s) as f32, (ep[2] * s) as f32);
+    let pp = data.projection_point;
+    let pt = Point3::new((pp[0] * s) as f32, (pp[1] * s) as f32, (pp[2] * s) as f32);
 
     let vd = data.view_direction;
     let dir = Vector3::new(vd[0] as f32, vd[1] as f32, vd[2] as f32);
@@ -440,10 +449,28 @@ fn view_data_to_camera(data: &opencascade::xcaf::ViewData, scale: f32) -> Camera
 
     let ortho = data.projection() == ViewProjection::Parallel;
 
-    let orbit_dist = eye.distance(Point3::origin()).max(1.0);
-    let target = eye + dir * orbit_dist;
+    const FOVY: f32 = 45.0;
 
-    Camera { eye, target, up, aspect: 1.0, fovy: 45.0, znear: 0.1, zfar: 100_000.0, ortho }
+    let (eye, target) = if ortho {
+        // projection_point is the center of interest; place eye behind it.
+        let target = pt;
+        let half_height = (data.window_vertical_size * s) as f32 / 2.0;
+        let orbit_dist = if half_height > 1e-6 {
+            half_height / (FOVY.to_radians() / 2.0).tan()
+        } else {
+            target.distance(Point3::origin()).max(1.0)
+        };
+        let eye = target - dir * orbit_dist;
+        (eye, target)
+    } else {
+        // projection_point is the eye; target is placed ahead of it.
+        let eye = pt;
+        let orbit_dist = eye.distance(Point3::origin()).max(1.0);
+        let target = eye + dir * orbit_dist;
+        (eye, target)
+    };
+
+    Camera { eye, target, up, aspect: 1.0, fovy: FOVY, znear: 0.1, zfar: 100_000.0, ortho }
 }
 
 #[cfg(test)]
