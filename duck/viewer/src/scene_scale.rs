@@ -50,12 +50,6 @@ pub fn zoom_factor() -> f32 {
     0.1 // 10% per scroll step
 }
 
-/// Returns the pan sensitivity multiplier for a given model radius.
-/// Scales with model size for consistent feel.
-pub fn pan_sensitivity(model_radius: f32) -> f32 {
-    model_radius * 0.001
-}
-
 /// Returns the walk movement speed (units per second) for a given model radius.
 /// Set to 10% of model radius per second for comfortable navigation.
 pub fn walk_speed(model_radius: f32) -> f32 {
@@ -109,7 +103,6 @@ mod tests {
 
         assert!((min_camera_radius(model_radius) - 0.1).abs() < 0.001);
         assert!((max_camera_radius(model_radius) - 1000.0).abs() < 0.1);
-        assert!((pan_sensitivity(model_radius) - 0.01).abs() < 0.0001);
         assert!((walk_speed(model_radius) - 1.0).abs() < 0.01);
         assert_eq!(zoom_factor(), 0.1);
     }
