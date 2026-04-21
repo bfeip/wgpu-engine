@@ -30,7 +30,7 @@ use crate::common::{
 };
 use crate::common::Axis;
 use crate::event::{CallbackId, Event, EventContext, EventDispatcher, EventKind};
-use crate::geom_query::pick_all_from_ray;
+use crate::geom_query::{pick_all_from_ray, RayPickQuery};
 use crate::input::{ElementState, Key, MouseButton, NamedKey};
 use crate::operator::{Operator, OperatorId};
 use crate::scene::annotation::AnnotationId;
@@ -189,7 +189,7 @@ impl GizmoState {
         }
 
         let ray = ctx.camera.ray_from_screen_point(cursor_x, cursor_y, ctx.size.0, ctx.size.1);
-        let results = pick_all_from_ray(&ray, ctx.scene);
+        let results = pick_all_from_ray(&RayPickQuery::faces(ray), ctx.scene);
 
         // Find the first hit that matches a gizmo node
         for result in &results {

@@ -476,6 +476,77 @@ impl Mesh {
             .collect()
     }
 
+    /// Extracts all line segment indices from the mesh.
+    ///
+    /// Collects indices from all line list primitives in the mesh into a single vector.
+    /// Each group of 2 indices defines one segment.
+    ///
+    /// # Returns
+    /// A vector of indices for all segments. Empty if the mesh contains no line primitives.
+    pub fn line_indices(&self) -> Vec<MeshIndex> {
+        self.primitives
+            .iter()
+            .filter(|p| p.primitive_type == PrimitiveType::LineList)
+            .flat_map(|p| p.indices.iter().copied())
+            .collect()
+    }
+
+    /// Extracts all point indices from the mesh.
+    ///
+    /// Collects indices from all point list primitives in the mesh into a single vector.
+    ///
+    /// # Returns
+    /// A vector of indices for all points. Empty if the mesh contains no point primitives.
+    pub fn point_indices(&self) -> Vec<MeshIndex> {
+        self.primitives
+            .iter()
+            .filter(|p| p.primitive_type == PrimitiveType::PointList)
+            .flat_map(|p| p.indices.iter().copied())
+            .collect()
+    }
+
+    /// Iterates over each triangle as three resolved vertices.
+    ///
+    /// Yields `[v0, v1, v2]` for every triangle in the mesh's `TriangleList` primitives,
+    /// in order. Callers do not need to know the indexing convention.
+    pub fn triangles(&self) -> impl Iterator<Item = [Vertex; 3]> + '_ {
+        self.primitives
+            .iter()
+            .filter(|p| p.primitive_type == PrimitiveType::TriangleList)
+            .flat_map(|p| p.indices.chunks_exact(3))
+            .map(|tri| [
+                self.vertices[tri[0] as usize],
+                self.vertices[tri[1] as usize],
+                self.vertices[tri[2] as usize],
+            ])
+    }
+
+    /// Iterates over each line segment as two resolved vertices.
+    ///
+    /// Yields `[v0, v1]` for every segment in the mesh's `LineList` primitives,
+    /// in order. Callers do not need to know the indexing convention.
+    pub fn segments(&self) -> impl Iterator<Item = [Vertex; 2]> + '_ {
+        self.primitives
+            .iter()
+            .filter(|p| p.primitive_type == PrimitiveType::LineList)
+            .flat_map(|p| p.indices.chunks_exact(2))
+            .map(|seg| [
+                self.vertices[seg[0] as usize],
+                self.vertices[seg[1] as usize],
+            ])
+    }
+
+    /// Iterates over each point as a resolved vertex.
+    ///
+    /// Yields one `Vertex` for every point in the mesh's `PointList` primitives, in order.
+    pub fn points(&self) -> impl Iterator<Item = Vertex> + '_ {
+        self.primitives
+            .iter()
+            .filter(|p| p.primitive_type == PrimitiveType::PointList)
+            .flat_map(|p| p.indices.iter())
+            .map(|&i| self.vertices[i as usize])
+    }
+
     /// Get the count of indices for a primitive type.
     pub fn index_count(&self, primitive_type: PrimitiveType) -> u32 {
         self.primitives
@@ -560,6 +631,25 @@ impl Default for Mesh {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn make_vertex(x: f32, y: f32, z: f32) -> Vertex {
+        Vertex { position: [x, y, z], tex_coords: [0.0; 3], normal: [0.0, 1.0, 0.0] }
+    }
+
+    fn make_mixed_mesh() -> Mesh {
+        let vertices = vec![
+            make_vertex(0.0, 0.0, 0.0),
+            make_vertex(1.0, 0.0, 0.0),
+            make_vertex(0.0, 1.0, 0.0),
+            make_vertex(0.0, 0.0, 1.0),
+        ];
+        let primitives = vec![
+            MeshPrimitive { primitive_type: PrimitiveType::TriangleList, indices: vec![0, 1, 2] },
+            MeshPrimitive { primitive_type: PrimitiveType::LineList, indices: vec![0, 3, 1, 3] },
+            MeshPrimitive { primitive_type: PrimitiveType::PointList, indices: vec![0, 1, 2, 3] },
+        ];
+        Mesh::from_raw(vertices, primitives)
+    }
 
     // ========== to_line_list ==========
 
@@ -660,5 +750,61 @@ mod tests {
             indices: vec![0, 1, 2],
         };
         assert!(prim.to_point_list().is_none());
+    }
+
+    // ========== Mesh index accessors and primitive iterators ==========
+
+    #[test]
+    fn line_indices_returns_correct_indices() {
+        let mesh = make_mixed_mesh();
+        assert_eq!(mesh.line_indices(), vec![0, 3, 1, 3]);
+    }
+
+    #[test]
+    fn line_indices_empty_for_triangle_only_mesh() {
+        let mesh = Mesh::from_raw(
+            vec![make_vertex(0.0, 0.0, 0.0), make_vertex(1.0, 0.0, 0.0), make_vertex(0.0, 1.0, 0.0)],
+            vec![MeshPrimitive { primitive_type: PrimitiveType::TriangleList, indices: vec![0, 1, 2] }],
+        );
+        assert!(mesh.line_indices().is_empty());
+    }
+
+    #[test]
+    fn triangles_iter_yields_correct_vertices() {
+        let mesh = make_mixed_mesh();
+        let tris: Vec<_> = mesh.triangles().collect();
+        assert_eq!(tris.len(), 1);
+        assert_eq!(tris[0][0].position, [0.0, 0.0, 0.0]);
+        assert_eq!(tris[0][1].position, [1.0, 0.0, 0.0]);
+        assert_eq!(tris[0][2].position, [0.0, 1.0, 0.0]);
+    }
+
+    #[test]
+    fn segments_iter_yields_correct_vertices() {
+        let mesh = make_mixed_mesh();
+        let segs: Vec<_> = mesh.segments().collect();
+        assert_eq!(segs.len(), 2);
+        assert_eq!(segs[0][0].position, [0.0, 0.0, 0.0]);
+        assert_eq!(segs[0][1].position, [0.0, 0.0, 1.0]);
+        assert_eq!(segs[1][0].position, [1.0, 0.0, 0.0]);
+        assert_eq!(segs[1][1].position, [0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn points_iter_yields_correct_vertices() {
+        let mesh = make_mixed_mesh();
+        let pts: Vec<_> = mesh.points().collect();
+        assert_eq!(pts.len(), 4);
+        assert_eq!(pts[0].position, [0.0, 0.0, 0.0]);
+        assert_eq!(pts[3].position, [0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn segments_iter_empty_for_triangle_only_mesh() {
+        let mesh = Mesh::from_raw(
+            vec![make_vertex(0.0, 0.0, 0.0), make_vertex(1.0, 0.0, 0.0), make_vertex(0.0, 1.0, 0.0)],
+            vec![MeshPrimitive { primitive_type: PrimitiveType::TriangleList, indices: vec![0, 1, 2] }],
+        );
+        assert_eq!(mesh.segments().count(), 0);
     }
 }

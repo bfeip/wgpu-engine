@@ -1,6 +1,6 @@
 use crate::common::RgbaColor;
 use crate::event::{CallbackId, Event, EventContext, EventDispatcher, EventKind};
-use crate::geom_query::{RayPickResult, pick_all_from_ray};
+use crate::geom_query::{RayHit, RayPickQuery, RayPickResult, pick_all_from_ray};
 use crate::operator::{Operator, OperatorId};
 use crate::selection::SelectionItem;
 use cgmath::{InnerSpace, Point3};
@@ -36,7 +36,7 @@ impl SelectionOperator {
         let camera_distance = (ctx.camera.eye - ctx.camera.target).magnitude();
 
         // Perform picking
-        let results = pick_all_from_ray(&ray, ctx.scene);
+        let results = pick_all_from_ray(&RayPickQuery::all(ray), ctx.scene);
 
         // Convert ray origin Vector3 to Point3
         let ray_origin = Point3::new(ray.origin.x, ray.origin.y, ray.origin.z);
@@ -104,18 +104,29 @@ impl Operator for SelectionOperator {
 
 /// Resolves a ray pick result to the most specific [`SelectionItem`] available.
 ///
-/// If the hit mesh carries [`Topology`](crate::scene::Topology) and the triangle maps
-/// to a known face, returns `SelectionItem::Face`. Otherwise falls back to
-/// `SelectionItem::Node`.
+/// - Triangle hit with topology → `SelectionItem::Face`
+/// - Segment hit with topology  → `SelectionItem::Edge`
+/// - Anything else              → `SelectionItem::Node`
 fn resolve_hit_to_selection(hit: &RayPickResult, scene: &crate::scene::Scene) -> SelectionItem {
-    let face_index = scene
+    let mesh = scene
         .get_instance(hit.instance_id)
-        .and_then(|inst| scene.get_mesh(inst.mesh()))
-        .and_then(|mesh| mesh.face_for_triangle(hit.triangle_index as u32));
+        .and_then(|inst| scene.get_mesh(inst.mesh()));
 
-    match face_index {
-        Some(fi) => SelectionItem::Face { node_id: hit.node_id, face_index: fi },
-        None => SelectionItem::Node(hit.node_id),
+    match hit.hit {
+        RayHit::Triangle { triangle_index, .. } => {
+            let face_index = mesh.and_then(|m| m.face_for_triangle(triangle_index as u32));
+            match face_index {
+                Some(fi) => SelectionItem::Face { node_id: hit.node_id, face_index: fi },
+                None => SelectionItem::Node(hit.node_id),
+            }
+        }
+        RayHit::Segment { segment_index, .. } => {
+            let edge_index = mesh.and_then(|m| m.edge_for_segment(segment_index as u32));
+            match edge_index {
+                Some(ei) => SelectionItem::Edge { node_id: hit.node_id, edge_index: ei },
+                None => SelectionItem::Node(hit.node_id),
+            }
+        }
     }
 }
 

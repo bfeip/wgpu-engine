@@ -295,7 +295,7 @@ mod tests {
                  vertices={}, triangles={}, aabb_min={:?}, aabb_max={:?}",
                 handle.axis,
                 handle.mesh.vertices().len(),
-                handle.mesh.triangle_indices().len() / 3,
+                handle.mesh.triangles().count(),
                 aabb.min,
                 aabb.max,
             );
@@ -337,7 +337,7 @@ mod tests {
                  vertices={}, triangles={}",
                 handle.axis,
                 handle.mesh.vertices().len(),
-                handle.mesh.triangle_indices().len() / 3,
+                handle.mesh.triangles().count(),
             );
         }
     }
@@ -377,7 +377,7 @@ mod tests {
                  vertices={}, triangles={}",
                 handle.axis,
                 handle.mesh.vertices().len(),
-                handle.mesh.triangle_indices().len() / 3,
+                handle.mesh.triangles().count(),
             );
         }
     }

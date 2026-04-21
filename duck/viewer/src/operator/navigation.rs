@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::common;
-use crate::scene::{Camera, geom_query::pick_all_from_ray};
+use crate::scene::{Camera, geom_query::{pick_all_from_ray, RayPickQuery}};
 use crate::event::{CallbackId, Event, EventContext, EventDispatcher, EventKind};
 use crate::input::MouseButton;
 use crate::operator::{Operator, OperatorId};
@@ -104,7 +104,7 @@ impl NavigationState {
                     ctx.size.0,
                     ctx.size.1,
                 );
-                let hits = pick_all_from_ray(&ray, ctx.scene);
+                let hits = pick_all_from_ray(&RayPickQuery::faces(ray), ctx.scene);
                 let pivot = if let Some(hit) = hits.first() {
                     hit.hit_point
                 } else {

@@ -2,6 +2,19 @@ use cgmath::{InnerSpace, Matrix4, Point3, Vector3};
 
 use crate::EPSILON;
 
+/// The closest approach between a ray and a line segment.
+///
+/// Returned by [`Ray::closest_approach_to_segment`].
+#[derive(Debug, Copy, Clone)]
+pub struct SegmentApproach {
+    /// Parameter along the ray at the closest approach point
+    pub t: f32,
+    /// Closest point on the segment to the ray
+    pub closest_on_segment: Point3<f32>,
+    /// Minimum 3D distance between the ray and the segment
+    pub distance: f32,
+}
+
 /// A ray in 3D space, defined by an origin point and a direction vector.
 #[derive(Debug, Copy, Clone)]
 pub struct Ray {
@@ -39,6 +52,72 @@ impl Ray {
             origin: new_origin,
             direction: new_direction.normalize(),
         }
+    }
+
+    /// Finds the closest approach between the ray and a line segment using
+    /// the Shoemake/Goldman two-segment closest-approach algorithm.
+    ///
+    /// Returns `Some((t, closest_on_segment, distance))` where:
+    /// - `t`: parameter along the ray at the closest approach point
+    /// - `closest_on_segment`: the point on the segment closest to the ray
+    /// - `distance`: the minimum 3D distance between the ray and segment
+    ///
+    /// Returns `None` if the closest approach is behind the ray origin (t ≤ 0).
+    pub fn closest_approach_to_segment(
+        &self,
+        p0: Point3<f32>,
+        p1: Point3<f32>,
+    ) -> Option<SegmentApproach> {
+        let d = p1 - p0; // segment direction
+        let w = self.origin - p0;
+
+        let e = d.dot(d); // segment length squared
+        let b = self.direction.dot(w);
+
+        let seg_t;
+        let ray_t;
+
+        // b = dot(r, w) where w = origin - p0; the ray parameter at the projection of
+        // p0 is -b (so degenerate/parallel cases use -b, not b).
+        if e < EPSILON {
+            // Degenerate segment: both endpoints are the same point — project p0 onto the ray
+            seg_t = 0.0_f32;
+            ray_t = -b;
+        } else {
+            let c = self.direction.dot(d);
+            let f = d.dot(w);
+            let denom = e - c * c; // = a*e - c*c where a=1 (ray direction is unit)
+
+            if denom < EPSILON {
+                // Ray and segment are parallel — project p0 onto the ray
+                seg_t = 0.0_f32;
+                ray_t = -b;
+            } else {
+                // Solving the 2×2 system from differentiating |P(s) - Q(t)|²:
+                //   s = (c*f - b*e) / denom
+                //   t = (f - b*c)   / denom
+                let raw_ray_t = (c * f - b * e) / denom;
+                let raw_seg_t = (f - b * c) / denom;
+                seg_t = raw_seg_t.clamp(0.0, 1.0);
+                // If seg_t was clamped, recompute ray_t against the clamped endpoint
+                if (raw_seg_t - seg_t).abs() > EPSILON {
+                    let clamped_point = p0 + d * seg_t;
+                    ray_t = self.direction.dot(clamped_point - self.origin);
+                } else {
+                    ray_t = raw_ray_t;
+                }
+            }
+        }
+
+        if ray_t <= 0.0 {
+            return None;
+        }
+
+        let closest_on_segment = p0 + d * seg_t;
+        let closest_on_ray = self.point_at(ray_t);
+        let distance = (closest_on_ray - closest_on_segment).magnitude();
+
+        Some(SegmentApproach { t: ray_t, closest_on_segment, distance })
     }
 
     /// Tests if a ray intersects a triangle using the Möller-Trumbore algorithm.
@@ -419,5 +498,63 @@ mod tests {
                 "Ray {:?} should miss triangle", ray
             );
         }
+    }
+
+    // ===== Segment Closest Approach Tests =====
+
+    #[test]
+    fn closest_approach_perpendicular() {
+        // Ray along +Z from origin; segment along X at z=5
+        let ray = Ray::new(Point3::new(0.0, 0.0, 0.0), Vector3::new(0.0, 0.0, 1.0));
+        let p0 = Point3::new(-1.0, 0.0, 5.0);
+        let p1 = Point3::new(1.0, 0.0, 5.0);
+        let a = ray.closest_approach_to_segment(p0, p1).unwrap();
+        assert!((a.t - 5.0).abs() < EPSILON, "t should be 5, got {}", a.t);
+        assert!((a.closest_on_segment.x).abs() < EPSILON);
+        assert!((a.closest_on_segment.z - 5.0).abs() < EPSILON);
+        assert!(a.distance < EPSILON, "dist should be 0, got {}", a.distance);
+    }
+
+    #[test]
+    fn closest_approach_offset() {
+        // Ray along +Z at x=0; segment parallel to ray at x=3, starting ahead of the origin
+        let ray = Ray::new(Point3::new(0.0, 0.0, 0.0), Vector3::new(0.0, 0.0, 1.0));
+        let p0 = Point3::new(3.0, 0.0, 2.0);
+        let p1 = Point3::new(3.0, 0.0, 10.0);
+        let a = ray.closest_approach_to_segment(p0, p1).unwrap();
+        assert!((a.distance - 3.0).abs() < EPSILON, "dist should be 3, got {}", a.distance);
+    }
+
+    #[test]
+    fn closest_approach_degenerate_segment() {
+        // Segment with both endpoints at the same position (zero length)
+        let ray = Ray::new(Point3::new(0.0, 0.0, 0.0), Vector3::new(0.0, 0.0, 1.0));
+        let p = Point3::new(1.0, 0.0, 5.0);
+        let a = ray.closest_approach_to_segment(p, p).unwrap();
+        assert!((a.t - 5.0).abs() < EPSILON);
+        assert!((a.closest_on_segment.x - 1.0).abs() < EPSILON);
+        assert!((a.distance - 1.0).abs() < EPSILON);
+    }
+
+    #[test]
+    fn closest_approach_clamped_to_endpoint() {
+        // Segment does not extend to the closest point on the ray — should clamp to p1
+        let ray = Ray::new(Point3::new(0.0, 0.0, 0.0), Vector3::new(1.0, 0.0, 0.0));
+        let p0 = Point3::new(5.0, 3.0, 0.0);
+        let p1 = Point3::new(5.0, 10.0, 0.0); // both endpoints above the ray
+        let a = ray.closest_approach_to_segment(p0, p1).unwrap();
+        // Closest point on segment to ray is p0 (nearest endpoint)
+        assert!((a.closest_on_segment.x - 5.0).abs() < EPSILON);
+        assert!((a.closest_on_segment.y - 3.0).abs() < EPSILON);
+        assert!((a.distance - 3.0).abs() < EPSILON);
+    }
+
+    #[test]
+    fn closest_approach_behind_ray_returns_none() {
+        // Segment is entirely behind the ray origin
+        let ray = Ray::new(Point3::new(0.0, 0.0, 0.0), Vector3::new(0.0, 0.0, 1.0));
+        let p0 = Point3::new(-1.0, 0.0, -5.0);
+        let p1 = Point3::new(1.0, 0.0, -5.0);
+        assert!(ray.closest_approach_to_segment(p0, p1).is_none());
     }
 }

@@ -11,7 +11,7 @@ mod transform;
 mod transform_ops;
 
 // Re-export common types
-pub use ray::Ray;
+pub use ray::{Ray, SegmentApproach};
 pub use aabb::Aabb;
 pub use plane::Plane;
 pub use convex_polyhedron::ConvexPolyhedron;
