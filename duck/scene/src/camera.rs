@@ -98,6 +98,16 @@ impl Camera {
         self.eye.distance(self.target)
     }
 
+    /// World-space size of one pixel at the given depth from the camera.
+    ///
+    /// For perspective, pixel size grows with depth. For orthographic, depth is
+    /// ignored and the camera distance is used instead (pixel size is constant).
+    pub fn world_size_per_pixel(&self, depth: f32, viewport_height: u32) -> f32 {
+        let effective_depth = if self.ortho { self.length() } else { depth };
+        let half_fovy = (self.fovy.to_radians() / 2.0).tan();
+        2.0 * effective_depth * half_fovy / viewport_height as f32
+    }
+
     /// Adjusts the camera to fit a bounding box in view.
     ///
     /// Positions the camera so the entire bounding box is visible while maintaining

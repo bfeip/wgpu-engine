@@ -32,11 +32,16 @@ impl SelectionOperator {
             ctx.size.1,
         );
 
-        // Calculate camera distance for miss visualization
+        // Calculate camera distance for miss visualization and line tolerance
         let camera_distance = (ctx.camera.eye - ctx.camera.target).magnitude();
 
+        // Line tolerance: 6 pixels in world space, calibrated to the camera target depth.
+        // Approximation: uses a single depth reference, so the effective pixel budget
+        // varies with geometry depth (near objects get more pixels, far objects fewer).
+        let line_tolerance = ctx.camera.world_size_per_pixel(camera_distance, ctx.size.1) * 6.0;
+
         // Perform picking
-        let results = pick_all_from_ray(&RayPickQuery::all(ray), ctx.scene);
+        let results = pick_all_from_ray(&RayPickQuery::all(ray, line_tolerance), ctx.scene);
 
         // Convert ray origin Vector3 to Point3
         let ray_origin = Point3::new(ray.origin.x, ray.origin.y, ray.origin.z);
