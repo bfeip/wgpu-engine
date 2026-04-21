@@ -54,13 +54,10 @@ impl Ray {
         }
     }
 
-    /// Finds the closest approach between the ray and a line segment using
-    /// the Shoemake/Goldman two-segment closest-approach algorithm.
+    /// Finds the closest approach between the ray and a line segment.
     ///
-    /// Returns `Some((t, closest_on_segment, distance))` where:
-    /// - `t`: parameter along the ray at the closest approach point
-    /// - `closest_on_segment`: the point on the segment closest to the ray
-    /// - `distance`: the minimum 3D distance between the ray and segment
+    /// Solves by differentiating the squared-distance function |P(s) − Q(t)|²
+    /// and solving the resulting 2×2 linear system.
     ///
     /// Returns `None` if the closest approach is behind the ray origin (t ≤ 0).
     pub fn closest_approach_to_segment(
