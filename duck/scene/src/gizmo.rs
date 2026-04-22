@@ -191,6 +191,8 @@ pub fn build_handles(gizmo_type: GizmoType, size: f32) -> Vec<GizmoHandle> {
 
 #[cfg(test)]
 mod tests {
+    use crate::geom_query::RayPickQuery;
+
     use super::*;
 
     #[test]
@@ -454,8 +456,9 @@ mod tests {
             for dir in &directions {
                 let origin = world_center - dir * 10.0;
                 let ray = Ray::new(origin, *dir);
+                let query = RayPickQuery::faces(ray);
 
-                let results = pick_all_from_ray(&ray, &scene);
+                let results = pick_all_from_ray(&query, &scene);
                 for result in &results {
                     if result.node_id == node_ids[i] {
                         found = true;
@@ -537,8 +540,9 @@ mod tests {
             for dir in &directions {
                 let origin = world_center - dir * 10.0;
                 let ray = Ray::new(origin, *dir);
+                let query = RayPickQuery::faces(ray);
 
-                let results = pick_all_from_ray(&ray, &scene);
+                let results = pick_all_from_ray(&query, &scene);
                 for result in &results {
                     if result.node_id == node_ids[i] {
                         found = true;
