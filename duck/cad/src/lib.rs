@@ -72,9 +72,8 @@ pub struct CadImportResult {
     /// `None` when `CadImportOptions::include_pmi` is false, the file has no
     /// graphical PMI, or the import used the string-based path (which bypasses XCAF).
     ///
-    /// **Note**: currently all PMI geometry is accumulated into a single `LineList` mesh
-    /// under this node. Per-annotation nodes (for individual visibility control) are
-    /// planned as a future extension.
+    /// Each annotation (dimension, geometric tolerance, datum) is a named child node
+    /// under this root, with its own mesh and instance.
     pub pmi_root: Option<NodeId>,
     /// Named views imported from the CAD file, added to the scene.
     ///
@@ -312,12 +311,12 @@ fn import_leaf_part(
     Ok(instance_id)
 }
 
-/// Extract PMI graphical presentation geometry from `dim_tol_tool` and add it to the scene
-/// as a single `LineList` mesh under a dedicated `pmi` node.
+/// Extract PMI graphical presentation geometry from `dim_tol_tool` and add it to the scene.
 ///
-/// Iterates all three PMI label types (dimensions, geometric tolerances, datums) and
-/// tessellates their presentation shapes using the same edge-extraction path as
-/// [`import_edges`].
+/// Each annotation label (dimension, geometric tolerance, datum) becomes its own named
+/// child node under a shared `pmi` root, with its own mesh and instance. The node name
+/// is taken from `label.name()` when available; otherwise a numbered fallback such as
+/// `"dimension 1"` or `"datum 3"` is used.
 ///
 /// Returns `None` if no presentation geometry was found (e.g. the file has only semantic
 /// PMI and no graphical representations).
@@ -328,21 +327,40 @@ fn import_pmi(
     parent: NodeId,
 ) -> Result<Option<NodeId>> {
     let s = options.scale_factor;
-    let mut all_verts: Vec<Vertex> = Vec::new();
-    let mut all_indices: Vec<u32> = Vec::new();
+
+    let pmi_root = scene
+        .add_node(Some(parent), Some("pmi".to_string()), Transform::IDENTITY)
+        .context("Failed to add PMI root node")?;
+    let mat = scene.add_material(Material::new().with_line_color(options.pmi_color));
 
     let all_labels = dim_tol_tool
         .dimension_labels()
         .chain(dim_tol_tool.geom_tolerance_labels())
         .chain(dim_tol_tool.datum_labels());
 
+    let mut any_annotation = false;
+    let (mut dim_count, mut tol_count, mut datum_count) = (0u32, 0u32, 0u32);
+
     for label in all_labels {
         let shape = label
             .dimension_presentation()
             .or_else(|| label.geom_tolerance_presentation())
             .or_else(|| label.datum_presentation());
-
         let Some(shape) = shape else { continue };
+
+        let fallback_name = if label.is_dimension() {
+            dim_count += 1;
+            format!("dimension {dim_count}")
+        } else if label.is_geom_tolerance() {
+            tol_count += 1;
+            format!("geom_tolerance {tol_count}")
+        } else {
+            datum_count += 1;
+            format!("datum {datum_count}")
+        };
+
+        let mut verts: Vec<Vertex> = Vec::new();
+        let mut indices: Vec<u32> = Vec::new();
 
         for edge in shape.edges() {
             let points: Vec<_> = match edge.edge_type() {
@@ -355,33 +373,35 @@ fn import_pmi(
             }
 
             for window in points.windows(2) {
-                let base = all_verts.len() as u32;
+                let base = verts.len() as u32;
                 for p in window {
-                    all_verts.push(Vertex {
+                    verts.push(Vertex {
                         position: [p.x as f32 * s, p.y as f32 * s, p.z as f32 * s],
                         normal: [0.0, 0.0, 0.0],
                         tex_coords: [0.0, 0.0, 0.0],
                     });
                 }
-                all_indices.push(base);
-                all_indices.push(base + 1);
+                indices.push(base);
+                indices.push(base + 1);
             }
         }
+
+        if indices.is_empty() {
+            continue;
+        }
+
+        let name = label.name().unwrap_or(fallback_name);
+        let primitive = MeshPrimitive { primitive_type: PrimitiveType::LineList, indices };
+        let mesh_id = scene.add_mesh(Mesh::from_raw(verts, vec![primitive]));
+        scene
+            .add_instance_node(Some(pmi_root), mesh_id, mat, Some(name), Transform::IDENTITY)
+            .context("Failed to add PMI annotation node")?;
+        any_annotation = true;
     }
 
-    if all_verts.is_empty() {
+    if !any_annotation {
         return Ok(None);
     }
-
-    let pmi_root = scene
-        .add_node(Some(parent), Some("pmi".to_string()), Transform::IDENTITY)
-        .context("Failed to add PMI root node")?;
-    let mat = scene.add_material(Material::new().with_line_color(options.pmi_color));
-    let primitive = MeshPrimitive { primitive_type: PrimitiveType::LineList, indices: all_indices };
-    let mesh_id = scene.add_mesh(Mesh::from_raw(all_verts, vec![primitive]));
-    scene
-        .add_instance_node(Some(pmi_root), mesh_id, mat, None, Transform::IDENTITY)
-        .context("Failed to add PMI geometry node")?;
 
     Ok(Some(pmi_root))
 }
