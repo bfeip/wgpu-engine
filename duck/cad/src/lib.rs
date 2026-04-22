@@ -21,7 +21,7 @@ pub struct CadImportOptions {
     /// produce finer meshes. Units match the file's unit system (typically mm).
     pub tessellation_tolerance: f64,
     /// Uniform scale applied to all vertex positions. Use `0.001` to convert
-    /// from millimetres (STEP default) to metres.
+    /// from millimeters (STEP default) to metres.
     pub scale_factor: f32,
     /// Color applied to triangle faces.
     pub face_color: RgbaColor,
@@ -49,24 +49,10 @@ impl Default for CadImportOptions {
     }
 }
 
-/// CAD-specific metadata for a node created during import.
-pub struct CadEntityInfo {
-    /// Part name from CAD file metadata.
-    pub name: Option<String>,
-    /// `true` when this node is an assembly node (has sub-components).
-    /// `false` for leaf geometry nodes.
-    pub is_assembly: bool,
-    /// For leaf geometry nodes, the instance that holds the combined face+edge mesh.
-    /// `None` for assembly nodes and the root.
-    pub instance_id: Option<InstanceId>,
-}
-
 /// Result of a hierarchy-preserving CAD import.
 pub struct CadImportResult {
     /// Root node in the scene graph.
     pub root: NodeId,
-    /// Maps every created [`NodeId`] to its CAD metadata.
-    pub entity_map: HashMap<NodeId, CadEntityInfo>,
     /// Root node of the PMI geometry sub-tree, if PMI was found.
     ///
     /// `None` when `CadImportOptions::include_pmi` is false, the file has no
@@ -131,15 +117,13 @@ fn import_xcaf_document(
 ) -> Result<CadImportResult> {
     let shape_tool = doc.shape_tool();
     let color_tool = doc.color_tool();
-    let mut entity_map = HashMap::new();
 
     let root = scene
         .add_node(None, Some("cad_import".to_string()), Transform::IDENTITY)
         .context("Failed to add root CAD node")?;
-    entity_map.insert(root, CadEntityInfo { name: Some("cad_import".to_string()), is_assembly: true, instance_id: None });
 
     for label in shape_tool.free_shapes() {
-        import_xcaf_label(&label, &shape_tool, &color_tool, scene, options, Some(root), &mut entity_map)?;
+        import_xcaf_label(&label, &shape_tool, &color_tool, scene, options, Some(root))?;
     }
 
     let pmi_root = if options.include_pmi {
@@ -150,7 +134,7 @@ fn import_xcaf_document(
 
     let views = import_views(&doc.view_tool(), scene, options);
 
-    Ok(CadImportResult { root, entity_map, pmi_root, views })
+    Ok(CadImportResult { root, pmi_root, views })
 }
 
 fn import_xcaf_label(
@@ -160,7 +144,6 @@ fn import_xcaf_label(
     scene: &mut Scene,
     options: &CadImportOptions,
     parent: Option<NodeId>,
-    entity_map: &mut HashMap<NodeId, CadEntityInfo>,
 ) -> Result<NodeId> {
     let name = label.name();
     let transform = matrix_to_transform(shape_tool.location_matrix(label));
@@ -169,11 +152,10 @@ fn import_xcaf_label(
     let node_id = scene
         .add_node(parent, name.clone(), transform)
         .context("Failed to add XCAF node")?;
-    let instance_id = if is_assembly {
+    if is_assembly {
         for child in shape_tool.components(label) {
-            import_xcaf_label(&child, shape_tool, color_tool, scene, options, Some(node_id), entity_map)?;
+            import_xcaf_label(&child, shape_tool, color_tool, scene, options, Some(node_id))?;
         }
-        None
     } else {
         let shape = shape_tool.shape(label);
 
@@ -183,11 +165,8 @@ fn import_xcaf_label(
             .map(|(r, g, b)| RgbaColor { r, g, b, a: 1.0 })
             .unwrap_or(options.face_color);
 
-        let iid = import_leaf_part(&shape, scene, options, node_id, face_color)?;
-        Some(iid)
+        import_leaf_part(&shape, scene, options, node_id, face_color)?;
     };
-
-    entity_map.insert(node_id, CadEntityInfo { name, is_assembly, instance_id });
 
     Ok(node_id)
 }
@@ -528,9 +507,8 @@ mod tests {
         let path = step_file();
         let mut scene = duck_engine_scene::Scene::new();
         let options = CadImportOptions::default();
-        let result = load_step(&path, &mut scene, &options).expect("hierarchy load failed");
+        load_step(&path, &mut scene, &options).expect("hierarchy load failed");
         assert!(scene.node_count() > 1, "expected multiple nodes for assembly file");
-        assert!(result.entity_map.contains_key(&result.root));
     }
 
     #[test]
