@@ -1,8 +1,14 @@
 // outline_screenspace.wesl
-// Fullscreen post-process shader for screen-space selection outlines
-// Samples mask texture at pixel offsets to detect edges
+// Fullscreen post-process shader for screen-space selection outlines.
+//
+// Feature flag "multisampled":
+//   true  — mask_texture is texture_multisampled_2d; coverage() averages all MSAA
+//            samples per pixel, giving fractional values [0,1] at silhouette edges.
+//   false — mask_texture is texture_2d; coverage() reads the single sample.
+//
+// In both cases coverage drives the outline alpha, so MSAA mode produces smooth
+// anti-aliased edges while the non-MSAA mode stays binary (no regression).
 
-// Outline configuration uniform
 struct OutlineUniform {
     color: vec4<f32>,
     width_pixels: f32,
@@ -11,61 +17,71 @@ struct OutlineUniform {
     _padding: f32,
 };
 
+@if(multisampled)
+@group(0) @binding(0)
+var mask_texture: texture_multisampled_2d<f32>;
+
+@if(!multisampled)
 @group(0) @binding(0)
 var mask_texture: texture_2d<f32>;
 
-@group(0) @binding(1)
-var mask_sampler: sampler;
+// Binding 1 intentionally absent — no sampler needed; both paths use textureLoad.
 
 @group(0) @binding(2)
 var<uniform> outline: OutlineUniform;
 
-// Fullscreen triangle vertex shader
-// Generates a triangle that covers the entire screen from vertex index
 @vertex
 fn vs_fullscreen(@builtin(vertex_index) vertex_index: u32) -> @builtin(position) vec4<f32> {
-    // Generate fullscreen triangle vertices:
-    // vertex 0: (-1, -1)
-    // vertex 1: ( 3, -1)
-    // vertex 2: (-1,  3)
     let x = f32(i32(vertex_index & 1u) * 4 - 1);
     let y = f32(i32(vertex_index >> 1u) * 4 - 1);
     return vec4<f32>(x, y, 0.0, 1.0);
 }
 
-// Fragment shader that detects edges in the mask and draws outline
+// Returns fractional mask coverage for a pixel coordinate.
+// MSAA: averages all samples → smooth [0,1] values at the silhouette boundary.
+// Non-MSAA: reads the single sample → binary 0 or 1.
+fn coverage(coord: vec2<i32>) -> f32 {
+    @if(multisampled) {
+        let n = i32(textureNumSamples(mask_texture));
+        var total = 0.0;
+        for (var i = 0i; i < n; i++) {
+            total += textureLoad(mask_texture, coord, i).r;
+        }
+        return total / f32(n);
+    }
+    @if(!multisampled) {
+        return textureLoad(mask_texture, coord, 0).r;
+    }
+    return 0.0;
+}
+
 @fragment
 fn fs_outline(@builtin(position) frag_coord: vec4<f32>) -> @location(0) vec4<f32> {
-    let screen_size = vec2<f32>(outline.screen_width, outline.screen_height);
-    let uv = frag_coord.xy / screen_size;
-    let pixel_size = 1.0 / screen_size;
+    let center_coord = vec2<i32>(i32(frag_coord.x), i32(frag_coord.y));
 
-    // Sample center of mask
-    let center = textureSample(mask_texture, mask_sampler, uv).r;
-
-    // If center pixel is selected (inside the object), don't draw outline here
-    if center > 0.5 {
+    // Pixels fully inside the selection don't need an outline.
+    if coverage(center_coord) > 0.5 {
         discard;
     }
 
-    // Sample neighbors in 8 directions at the outline radius
+    // Sample 8 directions at the outline radius to find nearby selected pixels.
     let radius = outline.width_pixels;
-    var max_sample = 0.0;
-
-    // 8 direction samples around a circle
+    var max_coverage = 0.0;
     let pi = 3.14159265359;
     for (var i = 0u; i < 8u; i++) {
-        let angle = f32(i) * pi * 0.25; // 0, 45, 90, 135, 180, 225, 270, 315 degrees
-        let offset = vec2<f32>(cos(angle), sin(angle)) * radius * pixel_size;
-        let sample_val = textureSample(mask_texture, mask_sampler, uv + offset).r;
-        max_sample = max(max_sample, sample_val);
+        let angle = f32(i) * pi * 0.25;
+        let offset = vec2<i32>(
+            i32(round(cos(angle) * radius)),
+            i32(round(sin(angle) * radius)),
+        );
+        max_coverage = max(max_coverage, coverage(center_coord + offset));
     }
 
-    // If any neighbor is inside the selection, we're on the outline
-    if max_sample > 0.5 {
-        return outline.color;
+    if max_coverage <= 0.0 {
+        discard;
     }
 
-    // Not on outline, discard to show original scene
-    discard;
+    // max_coverage is fractional at the silhouette boundary in MSAA mode,
+    // giving a smooth alpha fade instead of a hard pixel edge.
+    return vec4<f32>(outline.color.rgb, outline.color.a * max_coverage);
 }

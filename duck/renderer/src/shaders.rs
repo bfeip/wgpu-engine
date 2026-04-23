@@ -36,8 +36,10 @@ pub(crate) struct ShaderGenerator {
     module_cache: HashMap<ShaderCacheKey, wgpu::ShaderModule>,
     /// Cached outline mask shader module
     outline_mask_cache: Option<wgpu::ShaderModule>,
-    /// Cached outline screenspace shader module
+    /// Cached outline screenspace shader module (non-MSAA, multisampled=false)
     outline_screenspace_cache: Option<wgpu::ShaderModule>,
+    /// Cached outline screenspace shader module (MSAA, multisampled=true)
+    outline_screenspace_ms_cache: Option<wgpu::ShaderModule>,
 }
 
 impl ShaderGenerator {
@@ -76,6 +78,7 @@ impl ShaderGenerator {
             module_cache: HashMap::new(),
             outline_mask_cache: None,
             outline_screenspace_cache: None,
+            outline_screenspace_ms_cache: None,
         }
     }
 
@@ -151,24 +154,44 @@ impl ShaderGenerator {
     }
 
     /// Generate the screen-space outline shader module.
-    /// Fullscreen post-process that samples the mask texture to draw outlines.
-    pub fn generate_outline_screenspace_shader(&mut self, device: &wgpu::Device) -> anyhow::Result<wgpu::ShaderModule> {
-        if let Some(cached) = &self.outline_screenspace_cache {
+    /// `multisampled = true` produces a variant that reads from a `texture_multisampled_2d`
+    /// and averages MSAA samples for smooth edge coverage.
+    /// `multisampled = false` produces the standard single-sample variant.
+    pub fn generate_outline_screenspace_shader(
+        &mut self,
+        device: &wgpu::Device,
+        multisampled: bool,
+    ) -> anyhow::Result<wgpu::ShaderModule> {
+        let cache = if multisampled {
+            &mut self.outline_screenspace_ms_cache
+        } else {
+            &mut self.outline_screenspace_cache
+        };
+        if let Some(cached) = cache {
             return Ok(cached.clone());
         }
 
         let path: ModulePath = "package::outline_screenspace".parse()?;
-        let empty_features: [(&str, bool); 0] = [];
-        self.compiler.set_features(empty_features);
+        self.compiler.set_features([("multisampled", multisampled)]);
         let result = self.compiler.compile(&path)?;
         let wgsl = result.to_string();
 
+        let label = if multisampled {
+            "Outline Screenspace Shader (MSAA)"
+        } else {
+            "Outline Screenspace Shader"
+        };
         let module = device.create_shader_module(ShaderModuleDescriptor {
-            label: Some("Outline Screenspace Shader"),
+            label: Some(label),
             source: wgpu::ShaderSource::Wgsl(wgsl.into()),
         });
 
-        self.outline_screenspace_cache = Some(module.clone());
+        let cache = if multisampled {
+            &mut self.outline_screenspace_ms_cache
+        } else {
+            &mut self.outline_screenspace_cache
+        };
+        *cache = Some(module.clone());
         Ok(module)
     }
 }

@@ -643,16 +643,13 @@ impl Renderer {
         sub_geom_batches: &[SubGeomBatch],
         scene: &Scene,
     ) {
-        let (mask_view, mask_resolve_target) = match &self.outline_resources.msaa_color_attachment {
-            Some(msaa_mask) => (&msaa_mask.view, Some(&self.outline_resources.mask.view as &wgpu::TextureView)),
-            None => (&self.outline_resources.mask.view, None),
-        };
+        let mask_view = &self.outline_resources.screenspace.texture.view;
 
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Selection Mask Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: mask_view,
-                resolve_target: mask_resolve_target,
+                resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                     store: wgpu::StoreOp::Store,
@@ -733,8 +730,8 @@ impl Renderer {
             timestamp_writes: None,
         });
 
-        render_pass.set_pipeline(&self.outline_resources.outline_pipeline);
-        render_pass.set_bind_group(0, &self.outline_resources.bind_group, &[]);
+        render_pass.set_pipeline(&self.outline_resources.screenspace.pipeline);
+        render_pass.set_bind_group(0, &self.outline_resources.screenspace.bind_group, &[]);
         render_pass.draw(0..3, 0..1); // Fullscreen triangle
     }
 
