@@ -1,8 +1,8 @@
 use crate::scene::{AlphaMode, MaterialProperties, PrimitiveType, SceneProperties};
 
-use super::batching::{DrawBatch, SubGeomBatch};
+use super::batching::{DrawBatch, DrawData};
 use super::gpu_resources::{self, PipelineCacheKey};
-use super::pass_context::FrameContext;
+use super::pass_context::{FrameContext, SceneRenderPass};
 use super::pipeline::PipelineCache;
 
 /// Bind the scene-level bind groups shared by all geometry passes:
@@ -128,91 +128,105 @@ fn draw_batches(
 ///
 /// Clears color/depth/stencil, binds camera/lights/IBL, runs a depth pre-pass for
 /// `Blend`-mode materials, then draws all batches with pipeline caching.
-pub(super) fn run_main_pass(
-    encoder: &mut wgpu::CommandEncoder,
-    view: &wgpu::TextureView,
-    batches: &[DrawBatch],
-    ctx: &FrameContext<'_>,
-    pipeline_cache: &mut PipelineCache,
-) {
-    let (color_view, resolve_target) = ctx.renderer_textures.msaa_views(view);
+pub(crate) struct MainPass;
 
-    let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some("3D Scene Render Pass"),
-        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-            view: color_view,
-            resolve_target,
-            ops: wgpu::Operations {
-                load: wgpu::LoadOp::Clear(wgpu::Color {
-                    r: 0.04,
-                    g: 0.04,
-                    b: 0.04,
-                    a: 1.0,
+impl SceneRenderPass for MainPass {
+    fn execute(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        ctx: &FrameContext<'_>,
+        pipeline_cache: &mut PipelineCache,
+        draw_data: &DrawData,
+    ) {
+        let (color_view, resolve_target) = ctx.renderer_textures.msaa_views(view);
+
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("3D Scene Render Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: color_view,
+                resolve_target,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                        r: 0.04,
+                        g: 0.04,
+                        b: 0.04,
+                        a: 1.0,
+                    }),
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &ctx.renderer_textures.depth.view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
                 }),
-                store: wgpu::StoreOp::Store,
-            },
-            depth_slice: None,
-        })],
-        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-            view: &ctx.renderer_textures.depth.view,
-            depth_ops: Some(wgpu::Operations {
-                load: wgpu::LoadOp::Clear(1.0),
-                store: wgpu::StoreOp::Store,
+                stencil_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(0),
+                    store: wgpu::StoreOp::Store,
+                }),
             }),
-            stencil_ops: Some(wgpu::Operations {
-                load: wgpu::LoadOp::Clear(0),
-                store: wgpu::StoreOp::Store,
-            }),
-        }),
-        occlusion_query_set: None,
-        timestamp_writes: None,
-    });
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
 
-    bind_scene_groups(&mut render_pass, ctx);
-    draw_batches(&mut render_pass, batches, ctx, pipeline_cache, true);
+        bind_scene_groups(&mut render_pass, ctx);
+        draw_batches(&mut render_pass, draw_data.all_batches(), ctx, pipeline_cache, true);
+    }
 }
 
 /// Pass 2 (conditional): Overlay render.
 ///
 /// Loads the existing color attachment, clears a separate depth buffer, and draws
 /// always-on-top geometry so it depth-tests among itself but not against the scene.
-pub(super) fn run_overlay_pass(
-    encoder: &mut wgpu::CommandEncoder,
-    view: &wgpu::TextureView,
-    batches: &[DrawBatch],
-    ctx: &FrameContext<'_>,
-    pipeline_cache: &mut PipelineCache,
-) {
-    let (color_view, resolve_target) = ctx.renderer_textures.msaa_views(view);
+pub(crate) struct OverlayPass;
 
-    let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some("Overlay Render Pass"),
-        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-            view: color_view,
-            resolve_target,
-            ops: wgpu::Operations {
-                load: wgpu::LoadOp::Load,
-                store: wgpu::StoreOp::Store,
-            },
-            depth_slice: None,
-        })],
-        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-            view: &ctx.renderer_textures.overlay_depth.view,
-            depth_ops: Some(wgpu::Operations {
-                load: wgpu::LoadOp::Clear(1.0),
-                store: wgpu::StoreOp::Store,
-            }),
-            stencil_ops: Some(wgpu::Operations {
-                load: wgpu::LoadOp::Clear(0),
-                store: wgpu::StoreOp::Store,
-            }),
-        }),
-        occlusion_query_set: None,
-        timestamp_writes: None,
-    });
+impl SceneRenderPass for OverlayPass {
+    fn is_active(&self, draw_data: &DrawData) -> bool {
+        draw_data.has_overlay()
+    }
 
-    bind_scene_groups(&mut render_pass, ctx);
-    draw_batches(&mut render_pass, batches, ctx, pipeline_cache, false);
+    fn execute(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        ctx: &FrameContext<'_>,
+        pipeline_cache: &mut PipelineCache,
+        draw_data: &DrawData,
+    ) {
+        let (color_view, resolve_target) = ctx.renderer_textures.msaa_views(view);
+
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Overlay Render Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: color_view,
+                resolve_target,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &ctx.renderer_textures.overlay_depth.view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(0),
+                    store: wgpu::StoreOp::Store,
+                }),
+            }),
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
+
+        bind_scene_groups(&mut render_pass, ctx);
+        draw_batches(&mut render_pass, draw_data.overlay_batches(), ctx, pipeline_cache, false);
+    }
 }
 
 /// Pass 3 (conditional): Selection mask.
@@ -221,110 +235,131 @@ pub(super) fn run_overlay_pass(
 /// depth buffer is loaded (not cleared) so occluded selections are masked correctly.
 /// Only triangle meshes are outlined; lines and points are skipped.
 ///
-/// Must run before `run_outline_pass`, which reads the mask texture this writes.
-pub(super) fn run_selection_mask_pass(
-    encoder: &mut wgpu::CommandEncoder,
-    selected_batches: &[DrawBatch],
-    sub_geom_batches: &[SubGeomBatch],
-    ctx: &FrameContext<'_>,
-) {
-    let mask_view = &ctx.outline_resources.screenspace.texture.view;
+/// Must run before `OutlinePass`, which reads the mask texture this writes.
+pub(crate) struct SelectionMaskPass;
 
-    let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some("Selection Mask Pass"),
-        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-            view: mask_view,
-            resolve_target: None,
-            ops: wgpu::Operations {
-                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                store: wgpu::StoreOp::Store,
-            },
-            depth_slice: None,
-        })],
-        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-            view: &ctx.renderer_textures.depth.view,
-            depth_ops: Some(wgpu::Operations {
-                load: wgpu::LoadOp::Load,
-                store: wgpu::StoreOp::Store,
-            }),
-            stencil_ops: None,
-        }),
-        occlusion_query_set: None,
-        timestamp_writes: None,
-    });
-
-    render_pass.set_pipeline(&ctx.outline_resources.mask_pipeline);
-    render_pass.set_bind_group(0, ctx.camera_bind_group, &[]);
-
-    for batch in selected_batches {
-        if batch.primitive_type != PrimitiveType::TriangleList {
-            continue; // Only outline triangle meshes
-        }
-        let mesh = ctx.scene.get_mesh(batch.mesh_id).unwrap();
-        let gpu_mesh = ctx
-            .gpu_resources
-            .get_mesh(batch.mesh_id)
-            .expect("Mesh GPU resources not initialized");
-        gpu_resources::draw_mesh_instances(
-            ctx.device,
-            &mut render_pass,
-            gpu_mesh,
-            batch.primitive_type,
-            &batch.instances,
-            mesh.index_count(batch.primitive_type),
-        );
+impl SceneRenderPass for SelectionMaskPass {
+    fn is_active(&self, draw_data: &DrawData) -> bool {
+        draw_data.has_selection()
     }
 
-    for batch in sub_geom_batches {
-        if batch.primitive_type != PrimitiveType::TriangleList {
-            continue; // Only outline triangle sub-geometry
+    fn execute(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        _view: &wgpu::TextureView,
+        ctx: &FrameContext<'_>,
+        _pipeline_cache: &mut PipelineCache,
+        draw_data: &DrawData,
+    ) {
+        let mask_view = &ctx.outline_resources.screenspace.texture.view;
+
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Selection Mask Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: mask_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &ctx.renderer_textures.depth.view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
+
+        render_pass.set_pipeline(&ctx.outline_resources.mask_pipeline);
+        render_pass.set_bind_group(0, ctx.camera_bind_group, &[]);
+
+        for batch in draw_data.selected_batches() {
+            if batch.primitive_type != PrimitiveType::TriangleList {
+                continue; // Only outline triangle meshes
+            }
+            let mesh = ctx.scene.get_mesh(batch.mesh_id).unwrap();
+            let gpu_mesh = ctx
+                .gpu_resources
+                .get_mesh(batch.mesh_id)
+                .expect("Mesh GPU resources not initialized");
+            gpu_resources::draw_mesh_instances(
+                ctx.device,
+                &mut render_pass,
+                gpu_mesh,
+                batch.primitive_type,
+                &batch.instances,
+                mesh.index_count(batch.primitive_type),
+            );
         }
-        let gpu_mesh = ctx
-            .gpu_resources
-            .get_mesh(batch.mesh_id)
-            .expect("Mesh GPU resources not initialized");
-        gpu_resources::draw_mesh_subgeom(
-            ctx.device,
-            &mut render_pass,
-            gpu_mesh,
-            batch.primitive_type,
-            &batch.instance_transform,
-            batch.first_index,
-            batch.index_count,
-        );
+
+        for batch in draw_data.selection_sub_geom_batches() {
+            if batch.primitive_type != PrimitiveType::TriangleList {
+                continue; // Only outline triangle sub-geometry
+            }
+            let gpu_mesh = ctx
+                .gpu_resources
+                .get_mesh(batch.mesh_id)
+                .expect("Mesh GPU resources not initialized");
+            gpu_resources::draw_mesh_subgeom(
+                ctx.device,
+                &mut render_pass,
+                gpu_mesh,
+                batch.primitive_type,
+                &batch.instance_transform,
+                batch.first_index,
+                batch.index_count,
+            );
+        }
     }
 }
 
 /// Pass 4 (conditional): Screenspace outline post-process.
 ///
-/// Fullscreen triangle pass that reads the mask written by `run_selection_mask_pass`
+/// Fullscreen triangle pass that reads the mask written by `SelectionMaskPass`
 /// and composites the outline color over the existing scene color.
 ///
-/// Must run after `run_selection_mask_pass`.
-pub(super) fn run_outline_pass(
-    encoder: &mut wgpu::CommandEncoder,
-    view: &wgpu::TextureView,
-    ctx: &FrameContext<'_>,
-) {
-    let (color_view, resolve_target) = ctx.renderer_textures.msaa_views(view);
+/// Must run after `SelectionMaskPass`.
+pub(crate) struct OutlinePass;
 
-    let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some("Outline Screenspace Pass"),
-        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-            view: color_view,
-            resolve_target,
-            ops: wgpu::Operations {
-                load: wgpu::LoadOp::Load,
-                store: wgpu::StoreOp::Store,
-            },
-            depth_slice: None,
-        })],
-        depth_stencil_attachment: None,
-        occlusion_query_set: None,
-        timestamp_writes: None,
-    });
+impl SceneRenderPass for OutlinePass {
+    fn is_active(&self, draw_data: &DrawData) -> bool {
+        draw_data.has_selection()
+    }
 
-    render_pass.set_pipeline(&ctx.outline_resources.screenspace.pipeline);
-    render_pass.set_bind_group(0, &ctx.outline_resources.screenspace.bind_group, &[]);
-    render_pass.draw(0..3, 0..1); // Fullscreen triangle
+    fn execute(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        ctx: &FrameContext<'_>,
+        _pipeline_cache: &mut PipelineCache,
+        _draw_data: &DrawData,
+    ) {
+        let (color_view, resolve_target) = ctx.renderer_textures.msaa_views(view);
+
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Outline Screenspace Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: color_view,
+                resolve_target,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
+
+        render_pass.set_pipeline(&ctx.outline_resources.screenspace.pipeline);
+        render_pass.set_bind_group(0, &ctx.outline_resources.screenspace.bind_group, &[]);
+        render_pass.draw(0..3, 0..1); // Fullscreen triangle
+    }
 }

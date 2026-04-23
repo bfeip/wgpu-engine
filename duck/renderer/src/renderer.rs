@@ -22,8 +22,9 @@ use gpu_resources::{
     LightResources, MaterialBindGroupLayouts, MaterialPipelineLayouts, RendererTextures,
 };
 use outline::{OutlineResources, OutlineUniform};
-use pass_context::FrameContext;
+use pass_context::{FrameContext, SceneRenderPass};
 use pipeline::PipelineCache;
+use scene_pass::{MainPass, OutlinePass, OverlayPass, SelectionMaskPass};
 
 pub struct Renderer {
     // Core GPU resources
@@ -54,6 +55,9 @@ pub struct Renderer {
 
     /// Cached GPU resources for headless rendering, reused across frames at the same size.
     headless_resources: Option<HeadlessResources>,
+
+    /// Ordered list of render passes executed each frame.
+    passes: Vec<Box<dyn SceneRenderPass>>,
 }
 
 impl Renderer {
@@ -124,6 +128,12 @@ impl Renderer {
             gpu_resources: GpuResourceManager::new(),
             sample_count,
             headless_resources: None,
+            passes: vec![
+                Box::new(MainPass),
+                Box::new(OverlayPass),
+                Box::new(SelectionMaskPass),
+                Box::new(OutlinePass),
+            ],
         }
     }
 
@@ -382,6 +392,7 @@ impl Renderer {
         // coexist with `&ctx` in the pass calls below.
         let ctx = FrameContext {
             device: &self.device,
+            queue: &self.queue,
             scene,
             gpu_resources: &self.gpu_resources,
             camera_bind_group: &self.camera_resources.bind_group,
@@ -395,22 +406,12 @@ impl Renderer {
             size: self.size,
         };
 
-        // Pass sequence — ordering is explicit and each pass is named
-        scene_pass::run_main_pass(encoder, view, draw_data.all_batches(), &ctx, &mut self.pipeline_cache);
-
-        if draw_data.has_overlay() {
-            scene_pass::run_overlay_pass(encoder, view, draw_data.overlay_batches(), &ctx, &mut self.pipeline_cache);
-        }
-
-        if draw_data.has_selection() {
-            // mask must precede outline — outline reads the texture mask writes
-            scene_pass::run_selection_mask_pass(
-                encoder,
-                draw_data.selected_batches(),
-                draw_data.selection_sub_geom_batches(),
-                &ctx,
-            );
-            scene_pass::run_outline_pass(encoder, view, &ctx);
+        let passes = &mut self.passes;
+        let pipeline_cache = &mut self.pipeline_cache;
+        for pass in passes.iter_mut() {
+            if pass.is_active(&draw_data) {
+                pass.execute(encoder, view, &ctx, pipeline_cache, &draw_data);
+            }
         }
 
         Ok(())

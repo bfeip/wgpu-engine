@@ -13,6 +13,8 @@ use super::pipeline::PipelineCache;
 /// — a disjoint named-field borrow the borrow checker accepts without conflict.
 pub(super) struct FrameContext<'a> {
     pub device: &'a wgpu::Device,
+    #[allow(dead_code)]
+    pub queue: &'a wgpu::Queue,
     pub scene: &'a Scene,
     pub gpu_resources: &'a GpuResourceManager,
     pub camera_bind_group: &'a wgpu::BindGroup,
@@ -35,15 +37,11 @@ pub(super) struct FrameContext<'a> {
 
 /// Extension point for user-defined render passes.
 ///
-/// Implement this trait and pass instances to `render_scene_to_view_with_passes`
-/// (not yet wired up) to inject custom draw passes into the frame.
-///
 /// Each pass receives `FrameContext` for read-only renderer state and a mutable
 /// `PipelineCache` for pipeline creation/lookup. The `DrawData` provides access
 /// to the sorted, partitioned batch lists for the current frame.
-#[allow(dead_code, unused_variables)]
 pub trait SceneRenderPass {
-    fn is_active(&self, draw_data: &DrawData) -> bool {
+    fn is_active(&self, _draw_data: &DrawData) -> bool {
         true
     }
     fn execute(
