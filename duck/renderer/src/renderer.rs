@@ -1,28 +1,29 @@
 mod batching;
 mod gpu_resources;
 mod outline;
+mod pass_context;
 mod pipeline;
 mod prepare;
-
-use std::collections::HashMap;
+mod scene_pass;
 
 use anyhow::Result;
 
 use crate::{
     ibl::IblResources,
-    scene::{AlphaMode, Camera, MaterialProperties, PrimitiveType, Scene, SceneProperties},
+    scene::{Camera, Scene, SceneProperties},
     selection_query::SelectionQuery,
     shaders::ShaderGenerator,
 };
 
-use batching::{DrawBatch, DrawData, SubGeomBatch};
+use batching::DrawData;
 
 use gpu_resources::{
-    CameraResources, CameraUniform, RendererTextures, GpuResourceManager,
-    GpuTexture, HeadlessResources, LightResources, MaterialBindGroupLayouts,
-    MaterialPipelineLayouts, PipelineCacheKey,
+    CameraResources, CameraUniform, GpuResourceManager, GpuTexture, HeadlessResources,
+    LightResources, MaterialBindGroupLayouts, MaterialPipelineLayouts, RendererTextures,
 };
 use outline::{OutlineResources, OutlineUniform};
+use pass_context::FrameContext;
+use pipeline::PipelineCache;
 
 pub struct Renderer {
     // Core GPU resources
@@ -38,12 +39,10 @@ pub struct Renderer {
     camera_resources: CameraResources,
     lights: LightResources,
     material_layouts: MaterialBindGroupLayouts,
-    pipelines: MaterialPipelineLayouts,
     renderer_textures: RendererTextures,
 
     // Other
-    shader_generator: ShaderGenerator,
-    pipeline_cache: HashMap<PipelineCacheKey, wgpu::RenderPipeline>,
+    pipeline_cache: PipelineCache,
     ibl_resources: IblResources,
     outline_resources: OutlineResources,
 
@@ -107,6 +106,8 @@ impl Renderer {
             sample_count,
         );
 
+        let pipeline_cache = PipelineCache::new(pipelines, shader_generator, sample_count, surface_format);
+
         Self {
             device,
             queue,
@@ -116,10 +117,8 @@ impl Renderer {
             camera_resources,
             lights,
             material_layouts,
-            pipelines,
             renderer_textures,
-            shader_generator,
-            pipeline_cache: HashMap::new(),
+            pipeline_cache,
             ibl_resources,
             outline_resources,
             gpu_resources: GpuResourceManager::new(),
@@ -372,367 +371,49 @@ impl Renderer {
             }
         }
 
-        self.render_main_pass(encoder, view, draw_data.all_batches(), scene);
+        // Resolve IBL bind group once — shared by all geometry passes this frame.
+        let ibl_bind_group = scene
+            .active_environment_map()
+            .and_then(|env_id| self.ibl_resources.get_processed(env_id))
+            .map(|processed| &processed.bind_group);
+
+        // Build a frame context from named field borrows. Because `pipeline_cache` is
+        // not included here, the borrow checker allows `&mut self.pipeline_cache` to
+        // coexist with `&ctx` in the pass calls below.
+        let ctx = FrameContext {
+            device: &self.device,
+            scene,
+            gpu_resources: &self.gpu_resources,
+            camera_bind_group: &self.camera_resources.bind_group,
+            lights_bind_group: &self.lights.bind_group,
+            ibl_bind_group,
+            scene_props: SceneProperties { has_ibl: ibl_bind_group.is_some() },
+            renderer_textures: &self.renderer_textures,
+            outline_resources: &self.outline_resources,
+            sample_count: self.sample_count,
+            surface_format: self.surface_format,
+            size: self.size,
+        };
+
+        // Pass sequence — ordering is explicit and each pass is named
+        scene_pass::run_main_pass(encoder, view, draw_data.all_batches(), &ctx, &mut self.pipeline_cache);
 
         if draw_data.has_overlay() {
-            self.render_overlay_pass(encoder, view, draw_data.overlay_batches(), scene);
+            scene_pass::run_overlay_pass(encoder, view, draw_data.overlay_batches(), &ctx, &mut self.pipeline_cache);
         }
 
         if draw_data.has_selection() {
-            self.render_selection_mask_pass(
+            // mask must precede outline — outline reads the texture mask writes
+            scene_pass::run_selection_mask_pass(
                 encoder,
                 draw_data.selected_batches(),
                 draw_data.selection_sub_geom_batches(),
-                scene,
+                &ctx,
             );
-            self.render_outline_pass(encoder, view);
+            scene_pass::run_outline_pass(encoder, view, &ctx);
         }
 
         Ok(())
-    }
-
-    /// Pass 1: Main scene render - clears color/depth/stencil, binds camera/lights/IBL,
-    /// and draws all batches with pipeline caching.
-    fn render_main_pass(
-        &mut self,
-        encoder: &mut wgpu::CommandEncoder,
-        view: &wgpu::TextureView,
-        batches: &[DrawBatch],
-        scene: &Scene,
-    ) {
-        let (color_view, resolve_target) = self.renderer_textures.msaa_views(view);
-
-        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("3D Scene Render Pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: color_view,
-                resolve_target,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: 0.04,
-                        g: 0.04,
-                        b: 0.04,
-                        a: 1.0,
-                    }),
-                    store: wgpu::StoreOp::Store,
-                },
-                depth_slice: None,
-            })],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &self.renderer_textures.depth.view,
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(1.0),
-                    store: wgpu::StoreOp::Store,
-                }),
-                stencil_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(0),
-                    store: wgpu::StoreOp::Store,
-                }),
-            }),
-            occlusion_query_set: None,
-            timestamp_writes: None,
-        });
-
-        render_pass.set_bind_group(0, &self.camera_resources.bind_group, &[]);
-        render_pass.set_bind_group(1, &self.lights.bind_group, &[]);
-
-        // Build scene properties for shader generation and bind IBL if active
-        let has_ibl = if let Some(env_id) = scene.active_environment_map() {
-            if let Some(processed) = self.ibl_resources.get_processed(env_id) {
-                render_pass.set_bind_group(3, &processed.bind_group, &[]);
-                true
-            } else {
-                false
-            }
-        } else {
-            false
-        };
-
-        let scene_props = SceneProperties { has_ibl };
-
-        // Depth pre-pass for transparent objects: render depth-only with alpha test
-        // so opaque portions of blend materials establish correct depth occlusion.
-        let mut prepass_pipeline_key: Option<PipelineCacheKey> = None;
-        for batch in batches {
-            let material = scene.get_material(batch.material_id).unwrap();
-            let material_props = material.get_properties(batch.primitive_type);
-
-            if material_props.alpha_mode != AlphaMode::Blend {
-                continue;
-            }
-
-            let material_gpu = self.gpu_resources
-                .get_material(batch.material_id, batch.primitive_type)
-                .expect("Material GPU resources not initialized");
-            render_pass.set_bind_group(2, &material_gpu.bind_group, &[]);
-
-            // Normalize key: only has_lighting (pipeline layout), double_sided
-            // (cull mode), and primitive_type matter for depth-only output.
-            // alpha_mode is always Mask, IBL is unused.
-            let pipeline_key = PipelineCacheKey {
-                material_props: MaterialProperties {
-                    alpha_mode: AlphaMode::Mask,
-                    has_lighting: material_props.has_lighting,
-                    double_sided: material_props.double_sided,
-                    always_on_top: material_props.always_on_top,
-                },
-                scene_props: SceneProperties { has_ibl: false },
-                primitive_type: batch.primitive_type,
-                depth_prepass: true,
-            };
-            if prepass_pipeline_key.as_ref() != Some(&pipeline_key) {
-                let pipeline = self.get_or_create_pipeline(pipeline_key.clone());
-                render_pass.set_pipeline(pipeline);
-                prepass_pipeline_key = Some(pipeline_key);
-            }
-
-            let mesh = scene.get_mesh(batch.mesh_id).unwrap();
-            let gpu_mesh = self.gpu_resources.get_mesh(batch.mesh_id)
-                .expect("Mesh GPU resources not initialized");
-            gpu_resources::draw_mesh_instances(
-                &self.device,
-                &mut render_pass,
-                gpu_mesh,
-                batch.primitive_type,
-                &batch.instances,
-                mesh.index_count(batch.primitive_type),
-            );
-        }
-
-        // Main rendering pass
-        let mut current_pipeline_key: Option<PipelineCacheKey> = None;
-
-        for batch in batches {
-            let mesh = scene.get_mesh(batch.mesh_id).unwrap();
-            let material = scene.get_material(batch.material_id).unwrap();
-            let material_props = material.get_properties(batch.primitive_type);
-
-            // Bind material for this batch
-            let material_gpu = self.gpu_resources
-                .get_material(batch.material_id, batch.primitive_type)
-                .expect("Material GPU resources not initialized");
-            render_pass.set_bind_group(2, &material_gpu.bind_group, &[]);
-
-            // Only change pipeline if material properties, scene properties, or primitive type changes
-            let pipeline_key = PipelineCacheKey {
-                material_props: material_props.clone(),
-                scene_props: scene_props.clone(),
-                primitive_type: batch.primitive_type,
-                depth_prepass: false,
-            };
-            if current_pipeline_key.as_ref() != Some(&pipeline_key) {
-                let pipeline = self.get_or_create_pipeline(pipeline_key.clone());
-                render_pass.set_pipeline(pipeline);
-                current_pipeline_key = Some(pipeline_key);
-            }
-
-            // Draw all instances in this batch
-            let gpu_mesh = self.gpu_resources.get_mesh(batch.mesh_id)
-                .expect("Mesh GPU resources not initialized");
-            gpu_resources::draw_mesh_instances(
-                &self.device,
-                &mut render_pass,
-                gpu_mesh,
-                batch.primitive_type,
-                &batch.instances,
-                mesh.index_count(batch.primitive_type),
-            );
-        }
-    }
-
-    /// Overlay pass: renders always-on-top geometry after the main pass.
-    ///
-    /// Uses a separate depth buffer (cleared each frame) so overlay geometry
-    /// depth-tests correctly among itself but not against scene geometry.
-    /// Loads the existing color attachment to composite on top.
-    fn render_overlay_pass(
-        &mut self,
-        encoder: &mut wgpu::CommandEncoder,
-        view: &wgpu::TextureView,
-        batches: &[DrawBatch],
-        scene: &Scene,
-    ) {
-        let (color_view, resolve_target) = self.renderer_textures.msaa_views(view);
-
-        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("Overlay Render Pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: color_view,
-                resolve_target,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                },
-                depth_slice: None,
-            })],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &self.renderer_textures.overlay_depth.view,
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(1.0),
-                    store: wgpu::StoreOp::Store,
-                }),
-                stencil_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(0),
-                    store: wgpu::StoreOp::Store,
-                }),
-            }),
-            occlusion_query_set: None,
-            timestamp_writes: None,
-        });
-
-        render_pass.set_bind_group(0, &self.camera_resources.bind_group, &[]);
-        render_pass.set_bind_group(1, &self.lights.bind_group, &[]);
-
-        let has_ibl = if let Some(env_id) = scene.active_environment_map() {
-            if let Some(processed) = self.ibl_resources.get_processed(env_id) {
-                render_pass.set_bind_group(3, &processed.bind_group, &[]);
-                true
-            } else {
-                false
-            }
-        } else {
-            false
-        };
-
-        let scene_props = SceneProperties { has_ibl };
-        let mut current_pipeline_key: Option<PipelineCacheKey> = None;
-
-        for batch in batches {
-            let mesh = scene.get_mesh(batch.mesh_id).unwrap();
-            let material = scene.get_material(batch.material_id).unwrap();
-            let material_props = material.get_properties(batch.primitive_type);
-
-            let material_gpu = self.gpu_resources
-                .get_material(batch.material_id, batch.primitive_type)
-                .expect("Material GPU resources not initialized");
-            render_pass.set_bind_group(2, &material_gpu.bind_group, &[]);
-
-            let pipeline_key = PipelineCacheKey {
-                material_props,
-                scene_props: scene_props.clone(),
-                primitive_type: batch.primitive_type,
-                depth_prepass: false,
-            };
-            if current_pipeline_key.as_ref() != Some(&pipeline_key) {
-                let pipeline = self.get_or_create_pipeline(pipeline_key.clone());
-                render_pass.set_pipeline(pipeline);
-                current_pipeline_key = Some(pipeline_key);
-            }
-
-            let gpu_mesh = self.gpu_resources.get_mesh(batch.mesh_id)
-                .expect("Mesh GPU resources not initialized");
-            gpu_resources::draw_mesh_instances(
-                &self.device,
-                &mut render_pass,
-                gpu_mesh,
-                batch.primitive_type,
-                &batch.instances,
-                mesh.index_count(batch.primitive_type),
-            );
-        }
-    }
-
-    /// Pass 2: Render selected objects to mask texture for outline detection.
-    ///
-    /// Renders both whole-node selections (`selected_batches`) and sub-geometry selections
-    /// (`sub_geom_batches`) into the same mask texture in a single pass.
-    fn render_selection_mask_pass(
-        &mut self,
-        encoder: &mut wgpu::CommandEncoder,
-        selected_batches: &[DrawBatch],
-        sub_geom_batches: &[SubGeomBatch],
-        scene: &Scene,
-    ) {
-        let mask_view = &self.outline_resources.screenspace.texture.view;
-
-        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("Selection Mask Pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: mask_view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                    store: wgpu::StoreOp::Store,
-                },
-                depth_slice: None,
-            })],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &self.renderer_textures.depth.view,
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                }),
-                stencil_ops: None,
-            }),
-            occlusion_query_set: None,
-            timestamp_writes: None,
-        });
-
-        render_pass.set_pipeline(&self.outline_resources.mask_pipeline);
-        render_pass.set_bind_group(0, &self.camera_resources.bind_group, &[]);
-
-        for batch in selected_batches {
-            if batch.primitive_type != PrimitiveType::TriangleList {
-                continue; // Only outline triangle meshes
-            }
-            let mesh = scene.get_mesh(batch.mesh_id).unwrap();
-            let gpu_mesh = self.gpu_resources.get_mesh(batch.mesh_id)
-                .expect("Mesh GPU resources not initialized");
-            gpu_resources::draw_mesh_instances(
-                &self.device,
-                &mut render_pass,
-                gpu_mesh,
-                batch.primitive_type,
-                &batch.instances,
-                mesh.index_count(batch.primitive_type),
-            );
-        }
-
-        for batch in sub_geom_batches {
-            if batch.primitive_type != PrimitiveType::TriangleList {
-                continue; // Only outline triangle sub-geometry
-            }
-            let gpu_mesh = self.gpu_resources.get_mesh(batch.mesh_id)
-                .expect("Mesh GPU resources not initialized");
-            gpu_resources::draw_mesh_subgeom(
-                &self.device,
-                &mut render_pass,
-                gpu_mesh,
-                batch.primitive_type,
-                &batch.instance_transform,
-                batch.first_index,
-                batch.index_count,
-            );
-        }
-    }
-
-    /// Pass 3: Fullscreen post-process to draw the selection outline.
-    fn render_outline_pass(
-        &mut self,
-        encoder: &mut wgpu::CommandEncoder,
-        view: &wgpu::TextureView,
-    ) {
-        let (color_view, resolve_target) = self.renderer_textures.msaa_views(view);
-
-        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("Outline Screenspace Pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: color_view,
-                resolve_target,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                },
-                depth_slice: None,
-            })],
-            depth_stencil_attachment: None,
-            occlusion_query_set: None,
-            timestamp_writes: None,
-        });
-
-        render_pass.set_pipeline(&self.outline_resources.screenspace.pipeline);
-        render_pass.set_bind_group(0, &self.outline_resources.screenspace.bind_group, &[]);
-        render_pass.draw(0..3, 0..1); // Fullscreen triangle
     }
 
 }
