@@ -210,7 +210,7 @@ impl OutlineResources {
             },
             depth_stencil: None, // No depth test for fullscreen pass
             multisample: wgpu::MultisampleState {
-                count: 1,
+                count: sample_count,
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             },

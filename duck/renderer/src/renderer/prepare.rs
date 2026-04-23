@@ -176,17 +176,17 @@ impl Renderer {
 
         let (base_color_view, base_color_sampler) = self.resolve_texture_or_default(
             material.base_color_texture(),
-            &self.default_textures.white,
+            &self.renderer_textures.white,
             "Base color",
         )?;
         let (normal_view, normal_sampler) = self.resolve_texture_or_default(
             material.normal_texture(),
-            &self.default_textures.normal,
+            &self.renderer_textures.default_normal,
             "Normal",
         )?;
         let (mr_view, mr_sampler) = self.resolve_texture_or_default(
             material.metallic_roughness_texture(),
-            &self.default_textures.white,
+            &self.renderer_textures.white,
             "Metallic-roughness",
         )?;
 

@@ -18,7 +18,7 @@ use crate::{
 use batching::{DrawBatch, DrawData, SubGeomBatch};
 
 use gpu_resources::{
-    CameraResources, CameraUniform, DefaultTextures, GpuResourceManager,
+    CameraResources, CameraUniform, RendererTextures, GpuResourceManager,
     GpuTexture, HeadlessResources, LightResources, MaterialBindGroupLayouts,
     MaterialPipelineLayouts, PipelineCacheKey,
 };
@@ -39,7 +39,7 @@ pub struct Renderer {
     lights: LightResources,
     material_layouts: MaterialBindGroupLayouts,
     pipelines: MaterialPipelineLayouts,
-    default_textures: DefaultTextures,
+    renderer_textures: RendererTextures,
 
     // Other
     shader_generator: ShaderGenerator,
@@ -97,7 +97,7 @@ impl Renderer {
             &ibl_resources.bind_group_layout,
         );
 
-        let default_textures = DefaultTextures::new(&device, &queue, &config, sample_count);
+        let renderer_textures = RendererTextures::new(&device, &queue, &config, sample_count);
         let mut shader_generator = ShaderGenerator::new();
         let outline_resources = OutlineResources::new(
             &device,
@@ -117,7 +117,7 @@ impl Renderer {
             lights,
             material_layouts,
             pipelines,
-            default_textures,
+            renderer_textures,
             shader_generator,
             pipeline_cache: HashMap::new(),
             ibl_resources,
@@ -218,12 +218,12 @@ impl Renderer {
             self.config.width = width;
             self.config.height = height;
 
-            self.default_textures.depth =
+            self.renderer_textures.depth =
                 GpuTexture::depth(&self.device, &self.config, self.sample_count, "depth_texture");
-            self.default_textures.overlay_depth =
+            self.renderer_textures.overlay_depth =
                 GpuTexture::depth(&self.device, &self.config, self.sample_count, "overlay_depth_texture");
 
-            self.default_textures.msaa_color_attachment = if self.sample_count > 1 {
+            self.renderer_textures.msaa_color_attachment = if self.sample_count > 1 {
                 Some(GpuTexture::color_attachment(&self.device, &self.config, self.sample_count, "msaa_color_attachment"))
             } else {
                 None
@@ -400,12 +400,7 @@ impl Renderer {
         batches: &[DrawBatch],
         scene: &Scene,
     ) {
-        // When MSAA is active, render to the multisampled color attachment
-        // and resolve to the swapchain view. Otherwise render directly to the swapchain.
-        let (color_view, resolve_target) = match &self.default_textures.msaa_color_attachment {
-            Some(msaa) => (&msaa.view, Some(view as &wgpu::TextureView)),
-            None => (view, None),
-        };
+        let (color_view, resolve_target) = self.renderer_textures.msaa_views(view);
 
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("3D Scene Render Pass"),
@@ -424,7 +419,7 @@ impl Renderer {
                 depth_slice: None,
             })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &self.default_textures.depth.view,
+                view: &self.renderer_textures.depth.view,
                 depth_ops: Some(wgpu::Operations {
                     load: wgpu::LoadOp::Clear(1.0),
                     store: wgpu::StoreOp::Store,
@@ -557,10 +552,7 @@ impl Renderer {
         batches: &[DrawBatch],
         scene: &Scene,
     ) {
-        let (color_view, resolve_target) = match &self.default_textures.msaa_color_attachment {
-            Some(msaa) => (&msaa.view, Some(view as &wgpu::TextureView)),
-            None => (view, None),
-        };
+        let (color_view, resolve_target) = self.renderer_textures.msaa_views(view);
 
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Overlay Render Pass"),
@@ -574,7 +566,7 @@ impl Renderer {
                 depth_slice: None,
             })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &self.default_textures.overlay_depth.view,
+                view: &self.renderer_textures.overlay_depth.view,
                 depth_ops: Some(wgpu::Operations {
                     load: wgpu::LoadOp::Clear(1.0),
                     store: wgpu::StoreOp::Store,
@@ -668,7 +660,7 @@ impl Renderer {
                 depth_slice: None,
             })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &self.default_textures.depth.view,
+                view: &self.renderer_textures.depth.view,
                 depth_ops: Some(wgpu::Operations {
                     load: wgpu::LoadOp::Load,
                     store: wgpu::StoreOp::Store,
@@ -723,18 +715,20 @@ impl Renderer {
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
     ) {
+        let (color_view, resolve_target) = self.renderer_textures.msaa_views(view);
+
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Outline Screenspace Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view,
-                resolve_target: None,
+                view: color_view,
+                resolve_target,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Load,
                     store: wgpu::StoreOp::Store,
                 },
                 depth_slice: None,
             })],
-            depth_stencil_attachment: None, // No depth test for fullscreen pass
+            depth_stencil_attachment: None,
             occlusion_query_set: None,
             timestamp_writes: None,
         });

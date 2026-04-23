@@ -255,26 +255,26 @@ impl MaterialPipelineLayouts {
     }
 }
 
-/// Default fallback textures for rendering.
-pub(in crate::renderer) struct DefaultTextures {
+/// Textures used as part of the rendering process.
+pub(in crate::renderer) struct RendererTextures {
     pub(in crate::renderer) depth: GpuTexture,
     /// Separate depth buffer for overlay (always-on-top) geometry so it depth-tests
     /// against itself but not against the main scene.
     pub(in crate::renderer) overlay_depth: GpuTexture,
     pub(in crate::renderer) white: GpuTexture,
-    pub(in crate::renderer) normal: GpuTexture,
+    pub(in crate::renderer) default_normal: GpuTexture,
     /// Multisampled color attachment for MSAA rendering. None when sample_count == 1.
     pub(in crate::renderer) msaa_color_attachment: Option<GpuTexture>,
 }
 
-impl DefaultTextures {
-    /// Create default fallback textures for rendering.
+impl RendererTextures {
+    /// Create textures for rendering.
     pub(in crate::renderer) fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         config: &wgpu::SurfaceConfiguration,
         sample_count: u32,
-    ) -> DefaultTextures {
+    ) -> RendererTextures {
         let depth = GpuTexture::depth(device, config, sample_count, "depth_texture");
         let overlay_depth = GpuTexture::depth(device, config, sample_count, "overlay_depth_texture");
         let white = GpuTexture::solid_color(
@@ -295,7 +295,22 @@ impl DefaultTextures {
             None
         };
 
-        DefaultTextures { depth, overlay_depth, white, normal, msaa_color_attachment }
+        RendererTextures { depth, overlay_depth, white, default_normal: normal, msaa_color_attachment }
+    }
+
+    /// Returns `(render_view, resolve_target)` for a render pass that may use MSAA.
+    ///
+    /// When MSAA is active, the pass should render into `render_view` (the multisampled
+    /// attachment) and resolve into `target` (typically the swapchain). When MSAA is
+    /// inactive, renders directly into `target` with no resolve step.
+    pub(in crate::renderer) fn msaa_views<'a>(
+        &'a self,
+        target: &'a wgpu::TextureView,
+    ) -> (&'a wgpu::TextureView, Option<&'a wgpu::TextureView>) {
+        match &self.msaa_color_attachment {
+            Some(msaa) => (&msaa.view, Some(target)),
+            None => (target, None),
+        }
     }
 }
 
