@@ -16,10 +16,14 @@ pub(crate) enum VertexShaderLocations {
     InstanceNormalRow2,
 }
 
-/// Returns the vertex buffer layout for Vertex structs.
+/// Returns the vertex buffer layout for [`Vertex`] structs.
 ///
-/// This describes how vertex data is laid out in GPU memory and maps to shader locations.
-pub(crate) fn vertex_buffer_layout() -> wgpu::VertexBufferLayout<'static> {
+/// Prefer [`Renderer::custom_pipeline_builder`] for building custom render pipelines —
+/// it applies both buffer layouts automatically. These functions are a lower-level
+/// escape hatch for cases where the builder's defaults don't fit. Callers that use
+/// the layouts directly must also duplicate the engine's shader struct definitions,
+/// which will silently break if the engine types change.
+pub fn vertex_buffer_layout() -> wgpu::VertexBufferLayout<'static> {
     wgpu::VertexBufferLayout {
         array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
         step_mode: wgpu::VertexStepMode::Vertex,
@@ -43,10 +47,10 @@ pub(crate) fn vertex_buffer_layout() -> wgpu::VertexBufferLayout<'static> {
     }
 }
 
-/// Returns the instance buffer layout for GpuInstance structs.
+/// Returns the instance buffer layout for `GpuInstance` structs.
 ///
-/// This describes how instance data is laid out in GPU memory for instanced rendering.
-pub(crate) fn instance_buffer_layout() -> wgpu::VertexBufferLayout<'static> {
+/// See [`vertex_buffer_layout`] — the same caveats apply.
+pub fn instance_buffer_layout() -> wgpu::VertexBufferLayout<'static> {
     use VertexShaderLocations as VSL;
 
     wgpu::VertexBufferLayout {

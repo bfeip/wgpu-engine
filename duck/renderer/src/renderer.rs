@@ -1,4 +1,5 @@
 mod batching;
+mod custom_pipeline;
 mod gpu_resources;
 mod outline;
 mod pass_context;
@@ -7,6 +8,8 @@ mod prepare;
 mod scene_pass;
 
 pub use batching::{DrawBatch, DrawData};
+pub use custom_pipeline::CustomPipelineBuilder;
+pub use gpu_resources::{instance_buffer_layout, vertex_buffer_layout};
 pub use pass_context::{FrameContext, SceneRenderPass};
 pub use pipeline::PipelineCache;
 
@@ -204,20 +207,42 @@ impl Renderer {
         self.sample_count
     }
 
+    /// Compile a user-supplied WESL shader with access to all engine shader modules.
+    ///
+    /// Engine modules available for import: `package::common`, `package::camera`,
+    /// `package::lighting`, `package::constants`, `package::vertex`, `package::pbr`.
+    /// See `docs/custom-passes.md` for the full module reference.
+    pub fn compile_user_wesl(&self, source: &str) -> anyhow::Result<wgpu::ShaderModule> {
+        crate::shaders::compile_user_wesl(&self.device, source)
+    }
+
+    /// Create a pipeline builder pre-configured with the engine's standard vertex
+    /// and instance buffer layouts, surface format, and MSAA sample count.
+    ///
+    /// Camera (group 0) and lights (group 1) bind group layouts are included by
+    /// default. See [`CustomPipelineBuilder`] for the full configuration API.
+    pub fn custom_pipeline_builder(&self) -> CustomPipelineBuilder<'_> {
+        CustomPipelineBuilder::new(
+            &self.device,
+            self.surface_format,
+            self.sample_count,
+            &self.camera_resources.bind_group_layout,
+            &self.lights.bind_group_layout,
+        )
+    }
+
     /// Get the bind group layout for the camera uniform (group 0).
     ///
-    /// Pass this to `wgpu::PipelineLayoutDescriptor::bind_group_layouts` when
-    /// building a custom render pipeline that reads camera data.
-    // TODO: A user should not even have to know the layout for custom drawing.
+    /// Prefer [`custom_pipeline_builder`](Self::custom_pipeline_builder) for
+    /// building custom pipelines — this method is a lower-level escape hatch.
     pub fn camera_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
         &self.camera_resources.bind_group_layout
     }
 
     /// Get the bind group layout for the lights uniform (group 1).
     ///
-    /// Pass this to `wgpu::PipelineLayoutDescriptor::bind_group_layouts` when
-    /// building a custom render pipeline that reads scene lights.
-    // TODO: A user should not even have to know the layout for custom drawing.
+    /// Prefer [`custom_pipeline_builder`](Self::custom_pipeline_builder) for
+    /// building custom pipelines — this method is a lower-level escape hatch.
     pub fn lights_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
         &self.lights.bind_group_layout
     }

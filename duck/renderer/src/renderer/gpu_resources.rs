@@ -20,7 +20,7 @@ pub(crate) use state::{
 };
 
 // From buffer_layouts
-pub(crate) use buffer_layouts::{instance_buffer_layout, vertex_buffer_layout};
+pub use buffer_layouts::{instance_buffer_layout, vertex_buffer_layout};
 
 // From renderer_resources
 pub(super) use renderer_resources::{

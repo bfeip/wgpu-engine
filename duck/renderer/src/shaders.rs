@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use wgpu::ShaderModuleDescriptor;
@@ -28,6 +29,71 @@ const SHADER_IBL: &str = include_str!("shaders/ibl.wesl");
 const SHADER_OUTLINE_MASK: &str = include_str!("shaders/outline_mask.wesl");
 const SHADER_OUTLINE_SCREENSPACE: &str = include_str!("shaders/outline_screenspace.wesl");
 
+/// Build a VirtualResolver pre-loaded with all engine shader modules.
+///
+/// All module sources are `&'static str` embedded at compile time, so
+/// registration is zero-copy (HashMap entries hold borrowed pointers).
+fn build_engine_resolver() -> VirtualResolver<'static> {
+    let mut resolver = VirtualResolver::default();
+
+    resolver.add_module("package::main".parse().unwrap(), SHADER_MAIN.into());
+    resolver.add_module("package::common".parse().unwrap(), SHADER_COMMON.into());
+    resolver.add_module("package::camera".parse().unwrap(), SHADER_CAMERA.into());
+    resolver.add_module("package::constants".parse().unwrap(), SHADER_CONSTANTS.into());
+    resolver.add_module("package::lighting".parse().unwrap(), SHADER_LIGHTING.into());
+    resolver.add_module("package::vertex".parse().unwrap(), SHADER_VERTEX.into());
+    resolver.add_module("package::material_color".parse().unwrap(), SHADER_MATERIAL_COLOR.into());
+    resolver.add_module("package::fragment_color_unlit".parse().unwrap(), SHADER_FRAGMENT_COLOR_UNLIT.into());
+    // PBR modules
+    resolver.add_module("package::pbr".parse().unwrap(), SHADER_PBR.into());
+    resolver.add_module("package::material_pbr".parse().unwrap(), SHADER_MATERIAL_PBR.into());
+    resolver.add_module("package::normal_mapping".parse().unwrap(), SHADER_NORMAL_MAPPING.into());
+    resolver.add_module("package::fragment_pbr_lit".parse().unwrap(), SHADER_FRAGMENT_PBR_LIT.into());
+    // IBL module
+    resolver.add_module("package::ibl".parse().unwrap(), SHADER_IBL.into());
+    // Screen-space outline modules
+    resolver.add_module("package::outline_mask".parse().unwrap(), SHADER_OUTLINE_MASK.into());
+    resolver.add_module("package::outline_screenspace".parse().unwrap(), SHADER_OUTLINE_SCREENSPACE.into());
+
+    resolver
+}
+
+/// Compile a user-supplied WESL shader with access to all engine shader modules.
+///
+/// The user's shader source is compiled with engine modules available for
+/// import (`package::common`, `package::camera`, `package::lighting`, etc.).
+///
+/// A fresh resolver is built each call to avoid contaminating the engine's
+/// cached compiler state. `VirtualResolver` does not implement `Clone`, and the
+/// engine's feature flags must not bleed into user compilation. The build cost
+/// is negligible: 15 HashMap inserts of `&'static str` pointers.
+///
+/// The user module is registered as `package::user` so that `package::` imports
+/// in the user's WESL resolve correctly. In WESL, `package::` means "the current
+/// package", so user code must live in the same namespace as the engine modules.
+/// Use specific item imports, e.g.:
+/// ```wesl
+/// import package::common::{VertexInput, InstanceInput, LIGHT_TYPE_DIRECTIONAL};
+/// import package::camera::camera;    // the camera uniform global
+/// import package::lighting::lights;  // the lights uniform global
+/// ```
+pub(crate) fn compile_user_wesl(device: &wgpu::Device, source: &str) -> anyhow::Result<wgpu::ShaderModule> {
+    let mut resolver = build_engine_resolver();
+    resolver.add_module("package::user".parse()?, Cow::Owned(source.to_owned()));
+
+    let mut compiler = Wesl::new(".").set_custom_resolver(resolver);
+    let path: ModulePath = "package::user".parse()?;
+    let empty_features: [(&str, bool); 0] = [];
+    compiler.set_features(empty_features);
+    let result = compiler.compile(&path)?;
+    let wgsl = result.to_string();
+
+    Ok(device.create_shader_module(ShaderModuleDescriptor {
+        label: Some("User WESL Shader"),
+        source: wgpu::ShaderSource::Wgsl(wgsl.into()),
+    }))
+}
+
 /// Shader generator using WESL compiler to create modular shaders
 pub(crate) struct ShaderGenerator {
     /// WESL compiler instance with embedded shader sources
@@ -48,30 +114,7 @@ impl ShaderGenerator {
     /// This initializes the WESL compiler with embedded shader sources,
     /// enabling compatibility with WASM and other environments without filesystem access.
     pub fn new() -> Self {
-        let mut resolver = VirtualResolver::default();
-
-        // Add all shader modules with their package paths
-        resolver.add_module("package::main".parse().unwrap(), SHADER_MAIN.into());
-        resolver.add_module("package::common".parse().unwrap(), SHADER_COMMON.into());
-        resolver.add_module("package::camera".parse().unwrap(), SHADER_CAMERA.into());
-        resolver.add_module("package::constants".parse().unwrap(), SHADER_CONSTANTS.into());
-        resolver.add_module("package::lighting".parse().unwrap(), SHADER_LIGHTING.into());
-        resolver.add_module("package::vertex".parse().unwrap(), SHADER_VERTEX.into());
-        resolver.add_module("package::material_color".parse().unwrap(), SHADER_MATERIAL_COLOR.into());
-        resolver.add_module("package::fragment_color_unlit".parse().unwrap(), SHADER_FRAGMENT_COLOR_UNLIT.into());
-        // PBR modules
-        resolver.add_module("package::pbr".parse().unwrap(), SHADER_PBR.into());
-        resolver.add_module("package::material_pbr".parse().unwrap(), SHADER_MATERIAL_PBR.into());
-        resolver.add_module("package::normal_mapping".parse().unwrap(), SHADER_NORMAL_MAPPING.into());
-        resolver.add_module("package::fragment_pbr_lit".parse().unwrap(), SHADER_FRAGMENT_PBR_LIT.into());
-        // IBL module
-        resolver.add_module("package::ibl".parse().unwrap(), SHADER_IBL.into());
-        // Screen-space outline modules
-        resolver.add_module("package::outline_mask".parse().unwrap(), SHADER_OUTLINE_MASK.into());
-        resolver.add_module("package::outline_screenspace".parse().unwrap(), SHADER_OUTLINE_SCREENSPACE.into());
-
-        // Create compiler with standard extensions enabled, then swap in the virtual resolver
-        let compiler = Wesl::new(".").set_custom_resolver(resolver);
+        let compiler = Wesl::new(".").set_custom_resolver(build_engine_resolver());
 
         Self {
             compiler,

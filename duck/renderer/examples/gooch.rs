@@ -8,101 +8,20 @@ use duck_engine_renderer::scene::{
 
 use cgmath::{Point3, Vector3};
 
-const GOOCH_SHADER: &str = include_str!("gooch.wgsl");
+const GOOCH_WESL: &str = include_str!("gooch.wesl");
 
 struct GoochPass {
     pipeline: wgpu::RenderPipeline,
 }
 
 impl GoochPass {
-    fn new(
-        device: &wgpu::Device,
-        surface_format: wgpu::TextureFormat,
-        sample_count: u32,
-        camera_bgl: &wgpu::BindGroupLayout,
-        lights_bgl: &wgpu::BindGroupLayout,
-    ) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Gooch Shader"),
-            source: wgpu::ShaderSource::Wgsl(GOOCH_SHADER.into()),
-        });
-
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Gooch Pipeline Layout"),
-            bind_group_layouts: &[camera_bgl, lights_bgl],
-            push_constant_ranges: &[],
-        });
-
-        let vertex_attrs = [
-            wgpu::VertexAttribute { offset: 0,  shader_location: 0, format: wgpu::VertexFormat::Float32x3 },
-            wgpu::VertexAttribute { offset: 12, shader_location: 1, format: wgpu::VertexFormat::Float32x3 },
-            wgpu::VertexAttribute { offset: 24, shader_location: 2, format: wgpu::VertexFormat::Float32x3 },
-        ];
-        let vertex_buffer_layout = wgpu::VertexBufferLayout {
-            array_stride: 36,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &vertex_attrs,
-        };
-
-        let instance_attrs = [
-            wgpu::VertexAttribute { offset: 0,  shader_location: 3, format: wgpu::VertexFormat::Float32x4 },
-            wgpu::VertexAttribute { offset: 16, shader_location: 4, format: wgpu::VertexFormat::Float32x4 },
-            wgpu::VertexAttribute { offset: 32, shader_location: 5, format: wgpu::VertexFormat::Float32x4 },
-            wgpu::VertexAttribute { offset: 48, shader_location: 6, format: wgpu::VertexFormat::Float32x4 },
-            wgpu::VertexAttribute { offset: 64, shader_location: 7, format: wgpu::VertexFormat::Float32x3 },
-            wgpu::VertexAttribute { offset: 76, shader_location: 8, format: wgpu::VertexFormat::Float32x3 },
-            wgpu::VertexAttribute { offset: 88, shader_location: 9, format: wgpu::VertexFormat::Float32x3 },
-        ];
-        let instance_buffer_layout = wgpu::VertexBufferLayout {
-            array_stride: 100,
-            step_mode: wgpu::VertexStepMode::Instance,
-            attributes: &instance_attrs,
-        };
-
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Gooch Pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[vertex_buffer_layout, instance_buffer_layout],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: sample_count,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            multiview: None,
-            cache: None,
-        });
-
+    fn new(renderer: &Renderer) -> Self {
+        let shader = renderer.compile_user_wesl(GOOCH_WESL)
+            .expect("failed to compile gooch shader");
+        let pipeline = renderer.custom_pipeline_builder()
+            .shader(&shader, "vs_main", "fs_main")
+            .label("Gooch")
+            .build();
         GoochPass { pipeline }
     }
 }
@@ -188,14 +107,7 @@ fn main() -> anyhow::Result<()> {
         ortho: false,
     };
 
-    // Build and install the Gooch pass, replacing the default pass list.
-    let gooch = GoochPass::new(
-        renderer.device(),
-        renderer.surface_format(),
-        renderer.sample_count(),
-        renderer.camera_bind_group_layout(),
-        renderer.lights_bind_group_layout(),
-    );
+    let gooch = GoochPass::new(&renderer);
     renderer.set_passes(vec![Box::new(gooch)]);
 
     let image = renderer.render_scene_to_image(&camera, &mut scene, None)?;

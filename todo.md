@@ -18,6 +18,9 @@
   - This will make writing a web viewer and keeping it consistent much easier
 - geom query tests
 - Better highlighting behavior
+- Further separate Viewer from scene and renderer
+  - Renderer and scene should be completely application agnostic
+  - Viewer is CAD oriented.
 
 ## glTF material extensions
 Trivial (~1 day total):
