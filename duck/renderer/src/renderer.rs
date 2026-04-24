@@ -6,6 +6,10 @@ mod pipeline;
 mod prepare;
 mod scene_pass;
 
+pub use batching::{DrawBatch, DrawData};
+pub use pass_context::{FrameContext, SceneRenderPass};
+pub use pipeline::PipelineCache;
+
 use anyhow::Result;
 
 use crate::{
@@ -15,15 +19,11 @@ use crate::{
     shaders::ShaderGenerator,
 };
 
-use batching::DrawData;
-
 use gpu_resources::{
     CameraResources, CameraUniform, GpuResourceManager, GpuTexture, HeadlessResources,
     LightResources, MaterialBindGroupLayouts, MaterialPipelineLayouts, RendererTextures,
 };
 use outline::{OutlineResources, OutlineUniform};
-use pass_context::{FrameContext, SceneRenderPass};
-use pipeline::PipelineCache;
 use scene_pass::{MainPass, OutlinePass, OverlayPass, SelectionMaskPass};
 
 pub struct Renderer {
@@ -197,6 +197,39 @@ impl Renderer {
     /// Get the surface texture format.
     pub fn surface_format(&self) -> wgpu::TextureFormat {
         self.surface_format
+    }
+
+    /// Get the MSAA sample count (1 = no MSAA, 4 = 4× MSAA).
+    pub fn sample_count(&self) -> u32 {
+        self.sample_count
+    }
+
+    /// Get the bind group layout for the camera uniform (group 0).
+    ///
+    /// Pass this to `wgpu::PipelineLayoutDescriptor::bind_group_layouts` when
+    /// building a custom render pipeline that reads camera data.
+    // TODO: A user should not even have to know the layout for custom drawing.
+    pub fn camera_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
+        &self.camera_resources.bind_group_layout
+    }
+
+    /// Get the bind group layout for the lights uniform (group 1).
+    ///
+    /// Pass this to `wgpu::PipelineLayoutDescriptor::bind_group_layouts` when
+    /// building a custom render pipeline that reads scene lights.
+    // TODO: A user should not even have to know the layout for custom drawing.
+    pub fn lights_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
+        &self.lights.bind_group_layout
+    }
+
+    /// Replace the ordered list of render passes executed each frame.
+    ///
+    /// Passes are executed in order; each pass receives the same [`FrameContext`]
+    /// snapshot and can read or write the color/depth attachment as needed.
+    /// Use this to inject custom passes (e.g. non-photorealistic shading) or
+    /// to trim the default pass list.
+    pub fn set_passes(&mut self, passes: Vec<Box<dyn SceneRenderPass>>) {
+        self.passes = passes;
     }
 
     /// Preprocess an environment map into CPU-side IBL data via GPU compute shaders.

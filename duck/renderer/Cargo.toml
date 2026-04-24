@@ -17,3 +17,6 @@ log = "0.4"
 wesl = "0.3.2"
 half = "2.7"
 wgpu = "27.0"
+
+[dev-dependencies]
+pollster = "0.3"

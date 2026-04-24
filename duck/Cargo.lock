@@ -1183,6 +1183,7 @@ dependencies = [
  "half",
  "image",
  "log",
+ "pollster 0.3.0",
  "wesl",
  "wgpu",
 ]

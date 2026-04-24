@@ -6,5 +6,5 @@ mod selection_query;
 mod renderer;
 mod shaders;
 
-pub use renderer::Renderer;
+pub use renderer::{DrawBatch, DrawData, FrameContext, PipelineCache, Renderer, SceneRenderPass};
 pub use selection_query::{OutlineConfig, SelectionQuery};

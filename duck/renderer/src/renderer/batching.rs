@@ -15,7 +15,7 @@ use crate::selection_query::SelectionQuery;
 ///
 /// Used to render individual faces or edges (e.g. for selection highlighting), but
 /// applicable wherever only part of a mesh needs to be drawn.
-pub(crate) struct SubGeomBatch {
+pub struct SubGeomBatch {
     pub mesh_id: MeshId,
     pub instance_transform: InstanceTransform,
     pub primitive_type: PrimitiveType,
@@ -28,11 +28,11 @@ pub(crate) struct SubGeomBatch {
 }
 
 /// Key used to group instances into draw batches.
-pub(crate) type BatchKey = (MeshId, MaterialId, PrimitiveType);
+pub type BatchKey = (MeshId, MaterialId, PrimitiveType);
 
 /// Represents an instance with its computed world transform.
 #[derive(Clone)]
-pub(crate) struct InstanceTransform {
+pub struct InstanceTransform {
     pub node_id: NodeId,
     pub instance_id: InstanceId,
     pub world_transform: Matrix4<f32>,
@@ -57,7 +57,7 @@ impl InstanceTransform {
 ///
 /// Batching allows us to minimize draw calls and state changes by grouping
 /// instances that can be rendered together.
-pub(crate) struct DrawBatch {
+pub struct DrawBatch {
     pub mesh_id: MeshId,
     pub material_id: MaterialId,
     pub primitive_type: PrimitiveType,
@@ -325,7 +325,7 @@ fn collect_selection_sub_geom_batches(
 /// Constructed once per frame from the scene, camera, and optional selection.
 /// Internally uses `collect_draw_batches`, `sort_batches_for_transparency`,
 /// and `partition_batches`.
-pub(crate) struct DrawData {
+pub struct DrawData {
     /// All batches, sorted: opaque first (by material/primitive/mesh),
     /// then transparent back-to-front.
     batches: Vec<DrawBatch>,
@@ -346,7 +346,7 @@ impl DrawData {
     /// - Groups into batches by mesh/material/primitive
     /// - Sorts for transparency (opaque first, transparent back-to-front)
     /// - Partitions selected instances if a non-empty selection is provided
-    pub fn new(
+    pub(crate) fn new(
         scene: &Scene,
         camera_position: Point3<f32>,
         selection: Option<&dyn SelectionQuery>,

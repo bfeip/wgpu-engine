@@ -9,7 +9,7 @@ use super::gpu_resources::{
 };
 
 /// Cached render pipelines and the resources needed to create new ones.
-pub(super) struct PipelineCache {
+pub struct PipelineCache {
     cache: HashMap<PipelineCacheKey, wgpu::RenderPipeline>,
     pipelines: MaterialPipelineLayouts,
     shader_generator: ShaderGenerator,
