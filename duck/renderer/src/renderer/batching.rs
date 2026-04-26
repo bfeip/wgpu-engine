@@ -337,6 +337,10 @@ pub struct DrawData {
     /// Sub-geometry draw calls for selected faces/edges.
     /// Each entry targets a specific index range within a mesh's index buffer.
     selection_sub_geom_batches: Vec<SubGeomBatch>,
+    /// Resolved outline configuration for the current frame. `Some` when a
+    /// non-empty selection is active; `None` otherwise. Passes use this to
+    /// update per-frame outline uniforms without holding a `SelectionQuery` ref.
+    outline_config: Option<crate::selection_query::OutlineConfig>,
 }
 
 impl DrawData {
@@ -366,22 +370,24 @@ impl DrawData {
         });
         batches = normal_batches;
 
-        let (selected_batches, selection_sub_geom_batches) =
-            match selection.filter(|sel| !sel.is_empty()) {
-                None => (Vec::new(), Vec::new()),
-                Some(sel) => {
-                    let (selected, _) =
-                        partition_batches(&batches, |inst| sel.is_node_selected(inst.node_id));
-                    let sub_geom = collect_selection_sub_geom_batches(&batches, scene, sel);
-                    (selected, sub_geom)
-                }
-            };
+        let active_selection = selection.filter(|sel| !sel.is_empty());
+
+        let selected_batches = active_selection
+            .map(|sel| partition_batches(&batches, |inst| sel.is_node_selected(inst.node_id)).0)
+            .unwrap_or_default();
+
+        let selection_sub_geom_batches = active_selection
+            .map(|sel| collect_selection_sub_geom_batches(&batches, scene, sel))
+            .unwrap_or_default();
+
+        let outline_config = active_selection.map(|sel| sel.outline_config());
 
         Self {
             batches,
             selected_batches,
             overlay_batches,
             selection_sub_geom_batches,
+            outline_config,
         }
     }
 
@@ -414,6 +420,11 @@ impl DrawData {
     /// Whether any overlay (always-on-top) batches exist.
     pub fn has_overlay(&self) -> bool {
         !self.overlay_batches.is_empty()
+    }
+
+    /// Outline configuration for the current frame, or `None` if nothing is selected.
+    pub fn outline_config(&self) -> Option<&crate::selection_query::OutlineConfig> {
+        self.outline_config.as_ref()
     }
 }
 

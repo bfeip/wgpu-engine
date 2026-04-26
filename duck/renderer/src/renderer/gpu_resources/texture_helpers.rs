@@ -70,12 +70,23 @@ impl GpuTexture {
         sample_count: u32,
         label: &str,
     ) -> GpuTexture {
+        Self::depth_sized(device, config.width, config.height, sample_count, label)
+    }
+
+    /// Create a depth texture at the given pixel dimensions.
+    pub(crate) fn depth_sized(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        sample_count: u32,
+        label: &str,
+    ) -> GpuTexture {
         let size = wgpu::Extent3d {
-            width: config.width.max(1),
-            height: config.height.max(1),
+            width: width.max(1),
+            height: height.max(1),
             depth_or_array_layers: 1,
         };
-        let desc = wgpu::TextureDescriptor {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some(label),
             size,
             mip_level_count: 1,
@@ -84,9 +95,7 @@ impl GpuTexture {
             format: Self::DEPTH_FORMAT,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
-        };
-        let texture = device.create_texture(&desc);
-
+        });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -100,7 +109,6 @@ impl GpuTexture {
             lod_max_clamp: 100.0,
             ..Default::default()
         });
-
         GpuTexture { _texture: texture, view, sampler }
     }
 

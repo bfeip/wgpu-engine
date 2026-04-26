@@ -1,17 +1,18 @@
 mod batching;
 mod custom_pipeline;
 mod gpu_resources;
-mod outline;
 mod pass_context;
 mod pipeline;
 mod prepare;
 mod scene_pass;
+mod workflow;
 
 pub use batching::{DrawBatch, DrawData};
 pub use custom_pipeline::CustomPipelineBuilder;
 pub use gpu_resources::{instance_buffer_layout, vertex_buffer_layout};
 pub use pass_context::{FrameContext, SceneRenderPass};
 pub use pipeline::PipelineCache;
+pub use workflow::{HiddenLineWorkflow, RenderWorkflow, ShadedWorkflow};
 
 use anyhow::Result;
 
@@ -26,8 +27,6 @@ use gpu_resources::{
     CameraResources, CameraUniform, GpuResourceManager, GpuTexture, HeadlessResources,
     LightResources, MaterialBindGroupLayouts, MaterialPipelineLayouts, RendererTextures,
 };
-use outline::{OutlineResources, OutlineUniform};
-use scene_pass::{MainPass, OutlinePass, OverlayPass, SelectionMaskPass};
 
 pub struct Renderer {
     // Core GPU resources
@@ -48,7 +47,6 @@ pub struct Renderer {
     // Other
     pipeline_cache: PipelineCache,
     ibl_resources: IblResources,
-    outline_resources: OutlineResources,
 
     // Scene GPU resource tracking
     gpu_resources: GpuResourceManager,
@@ -59,8 +57,8 @@ pub struct Renderer {
     /// Cached GPU resources for headless rendering, reused across frames at the same size.
     headless_resources: Option<HeadlessResources>,
 
-    /// Ordered list of render passes executed each frame.
-    passes: Vec<Box<dyn SceneRenderPass>>,
+    /// Active rendering workflow executed each frame.
+    workflow: Box<dyn RenderWorkflow>,
 }
 
 impl Renderer {
@@ -104,8 +102,12 @@ impl Renderer {
         );
 
         let renderer_textures = RendererTextures::new(&device, &queue, &config, sample_count);
+
+        // ShaderGenerator is shared between the workflow (for pass-specific shaders)
+        // and PipelineCache (for material shaders). Build the workflow first, then
+        // hand the generator to PipelineCache.
         let mut shader_generator = ShaderGenerator::new();
-        let outline_resources = OutlineResources::new(
+        let shaded_workflow = ShadedWorkflow::new(
             &device,
             &config,
             &camera_resources.bind_group_layout,
@@ -127,16 +129,10 @@ impl Renderer {
             renderer_textures,
             pipeline_cache,
             ibl_resources,
-            outline_resources,
             gpu_resources: GpuResourceManager::new(),
             sample_count,
             headless_resources: None,
-            passes: vec![
-                Box::new(MainPass),
-                Box::new(OverlayPass),
-                Box::new(SelectionMaskPass),
-                Box::new(OutlinePass),
-            ],
+            workflow: Box::new(shaded_workflow),
         }
     }
 
@@ -247,14 +243,37 @@ impl Renderer {
         &self.lights.bind_group_layout
     }
 
-    /// Replace the ordered list of render passes executed each frame.
+    /// Replace the active rendering workflow.
     ///
-    /// Passes are executed in order; each pass receives the same [`FrameContext`]
-    /// snapshot and can read or write the color/depth attachment as needed.
-    /// Use this to inject custom passes (e.g. non-photorealistic shading) or
-    /// to trim the default pass list.
-    pub fn set_passes(&mut self, passes: Vec<Box<dyn SceneRenderPass>>) {
-        self.passes = passes;
+    /// The new workflow takes effect immediately on the next frame. The previous
+    /// workflow and all its GPU resources are dropped. The [`PipelineCache`] is
+    /// retained across workflow swaps.
+    pub fn set_workflow(&mut self, workflow: Box<dyn RenderWorkflow>) {
+        self.workflow = workflow;
+    }
+
+    /// Create a new [`ShadedWorkflow`] configured for this renderer's device, format,
+    /// and MSAA settings. Pass to [`set_workflow`](Self::set_workflow) to activate it.
+    pub fn shaded_workflow(&mut self) -> ShadedWorkflow {
+        ShadedWorkflow::new(
+            &self.device,
+            &self.config,
+            &self.camera_resources.bind_group_layout,
+            self.pipeline_cache.shader_generator_mut(),
+            self.sample_count,
+        )
+    }
+
+    /// Create a new [`HiddenLineWorkflow`] configured for this renderer's device, format,
+    /// and MSAA settings. Pass to [`set_workflow`](Self::set_workflow) to activate it.
+    pub fn hidden_line_workflow(&mut self) -> HiddenLineWorkflow {
+        HiddenLineWorkflow::new(
+            &self.device,
+            self.surface_format,
+            self.sample_count,
+            &self.camera_resources.bind_group_layout,
+            self.pipeline_cache.shader_generator_mut(),
+        )
     }
 
     /// Preprocess an environment map into CPU-side IBL data via GPU compute shaders.
@@ -287,8 +306,6 @@ impl Renderer {
 
             self.renderer_textures.depth =
                 GpuTexture::depth(&self.device, &self.config, self.sample_count, "depth_texture");
-            self.renderer_textures.overlay_depth =
-                GpuTexture::depth(&self.device, &self.config, self.sample_count, "overlay_depth_texture");
 
             self.renderer_textures.msaa_color_attachment = if self.sample_count > 1 {
                 Some(GpuTexture::color_attachment(&self.device, &self.config, self.sample_count, "msaa_color_attachment"))
@@ -296,8 +313,7 @@ impl Renderer {
                 None
             };
 
-            self.outline_resources
-                .resize(&self.device, width, height, self.sample_count);
+            self.workflow.resize(&self.device, new_size, self.sample_count);
 
             self.headless_resources = None;
         }
@@ -420,34 +436,15 @@ impl Renderer {
         // Collect, sort, and partition draw batches for this frame
         let draw_data = DrawData::new(scene, camera.eye, selection);
 
-        // Update outline uniform if we have a selection
-        if draw_data.has_selection() {
-            if let Some(sel) = selection {
-                let outline_cfg = sel.outline_config();
-                let outline_uniform = OutlineUniform {
-                    color: outline_cfg.color,
-                    width_pixels: outline_cfg.width_pixels,
-                    screen_width: self.size.0 as f32,
-                    screen_height: self.size.1 as f32,
-                    _padding: 0.0,
-                };
-                self.queue.write_buffer(
-                    &self.outline_resources.uniform_buffer,
-                    0,
-                    bytemuck::cast_slice(&[outline_uniform]),
-                );
-            }
-        }
-
         // Resolve IBL bind group once — shared by all geometry passes this frame.
         let ibl_bind_group = scene
             .active_environment_map()
             .and_then(|env_id| self.ibl_resources.get_processed(env_id))
             .map(|processed| &processed.bind_group);
 
-        // Build a frame context from named field borrows. Because `pipeline_cache` is
-        // not included here, the borrow checker allows `&mut self.pipeline_cache` to
-        // coexist with `&ctx` in the pass calls below.
+        // Build a frame context from named field borrows. Because `pipeline_cache`
+        // and `workflow` are not included here, the borrow checker allows
+        // `&mut self.pipeline_cache` and `&mut self.workflow` to coexist with `&ctx`.
         let ctx = FrameContext {
             device: &self.device,
             queue: &self.queue,
@@ -458,21 +455,15 @@ impl Renderer {
             ibl_bind_group,
             scene_props: SceneProperties { has_ibl: ibl_bind_group.is_some() },
             renderer_textures: &self.renderer_textures,
-            outline_resources: &self.outline_resources,
             sample_count: self.sample_count,
             surface_format: self.surface_format,
             size: self.size,
         };
 
-        let passes = &mut self.passes;
+        let workflow = &mut self.workflow;
         let pipeline_cache = &mut self.pipeline_cache;
-        for pass in passes.iter_mut() {
-            if pass.is_active(&draw_data) {
-                pass.execute(encoder, view, &ctx, pipeline_cache, &draw_data);
-            }
-        }
+        workflow.execute(encoder, view, &ctx, pipeline_cache, &draw_data);
 
         Ok(())
     }
-
 }

@@ -258,9 +258,6 @@ impl MaterialPipelineLayouts {
 /// Textures used as part of the rendering process.
 pub(in crate::renderer) struct RendererTextures {
     pub(in crate::renderer) depth: GpuTexture,
-    /// Separate depth buffer for overlay (always-on-top) geometry so it depth-tests
-    /// against itself but not against the main scene.
-    pub(in crate::renderer) overlay_depth: GpuTexture,
     pub(in crate::renderer) white: GpuTexture,
     pub(in crate::renderer) default_normal: GpuTexture,
     /// Multisampled color attachment for MSAA rendering. None when sample_count == 1.
@@ -276,7 +273,6 @@ impl RendererTextures {
         sample_count: u32,
     ) -> RendererTextures {
         let depth = GpuTexture::depth(device, config, sample_count, "depth_texture");
-        let overlay_depth = GpuTexture::depth(device, config, sample_count, "overlay_depth_texture");
         let white = GpuTexture::solid_color(
             device,
             queue,
@@ -295,7 +291,7 @@ impl RendererTextures {
             None
         };
 
-        RendererTextures { depth, overlay_depth, white, default_normal: normal, msaa_color_attachment }
+        RendererTextures { depth, white, default_normal: normal, msaa_color_attachment }
     }
 
     /// Returns `(render_view, resolve_target)` for a render pass that may use MSAA.

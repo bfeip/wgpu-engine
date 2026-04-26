@@ -2,7 +2,6 @@ use crate::scene::{Scene, SceneProperties};
 
 use super::batching::{DrawBatch, DrawData};
 use super::gpu_resources::{self, GpuResourceManager, RendererTextures};
-use super::outline::OutlineResources;
 use super::pipeline::PipelineCache;
 
 /// Per-frame read-only snapshot of all renderer state a pass needs.
@@ -23,7 +22,6 @@ pub struct FrameContext<'a> {
     /// Derived from `ibl_bind_group` — `has_ibl` is true iff `ibl_bind_group` is `Some`.
     pub scene_props: SceneProperties,
     pub(in crate::renderer) renderer_textures: &'a RendererTextures,
-    pub(in crate::renderer) outline_resources: &'a OutlineResources,
     pub sample_count: u32,
     pub surface_format: wgpu::TextureFormat,
     pub size: (u32, u32),
@@ -61,10 +59,19 @@ impl<'a> FrameContext<'a> {
 /// Each pass receives [`FrameContext`] for read-only renderer state and a mutable
 /// [`PipelineCache`] for pipeline creation/lookup. The [`DrawData`] provides access
 /// to the sorted, partitioned batch lists for the current frame.
+///
+/// Passes may be stateless (zero-size structs) or stateful (holding owned GPU resources
+/// such as textures or pipelines). Stateful passes implement [`resize`](Self::resize)
+/// to recreate size-dependent resources when the viewport changes.
 pub trait SceneRenderPass {
     fn is_active(&self, _draw_data: &DrawData) -> bool {
         true
     }
+
+    /// Called after a viewport resize. Passes that own size-dependent GPU resources
+    /// (textures, bind groups) should recreate them here. The default is a no-op.
+    fn resize(&mut self, _device: &wgpu::Device, _size: (u32, u32), _sample_count: u32) {}
+
     fn execute(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,

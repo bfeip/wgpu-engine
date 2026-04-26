@@ -227,6 +227,18 @@ impl PbrUniform {
     }
 }
 
+/// GPU uniform for screen-space selection outline rendering.
+/// Must match the layout in `outline_screenspace.wesl`.
+#[repr(C)]
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub(in crate::renderer) struct OutlineUniform {
+    pub(in crate::renderer) color: [f32; 4],
+    pub(in crate::renderer) width_pixels: f32,
+    pub(in crate::renderer) screen_width: f32,
+    pub(in crate::renderer) screen_height: f32,
+    pub(in crate::renderer) _padding: f32,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

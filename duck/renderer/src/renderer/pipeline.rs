@@ -33,6 +33,10 @@ impl PipelineCache {
         }
     }
 
+    pub(super) fn shader_generator_mut(&mut self) -> &mut ShaderGenerator {
+        &mut self.shader_generator
+    }
+
     pub(super) fn get_or_create(
         &mut self,
         device: &wgpu::Device,

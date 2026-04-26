@@ -1,5 +1,5 @@
 use duck_engine_renderer::{
-    DrawData, FrameContext, PipelineCache, Renderer, SceneRenderPass,
+    DrawData, FrameContext, PipelineCache, Renderer, RenderWorkflow, SceneRenderPass,
 };
 use duck_engine_renderer::scene::{
     Camera, Light, Material, Mesh, PrimitiveType, Scene,
@@ -70,6 +70,33 @@ impl SceneRenderPass for GoochPass {
     }
 }
 
+struct GoochWorkflow {
+    pass: GoochPass,
+}
+
+impl GoochWorkflow {
+    fn new(renderer: &Renderer) -> Self {
+        Self { pass: GoochPass::new(renderer) }
+    }
+}
+
+impl RenderWorkflow for GoochWorkflow {
+    fn name(&self) -> &'static str { "Gooch" }
+
+    fn resize(&mut self, _device: &wgpu::Device, _size: (u32, u32), _sample_count: u32) {}
+
+    fn execute(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        ctx: &FrameContext<'_>,
+        pipeline_cache: &mut PipelineCache,
+        draw_data: &DrawData,
+    ) {
+        self.pass.execute(encoder, view, ctx, pipeline_cache, draw_data);
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     let width = 800u32;
     let height = 600u32;
@@ -107,8 +134,7 @@ fn main() -> anyhow::Result<()> {
         ortho: false,
     };
 
-    let gooch = GoochPass::new(&renderer);
-    renderer.set_passes(vec![Box::new(gooch)]);
+    renderer.set_workflow(Box::new(GoochWorkflow::new(&renderer)));
 
     let image = renderer.render_scene_to_image(&camera, &mut scene, None)?;
     image.save("gooch.png")?;
