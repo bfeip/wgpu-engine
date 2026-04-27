@@ -239,6 +239,16 @@ pub(in crate::renderer) struct OutlineUniform {
     pub(in crate::renderer) _padding: f32,
 }
 
+/// GPU uniform for silhouette edge rendering.
+/// Must match the layout in `silhouette_edges.wesl`.
+#[repr(C)]
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub(in crate::renderer) struct SilhouetteUniform {
+    pub(in crate::renderer) edge_color: [f32; 4],
+    pub(in crate::renderer) threshold: f32,
+    pub(in crate::renderer) _pad: [f32; 3],
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

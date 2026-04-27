@@ -13,7 +13,7 @@ mod uniforms;
 
 // From uniforms
 pub use uniforms::{CameraUniform, LightsArrayUniform, PbrUniform};
-pub(super) use uniforms::OutlineUniform;
+pub(super) use uniforms::{OutlineUniform, SilhouetteUniform};
 
 // From state
 pub(crate) use state::{

@@ -28,8 +28,11 @@ const SHADER_IBL: &str = include_str!("shaders/ibl.wesl");
 // Screen-space outline shader modules
 const SHADER_OUTLINE_MASK: &str = include_str!("shaders/outline_mask.wesl");
 const SHADER_OUTLINE_SCREENSPACE: &str = include_str!("shaders/outline_screenspace.wesl");
-// Hidden-line workflow shader
+// Hidden-line workflow shaders
 const SHADER_HIDDEN_LINE_SOLID: &str = include_str!("shaders/hidden_line_solid.wesl");
+const SHADER_HIDDEN_LINE_OCCLUDED: &str = include_str!("shaders/hidden_line_occluded.wesl");
+// Silhouette edge detection shader
+const SHADER_SILHOUETTE_EDGES: &str = include_str!("shaders/silhouette_edges.wesl");
 
 /// Build a VirtualResolver pre-loaded with all engine shader modules.
 ///
@@ -57,6 +60,8 @@ fn build_engine_resolver() -> VirtualResolver<'static> {
     resolver.add_module("package::outline_mask".parse().unwrap(), SHADER_OUTLINE_MASK.into());
     resolver.add_module("package::outline_screenspace".parse().unwrap(), SHADER_OUTLINE_SCREENSPACE.into());
     resolver.add_module("package::hidden_line_solid".parse().unwrap(), SHADER_HIDDEN_LINE_SOLID.into());
+    resolver.add_module("package::hidden_line_occluded".parse().unwrap(), SHADER_HIDDEN_LINE_OCCLUDED.into());
+    resolver.add_module("package::silhouette_edges".parse().unwrap(), SHADER_SILHOUETTE_EDGES.into());
 
     resolver
 }
@@ -111,6 +116,12 @@ pub(crate) struct ShaderGenerator {
     outline_screenspace_ms_cache: Option<wgpu::ShaderModule>,
     /// Cached hidden-line solid shader module
     hidden_line_solid_cache: Option<wgpu::ShaderModule>,
+    /// Cached hidden-line occluded (gray) shader module
+    hidden_line_occluded_cache: Option<wgpu::ShaderModule>,
+    /// Cached silhouette edge shader module (non-MSAA)
+    silhouette_cache: Option<wgpu::ShaderModule>,
+    /// Cached silhouette edge shader module (MSAA)
+    silhouette_ms_cache: Option<wgpu::ShaderModule>,
 }
 
 impl ShaderGenerator {
@@ -128,6 +139,9 @@ impl ShaderGenerator {
             outline_screenspace_cache: None,
             outline_screenspace_ms_cache: None,
             hidden_line_solid_cache: None,
+            hidden_line_occluded_cache: None,
+            silhouette_cache: None,
+            silhouette_ms_cache: None,
         }
     }
 
@@ -263,6 +277,69 @@ impl ShaderGenerator {
         });
 
         self.hidden_line_solid_cache = Some(module.clone());
+        Ok(module)
+    }
+
+    /// Generate the hidden-line occluded shader module.
+    /// Renders line geometry flat-gray for lines occluded by solid geometry.
+    pub fn generate_hidden_line_occluded_shader(&mut self, device: &wgpu::Device) -> anyhow::Result<wgpu::ShaderModule> {
+        if let Some(cached) = &self.hidden_line_occluded_cache {
+            return Ok(cached.clone());
+        }
+
+        let path: ModulePath = "package::hidden_line_occluded".parse()?;
+        let empty_features: [(&str, bool); 0] = [];
+        self.compiler.set_features(empty_features);
+        let result = self.compiler.compile(&path)?;
+        let wgsl = result.to_string();
+
+        let module = device.create_shader_module(ShaderModuleDescriptor {
+            label: Some("Hidden Line Occluded Shader"),
+            source: wgpu::ShaderSource::Wgsl(wgsl.into()),
+        });
+
+        self.hidden_line_occluded_cache = Some(module.clone());
+        Ok(module)
+    }
+
+    /// Generate the silhouette edge detection shader module.
+    /// `depth_multisampled = true` produces a variant that reads from a
+    /// `texture_depth_multisampled_2d`; `false` reads a `texture_depth_2d`.
+    pub fn generate_silhouette_shader(
+        &mut self,
+        device: &wgpu::Device,
+        depth_multisampled: bool,
+    ) -> anyhow::Result<wgpu::ShaderModule> {
+        let cache = if depth_multisampled {
+            &mut self.silhouette_ms_cache
+        } else {
+            &mut self.silhouette_cache
+        };
+        if let Some(cached) = cache {
+            return Ok(cached.clone());
+        }
+
+        let path: ModulePath = "package::silhouette_edges".parse()?;
+        self.compiler.set_features([("depth_multisampled", depth_multisampled)]);
+        let result = self.compiler.compile(&path)?;
+        let wgsl = result.to_string();
+
+        let label = if depth_multisampled {
+            "Silhouette Edges Shader (MSAA)"
+        } else {
+            "Silhouette Edges Shader"
+        };
+        let module = device.create_shader_module(ShaderModuleDescriptor {
+            label: Some(label),
+            source: wgpu::ShaderSource::Wgsl(wgsl.into()),
+        });
+
+        let cache = if depth_multisampled {
+            &mut self.silhouette_ms_cache
+        } else {
+            &mut self.silhouette_cache
+        };
+        *cache = Some(module.clone());
         Ok(module)
     }
 }

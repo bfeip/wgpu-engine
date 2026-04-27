@@ -43,7 +43,7 @@ impl Default for CadImportOptions {
             edge_color: RgbaColor { r: 0.15, g: 0.15, b: 0.15, a: 1.0 },
             include_edges: true,
             include_pmi: true,
-            pmi_color: RgbaColor { r: 0.2, g: 0.6, b: 1.0, a: 1.0 },
+            pmi_color: RgbaColor { r: 0.0, g: 0.0, b: 0.0, a: 1.0 },
         }
     }
 }

@@ -1,7 +1,10 @@
 use super::batching::DrawData;
 use super::pass_context::{FrameContext, SceneRenderPass};
 use super::pipeline::PipelineCache;
-use super::scene_pass::{HiddenLineEdgesPass, HiddenLineSolidPass, MainPass, OverlayPass, SelectionOutlinePass};
+use super::scene_pass::{
+    HiddenLineEdgesPass, HiddenLineOccludedPass, HiddenLineSolidPass,
+    MainPass, OverlayPass, SelectionOutlinePass, SilhouetteEdgesPass,
+};
 use crate::shaders::ShaderGenerator;
 
 /// A named rendering strategy that owns all passes and GPU resources for one frame style.
@@ -99,15 +102,19 @@ impl RenderWorkflow for ShadedWorkflow {
 
 /// Hidden-line rendering workflow.
 ///
-/// Renders scene geometry as white solid faces with depth-occluded edges on
-/// top. Only meshes that carry explicit `LineList` primitives show edges;
-/// triangle-only meshes render as flat-white solids with no edges.
+/// Renders scene geometry as white solid faces with silhouette edges detected
+/// from the depth buffer, plus explicit `LineList` primitives rendered in two
+/// tones: gray for occluded lines and black (material color) for visible lines.
 ///
 /// Pass sequence:
-/// 1. [`HiddenLineSolidPass`] — clear to white, render all triangles white, write depth.
-/// 2. [`HiddenLineEdgesPass`] — render `LineList` geometry depth-tested against the solids.
+/// 1. [`HiddenLineSolidPass`]    — clear to white, render all triangles white, write depth.
+/// 2. [`SilhouetteEdgesPass`]    — fullscreen depth-discontinuity edge detection.
+/// 3. [`HiddenLineOccludedPass`] — gray lines where depth compare is `Greater` (behind solids).
+/// 4. [`HiddenLineEdgesPass`]    — black (material-colored) lines where depth compare is `LessEqual`.
 pub struct HiddenLineWorkflow {
     solid_pass: HiddenLineSolidPass,
+    silhouette_pass: SilhouetteEdgesPass,
+    occluded_pass: HiddenLineOccludedPass,
     edge_pass: HiddenLineEdgesPass,
 }
 
@@ -121,6 +128,8 @@ impl HiddenLineWorkflow {
     ) -> Self {
         Self {
             solid_pass: HiddenLineSolidPass::new(device, surface_format, sample_count, camera_bgl, shader_generator),
+            silhouette_pass: SilhouetteEdgesPass::new(device, surface_format, sample_count, shader_generator),
+            occluded_pass: HiddenLineOccludedPass::new(device, surface_format, sample_count, camera_bgl, shader_generator),
             edge_pass: HiddenLineEdgesPass,
         }
     }
@@ -129,7 +138,9 @@ impl HiddenLineWorkflow {
 impl RenderWorkflow for HiddenLineWorkflow {
     fn name(&self) -> &'static str { "Hidden Line" }
 
-    fn resize(&mut self, _device: &wgpu::Device, _size: (u32, u32), _sample_count: u32) {}
+    fn resize(&mut self, device: &wgpu::Device, size: (u32, u32), sample_count: u32) {
+        self.silhouette_pass.resize(device, size, sample_count);
+    }
 
     fn execute(
         &mut self,
@@ -140,6 +151,8 @@ impl RenderWorkflow for HiddenLineWorkflow {
         draw_data: &DrawData,
     ) {
         self.solid_pass.execute(encoder, view, ctx, pipeline_cache, draw_data);
+        self.silhouette_pass.execute(encoder, view, ctx, pipeline_cache, draw_data);
+        self.occluded_pass.execute(encoder, view, ctx, pipeline_cache, draw_data);
         self.edge_pass.execute(encoder, view, ctx, pipeline_cache, draw_data);
     }
 }
