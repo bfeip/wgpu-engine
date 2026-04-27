@@ -18,6 +18,7 @@ const SHADER_LIGHTING: &str = include_str!("shaders/lighting.wesl");
 const SHADER_VERTEX: &str = include_str!("shaders/vertex.wesl");
 const SHADER_MATERIAL_COLOR: &str = include_str!("shaders/material_color.wesl");
 const SHADER_FRAGMENT_COLOR_UNLIT: &str = include_str!("shaders/fragment_color_unlit.wesl");
+const SHADER_FLAT_COLOR: &str = include_str!("shaders/flat_color.wesl");
 // PBR shader modules
 const SHADER_PBR: &str = include_str!("shaders/pbr.wesl");
 const SHADER_MATERIAL_PBR: &str = include_str!("shaders/material_pbr.wesl");
@@ -28,9 +29,6 @@ const SHADER_IBL: &str = include_str!("shaders/ibl.wesl");
 // Screen-space outline shader modules
 const SHADER_OUTLINE_MASK: &str = include_str!("shaders/outline_mask.wesl");
 const SHADER_OUTLINE_SCREENSPACE: &str = include_str!("shaders/outline_screenspace.wesl");
-// Hidden-line workflow shaders
-const SHADER_HIDDEN_LINE_SOLID: &str = include_str!("shaders/hidden_line_solid.wesl");
-const SHADER_HIDDEN_LINE_OCCLUDED: &str = include_str!("shaders/hidden_line_occluded.wesl");
 // Silhouette edge detection shader
 const SHADER_SILHOUETTE_EDGES: &str = include_str!("shaders/silhouette_edges.wesl");
 
@@ -49,6 +47,7 @@ fn build_engine_resolver() -> VirtualResolver<'static> {
     resolver.add_module("package::vertex".parse().unwrap(), SHADER_VERTEX.into());
     resolver.add_module("package::material_color".parse().unwrap(), SHADER_MATERIAL_COLOR.into());
     resolver.add_module("package::fragment_color_unlit".parse().unwrap(), SHADER_FRAGMENT_COLOR_UNLIT.into());
+    resolver.add_module("package::flat_color".parse().unwrap(), SHADER_FLAT_COLOR.into());
     // PBR modules
     resolver.add_module("package::pbr".parse().unwrap(), SHADER_PBR.into());
     resolver.add_module("package::material_pbr".parse().unwrap(), SHADER_MATERIAL_PBR.into());
@@ -59,8 +58,6 @@ fn build_engine_resolver() -> VirtualResolver<'static> {
     // Screen-space outline modules
     resolver.add_module("package::outline_mask".parse().unwrap(), SHADER_OUTLINE_MASK.into());
     resolver.add_module("package::outline_screenspace".parse().unwrap(), SHADER_OUTLINE_SCREENSPACE.into());
-    resolver.add_module("package::hidden_line_solid".parse().unwrap(), SHADER_HIDDEN_LINE_SOLID.into());
-    resolver.add_module("package::hidden_line_occluded".parse().unwrap(), SHADER_HIDDEN_LINE_OCCLUDED.into());
     resolver.add_module("package::silhouette_edges".parse().unwrap(), SHADER_SILHOUETTE_EDGES.into());
 
     resolver
@@ -114,10 +111,8 @@ pub(crate) struct ShaderGenerator {
     outline_screenspace_cache: Option<wgpu::ShaderModule>,
     /// Cached outline screenspace shader module (MSAA, multisampled=true)
     outline_screenspace_ms_cache: Option<wgpu::ShaderModule>,
-    /// Cached hidden-line solid shader module
-    hidden_line_solid_cache: Option<wgpu::ShaderModule>,
-    /// Cached hidden-line occluded (gray) shader module
-    hidden_line_occluded_cache: Option<wgpu::ShaderModule>,
+    /// Cached flat-color shader module
+    flat_color_cache: Option<wgpu::ShaderModule>,
     /// Cached silhouette edge shader module (non-MSAA)
     silhouette_cache: Option<wgpu::ShaderModule>,
     /// Cached silhouette edge shader module (MSAA)
@@ -138,8 +133,7 @@ impl ShaderGenerator {
             outline_mask_cache: None,
             outline_screenspace_cache: None,
             outline_screenspace_ms_cache: None,
-            hidden_line_solid_cache: None,
-            hidden_line_occluded_cache: None,
+            flat_color_cache: None,
             silhouette_cache: None,
             silhouette_ms_cache: None,
         }
@@ -258,47 +252,25 @@ impl ShaderGenerator {
         Ok(module)
     }
 
-    /// Generate the hidden-line solid shader module.
-    /// Renders geometry flat-white with no lighting for the hidden-line workflow.
-    pub fn generate_hidden_line_solid_shader(&mut self, device: &wgpu::Device) -> anyhow::Result<wgpu::ShaderModule> {
-        if let Some(cached) = &self.hidden_line_solid_cache {
+    /// Generate the flat-color shader module.
+    /// Renders geometry using a color from the material uniform (group 2) with no lighting.
+    pub fn generate_flat_color_shader(&mut self, device: &wgpu::Device) -> anyhow::Result<wgpu::ShaderModule> {
+        if let Some(cached) = &self.flat_color_cache {
             return Ok(cached.clone());
         }
 
-        let path: ModulePath = "package::hidden_line_solid".parse()?;
+        let path: ModulePath = "package::flat_color".parse()?;
         let empty_features: [(&str, bool); 0] = [];
         self.compiler.set_features(empty_features);
         let result = self.compiler.compile(&path)?;
         let wgsl = result.to_string();
 
         let module = device.create_shader_module(ShaderModuleDescriptor {
-            label: Some("Hidden Line Solid Shader"),
+            label: Some("Flat Color Shader"),
             source: wgpu::ShaderSource::Wgsl(wgsl.into()),
         });
 
-        self.hidden_line_solid_cache = Some(module.clone());
-        Ok(module)
-    }
-
-    /// Generate the hidden-line occluded shader module.
-    /// Renders line geometry flat-gray for lines occluded by solid geometry.
-    pub fn generate_hidden_line_occluded_shader(&mut self, device: &wgpu::Device) -> anyhow::Result<wgpu::ShaderModule> {
-        if let Some(cached) = &self.hidden_line_occluded_cache {
-            return Ok(cached.clone());
-        }
-
-        let path: ModulePath = "package::hidden_line_occluded".parse()?;
-        let empty_features: [(&str, bool); 0] = [];
-        self.compiler.set_features(empty_features);
-        let result = self.compiler.compile(&path)?;
-        let wgsl = result.to_string();
-
-        let module = device.create_shader_module(ShaderModuleDescriptor {
-            label: Some("Hidden Line Occluded Shader"),
-            source: wgpu::ShaderSource::Wgsl(wgsl.into()),
-        });
-
-        self.hidden_line_occluded_cache = Some(module.clone());
+        self.flat_color_cache = Some(module.clone());
         Ok(module)
     }
 

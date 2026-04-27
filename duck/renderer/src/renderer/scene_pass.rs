@@ -273,6 +273,7 @@ impl SceneRenderPass for OverlayPass {
 /// can occlude lines that are behind solid faces.
 pub(crate) struct HiddenLineSolidPass {
     pipeline: wgpu::RenderPipeline,
+    color_bind_group: wgpu::BindGroup,
 }
 
 impl HiddenLineSolidPass {
@@ -281,15 +282,17 @@ impl HiddenLineSolidPass {
         surface_format: wgpu::TextureFormat,
         sample_count: u32,
         camera_bgl: &wgpu::BindGroupLayout,
+        lights_bgl: &wgpu::BindGroupLayout,
+        material_color_bgl: &wgpu::BindGroupLayout,
         shader_generator: &mut crate::shaders::ShaderGenerator,
     ) -> Self {
-        use super::gpu_resources::{instance_buffer_layout, vertex_buffer_layout};
+        use wgpu::util::{BufferInitDescriptor, DeviceExt};
         let shader = shader_generator
-            .generate_hidden_line_solid_shader(device)
-            .expect("Failed to generate hidden line solid shader");
+            .generate_flat_color_shader(device)
+            .expect("Failed to generate flat color shader");
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Hidden Line Solid Pipeline Layout"),
-            bind_group_layouts: &[camera_bgl],
+            bind_group_layouts: &[camera_bgl, lights_bgl, material_color_bgl],
             push_constant_ranges: &[],
         });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -297,13 +300,13 @@ impl HiddenLineSolidPass {
             layout: Some(&layout),
             vertex: wgpu::VertexState {
                 module: &shader,
-                entry_point: Some("vs_solid"),
+                entry_point: Some("vs_flat_color"),
                 buffers: &[vertex_buffer_layout(), instance_buffer_layout()],
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
-                entry_point: Some("fs_solid"),
+                entry_point: Some("fs_flat_color"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: surface_format,
                     blend: None,
@@ -332,7 +335,20 @@ impl HiddenLineSolidPass {
             multiview: None,
             cache: None,
         });
-        Self { pipeline }
+        let color_buffer = device.create_buffer_init(&BufferInitDescriptor {
+            label: Some("Hidden Line Solid Color Buffer"),
+            contents: bytemuck::cast_slice(&[1.0f32, 1.0, 1.0, 1.0]),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let color_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Hidden Line Solid Color Bind Group"),
+            layout: material_color_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: color_buffer.as_entire_binding(),
+            }],
+        });
+        Self { pipeline, color_bind_group }
     }
 }
 
@@ -370,6 +386,7 @@ impl SceneRenderPass for HiddenLineSolidPass {
         });
         render_pass.set_pipeline(&self.pipeline);
         render_pass.set_bind_group(0, ctx.camera_bind_group, &[]);
+        render_pass.set_bind_group(2, &self.color_bind_group, &[]);
         for batch in draw_data.all_batches() {
             if batch.primitive_type != PrimitiveType::TriangleList { continue; }
             ctx.draw_batch(&mut render_pass, batch);
@@ -465,6 +482,7 @@ impl SceneRenderPass for HiddenLineEdgesPass {
 /// wherever the two coincide.
 pub(crate) struct HiddenLineOccludedPass {
     pipeline: wgpu::RenderPipeline,
+    color_bind_group: wgpu::BindGroup,
 }
 
 impl HiddenLineOccludedPass {
@@ -473,15 +491,17 @@ impl HiddenLineOccludedPass {
         surface_format: wgpu::TextureFormat,
         sample_count: u32,
         camera_bgl: &wgpu::BindGroupLayout,
+        lights_bgl: &wgpu::BindGroupLayout,
+        material_color_bgl: &wgpu::BindGroupLayout,
         shader_generator: &mut crate::shaders::ShaderGenerator,
     ) -> Self {
-        use super::gpu_resources::{instance_buffer_layout, vertex_buffer_layout};
+        use wgpu::util::{BufferInitDescriptor, DeviceExt};
         let shader = shader_generator
-            .generate_hidden_line_occluded_shader(device)
-            .expect("Failed to generate hidden line occluded shader");
+            .generate_flat_color_shader(device)
+            .expect("Failed to generate flat color shader");
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Hidden Line Occluded Pipeline Layout"),
-            bind_group_layouts: &[camera_bgl],
+            bind_group_layouts: &[camera_bgl, lights_bgl, material_color_bgl],
             push_constant_ranges: &[],
         });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -489,13 +509,13 @@ impl HiddenLineOccludedPass {
             layout: Some(&layout),
             vertex: wgpu::VertexState {
                 module: &shader,
-                entry_point: Some("vs_occluded"),
+                entry_point: Some("vs_flat_color"),
                 buffers: &[vertex_buffer_layout(), instance_buffer_layout()],
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
-                entry_point: Some("fs_occluded"),
+                entry_point: Some("fs_flat_color"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: surface_format,
                     blend: None,
@@ -523,7 +543,20 @@ impl HiddenLineOccludedPass {
             multiview: None,
             cache: None,
         });
-        Self { pipeline }
+        let color_buffer = device.create_buffer_init(&BufferInitDescriptor {
+            label: Some("Hidden Line Occluded Color Buffer"),
+            contents: bytemuck::cast_slice(&[0.6f32, 0.6, 0.6, 1.0]),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let color_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Hidden Line Occluded Color Bind Group"),
+            layout: material_color_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: color_buffer.as_entire_binding(),
+            }],
+        });
+        Self { pipeline, color_bind_group }
     }
 }
 
@@ -565,6 +598,7 @@ impl SceneRenderPass for HiddenLineOccludedPass {
 
         render_pass.set_pipeline(&self.pipeline);
         render_pass.set_bind_group(0, ctx.camera_bind_group, &[]);
+        render_pass.set_bind_group(2, &self.color_bind_group, &[]);
         for batch in draw_data.all_batches() {
             if batch.primitive_type != PrimitiveType::LineList { continue; }
             ctx.draw_batch(&mut render_pass, batch);

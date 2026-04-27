@@ -1,12 +1,13 @@
-// hidden_line_solid.wesl
-// Flat-white vertex + fragment shader for the hidden-line solid pass.
-// Transforms geometry using camera + instance data; outputs opaque white.
+// flat_color.wesl
+// Position-only vertex + material-color fragment shader.
+// Used by passes that render geometry in a single flat color driven by a material uniform.
 
 import package::common::{VertexInput, InstanceInput};
 import package::camera::camera;
+import package::material_color::material_color;
 
 @vertex
-fn vs_solid(model: VertexInput, instance: InstanceInput) -> @builtin(position) vec4<f32> {
+fn vs_flat_color(model: VertexInput, instance: InstanceInput) -> @builtin(position) vec4<f32> {
     let transform = mat4x4<f32>(
         instance.model_matrix_0,
         instance.model_matrix_1,
@@ -18,6 +19,6 @@ fn vs_solid(model: VertexInput, instance: InstanceInput) -> @builtin(position) v
 }
 
 @fragment
-fn fs_solid() -> @location(0) vec4<f32> {
-    return vec4<f32>(1.0, 1.0, 1.0, 1.0);
+fn fs_flat_color() -> @location(0) vec4<f32> {
+    return material_color;
 }

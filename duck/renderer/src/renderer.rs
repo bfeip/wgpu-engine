@@ -272,6 +272,8 @@ impl Renderer {
             self.surface_format,
             self.sample_count,
             &self.camera_resources.bind_group_layout,
+            &self.lights.bind_group_layout,
+            &self.material_layouts.color,
             self.pipeline_cache.shader_generator_mut(),
         )
     }

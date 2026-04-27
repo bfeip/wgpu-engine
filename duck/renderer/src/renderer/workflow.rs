@@ -124,12 +124,14 @@ impl HiddenLineWorkflow {
         surface_format: wgpu::TextureFormat,
         sample_count: u32,
         camera_bgl: &wgpu::BindGroupLayout,
+        lights_bgl: &wgpu::BindGroupLayout,
+        material_color_bgl: &wgpu::BindGroupLayout,
         shader_generator: &mut ShaderGenerator,
     ) -> Self {
         Self {
-            solid_pass: HiddenLineSolidPass::new(device, surface_format, sample_count, camera_bgl, shader_generator),
+            solid_pass: HiddenLineSolidPass::new(device, surface_format, sample_count, camera_bgl, lights_bgl, material_color_bgl, shader_generator),
             silhouette_pass: SilhouetteEdgesPass::new(device, surface_format, sample_count, shader_generator),
-            occluded_pass: HiddenLineOccludedPass::new(device, surface_format, sample_count, camera_bgl, shader_generator),
+            occluded_pass: HiddenLineOccludedPass::new(device, surface_format, sample_count, camera_bgl, lights_bgl, material_color_bgl, shader_generator),
             edge_pass: HiddenLineEdgesPass,
         }
     }
