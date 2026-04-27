@@ -283,6 +283,21 @@ impl<'a> Viewer<'a> {
         self.renderer.surface_format()
     }
 
+    /// Replace the active rendering workflow.
+    pub fn set_workflow(&mut self, workflow: Box<dyn crate::renderer::RenderWorkflow>) {
+        self.renderer.set_workflow(workflow);
+    }
+
+    /// Create a [`ShadedWorkflow`](crate::renderer::ShadedWorkflow) configured for this viewer.
+    pub fn shaded_workflow(&mut self) -> crate::renderer::ShadedWorkflow {
+        self.renderer.shaded_workflow()
+    }
+
+    /// Create a [`HiddenLineWorkflow`](crate::renderer::HiddenLineWorkflow) configured for this viewer.
+    pub fn hidden_line_workflow(&mut self) -> crate::renderer::HiddenLineWorkflow {
+        self.renderer.hidden_line_workflow()
+    }
+
     /// Get a reference to the wgpu device
     pub fn device(&self) -> &wgpu::Device {
         &self.device

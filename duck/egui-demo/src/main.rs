@@ -22,12 +22,15 @@ use duck_engine_viewer::winit_support;
 enum DebugAction {
     CycleOperator,
     ToggleOrtho,
+    CycleWorkflow,
 }
 
 /// Application state for the winit event loop with egui integration
 struct App<'a> {
     viewer_app: Option<EguiViewerApp<'a>>,
     ui: ui::UiState,
+    /// Index of the currently active workflow (cycled by the W debug key).
+    workflow_index: usize,
     /// Pending HDR environment path to load
     pending_hdr_path: Option<std::path::PathBuf>,
     /// Pending scene file path to load
@@ -256,6 +259,7 @@ impl<'a> App<'a> {
         match action {
             DebugAction::CycleOperator => self.cycle_operator_mode(),
             DebugAction::ToggleOrtho => self.toggle_ortho(),
+            DebugAction::CycleWorkflow => self.cycle_workflow(),
         }
     }
 
@@ -272,6 +276,7 @@ impl<'a> App<'a> {
         match &key_event.logical_key {
             Key::Character('c') => Some(DebugAction::CycleOperator),
             Key::Character('o') => Some(DebugAction::ToggleOrtho),
+            Key::Character('w') => Some(DebugAction::CycleWorkflow),
             _ => None,
         }
     }
@@ -292,6 +297,19 @@ impl<'a> App<'a> {
         let viewer_app = self.viewer_app.as_mut().unwrap();
         let camera = viewer_app.viewer_mut().camera_mut();
         camera.ortho = !camera.ortho;
+    }
+
+    /// Cycle through the built-in rendering workflows.
+    fn cycle_workflow(&mut self) {
+        use duck_engine_viewer::renderer::RenderWorkflow;
+        let viewer = self.viewer_app.as_mut().unwrap().viewer_mut();
+        self.workflow_index = (self.workflow_index + 1) % 2;
+        let workflow: Box<dyn RenderWorkflow> = match self.workflow_index {
+            0 => Box::new(viewer.shaded_workflow()),
+            _ => Box::new(viewer.hidden_line_workflow()),
+        };
+        log::info!("Switched to '{}' workflow", workflow.name());
+        viewer.set_workflow(workflow);
     }
 }
 
@@ -373,6 +391,7 @@ fn main() {
     let mut app = App {
         viewer_app: None,
         ui: ui::UiState::default(),
+        workflow_index: 0,
         pending_hdr_path: None,
         pending_scene_load_path: None,
         pending_scene_save_path: None,
