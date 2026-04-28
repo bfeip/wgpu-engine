@@ -9,11 +9,11 @@ use crate::scene::{
     Visibility,
 };
 use crate::scene::common;
-use crate::selection_query::SelectionQuery;
+use crate::highlight_query::HighlightQuery;
 
 /// A draw call targeting a sub-range of a mesh's index buffer for a single instance.
 ///
-/// Used to render individual faces or edges (e.g. for selection highlighting), but
+/// Used to render individual faces or edges (e.g. for highlight outlines), but
 /// applicable wherever only part of a mesh needs to be drawn.
 pub struct SubGeomBatch {
     pub mesh_id: MeshId,
@@ -283,14 +283,14 @@ where
     (matched, unmatched)
 }
 
-/// Builds sub-geometry draw calls for all face selections in the current frame.
+/// Builds sub-geometry draw calls for all highlighted faces in the current frame.
 ///
-/// For each node with face selections, looks up the instance's mesh topology and converts
-/// each selected face index into a `SubGeomBatch` targeting that face's triangle range.
-fn collect_selection_sub_geom_batches(
+/// For each node with highlighted faces, looks up the instance's mesh topology and converts
+/// each highlighted face index into a `SubGeomBatch` targeting that face's triangle range.
+fn collect_highlight_sub_geom_batches(
     batches: &[DrawBatch],
     scene: &Scene,
-    sel: &dyn SelectionQuery,
+    highlight: &dyn HighlightQuery,
 ) -> Vec<SubGeomBatch> {
     // Build a node_id → InstanceTransform index so we can resolve faces by node
     let instance_by_node: HashMap<NodeId, &InstanceTransform> = batches
@@ -300,13 +300,13 @@ fn collect_selection_sub_geom_batches(
         .collect();
 
     let mut sub_geom: Vec<SubGeomBatch> = Vec::new();
-    for node_id in sel.nodes_with_face_selection() {
+    for node_id in highlight.nodes_with_highlighted_faces() {
         let Some(it) = instance_by_node.get(&node_id) else { continue };
         let Some(instance) = scene.get_instance(it.instance_id) else { continue };
         let Some(mesh) = scene.get_mesh(instance.mesh()) else { continue };
         let Some(topology) = mesh.topology() else { continue };
 
-        for face_index in sel.selected_faces_for_node(node_id) {
+        for face_index in highlight.highlighted_faces_for_node(node_id) {
             let Some(range) = topology.face_ranges.get(face_index as usize) else { continue };
             sub_geom.push(SubGeomBatch {
                 mesh_id: instance.mesh(),
@@ -329,18 +329,18 @@ pub struct DrawData {
     /// All batches, sorted: opaque first (by material/primitive/mesh),
     /// then transparent back-to-front.
     batches: Vec<DrawBatch>,
-    /// Subset of batches containing only selected instances.
-    /// Empty if no selection is active.
-    selected_batches: Vec<DrawBatch>,
+    /// Subset of batches containing only highlighted instances.
+    /// Empty if no highlight is active.
+    highlighted_batches: Vec<DrawBatch>,
     /// Batches with ALWAYS_ON_TOP materials, rendered in a separate overlay pass.
     overlay_batches: Vec<DrawBatch>,
-    /// Sub-geometry draw calls for selected faces/edges.
+    /// Sub-geometry draw calls for highlighted faces/edges.
     /// Each entry targets a specific index range within a mesh's index buffer.
-    selection_sub_geom_batches: Vec<SubGeomBatch>,
+    highlight_sub_geom_batches: Vec<SubGeomBatch>,
     /// Resolved outline configuration for the current frame. `Some` when a
-    /// non-empty selection is active; `None` otherwise. Passes use this to
-    /// update per-frame outline uniforms without holding a `SelectionQuery` ref.
-    outline_config: Option<crate::selection_query::OutlineConfig>,
+    /// non-empty highlight is active; `None` otherwise. Passes use this to
+    /// update per-frame outline uniforms without holding a `HighlightQuery` ref.
+    outline_config: Option<crate::highlight_query::OutlineConfig>,
 }
 
 impl DrawData {
@@ -349,11 +349,11 @@ impl DrawData {
     /// - Walks the scene tree to collect instance transforms
     /// - Groups into batches by mesh/material/primitive
     /// - Sorts for transparency (opaque first, transparent back-to-front)
-    /// - Partitions selected instances if a non-empty selection is provided
+    /// - Partitions highlighted instances if a non-empty highlight is provided
     pub(crate) fn new(
         scene: &Scene,
         camera_position: Point3<f32>,
-        selection: Option<&dyn SelectionQuery>,
+        highlight: Option<&dyn HighlightQuery>,
     ) -> Self {
         let mut batches = collect_draw_batches(scene);
         sort_batches_for_transparency(&mut batches, scene, camera_position);
@@ -370,23 +370,23 @@ impl DrawData {
         });
         batches = normal_batches;
 
-        let active_selection = selection.filter(|sel| !sel.is_empty());
+        let active_highlight = highlight.filter(|h| !h.is_empty());
 
-        let selected_batches = active_selection
-            .map(|sel| partition_batches(&batches, |inst| sel.is_node_selected(inst.node_id)).0)
+        let highlighted_batches = active_highlight
+            .map(|h| partition_batches(&batches, |inst| h.is_node_highlighted(inst.node_id)).0)
             .unwrap_or_default();
 
-        let selection_sub_geom_batches = active_selection
-            .map(|sel| collect_selection_sub_geom_batches(&batches, scene, sel))
+        let highlight_sub_geom_batches = active_highlight
+            .map(|h| collect_highlight_sub_geom_batches(&batches, scene, h))
             .unwrap_or_default();
 
-        let outline_config = active_selection.map(|sel| sel.outline_config());
+        let outline_config = active_highlight.map(|h| h.outline_config());
 
         Self {
             batches,
-            selected_batches,
+            highlighted_batches,
             overlay_batches,
-            selection_sub_geom_batches,
+            highlight_sub_geom_batches,
             outline_config,
         }
     }
@@ -396,20 +396,20 @@ impl DrawData {
         &self.batches
     }
 
-    /// Batches containing only selected instances, for outline/mask rendering.
-    /// Empty if no selection is active.
-    pub fn selected_batches(&self) -> &[DrawBatch] {
-        &self.selected_batches
+    /// Batches containing only highlighted instances, for outline/mask rendering.
+    /// Empty if no highlight is active.
+    pub fn highlighted_batches(&self) -> &[DrawBatch] {
+        &self.highlighted_batches
     }
 
-    /// Whether any instances or sub-geometry are selected.
-    pub fn has_selection(&self) -> bool {
-        !self.selected_batches.is_empty() || !self.selection_sub_geom_batches.is_empty()
+    /// Whether any instances or sub-geometry are highlighted.
+    pub fn has_highlights(&self) -> bool {
+        !self.highlighted_batches.is_empty() || !self.highlight_sub_geom_batches.is_empty()
     }
 
-    /// Sub-geometry draw calls for selected faces/edges.
-    pub fn selection_sub_geom_batches(&self) -> &[SubGeomBatch] {
-        &self.selection_sub_geom_batches
+    /// Sub-geometry draw calls for highlighted faces/edges.
+    pub fn highlight_sub_geom_batches(&self) -> &[SubGeomBatch] {
+        &self.highlight_sub_geom_batches
     }
 
     /// Batches with ALWAYS_ON_TOP materials, rendered in a separate overlay pass.
@@ -422,8 +422,8 @@ impl DrawData {
         !self.overlay_batches.is_empty()
     }
 
-    /// Outline configuration for the current frame, or `None` if nothing is selected.
-    pub fn outline_config(&self) -> Option<&crate::selection_query::OutlineConfig> {
+    /// Outline configuration for the current frame, or `None` if nothing is highlighted.
+    pub fn outline_config(&self) -> Option<&crate::highlight_query::OutlineConfig> {
         self.outline_config.as_ref()
     }
 }
@@ -737,34 +737,34 @@ mod tests {
     // DrawData Tests
     // ========================================================================
 
-    use crate::selection_query::OutlineConfig;
+    use crate::highlight_query::OutlineConfig;
 
-    struct MockSelection {
-        selected_nodes: Vec<NodeId>,
+    struct MockHighlight {
+        highlighted_nodes: Vec<NodeId>,
     }
 
-    impl SelectionQuery for MockSelection {
+    impl HighlightQuery for MockHighlight {
         fn is_empty(&self) -> bool {
-            self.selected_nodes.is_empty()
+            self.highlighted_nodes.is_empty()
         }
 
-        fn is_node_selected(&self, node_id: NodeId) -> bool {
-            self.selected_nodes.contains(&node_id)
+        fn is_node_highlighted(&self, node_id: NodeId) -> bool {
+            self.highlighted_nodes.contains(&node_id)
         }
 
-        fn selected_faces_for_node(&self, _node_id: NodeId) -> Vec<u32> {
+        fn highlighted_faces_for_node(&self, _node_id: NodeId) -> Vec<u32> {
             Vec::new()
         }
 
-        fn selected_edges_for_node(&self, _node_id: NodeId) -> Vec<u32> {
+        fn highlighted_edges_for_node(&self, _node_id: NodeId) -> Vec<u32> {
             Vec::new()
         }
 
-        fn nodes_with_face_selection(&self) -> Vec<NodeId> {
+        fn nodes_with_highlighted_faces(&self) -> Vec<NodeId> {
             Vec::new()
         }
 
-        fn nodes_with_edge_selection(&self) -> Vec<NodeId> {
+        fn nodes_with_highlighted_edges(&self) -> Vec<NodeId> {
             Vec::new()
         }
 
@@ -785,45 +785,45 @@ mod tests {
     }
 
     #[test]
-    fn test_draw_data_no_selection() {
+    fn test_draw_data_no_highlight() {
         let scene = Scene::new();
         let draw_data = DrawData::new(&scene, Point3::new(0.0, 0.0, 0.0), None);
 
         assert!(draw_data.all_batches().is_empty());
-        assert!(draw_data.selected_batches().is_empty());
-        assert!(!draw_data.has_selection());
+        assert!(draw_data.highlighted_batches().is_empty());
+        assert!(!draw_data.has_highlights());
     }
 
     #[test]
-    fn test_draw_data_empty_selection() {
+    fn test_draw_data_empty_highlight() {
         let (scene, _node_id) = build_simple_scene();
-        let selection = MockSelection {
-            selected_nodes: vec![],
+        let highlight = MockHighlight {
+            highlighted_nodes: vec![],
         };
         let draw_data = DrawData::new(
             &scene,
             Point3::new(0.0, 0.0, 0.0),
-            Some(&selection),
+            Some(&highlight),
         );
 
-        assert!(!draw_data.has_selection());
-        assert!(draw_data.selected_batches().is_empty());
+        assert!(!draw_data.has_highlights());
+        assert!(draw_data.highlighted_batches().is_empty());
     }
 
     #[test]
-    fn test_draw_data_with_selection() {
+    fn test_draw_data_with_highlight() {
         let (scene, node_id) = build_simple_scene();
-        let selection = MockSelection {
-            selected_nodes: vec![node_id],
+        let highlight = MockHighlight {
+            highlighted_nodes: vec![node_id],
         };
         let draw_data = DrawData::new(
             &scene,
             Point3::new(0.0, 0.0, 0.0),
-            Some(&selection),
+            Some(&highlight),
         );
 
         // Scene has no mesh primitives (empty mesh), so no batches are generated
-        // This test verifies the selection path runs without errors
-        assert!(!draw_data.has_selection() || !draw_data.selected_batches().is_empty());
+        // This test verifies the highlight path runs without errors
+        assert!(!draw_data.has_highlights() || !draw_data.highlighted_batches().is_empty());
     }
 }

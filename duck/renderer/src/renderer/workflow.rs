@@ -3,7 +3,7 @@ use super::pass_context::{FrameContext, SceneRenderPass};
 use super::pipeline::PipelineCache;
 use super::scene_pass::{
     HiddenLineEdgesPass, HiddenLineOccludedPass, HiddenLineSolidPass,
-    MainPass, OverlayPass, SelectionOutlinePass, SilhouetteEdgesPass,
+    MainPass, OverlayPass, OutlinePass, SilhouetteEdgesPass,
 };
 use crate::shaders::ShaderGenerator;
 
@@ -40,7 +40,7 @@ pub trait RenderWorkflow: 'static {
 /// The default shaded rendering workflow.
 ///
 /// Runs the standard pass sequence: main geometry, overlay (always-on-top)
-/// geometry, and selection outlines. Holds passes as `Box<dyn SceneRenderPass>`
+/// geometry, and highlight outlines. Holds passes as `Box<dyn SceneRenderPass>`
 /// so custom passes can be injected via [`ShadedWorkflow::set_passes`].
 pub struct ShadedWorkflow {
     passes: Vec<Box<dyn SceneRenderPass>>,
@@ -58,7 +58,7 @@ impl ShadedWorkflow {
             passes: vec![
                 Box::new(MainPass),
                 Box::new(OverlayPass::new(device, config.width, config.height, sample_count)),
-                Box::new(SelectionOutlinePass::new(device, config, camera_bgl, shader_generator, sample_count)),
+                Box::new(OutlinePass::new(device, config, camera_bgl, shader_generator, sample_count)),
             ],
         }
     }

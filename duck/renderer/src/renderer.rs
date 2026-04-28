@@ -19,7 +19,7 @@ use anyhow::Result;
 use crate::{
     ibl::IblResources,
     scene::{Camera, Scene, SceneProperties},
-    selection_query::SelectionQuery,
+    highlight_query::HighlightQuery,
     shaders::ShaderGenerator,
 };
 
@@ -332,7 +332,7 @@ impl Renderer {
         &mut self,
         camera: &Camera,
         scene: &mut Scene,
-        selection: Option<&dyn SelectionQuery>,
+        highlight: Option<&dyn HighlightQuery>,
     ) -> Result<image::RgbaImage> {
         let (width, height) = self.size;
 
@@ -361,7 +361,7 @@ impl Renderer {
             },
         );
         let resources = self.headless_resources.take().unwrap();
-        self.render_scene_to_view(&resources.view, &mut encoder, camera, scene, selection)?;
+        self.render_scene_to_view(&resources.view, &mut encoder, camera, scene, highlight)?;
 
         // Copy texture to staging buffer
         encoder.copy_texture_to_buffer(
@@ -418,7 +418,7 @@ impl Renderer {
     }
 
     /// Render the scene to a specific view, updating uniforms and drawing all batches.
-    /// If a selection is provided and not empty, selection outlines will be rendered.
+    /// If a highlight is provided and not empty, highlight outlines will be rendered.
     /// The encoder is not submitted - the caller is responsible for that.
     pub fn render_scene_to_view(
         &mut self,
@@ -426,7 +426,7 @@ impl Renderer {
         encoder: &mut wgpu::CommandEncoder,
         camera: &Camera,
         scene: &Scene,
-        selection: Option<&dyn SelectionQuery>,
+        highlight: Option<&dyn HighlightQuery>,
     ) -> Result<()> {
         // Update camera uniform
         // TODO: only when needed
@@ -436,7 +436,7 @@ impl Renderer {
             .write_buffer(&self.camera_resources.buffer, 0, camera_buffer_contents);
 
         // Collect, sort, and partition draw batches for this frame
-        let draw_data = DrawData::new(scene, camera.eye, selection);
+        let draw_data = DrawData::new(scene, camera.eye, highlight);
 
         // Resolve IBL bind group once — shared by all geometry passes this frame.
         let ibl_bind_group = scene

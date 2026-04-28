@@ -2,7 +2,7 @@
 pub use duck_engine_scene as scene;
 
 pub mod ibl;
-mod selection_query;
+mod highlight_query;
 mod renderer;
 mod shaders;
 
@@ -11,4 +11,4 @@ pub use renderer::{
     PipelineCache, Renderer, RenderWorkflow, SceneRenderPass, ShadedWorkflow,
     instance_buffer_layout, vertex_buffer_layout,
 };
-pub use selection_query::{OutlineConfig, SelectionQuery};
+pub use highlight_query::{OutlineConfig, HighlightQuery};

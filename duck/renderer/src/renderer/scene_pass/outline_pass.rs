@@ -6,10 +6,10 @@ use super::super::pass_context::{FrameContext, SceneRenderPass};
 use super::super::pipeline::PipelineCache;
 
 // ---------------------------------------------------------------------------
-// SelectionOutlinePass — mask + screenspace composite in one SceneRenderPass
+// OutlinePass — mask + screenspace composite in one SceneRenderPass
 // ---------------------------------------------------------------------------
 
-/// Creates the pipeline that renders selected geometry into the R8Unorm mask texture.
+/// Creates the pipeline that renders highlighted geometry into the R8Unorm mask texture.
 fn build_mask_pipeline(
     device: &wgpu::Device,
     camera_bgl: &wgpu::BindGroupLayout,
@@ -162,24 +162,24 @@ fn make_screenspace_bind_group(
     })
 }
 
-/// Pass 3 (conditional): Selection outline.
+/// Pass 3 (conditional): Highlight outline.
 ///
 /// Runs two wgpu render passes in sequence:
-/// 1. Renders selected triangle geometry into an R8Unorm mask texture (depth-tested
+/// 1. Renders highlighted triangle geometry into an R8Unorm mask texture (depth-tested
 ///    against the main scene buffer so occluded geometry is not outlined).
 /// 2. Reads the mask in a fullscreen screenspace pass and composites the outline
 ///    color over the scene.
 ///
 /// Owns all GPU resources needed for this effect so neither `FrameContext` nor
 /// `Renderer` need to know about outline-specific state.
-pub(crate) struct SelectionOutlinePass {
+pub(crate) struct OutlinePass {
     mask_pipeline: wgpu::RenderPipeline,
     uniform_buffer: wgpu::Buffer,
     mask_texture: GpuTexture,
     screenspace: ScreenspaceResources,
 }
 
-impl SelectionOutlinePass {
+impl OutlinePass {
     pub(crate) fn new(
         device: &wgpu::Device,
         config: &wgpu::SurfaceConfiguration,
@@ -215,9 +215,9 @@ impl SelectionOutlinePass {
     }
 }
 
-impl SceneRenderPass for SelectionOutlinePass {
+impl SceneRenderPass for OutlinePass {
     fn is_active(&self, draw_data: &DrawData) -> bool {
-        draw_data.has_selection()
+        draw_data.has_highlights()
     }
 
     fn resize(&mut self, device: &wgpu::Device, size: (u32, u32), sample_count: u32) {
@@ -250,10 +250,10 @@ impl SceneRenderPass for SelectionOutlinePass {
             }]));
         }
 
-        // Mask pass — render selected triangles into the R8Unorm mask texture.
+        // Mask pass — render highlighted triangles into the R8Unorm mask texture.
         {
             let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Selection Mask Pass"),
+                label: Some("Highlight Mask Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &self.mask_texture.view,
                     resolve_target: None,
@@ -270,13 +270,13 @@ impl SceneRenderPass for SelectionOutlinePass {
             });
             rp.set_pipeline(&self.mask_pipeline);
             rp.set_bind_group(0, ctx.camera_bind_group, &[]);
-            for batch in draw_data.selected_batches() {
+            for batch in draw_data.highlighted_batches() {
                 if batch.primitive_type != PrimitiveType::TriangleList { continue; }
                 let mesh = ctx.scene.get_mesh(batch.mesh_id).unwrap();
                 let gpu_mesh = ctx.gpu_resources.get_mesh(batch.mesh_id).expect("Mesh GPU resources not initialized");
                 gpu_resources::draw_mesh_instances(ctx.device, &mut rp, gpu_mesh, batch.primitive_type, &batch.instances, mesh.index_count(batch.primitive_type));
             }
-            for batch in draw_data.selection_sub_geom_batches() {
+            for batch in draw_data.highlight_sub_geom_batches() {
                 if batch.primitive_type != PrimitiveType::TriangleList { continue; }
                 let gpu_mesh = ctx.gpu_resources.get_mesh(batch.mesh_id).expect("Mesh GPU resources not initialized");
                 gpu_resources::draw_mesh_subgeom(ctx.device, &mut rp, gpu_mesh, batch.primitive_type, &batch.instance_transform, batch.first_index, batch.index_count);

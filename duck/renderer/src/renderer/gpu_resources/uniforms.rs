@@ -227,7 +227,7 @@ impl PbrUniform {
     }
 }
 
-/// GPU uniform for screen-space selection outline rendering.
+/// GPU uniform for screen-space highlight outline rendering.
 /// Must match the layout in `outline_screenspace.wesl`.
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]

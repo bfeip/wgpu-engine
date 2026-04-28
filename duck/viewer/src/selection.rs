@@ -6,7 +6,7 @@
 use std::collections::HashSet;
 
 use crate::scene::NodeId;
-use crate::renderer::{SelectionQuery, OutlineConfig};
+use crate::renderer::{HighlightQuery, OutlineConfig};
 
 /// Configuration for selection visual feedback.
 #[derive(Debug, Clone)]
@@ -245,24 +245,24 @@ impl SelectionManager {
     }
 }
 
-impl SelectionQuery for SelectionManager {
+impl HighlightQuery for SelectionManager {
     fn is_empty(&self) -> bool {
         self.selected.is_empty()
     }
 
-    fn is_node_selected(&self, node_id: NodeId) -> bool {
+    fn is_node_highlighted(&self, node_id: NodeId) -> bool {
         self.is_node_selected(node_id)
     }
 
-    fn selected_faces_for_node(&self, node_id: NodeId) -> Vec<u32> {
+    fn highlighted_faces_for_node(&self, node_id: NodeId) -> Vec<u32> {
         self.selected_faces_for_node(node_id).collect()
     }
 
-    fn selected_edges_for_node(&self, node_id: NodeId) -> Vec<u32> {
+    fn highlighted_edges_for_node(&self, node_id: NodeId) -> Vec<u32> {
         self.selected_edges_for_node(node_id).collect()
     }
 
-    fn nodes_with_face_selection(&self) -> Vec<NodeId> {
+    fn nodes_with_highlighted_faces(&self) -> Vec<NodeId> {
         let mut nodes: Vec<NodeId> = self
             .selected
             .iter()
@@ -275,7 +275,7 @@ impl SelectionQuery for SelectionManager {
         nodes
     }
 
-    fn nodes_with_edge_selection(&self) -> Vec<NodeId> {
+    fn nodes_with_highlighted_edges(&self) -> Vec<NodeId> {
         let mut nodes: Vec<NodeId> = self
             .selected
             .iter()

@@ -11,7 +11,7 @@ use crate::{
     },
     scene::{Camera, Scene},
     selection::SelectionManager,
-    renderer::{Renderer, SelectionQuery},
+    renderer::{Renderer, HighlightQuery},
 };
 
 /// Main viewer that encapsulates the renderer, scene, and event handling
@@ -423,8 +423,8 @@ impl<'a> Viewer<'a> {
         output.present();
     }
 
-    /// Returns a selection query for the renderer if outline rendering is enabled.
-    fn selection_for_render(selection: &SelectionManager) -> Option<&dyn SelectionQuery> {
+    /// Returns a highlight query for the renderer if outline rendering is enabled.
+    fn selection_for_render(selection: &SelectionManager) -> Option<&dyn HighlightQuery> {
         if selection.config().outline_enabled {
             Some(selection)
         } else {

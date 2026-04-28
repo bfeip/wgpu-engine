@@ -403,7 +403,7 @@ fn create_texture_gpu_resources(
 
 /// Draw a single sub-range of a mesh's index buffer for one instance.
 ///
-/// Used to render individual faces or edges (e.g. for selection highlighting).
+/// Used to render individual faces or edges (e.g. for highlight outlines).
 /// `first_index` and `index_count` are raw index counts (not triangle/segment counts).
 pub(crate) fn draw_mesh_subgeom(
     device: &wgpu::Device,
