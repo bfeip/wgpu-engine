@@ -1,5 +1,5 @@
 use duck_engine_renderer::{
-    DrawData, FrameContext, PipelineCache, Renderer, RenderWorkflow, SceneRenderPass,
+    DrawData, FrameContext, MaterialPipelineCache, Renderer, RenderWorkflow, SceneRenderPass,
 };
 use duck_engine_renderer::scene::{
     Camera, Light, Material, Mesh, PrimitiveType, Scene,
@@ -32,7 +32,7 @@ impl SceneRenderPass for GoochPass {
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
         ctx: &FrameContext<'_>,
-        _pipeline_cache: &mut PipelineCache,
+        _pipeline_cache: &mut MaterialPipelineCache,
         draw_data: &DrawData,
     ) {
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -90,7 +90,7 @@ impl RenderWorkflow for GoochWorkflow {
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
         ctx: &FrameContext<'_>,
-        pipeline_cache: &mut PipelineCache,
+        pipeline_cache: &mut MaterialPipelineCache,
         draw_data: &DrawData,
     ) {
         self.pass.execute(encoder, view, ctx, pipeline_cache, draw_data);

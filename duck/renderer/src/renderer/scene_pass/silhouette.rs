@@ -1,7 +1,7 @@
 use super::super::batching::DrawData;
 use super::super::gpu_resources::SilhouetteUniform;
 use super::super::pass_context::{FrameContext, SceneRenderPass};
-use super::super::pipeline::PipelineCache;
+use super::super::pipeline::MaterialPipelineCache;
 
 // ---------------------------------------------------------------------------
 // SilhouetteEdgesPass — screen-space depth-discontinuity edge detection
@@ -144,7 +144,7 @@ impl SceneRenderPass for SilhouetteEdgesPass {
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
         ctx: &FrameContext<'_>,
-        _pipeline_cache: &mut PipelineCache,
+        _pipeline_cache: &mut MaterialPipelineCache,
         _draw_data: &DrawData,
     ) {
         if self.bind_group.is_none() {

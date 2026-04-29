@@ -8,7 +8,7 @@ mod shaders;
 
 pub use renderer::{
     CustomPipelineBuilder, DrawBatch, DrawData, FrameContext, HiddenLineWorkflow,
-    PipelineCache, Renderer, RenderWorkflow, SceneRenderPass, ShadedWorkflow,
+    MaterialPipelineCache, Renderer, RenderWorkflow, SceneRenderPass, ShadedWorkflow,
     instance_buffer_layout, vertex_buffer_layout,
 };
 pub use highlight_query::{OutlineConfig, HighlightQuery};

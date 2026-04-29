@@ -1,6 +1,6 @@
 use super::batching::DrawData;
 use super::pass_context::{FrameContext, SceneRenderPass};
-use super::pipeline::PipelineCache;
+use super::pipeline::MaterialPipelineCache;
 use super::scene_pass::{
     HiddenLineEdgesPass, HiddenLineOccludedPass, HiddenLineSolidPass,
     MainPass, OverlayPass, OutlinePass, SilhouetteEdgesPass,
@@ -28,7 +28,7 @@ pub trait RenderWorkflow: 'static {
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
         ctx: &FrameContext<'_>,
-        pipeline_cache: &mut PipelineCache,
+        pipeline_cache: &mut MaterialPipelineCache,
         draw_data: &DrawData,
     );
 }
@@ -85,7 +85,7 @@ impl RenderWorkflow for ShadedWorkflow {
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
         ctx: &FrameContext<'_>,
-        pipeline_cache: &mut PipelineCache,
+        pipeline_cache: &mut MaterialPipelineCache,
         draw_data: &DrawData,
     ) {
         for pass in &mut self.passes {
@@ -141,7 +141,9 @@ impl RenderWorkflow for HiddenLineWorkflow {
     fn name(&self) -> &'static str { "Hidden Line" }
 
     fn resize(&mut self, device: &wgpu::Device, size: (u32, u32), sample_count: u32) {
+        self.solid_pass.resize(device, size, sample_count);
         self.silhouette_pass.resize(device, size, sample_count);
+        self.occluded_pass.resize(device, size, sample_count);
     }
 
     fn execute(
@@ -149,7 +151,7 @@ impl RenderWorkflow for HiddenLineWorkflow {
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
         ctx: &FrameContext<'_>,
-        pipeline_cache: &mut PipelineCache,
+        pipeline_cache: &mut MaterialPipelineCache,
         draw_data: &DrawData,
     ) {
         self.solid_pass.execute(encoder, view, ctx, pipeline_cache, draw_data);

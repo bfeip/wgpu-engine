@@ -2,7 +2,7 @@ use super::common::{bind_scene_groups, draw_batches};
 use super::super::batching::DrawData;
 use super::super::gpu_resources::GpuTexture;
 use super::super::pass_context::{FrameContext, SceneRenderPass};
-use super::super::pipeline::PipelineCache;
+use super::super::pipeline::MaterialPipelineCache;
 
 /// Pass 1: Main scene render.
 ///
@@ -16,7 +16,7 @@ impl SceneRenderPass for MainPass {
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
         ctx: &FrameContext<'_>,
-        pipeline_cache: &mut PipelineCache,
+        pipeline_cache: &mut MaterialPipelineCache,
         draw_data: &DrawData,
     ) {
         let (color_view, resolve_target) = ctx.renderer_textures.msaa_views(view);
@@ -93,7 +93,7 @@ impl SceneRenderPass for OverlayPass {
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
         ctx: &FrameContext<'_>,
-        pipeline_cache: &mut PipelineCache,
+        pipeline_cache: &mut MaterialPipelineCache,
         draw_data: &DrawData,
     ) {
         let (color_view, resolve_target) = ctx.renderer_textures.msaa_views(view);

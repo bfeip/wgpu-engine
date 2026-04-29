@@ -3,7 +3,7 @@ use crate::scene::{AlphaMode, MaterialProperties, SceneProperties};
 use super::super::batching::DrawBatch;
 use super::super::gpu_resources::{self, PipelineCacheKey};
 use super::super::pass_context::FrameContext;
-use super::super::pipeline::PipelineCache;
+use super::super::pipeline::MaterialPipelineCache;
 
 /// Bind the scene-level bind groups shared by all geometry passes:
 /// - Group 0: Camera (view/proj + eye position)
@@ -26,7 +26,7 @@ pub(crate) fn draw_batches(
     render_pass: &mut wgpu::RenderPass<'_>,
     batches: &[DrawBatch],
     ctx: &FrameContext<'_>,
-    pipeline_cache: &mut PipelineCache,
+    pipeline_cache: &mut MaterialPipelineCache,
     with_depth_prepass: bool,
 ) {
     if with_depth_prepass {

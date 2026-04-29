@@ -2,7 +2,7 @@ use crate::scene::{Scene, SceneProperties};
 
 use super::batching::{DrawBatch, DrawData};
 use super::gpu_resources::{self, GpuResourceManager, RendererTextures};
-use super::pipeline::PipelineCache;
+use super::pipeline::MaterialPipelineCache;
 
 /// Per-frame read-only snapshot of all renderer state a pass needs.
 ///
@@ -57,8 +57,8 @@ impl<'a> FrameContext<'a> {
 /// Extension point for user-defined render passes.
 ///
 /// Each pass receives [`FrameContext`] for read-only renderer state and a mutable
-/// [`PipelineCache`] for pipeline creation/lookup. The [`DrawData`] provides access
-/// to the sorted, partitioned batch lists for the current frame.
+/// [`MaterialPipelineCache`] for material-variant pipeline creation/lookup. The
+/// [`DrawData`] provides access to the sorted, partitioned batch lists for the current frame.
 ///
 /// Passes may be stateless (zero-size structs) or stateful (holding owned GPU resources
 /// such as textures or pipelines). Stateful passes implement [`resize`](Self::resize)
@@ -69,7 +69,8 @@ pub trait SceneRenderPass {
     }
 
     /// Called after a viewport resize. Passes that own size-dependent GPU resources
-    /// (textures, bind groups) should recreate them here. The default is a no-op.
+    /// (textures, bind groups, or pipelines with baked sample counts) should recreate
+    /// them here. The default is a no-op.
     fn resize(&mut self, _device: &wgpu::Device, _size: (u32, u32), _sample_count: u32) {}
 
     fn execute(
@@ -77,7 +78,7 @@ pub trait SceneRenderPass {
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
         ctx: &FrameContext<'_>,
-        pipeline_cache: &mut PipelineCache,
+        pipeline_cache: &mut MaterialPipelineCache,
         draw_data: &DrawData,
     );
 }

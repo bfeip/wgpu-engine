@@ -11,7 +11,7 @@ pub use batching::{DrawBatch, DrawData};
 pub use custom_pipeline::CustomPipelineBuilder;
 pub use gpu_resources::{instance_buffer_layout, vertex_buffer_layout};
 pub use pass_context::{FrameContext, SceneRenderPass};
-pub use pipeline::PipelineCache;
+pub use pipeline::MaterialPipelineCache;
 pub use workflow::{HiddenLineWorkflow, RenderWorkflow, ShadedWorkflow};
 
 use anyhow::Result;
@@ -45,7 +45,7 @@ pub struct Renderer {
     renderer_textures: RendererTextures,
 
     // Other
-    pipeline_cache: PipelineCache,
+    pipeline_cache: MaterialPipelineCache,
     ibl_resources: IblResources,
 
     // Scene GPU resource tracking
@@ -104,8 +104,8 @@ impl Renderer {
         let renderer_textures = RendererTextures::new(&device, &queue, &config, sample_count);
 
         // ShaderGenerator is shared between the workflow (for pass-specific shaders)
-        // and PipelineCache (for material shaders). Build the workflow first, then
-        // hand the generator to PipelineCache.
+        // and MaterialPipelineCache (for material shaders). Build the workflow first,
+        // then hand the generator to MaterialPipelineCache.
         let mut shader_generator = ShaderGenerator::new();
         let shaded_workflow = ShadedWorkflow::new(
             &device,
@@ -115,7 +115,7 @@ impl Renderer {
             sample_count,
         );
 
-        let pipeline_cache = PipelineCache::new(pipelines, shader_generator, sample_count, surface_format);
+        let pipeline_cache = MaterialPipelineCache::new(pipelines, shader_generator, sample_count, surface_format);
 
         Self {
             device,
@@ -246,7 +246,7 @@ impl Renderer {
     /// Replace the active rendering workflow.
     ///
     /// The new workflow takes effect immediately on the next frame. The previous
-    /// workflow and all its GPU resources are dropped. The [`PipelineCache`] is
+    /// workflow and all its GPU resources are dropped. The [`MaterialPipelineCache`] is
     /// retained across workflow swaps.
     pub fn set_workflow(&mut self, workflow: Box<dyn RenderWorkflow>) {
         self.workflow = workflow;

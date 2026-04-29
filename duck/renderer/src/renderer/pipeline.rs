@@ -8,8 +8,13 @@ use super::gpu_resources::{
     PipelineCacheKey,
 };
 
-/// Cached render pipelines and the resources needed to create new ones.
-pub struct PipelineCache {
+/// Cached render pipelines keyed by material and scene properties.
+///
+/// Only stores **material-variant** pipelines — those parameterized by
+/// [`PipelineCacheKey`] (MaterialProperties × SceneProperties × PrimitiveType).
+/// Technique-specific pipelines with a fixed configuration (outline, silhouette,
+/// hidden-line solid) are owned directly by their respective passes.
+pub struct MaterialPipelineCache {
     cache: HashMap<PipelineCacheKey, wgpu::RenderPipeline>,
     pipelines: MaterialPipelineLayouts,
     shader_generator: ShaderGenerator,
@@ -17,7 +22,7 @@ pub struct PipelineCache {
     surface_format: wgpu::TextureFormat,
 }
 
-impl PipelineCache {
+impl MaterialPipelineCache {
     pub(super) fn new(
         pipelines: MaterialPipelineLayouts,
         shader_generator: ShaderGenerator,
@@ -35,6 +40,15 @@ impl PipelineCache {
 
     pub(super) fn shader_generator_mut(&mut self) -> &mut ShaderGenerator {
         &mut self.shader_generator
+    }
+
+    /// Discard all cached pipelines.
+    ///
+    /// Call this when `sample_count` or `surface_format` changes so pipelines
+    /// are recreated with the new parameters on the next frame.
+    #[allow(dead_code)]
+    pub(super) fn invalidate(&mut self) {
+        self.cache.clear();
     }
 
     pub(super) fn get_or_create(

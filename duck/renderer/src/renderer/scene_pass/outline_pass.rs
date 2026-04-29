@@ -3,7 +3,7 @@ use crate::scene::PrimitiveType;
 use super::super::batching::DrawData;
 use super::super::gpu_resources::{self, GpuTexture, OutlineUniform, instance_buffer_layout, vertex_buffer_layout};
 use super::super::pass_context::{FrameContext, SceneRenderPass};
-use super::super::pipeline::PipelineCache;
+use super::super::pipeline::MaterialPipelineCache;
 
 // ---------------------------------------------------------------------------
 // OutlinePass — mask + screenspace composite in one SceneRenderPass
@@ -237,7 +237,7 @@ impl SceneRenderPass for OutlinePass {
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
         ctx: &FrameContext<'_>,
-        _pipeline_cache: &mut PipelineCache,
+        _pipeline_cache: &mut MaterialPipelineCache,
         draw_data: &DrawData,
     ) {
         if let Some(cfg) = draw_data.outline_config() {
