@@ -453,7 +453,7 @@ fn print_mesh_details(meshes: &[Mesh]) {
             }
         }
 
-        let vertex_data_size = vertex_count * std::mem::size_of::<duck_engine_scene::Vertex>();
+        let vertex_data_size = std::mem::size_of_val(mesh.vertices());
         println!(
             "  {:>4} {:>10} {:>10} {:>10} {:>12}",
             mesh.id,

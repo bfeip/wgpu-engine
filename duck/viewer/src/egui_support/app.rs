@@ -258,11 +258,10 @@ impl<'a> EguiViewerApp<'a> {
         let response = self.egui_winit.on_window_event(&self.window, event);
 
         // Forward to viewer if egui didn't consume it
-        if !response.consumed {
-            if let Some(app_event) = winit_support::convert_window_event(event.clone()) {
+        if !response.consumed
+            && let Some(app_event) = winit_support::convert_window_event(event.clone()) {
                 self.viewer.handle_event(&app_event);
             }
-        }
 
         response.consumed
     }

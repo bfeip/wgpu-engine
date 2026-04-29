@@ -179,11 +179,10 @@ impl ConvexPolyhedron {
         }
 
         // Test 3 (thorough only): Polyhedron edges cross the triangle?
-        if thorough {
-            if self.polyhedron_edges_intersect_triangle(v0, v1, v2) {
+        if thorough
+            && self.polyhedron_edges_intersect_triangle(v0, v1, v2) {
                 return true;
             }
-        }
 
         false
     }

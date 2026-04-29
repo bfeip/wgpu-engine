@@ -132,8 +132,8 @@ impl IrradiancePipeline {
             pass.set_bind_group(0, &bind_group, &[]);
 
             // Dispatch: workgroup size is 8x8, for each of 6 faces
-            let workgroups_x = (IRRADIANCE_CUBEMAP_SIZE + 7) / 8;
-            let workgroups_y = (IRRADIANCE_CUBEMAP_SIZE + 7) / 8;
+            let workgroups_x = IRRADIANCE_CUBEMAP_SIZE.div_ceil(8);
+            let workgroups_y = IRRADIANCE_CUBEMAP_SIZE.div_ceil(8);
             pass.dispatch_workgroups(workgroups_x, workgroups_y, 6);
         }
 

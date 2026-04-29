@@ -208,8 +208,8 @@ impl BrdfLutPipeline {
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &bind_group, &[]);
 
-            let workgroups_x = (BRDF_LUT_SIZE + 15) / 16;
-            let workgroups_y = (BRDF_LUT_SIZE + 15) / 16;
+            let workgroups_x = BRDF_LUT_SIZE.div_ceil(16);
+            let workgroups_y = BRDF_LUT_SIZE.div_ceil(16);
             pass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
         }
 

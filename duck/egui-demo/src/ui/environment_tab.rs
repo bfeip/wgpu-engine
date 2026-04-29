@@ -29,11 +29,9 @@ pub fn show(ui: &mut egui::Ui, viewer: &mut Viewer, actions: &mut UiActions) {
         if ui
             .add(egui::Slider::new(&mut intensity, 0.0..=5.0).text("Intensity"))
             .changed()
-        {
-            if let Some(env_map) = viewer.scene_mut().get_environment_map_mut(env_id) {
+            && let Some(env_map) = viewer.scene_mut().get_environment_map_mut(env_id) {
                 env_map.set_intensity(intensity);
             }
-        }
         ui.label(format!("Rotation: {:.1}°", rotation_deg));
     } else {
         ui.label("No environment map active");

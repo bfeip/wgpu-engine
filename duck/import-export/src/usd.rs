@@ -257,7 +257,7 @@ fn extract_material(data: &mut dyn AbstractData, mat_path: &sdf::Path) -> Materi
     // Find the UsdPreviewSurface shader child
     let children = get_prim_children(data, mat_path);
     for child_name in &children {
-        let shader_path = make_child_path(mat_path, &child_name);
+        let shader_path = make_child_path(mat_path, child_name);
         let type_name = get_prim_type(data, &shader_path);
 
         if type_name.as_deref() != Some("Shader") {
@@ -640,11 +640,10 @@ fn try_read_uvs(data: &mut dyn AbstractData, mesh_path: &sdf::Path) -> Option<Ve
         "primvars:st0",
     ] {
         let uv_path = make_property_path(mesh_path, name);
-        if let Some(uvs) = get_float_array(data, &uv_path, "default") {
-            if !uvs.is_empty() {
+        if let Some(uvs) = get_float_array(data, &uv_path, "default")
+            && !uvs.is_empty() {
                 return Some(uvs);
             }
-        }
     }
     None
 }

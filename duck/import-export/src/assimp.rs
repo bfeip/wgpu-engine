@@ -110,7 +110,7 @@ fn load_textures(
 
     // Pre-load embedded textures from materials
     for mat in &assimp_scene.materials {
-        for (_tex_type, tex_rc) in &mat.textures {
+        for tex_rc in mat.textures.values() {
             let tex = tex_rc.borrow();
             let key = tex.filename.clone();
             if key.is_empty() || map.contains_key(&key) {

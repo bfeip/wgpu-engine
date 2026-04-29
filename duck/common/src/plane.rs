@@ -122,7 +122,7 @@ impl Plane {
         let t = -(self.normal.dot(start.to_vec()) + self.d) / denom;
 
         // Check if intersection is within segment bounds
-        if t < 0.0 || t > 1.0 {
+        if !(0.0..=1.0).contains(&t) {
             return None;
         }
 

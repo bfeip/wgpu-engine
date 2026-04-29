@@ -147,8 +147,8 @@ impl EquirectToCubePipeline {
             pass.set_bind_group(0, &bind_group, &[]);
 
             // Dispatch: one workgroup per 16x16 pixels, for each of 6 faces
-            let workgroups_x = (ENVIRONMENT_CUBEMAP_SIZE + 15) / 16;
-            let workgroups_y = (ENVIRONMENT_CUBEMAP_SIZE + 15) / 16;
+            let workgroups_x = ENVIRONMENT_CUBEMAP_SIZE.div_ceil(16);
+            let workgroups_y = ENVIRONMENT_CUBEMAP_SIZE.div_ceil(16);
             pass.dispatch_workgroups(workgroups_x, workgroups_y, 6);
         }
 

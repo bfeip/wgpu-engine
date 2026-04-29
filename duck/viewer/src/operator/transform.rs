@@ -212,21 +212,19 @@ impl GizmoState {
         // Restore previous highlight to normal color
         if let Some(prev_axis) = self.highlighted_axis {
             let idx = axis_index(prev_axis);
-            if let Some(&mat_id) = self.material_ids.get(idx) {
-                if let Some(mat) = ctx.scene.get_material_mut(mat_id) {
+            if let Some(&mat_id) = self.material_ids.get(idx)
+                && let Some(mat) = ctx.scene.get_material_mut(mat_id) {
                     mat.set_base_color_factor(prev_axis.color());
                 }
-            }
         }
 
         // Apply highlight color to new axis
         if let Some(new_axis) = axis {
             let idx = axis_index(new_axis);
-            if let Some(&mat_id) = self.material_ids.get(idx) {
-                if let Some(mat) = ctx.scene.get_material_mut(mat_id) {
+            if let Some(&mat_id) = self.material_ids.get(idx)
+                && let Some(mat) = ctx.scene.get_material_mut(mat_id) {
                     mat.set_base_color_factor(gizmo::highlight_color(new_axis));
                 }
-            }
         }
 
         self.highlighted_axis = axis;
@@ -367,7 +365,7 @@ impl TransformState {
         let Point3 { x: screen_x, y: screen_y, .. } = camera.project_point_screen(*pivot, width, height);
         let diff_ray = camera.ray_from_screen_point(screen_x + dx, screen_y + dy, width, height);
         let new_pivot = movement_plane.intersect_ray(&diff_ray)
-            .map_or(pivot.clone(), |intersection| intersection.1);
+            .map_or(*pivot, |intersection| intersection.1);
         let move_vector = new_pivot - pivot;
 
         match self.get_constraint_axis() {
@@ -536,15 +534,14 @@ impl TransformState {
         }
 
         // Add axis constraint line if constrained
-        if let Some(color) = self.axis_constraint.color() {
-            if let Some(axis) = self.get_constraint_axis() {
+        if let Some(color) = self.axis_constraint.color()
+            && let Some(axis) = self.get_constraint_axis() {
                 let half_length = self.model_radius * 2.0;
                 let start = self.pivot_world - axis * half_length;
                 let end = self.pivot_world + axis * half_length;
                 let id = ctx.scene.annotations.add_line(start, end, color);
                 self.annotation_ids.push(id);
             }
-        }
     }
 
     /// Clean up annotations.
@@ -679,11 +676,10 @@ impl TransformOperator {
         state.pivot_world = centroid_of_slice(&world_positions).unwrap_or(Point3::origin());
 
         // Store primary selection's rotation for local axis transforms
-        if let Some(primary) = ctx.selection.primary() {
-            if let Some(node) = ctx.scene.get_node(primary.node_id()) {
+        if let Some(primary) = ctx.selection.primary()
+            && let Some(node) = ctx.scene.get_node(primary.node_id()) {
                 state.primary_rotation = node.rotation();
             }
-        }
 
         // Get model radius for sensitivity scaling
         state.model_radius =
@@ -926,8 +922,8 @@ impl Operator for TransformOperator {
             {
                 let mut state = operator_state.borrow_mut();
                 if state.is_active() {
-                    state.accumulated_delta.0 += delta.0 as f32;
-                    state.accumulated_delta.1 += delta.1 as f32;
+                    state.accumulated_delta.0 += delta.0;
+                    state.accumulated_delta.1 += delta.1;
                     state.apply_preview_transform(ctx);
                     return true;
                 }

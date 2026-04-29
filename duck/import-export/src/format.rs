@@ -384,7 +384,7 @@ impl SerializedTexture {
         let image = texture.get_image()
             .map_err(|e| FormatError::TextureError(e.to_string()))?;
         let (width, height) = image.dimensions();
-        let (format, data) = Self::encode_image(&image, fallback_format, compression)?;
+        let (format, data) = Self::encode_image(image, fallback_format, compression)?;
 
         Ok(Self { id, format, width, height, data })
     }
@@ -827,11 +827,10 @@ pub fn assemble_duck_scene(
         em.set_rotation(sem.rotation);
 
         // Attach preprocessed data if HDR source was also kept
-        if has_hdr {
-            if let Some(preprocessed) = preprocessed_map.remove(&sem.id) {
+        if has_hdr
+            && let Some(preprocessed) = preprocessed_map.remove(&sem.id) {
                 em.set_preprocessed_ibl(preprocessed);
             }
-        }
 
         scene.insert_environment_map_unchecked(em);
     }
@@ -863,7 +862,7 @@ pub fn estimate_serialized_size(scene: &Scene) -> usize {
     // Mesh data (vertices + indices), estimate zstd compression at 60%
     let mesh_raw: usize = scene.meshes()
         .map(|m| {
-            let vert_bytes = m.vertices().len() * size_of::<Vertex>();
+            let vert_bytes = std::mem::size_of_val(m.vertices());
             let idx_bytes: usize = m.primitives().iter()
                 .map(|p| p.indices.len() * 2)
                 .sum();
@@ -879,11 +878,10 @@ pub fn estimate_serialized_size(scene: &Scene) -> usize {
                 // already compressed as PNG/JPEG, zstd won't shrink further
                 return bytes.len();
             }
-            if let Some(path) = tex.source_path() {
-                if let Ok(meta) = std::fs::metadata(path) {
+            if let Some(path) = tex.source_path()
+                && let Ok(meta) = std::fs::metadata(path) {
                     return meta.len() as usize;
                 }
-            }
             // Fallback: estimate from dimensions (RGBA / 2 for rough PNG size)
             tex.dimensions()
                 .map(|(w, h)| {
@@ -927,7 +925,7 @@ pub fn estimate_serialized_size(scene: &Scene) -> usize {
     let structured = scene.node_count() * std::mem::size_of::<Node>()
         + scene.instance_count() * std::mem::size_of::<Instance>()
         + scene.material_count() * std::mem::size_of::<Material>()
-        + scene.lights().len() * std::mem::size_of::<Light>();
+        + std::mem::size_of_val(scene.lights());
     let structured_estimate = (structured as f64 * GOOD_COMPRESSION_RATIO) as usize;
 
     // Header (16 bytes) + TOC (~40 bytes per section × 8 sections)
@@ -1077,21 +1075,18 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
                 .with_alpha_mode(mat.alpha_mode())
                 .with_alpha_cutoff(mat.alpha_cutoff());
 
-            if let Some(tid) = mat.base_color_texture() {
-                if let Some(&remapped) = texture_id_map.get(&tid) {
+            if let Some(tid) = mat.base_color_texture()
+                && let Some(&remapped) = texture_id_map.get(&tid) {
                     new_mat = new_mat.with_base_color_texture(remapped);
                 }
-            }
-            if let Some(tid) = mat.normal_texture() {
-                if let Some(&remapped) = texture_id_map.get(&tid) {
+            if let Some(tid) = mat.normal_texture()
+                && let Some(&remapped) = texture_id_map.get(&tid) {
                     new_mat = new_mat.with_normal_texture(remapped);
                 }
-            }
-            if let Some(tid) = mat.metallic_roughness_texture() {
-                if let Some(&remapped) = texture_id_map.get(&tid) {
+            if let Some(tid) = mat.metallic_roughness_texture()
+                && let Some(&remapped) = texture_id_map.get(&tid) {
                     new_mat = new_mat.with_metallic_roughness_texture(remapped);
                 }
-            }
             if let Some(color) = mat.line_color() {
                 new_mat = new_mat.with_line_color(color);
             }
@@ -1145,7 +1140,7 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
             let remapped_id = *env_map_id_map.get(&env_map.id).unwrap_or(&0);
             let hdr_data = match env_map.source() {
                 duck_engine_scene::EnvironmentSource::EquirectangularPath(path) => {
-                    Some(std::fs::read(path).map_err(|e| FormatError::IoError(e))?)
+                    Some(std::fs::read(path).map_err(FormatError::IoError)?)
                 }
                 duck_engine_scene::EnvironmentSource::EquirectangularHdr(data) => {
                     Some(data.clone())

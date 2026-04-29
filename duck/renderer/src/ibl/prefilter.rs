@@ -178,8 +178,8 @@ impl PrefilterPipeline {
                 pass.set_pipeline(&self.pipeline);
                 pass.set_bind_group(0, &bind_group, &[]);
 
-                let workgroups_x = (mip_size + 7) / 8;
-                let workgroups_y = (mip_size + 7) / 8;
+                let workgroups_x = mip_size.div_ceil(8);
+                let workgroups_y = mip_size.div_ceil(8);
                 pass.dispatch_workgroups(workgroups_x, workgroups_y, 6);
             }
 

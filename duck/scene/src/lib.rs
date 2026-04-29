@@ -713,11 +713,10 @@ impl Scene {
         transform: common::Transform,
     ) -> anyhow::Result<NodeId> {
         // Validate parent exists if specified
-        if let Some(parent_id) = parent {
-            if !self.nodes.contains_key(&parent_id) {
+        if let Some(parent_id) = parent
+            && !self.nodes.contains_key(&parent_id) {
                 anyhow::bail!("Parent node with ID {} not found in scene", parent_id);
             }
-        }
 
         let id = self.next_node_id;
         self.next_node_id += 1;
@@ -995,11 +994,10 @@ impl Scene {
             }
             node::Visibility::Invisible => {
                 self.set_subtree_visibility_recursive(node_id, node::Visibility::Invisible);
-                if let Some(node) = self.get_node(node_id) {
-                    if let Some(parent_id) = node.parent() {
+                if let Some(node) = self.get_node(node_id)
+                    && let Some(parent_id) = node.parent() {
                         self.invalidate_ancestor_effective_visibility(parent_id);
                     }
-                }
             }
         }
     }
@@ -1216,11 +1214,10 @@ impl Scene {
     // consider introducing a dedicated overlay system with its own root node
     // rather than piggy-backing on the annotation root.
     pub fn ensure_annotation_root(&mut self) -> NodeId {
-        if let Some(root_id) = self.annotations.root_node() {
-            if self.nodes.contains_key(&root_id) {
+        if let Some(root_id) = self.annotations.root_node()
+            && self.nodes.contains_key(&root_id) {
                 return root_id;
             }
-        }
 
         let root_id = self
             .add_default_node(None, Some("AnnotationRoot".to_string()))
@@ -1263,11 +1260,10 @@ impl Scene {
 
         // Remove old scene nodes for stale annotations
         for &id in &stale_ids {
-            if let Some(annotation) = self.annotations.get(id) {
-                if let Some(old_node_id) = annotation.node_id() {
+            if let Some(annotation) = self.annotations.get(id)
+                && let Some(old_node_id) = annotation.node_id() {
                     self.remove_node(old_node_id);
                 }
-            }
             if let Some(ann) = self.annotations.get_mut(id) {
                 ann.meta_mut().node_id = None;
             }
@@ -1293,11 +1289,10 @@ impl Scene {
     /// The NodeId of the reified annotation, or None if not found or already reified.
     pub fn reify_annotation(&mut self, id: AnnotationId) -> Option<NodeId> {
         // Check if already reified
-        if let Some(annotation) = self.annotations.get(id) {
-            if annotation.is_reified() {
+        if let Some(annotation) = self.annotations.get(id)
+            && annotation.is_reified() {
                 return annotation.node_id();
             }
-        }
 
         let annotation = self.annotations.get(id)?.clone();
         let name = annotation.meta().name.clone();

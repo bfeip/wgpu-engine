@@ -286,7 +286,7 @@ impl EventDispatcher {
 
         self.callback_map
             .entry(kind)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push((id, Box::new(callback)));
 
         id
@@ -619,8 +619,8 @@ impl EventDispatcher {
                     }
 
                     // Emit zoom as mouse wheel (pinch distance change)
-                    if let Some(prev_distance) = self.touch_state.prev_pinch_distance {
-                        if prev_distance > 0.0 {
+                    if let Some(prev_distance) = self.touch_state.prev_pinch_distance
+                        && prev_distance > 0.0 {
                             let delta = distance - prev_distance;
                             // Scale: positive delta = fingers moving apart = zoom in
                             if delta.abs() > 0.5 {
@@ -632,7 +632,6 @@ impl EventDispatcher {
                                 );
                             }
                         }
-                    }
                     self.touch_state.prev_pinch_distance = Some(distance);
                 }
             }

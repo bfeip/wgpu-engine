@@ -479,15 +479,14 @@ pub fn detect_importer<'a>(
     }
 
     // Second pass: file extension fallback
-    if let Some(path) = path_hint {
-        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+    if let Some(path) = path_hint
+        && let Some(ext) = path.extension().and_then(|e| e.to_str()) {
             for imp in importers {
                 if imp.detect_from_extension(ext) {
                     return Ok(imp.as_ref());
                 }
             }
         }
-    }
 
     Err(LoadError::UnknownFormat)
 }

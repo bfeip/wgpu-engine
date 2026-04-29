@@ -359,11 +359,10 @@ impl<'a> ApplicationHandler for App<'a> {
                 viewer_app.handle_window_event(&event);
 
                 // Check for debug keys (convert to app event for checking)
-                if let Some(app_event) = winit_support::convert_window_event(event) {
-                    if let Some(action) = Self::get_debug_key_action(&app_event) {
+                if let Some(app_event) = winit_support::convert_window_event(event)
+                    && let Some(action) = Self::get_debug_key_action(&app_event) {
                         self.handle_debug_key_action(action, event_loop);
                     }
-                }
             }
         }
     }

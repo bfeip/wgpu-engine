@@ -109,7 +109,7 @@ impl GpuCubemap {
             let unpadded_bytes_per_row = mip_size * bytes_per_pixel;
             // wgpu requires rows aligned to COPY_BYTES_PER_ROW_ALIGNMENT (256)
             let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-            let padded_bytes_per_row = (unpadded_bytes_per_row + align - 1) / align * align;
+            let padded_bytes_per_row = unpadded_bytes_per_row.div_ceil(align) * align;
             let buffer_size = (padded_bytes_per_row * mip_size) as u64;
 
             let mut faces: [CubemapFaceData; CUBEMAP_FACES] =

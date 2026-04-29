@@ -609,7 +609,7 @@ pub fn load_gltf_assets(
     for mesh in parsed.document.meshes() {
         let mut primitives_data = Vec::new();
 
-        for (_prim_idx, primitive) in mesh.primitives().enumerate() {
+        for primitive in mesh.primitives() {
             let Some(primitive_type) = map_primitive_mode(primitive.mode()) else {
                 log::warn!(
                     "Skipping unsupported primitive mode {:?} in mesh {}",

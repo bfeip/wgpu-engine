@@ -18,9 +18,9 @@ pub enum BuiltinOperatorId {
     Transform = 3,
 }
 
-impl Into<OperatorId> for BuiltinOperatorId {
-    fn into(self) -> OperatorId {
-        self as OperatorId
+impl From<BuiltinOperatorId> for OperatorId {
+    fn from(val: BuiltinOperatorId) -> Self {
+        val as OperatorId
     }
 }
 
