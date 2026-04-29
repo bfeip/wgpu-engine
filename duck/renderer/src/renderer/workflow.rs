@@ -1,8 +1,10 @@
+use crate::scene::PrimitiveType;
+
 use super::batching::DrawData;
 use super::pass_context::{FrameContext, SceneRenderPass};
 use super::pipeline::MaterialPipelineCache;
 use super::scene_pass::{
-    HiddenLineEdgesPass, HiddenLineOccludedPass, HiddenLineSolidPass,
+    FlatColorPass, FlatColorPassDesc, HiddenLineEdgesPass,
     MainPass, OverlayPass, OutlinePass, SilhouetteEdgesPass,
 };
 use crate::shaders::ShaderGenerator;
@@ -107,14 +109,14 @@ impl RenderWorkflow for ShadedWorkflow {
 /// tones: gray for occluded lines and black (material color) for visible lines.
 ///
 /// Pass sequence:
-/// 1. [`HiddenLineSolidPass`]    — clear to white, render all triangles white, write depth.
-/// 2. [`SilhouetteEdgesPass`]    — fullscreen depth-discontinuity edge detection.
-/// 3. [`HiddenLineOccludedPass`] — gray lines where depth compare is `Greater` (behind solids).
-/// 4. [`HiddenLineEdgesPass`]    — black (material-colored) lines where depth compare is `LessEqual`.
+/// 1. `solid_pass`     ([`FlatColorPass`]) — clear to white, render all triangles white, write depth.
+/// 2. `silhouette_pass`([`SilhouetteEdgesPass`]) — fullscreen depth-discontinuity edge detection.
+/// 3. `occluded_pass`  ([`FlatColorPass`]) — gray lines where depth compare is `Greater` (behind solids).
+/// 4. `edge_pass`      ([`HiddenLineEdgesPass`]) — material-colored lines where depth compare is `LessEqual`.
 pub struct HiddenLineWorkflow {
-    solid_pass: HiddenLineSolidPass,
+    solid_pass: FlatColorPass,
     silhouette_pass: SilhouetteEdgesPass,
-    occluded_pass: HiddenLineOccludedPass,
+    occluded_pass: FlatColorPass,
     edge_pass: HiddenLineEdgesPass,
 }
 
@@ -129,9 +131,38 @@ impl HiddenLineWorkflow {
         shader_generator: &mut ShaderGenerator,
     ) -> Self {
         Self {
-            solid_pass: HiddenLineSolidPass::new(device, surface_format, sample_count, camera_bgl, lights_bgl, material_color_bgl, shader_generator),
+            solid_pass: FlatColorPass::new(
+                device, surface_format, sample_count,
+                camera_bgl, lights_bgl, material_color_bgl, shader_generator,
+                FlatColorPassDesc {
+                    label: "Hidden Line Solid",
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: Some(wgpu::Face::Back),
+                    depth_compare: wgpu::CompareFunction::Less,
+                    depth_write: true,
+                    // Push faces slightly away so coplanar edges pass depth test.
+                    depth_bias: wgpu::DepthBiasState { constant: 2, slope_scale: 2.0, clamp: 0.0 },
+                    clear_color: Some(wgpu::Color::WHITE),
+                    primitive_filter: PrimitiveType::TriangleList,
+                    color: [1.0, 1.0, 1.0, 1.0],
+                },
+            ),
             silhouette_pass: SilhouetteEdgesPass::new(device, surface_format, sample_count, shader_generator),
-            occluded_pass: HiddenLineOccludedPass::new(device, surface_format, sample_count, camera_bgl, lights_bgl, material_color_bgl, shader_generator),
+            occluded_pass: FlatColorPass::new(
+                device, surface_format, sample_count,
+                camera_bgl, lights_bgl, material_color_bgl, shader_generator,
+                FlatColorPassDesc {
+                    label: "Hidden Line Occluded",
+                    topology: wgpu::PrimitiveTopology::LineList,
+                    cull_mode: None,
+                    depth_compare: wgpu::CompareFunction::Greater,
+                    depth_write: false,
+                    depth_bias: Default::default(),
+                    clear_color: None,
+                    primitive_filter: PrimitiveType::LineList,
+                    color: [0.6, 0.6, 0.6, 1.0],
+                },
+            ),
             edge_pass: HiddenLineEdgesPass,
         }
     }
@@ -156,7 +187,10 @@ impl RenderWorkflow for HiddenLineWorkflow {
     ) {
         self.solid_pass.execute(encoder, view, ctx, pipeline_cache, draw_data);
         self.silhouette_pass.execute(encoder, view, ctx, pipeline_cache, draw_data);
-        self.occluded_pass.execute(encoder, view, ctx, pipeline_cache, draw_data);
-        self.edge_pass.execute(encoder, view, ctx, pipeline_cache, draw_data);
+        let has_lines = draw_data.all_batches().iter().any(|b| b.primitive_type == PrimitiveType::LineList);
+        if has_lines {
+            self.occluded_pass.execute(encoder, view, ctx, pipeline_cache, draw_data);
+            self.edge_pass.execute(encoder, view, ctx, pipeline_cache, draw_data);
+        }
     }
 }

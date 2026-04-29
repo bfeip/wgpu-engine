@@ -66,7 +66,6 @@ impl Renderer {
             .any(|l| l.space() != CoordinateSpace::World);
         let light_generation = scene.light_generation();
         if self.lights.synced_generation != light_generation || has_camera_space_lights {
-            let camera = camera;
             let world_lights: Vec<_> = scene
                 .lights()
                 .iter()
@@ -79,11 +78,11 @@ impl Renderer {
         }
 
         // 5. Process environment maps for IBL
-        if let Some(env_id) = scene.active_environment_map() {
-            if let Some(env_map) = scene.get_environment_map(env_id) {
-                self.ibl_resources
-                    .process_environment(&self.device, &self.queue, env_map)?;
-            }
+        if let Some(env_id) = scene.active_environment_map()
+            && let Some(env_map) = scene.get_environment_map(env_id)
+        {
+            self.ibl_resources
+                .process_environment(&self.device, &self.queue, env_map)?;
         }
 
         Ok(())
