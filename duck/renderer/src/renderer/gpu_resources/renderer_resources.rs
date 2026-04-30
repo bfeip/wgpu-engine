@@ -6,15 +6,15 @@ use super::state::GpuTexture;
 use super::uniforms::{CameraUniform, LightsArrayUniform};
 
 /// GPU resources for camera view/projection uniforms.
-pub(in crate::renderer) struct CameraResources {
-    pub(in crate::renderer) buffer: wgpu::Buffer,
-    pub(in crate::renderer) bind_group_layout: wgpu::BindGroupLayout,
-    pub(in crate::renderer) bind_group: wgpu::BindGroup,
+pub(crate) struct CameraResources {
+    pub buffer: wgpu::Buffer,
+    pub bind_group_layout: wgpu::BindGroupLayout,
+    pub bind_group: wgpu::BindGroup,
 }
 
 impl CameraResources {
     /// Create camera resources including bind group layout.
-    pub(in crate::renderer) fn new(device: &wgpu::Device) -> CameraResources {
+    pub fn new(device: &wgpu::Device) -> CameraResources {
         let camera_uniform = CameraUniform::new();
 
         let buffer = device.create_buffer_init(&BufferInitDescriptor {
@@ -56,16 +56,16 @@ impl CameraResources {
 }
 
 /// GPU resources for lighting uniform data.
-pub(in crate::renderer) struct LightResources {
-    pub(in crate::renderer) buffer: wgpu::Buffer,
-    pub(in crate::renderer) bind_group_layout: wgpu::BindGroupLayout,
-    pub(in crate::renderer) bind_group: wgpu::BindGroup,
-    pub(in crate::renderer) synced_generation: u64,
+pub(crate) struct LightResources {
+    pub buffer: wgpu::Buffer,
+    pub bind_group_layout: wgpu::BindGroupLayout,
+    pub bind_group: wgpu::BindGroup,
+    pub synced_generation: u64,
 }
 
 impl LightResources {
     /// Create light resources including bind group layout.
-    pub(in crate::renderer) fn new(device: &wgpu::Device) -> LightResources {
+    pub fn new(device: &wgpu::Device) -> LightResources {
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Light buffer"),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
@@ -106,14 +106,14 @@ impl LightResources {
 }
 
 /// Bind group layouts for different material types.
-pub(in crate::renderer) struct MaterialBindGroupLayouts {
-    pub(in crate::renderer) color: wgpu::BindGroupLayout,
-    pub(in crate::renderer) pbr: wgpu::BindGroupLayout,
+pub(crate) struct MaterialBindGroupLayouts {
+    pub color: wgpu::BindGroupLayout,
+    pub pbr: wgpu::BindGroupLayout,
 }
 
 impl MaterialBindGroupLayouts {
     /// Create bind group layouts for all material types.
-    pub(in crate::renderer) fn new(device: &wgpu::Device) -> MaterialBindGroupLayouts {
+    pub fn new(device: &wgpu::Device) -> MaterialBindGroupLayouts {
         let color = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Color Material Bind Group Layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -204,16 +204,16 @@ impl MaterialBindGroupLayouts {
 }
 
 /// Pipeline layouts for different material types.
-pub(in crate::renderer) struct MaterialPipelineLayouts {
-    pub(in crate::renderer) color: wgpu::PipelineLayout,
-    pub(in crate::renderer) pbr: wgpu::PipelineLayout,
+pub(crate) struct MaterialPipelineLayouts {
+    pub color: wgpu::PipelineLayout,
+    pub pbr: wgpu::PipelineLayout,
     /// PBR with IBL (includes environment bind group)
-    pub(in crate::renderer) pbr_ibl: wgpu::PipelineLayout,
+    pub pbr_ibl: wgpu::PipelineLayout,
 }
 
 impl MaterialPipelineLayouts {
     /// Create pipeline layouts for all material types.
-    pub(in crate::renderer) fn new(
+    pub fn new(
         device: &wgpu::Device,
         camera_bind_group_layout: &wgpu::BindGroupLayout,
         light_bind_group_layout: &wgpu::BindGroupLayout,
@@ -256,17 +256,17 @@ impl MaterialPipelineLayouts {
 }
 
 /// Textures used as part of the rendering process.
-pub(in crate::renderer) struct RendererTextures {
-    pub(in crate::renderer) depth: GpuTexture,
-    pub(in crate::renderer) white: GpuTexture,
-    pub(in crate::renderer) default_normal: GpuTexture,
+pub(crate) struct RendererTextures {
+    pub depth: GpuTexture,
+    pub white: GpuTexture,
+    pub default_normal: GpuTexture,
     /// Multisampled color attachment for MSAA rendering. None when sample_count == 1.
-    pub(in crate::renderer) msaa_color_attachment: Option<GpuTexture>,
+    pub msaa_color_attachment: Option<GpuTexture>,
 }
 
 impl RendererTextures {
     /// Create textures for rendering.
-    pub(in crate::renderer) fn new(
+    pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         config: &wgpu::SurfaceConfiguration,
@@ -299,7 +299,7 @@ impl RendererTextures {
     /// When MSAA is active, the pass should render into `render_view` (the multisampled
     /// attachment) and resolve into `target` (typically the swapchain). When MSAA is
     /// inactive, renders directly into `target` with no resolve step.
-    pub(in crate::renderer) fn msaa_views<'a>(
+    pub fn msaa_views<'a>(
         &'a self,
         target: &'a wgpu::TextureView,
     ) -> (&'a wgpu::TextureView, Option<&'a wgpu::TextureView>) {
@@ -311,16 +311,16 @@ impl RendererTextures {
 }
 
 /// Cached GPU resources for headless rendering, reused across frames at the same size.
-pub(in crate::renderer) struct HeadlessResources {
-    pub(in crate::renderer) texture: wgpu::Texture,
-    pub(in crate::renderer) view: wgpu::TextureView,
-    pub(in crate::renderer) staging_buffer: wgpu::Buffer,
-    pub(in crate::renderer) padded_bytes_per_row: u32,
-    pub(in crate::renderer) size: (u32, u32),
+pub(crate) struct HeadlessResources {
+    pub texture: wgpu::Texture,
+    pub view: wgpu::TextureView,
+    pub staging_buffer: wgpu::Buffer,
+    pub padded_bytes_per_row: u32,
+    pub size: (u32, u32),
 }
 
 impl HeadlessResources {
-    pub(in crate::renderer) fn new(
+    pub fn new(
         device: &wgpu::Device,
         width: u32,
         height: u32,
@@ -370,9 +370,9 @@ impl HeadlessResources {
 /// Cache key for render pipelines, combining all properties that require
 /// a distinct compiled pipeline.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(in crate::renderer) struct PipelineCacheKey {
-    pub(in crate::renderer) material_props: MaterialProperties,
-    pub(in crate::renderer) scene_props: SceneProperties,
-    pub(in crate::renderer) primitive_type: PrimitiveType,
-    pub(in crate::renderer) depth_prepass: bool,
+pub(crate) struct PipelineCacheKey {
+    pub material_props: MaterialProperties,
+    pub scene_props: SceneProperties,
+    pub primitive_type: PrimitiveType,
+    pub depth_prepass: bool,
 }
