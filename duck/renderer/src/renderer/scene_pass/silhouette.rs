@@ -3,10 +3,6 @@ use super::super::gpu_resources::SilhouetteUniform;
 use super::super::pass_context::{FrameContext, SceneRenderPass};
 use super::super::pipeline::MaterialPipelineCache;
 
-// ---------------------------------------------------------------------------
-// SilhouetteEdgesPass — screen-space depth-discontinuity edge detection
-// ---------------------------------------------------------------------------
-
 /// Silhouette edge detection pass.
 ///
 /// A fullscreen screenspace compositor that reads the depth buffer and draws a

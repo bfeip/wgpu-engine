@@ -5,10 +5,6 @@ use super::super::gpu_resources::{self, GpuTexture, OutlineUniform, instance_buf
 use super::super::pass_context::{FrameContext, SceneRenderPass};
 use super::super::pipeline::MaterialPipelineCache;
 
-// ---------------------------------------------------------------------------
-// OutlinePass — mask + screenspace composite in one SceneRenderPass
-// ---------------------------------------------------------------------------
-
 /// Creates the pipeline that renders highlighted geometry into the R8Unorm mask texture.
 fn build_mask_pipeline(
     device: &wgpu::Device,
@@ -162,8 +158,6 @@ fn make_screenspace_bind_group(
     })
 }
 
-/// Pass 3 (conditional): Highlight outline.
-///
 /// Runs two wgpu render passes in sequence:
 /// 1. Renders highlighted triangle geometry into an R8Unorm mask texture (depth-tested
 ///    against the main scene buffer so occluded geometry is not outlined).

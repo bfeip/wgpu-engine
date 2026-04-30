@@ -127,8 +127,6 @@ pub(crate) fn draw_batches(
     }
 }
 
-/// Pass 1: Main scene render.
-///
 /// Clears color/depth/stencil, binds camera/lights/IBL, runs a depth pre-pass for
 /// `Blend`-mode materials, then draws all batches with pipeline caching.
 pub(crate) struct MainPass;
@@ -180,8 +178,6 @@ impl SceneRenderPass for MainPass {
     }
 }
 
-/// Pass 2 (conditional): Overlay render.
-///
 /// Loads the existing color attachment, clears a separate depth buffer, and draws
 /// always-on-top geometry so it depth-tests among itself but not against the scene.
 /// Owns its own depth buffer so it can be independently resized.
