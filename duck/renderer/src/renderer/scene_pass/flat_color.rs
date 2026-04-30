@@ -6,10 +6,6 @@ use super::super::gpu_resources::{GpuTexture, instance_buffer_layout, vertex_buf
 use super::super::pass_context::{FrameContext, SceneRenderPass};
 use super::super::pipeline::MaterialPipelineCache;
 
-pub(crate) fn rgba_to_wgpu_color(c: RgbaColor) -> wgpu::Color {
-    wgpu::Color { r: c.r as f64, g: c.g as f64, b: c.b as f64, a: c.a as f64 }
-}
-
 /// Per-instance configuration for [`FlatColorPass`].
 ///
 /// Encodes everything that distinguishes different flat-color pass variants

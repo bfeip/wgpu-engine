@@ -5,7 +5,7 @@ use super::batching::DrawData;
 use super::pass_context::{FrameContext, SceneRenderPass};
 use super::pipeline::MaterialPipelineCache;
 use super::scene_pass::{
-    FlatColorPass, FlatColorPassDesc, rgba_to_wgpu_color,
+    FlatColorPass, FlatColorPassDesc,
     MainPass, OverlayPass, OutlinePass, SilhouetteEdgesPass,
 };
 use crate::shaders::ShaderGenerator;
@@ -168,7 +168,7 @@ impl HiddenLineWorkflow {
                 depth_write: true,
                 // Push faces slightly away so coplanar edges pass depth test.
                 depth_bias: wgpu::DepthBiasState { constant: 2, slope_scale: 2.0, clamp: 0.0 },
-                clear_color: Some(rgba_to_wgpu_color(config.face_color)),
+                clear_color: Some(crate::rgba_to_wgpu_color(config.face_color)),
                 primitive_filter: PrimitiveType::TriangleList,
                 color: config.face_color,
             },
