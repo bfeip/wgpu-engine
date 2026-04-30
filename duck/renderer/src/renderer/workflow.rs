@@ -36,10 +36,6 @@ pub trait RenderWorkflow: 'static {
     );
 }
 
-// ---------------------------------------------------------------------------
-// ShadedWorkflow
-// ---------------------------------------------------------------------------
-
 /// The default shaded rendering workflow.
 ///
 /// Runs the standard pass sequence: main geometry, overlay (always-on-top)
@@ -99,10 +95,6 @@ impl RenderWorkflow for ShadedWorkflow {
     }
 }
 
-// ---------------------------------------------------------------------------
-// HiddenLineConfig
-// ---------------------------------------------------------------------------
-
 /// Color configuration for [`HiddenLineWorkflow`].
 #[derive(Clone, Debug)]
 pub struct HiddenLineConfig {
@@ -123,10 +115,6 @@ impl Default for HiddenLineConfig {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// HiddenLineWorkflow
-// ---------------------------------------------------------------------------
 
 /// Hidden-line rendering workflow.
 ///
