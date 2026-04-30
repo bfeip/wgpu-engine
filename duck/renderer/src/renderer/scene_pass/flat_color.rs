@@ -16,7 +16,6 @@ pub(crate) fn rgba_to_wgpu_color(c: RgbaColor) -> wgpu::Color {
 /// so all can be driven by one struct + one pipeline builder.
 pub(crate) struct FlatColorPassDesc {
     pub label: &'static str,
-    pub topology: wgpu::PrimitiveTopology,
     pub cull_mode: Option<wgpu::Face>,
     pub depth_compare: wgpu::CompareFunction,
     pub depth_write: bool,
@@ -56,7 +55,11 @@ fn build_flat_color_pipeline(
             compilation_options: Default::default(),
         }),
         primitive: wgpu::PrimitiveState {
-            topology: desc.topology,
+            topology: match desc.primitive_filter {
+                PrimitiveType::TriangleList => wgpu::PrimitiveTopology::TriangleList,
+                PrimitiveType::LineList => wgpu::PrimitiveTopology::LineList,
+                PrimitiveType::PointList => wgpu::PrimitiveTopology::PointList,
+            },
             cull_mode: desc.cull_mode,
             ..Default::default()
         },

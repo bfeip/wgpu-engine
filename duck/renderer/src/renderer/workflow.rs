@@ -163,7 +163,6 @@ impl HiddenLineWorkflow {
             camera_bgl, lights_bgl, material_color_bgl, shader_generator,
             FlatColorPassDesc {
                 label: "Hidden Line Solid",
-                topology: wgpu::PrimitiveTopology::TriangleList,
                 cull_mode: Some(wgpu::Face::Back),
                 depth_compare: wgpu::CompareFunction::Less,
                 depth_write: true,
@@ -181,7 +180,6 @@ impl HiddenLineWorkflow {
             camera_bgl, lights_bgl, material_color_bgl, shader_generator,
             FlatColorPassDesc {
                 label,
-                topology: wgpu::PrimitiveTopology::LineList,
                 cull_mode: None,
                 depth_compare,
                 depth_write: false,
