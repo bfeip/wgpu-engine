@@ -1,9 +1,14 @@
 use crate::scene::PrimitiveType;
+use crate::scene::common::RgbaColor;
 
 use super::super::batching::DrawData;
 use super::super::gpu_resources::{GpuTexture, instance_buffer_layout, vertex_buffer_layout};
 use super::super::pass_context::{FrameContext, SceneRenderPass};
 use super::super::pipeline::MaterialPipelineCache;
+
+pub(crate) fn rgba_to_wgpu_color(c: RgbaColor) -> wgpu::Color {
+    wgpu::Color { r: c.r as f64, g: c.g as f64, b: c.b as f64, a: c.a as f64 }
+}
 
 /// Per-instance configuration for [`FlatColorPass`].
 ///
@@ -20,7 +25,7 @@ pub(crate) struct FlatColorPassDesc {
     pub clear_color: Option<wgpu::Color>,
     /// Only batches whose primitive type matches this value are drawn.
     pub primitive_filter: PrimitiveType,
-    pub color: [f32; 4],
+    pub color: RgbaColor,
 }
 
 fn build_flat_color_pipeline(
@@ -108,7 +113,7 @@ impl FlatColorPass {
 
         let color_buffer = device.create_buffer_init(&BufferInitDescriptor {
             label: Some(desc.label),
-            contents: bytemuck::cast_slice(&desc.color),
+            contents: bytemuck::bytes_of(&desc.color),
             usage: wgpu::BufferUsages::UNIFORM,
         });
         let color_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {

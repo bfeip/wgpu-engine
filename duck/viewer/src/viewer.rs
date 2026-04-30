@@ -294,8 +294,8 @@ impl<'a> Viewer<'a> {
     }
 
     /// Create a [`HiddenLineWorkflow`](crate::renderer::HiddenLineWorkflow) configured for this viewer.
-    pub fn hidden_line_workflow(&mut self) -> crate::renderer::HiddenLineWorkflow {
-        self.renderer.hidden_line_workflow()
+    pub fn hidden_line_workflow(&mut self, config: crate::renderer::HiddenLineConfig) -> crate::renderer::HiddenLineWorkflow {
+        self.renderer.hidden_line_workflow(config)
     }
 
     /// Get a reference to the wgpu device

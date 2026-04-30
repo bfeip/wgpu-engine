@@ -7,7 +7,7 @@ mod renderer;
 mod shaders;
 
 pub use renderer::{
-    CustomPipelineBuilder, DrawBatch, DrawData, FrameContext, HiddenLineWorkflow,
+    CustomPipelineBuilder, DrawBatch, DrawData, FrameContext, HiddenLineConfig, HiddenLineWorkflow,
     MaterialPipelineCache, Renderer, RenderWorkflow, SceneRenderPass, ShadedWorkflow,
     instance_buffer_layout, vertex_buffer_layout,
 };

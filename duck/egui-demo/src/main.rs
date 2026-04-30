@@ -306,7 +306,7 @@ impl<'a> App<'a> {
         self.workflow_index = (self.workflow_index + 1) % 2;
         let workflow: Box<dyn RenderWorkflow> = match self.workflow_index {
             0 => Box::new(viewer.shaded_workflow()),
-            _ => Box::new(viewer.hidden_line_workflow()),
+            _ => Box::new(viewer.hidden_line_workflow(Default::default())),
         };
         log::info!("Switched to '{}' workflow", workflow.name());
         viewer.set_workflow(workflow);

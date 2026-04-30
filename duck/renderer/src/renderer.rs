@@ -12,7 +12,7 @@ pub use custom_pipeline::CustomPipelineBuilder;
 pub use gpu_resources::{instance_buffer_layout, vertex_buffer_layout};
 pub use pass_context::{FrameContext, SceneRenderPass};
 pub use pipeline::MaterialPipelineCache;
-pub use workflow::{HiddenLineWorkflow, RenderWorkflow, ShadedWorkflow};
+pub use workflow::{HiddenLineConfig, HiddenLineWorkflow, RenderWorkflow, ShadedWorkflow};
 
 use anyhow::Result;
 
@@ -266,7 +266,7 @@ impl Renderer {
 
     /// Create a new [`HiddenLineWorkflow`] configured for this renderer's device, format,
     /// and MSAA settings. Pass to [`set_workflow`](Self::set_workflow) to activate it.
-    pub fn hidden_line_workflow(&mut self) -> HiddenLineWorkflow {
+    pub fn hidden_line_workflow(&mut self, config: HiddenLineConfig) -> HiddenLineWorkflow {
         HiddenLineWorkflow::new(
             &self.device,
             self.surface_format,
@@ -275,6 +275,7 @@ impl Renderer {
             &self.lights.bind_group_layout,
             &self.material_layouts.color,
             self.pipeline_cache.shader_generator_mut(),
+            config,
         )
     }
 
