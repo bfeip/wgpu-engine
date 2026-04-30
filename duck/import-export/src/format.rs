@@ -854,8 +854,7 @@ pub fn assemble_duck_scene(
 /// reallocations. The actual size after zstd compression will typically be
 /// smaller.
 pub fn estimate_serialized_size(scene: &Scene) -> usize {
-    use std::mem::size_of;
-    use duck_engine_scene::{EnvironmentSource, Vertex};
+    use duck_engine_scene::{EnvironmentSource};
 
     const GOOD_COMPRESSION_RATIO: f64 = 0.6;
 
