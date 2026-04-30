@@ -104,6 +104,7 @@ impl LightUniform {
                 color: [color.r, color.g, color.b],
                 _padding2: 0.0,
             },
+
             Light::Directional {
                 direction,
                 color,
@@ -121,6 +122,7 @@ impl LightUniform {
                 color: [color.r, color.g, color.b],
                 _padding2: 0.0,
             },
+
             Light::Spot {
                 position,
                 direction,
@@ -246,7 +248,7 @@ pub(in crate::renderer) struct OutlineUniform {
 pub(in crate::renderer) struct SilhouetteUniform {
     pub(in crate::renderer) edge_color: [f32; 4],
     pub(in crate::renderer) threshold: f32,
-    pub(in crate::renderer) _pad: [f32; 3],
+    pub(in crate::renderer) _pad: [f32; 3], // removable?
 }
 
 #[cfg(test)]
