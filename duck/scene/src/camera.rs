@@ -329,6 +329,27 @@ impl Camera {
 
         crate::common::Ray::new(world_near, direction)
     }
+
+    /// Builds a node `Transform` that encodes this camera's pose (eye + orientation).
+    ///
+    /// # TODO
+    /// When Camera is refactored to store only projection intrinsics (fovy, aspect,
+    /// znear, zfar), `eye`/`target`/`up` will be removed and this method will
+    /// no longer be needed — the node Transform itself will be the canonical source.
+    /// At that point, delete this method and all call-sites that sync the node
+    /// transform from the camera payload.
+    pub fn to_node_transform(&self) -> crate::common::Transform {
+        use cgmath::{InnerSpace, Matrix3, Quaternion, Vector3};
+        let forward = (self.target - self.eye).normalize();
+        let right = forward.cross(self.up).normalize();
+        let up = right.cross(forward);
+        let mat = Matrix3::from_cols(right, up, -forward);
+        crate::common::Transform::new(
+            self.eye,
+            Quaternion::from(mat),
+            Vector3::new(1.0, 1.0, 1.0),
+        )
+    }
 }
 
 #[cfg(test)]

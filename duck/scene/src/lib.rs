@@ -577,21 +577,29 @@ impl Scene {
         self.nodes.values().any(|n| matches!(n.payload(), NodePayload::Light(_)))
     }
 
-    /// Attaches a default two-light setup as children of the given camera node.
+    /// Adds a default key + fill directional light pair as children of `camera_node_id`.
     ///
-    /// Adds a key light (intensity 1.0) and fill light (intensity 0.3) as directional
-    /// light nodes parented under `camera_node_id`. The lights are camera-relative
-    /// because they are children of the camera node
+    /// Because the lights are children of the camera node, callers must keep that
+    /// node's world Transform in sync with the viewer camera so the lights remain
+    /// camera-relative.
+    ///
+    /// # TODO
+    /// When Camera is refactored to intrinsics-only (dropping eye/target/up), the
+    /// camera node's Transform will be the canonical pose and this sync will be
+    /// automatic. At that point the `camera_node_id` relationship stays but the
+    /// manual Transform sync in the viewer can be removed.
     pub fn set_default_light_nodes(&mut self, camera_node_id: NodeId) {
         let white = crate::common::RgbaColor { r: 1.0, g: 1.0, b: 1.0, a: 1.0 };
         let key_id = self
             .add_node(Some(camera_node_id), Some("DefaultKeyLight".to_string()), common::Transform::IDENTITY)
             .expect("Failed to create key light node");
         self.nodes.get_mut(&key_id).unwrap().set_payload(NodePayload::Light(Light::directional(white, 1.0)));
+        self.node_generation += 1;
         let fill_id = self
             .add_node(Some(camera_node_id), Some("DefaultFillLight".to_string()), common::Transform::IDENTITY)
             .expect("Failed to create fill light node");
         self.nodes.get_mut(&fill_id).unwrap().set_payload(NodePayload::Light(Light::directional(white, 0.3)));
+        self.node_generation += 1;
     }
 
     // ========== Node API ==========
