@@ -1,4 +1,6 @@
 use super::InstanceId;
+use crate::Camera;
+use crate::Light;
 use crate::common::{
     Aabb, Transform, apply_scale, compose_rotation, local_axes, local_axis_x, local_axis_y,
     local_axis_z, rotate_position_about_pivot, scale_position_about_pivot_local,
@@ -9,6 +11,49 @@ use std::cell::Cell;
 
 /// Unique identifier for a Node in the scene tree.
 pub type NodeId = u32;
+
+/// Trait for custom, user-defined node payloads.
+///
+/// External crates can implement this to attach arbitrary typed data to scene nodes.
+/// Custom payloads serialize as `NodePayload::None` for now.
+pub trait CustomNodePayload: std::fmt::Debug + Send + Sync {}
+
+/// The typed content of a scene node.
+#[derive(Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum NodePayload {
+    /// Structural container with no content (default).
+    None,
+    /// References a mesh+material pair to be rendered.
+    Instance(InstanceId),
+    /// A camera with eye/target/up defining position and fovy/znear/zfar/ortho for projection.
+    Camera(Camera),
+    /// A light source. Position and direction are derived from the node's world transform:
+    /// translation column → position (Point, Spot); negative Z-axis → direction (Directional, Spot).
+    Light(Light),
+    /// A runtime-only custom payload defined by an external crate.
+    /// Serializes as `None` for now.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    Custom(Box<dyn CustomNodePayload>),
+}
+
+impl Default for NodePayload {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+impl Clone for NodePayload {
+    fn clone(&self) -> Self {
+        match self {
+            Self::None => Self::None,
+            Self::Instance(id) => Self::Instance(*id),
+            Self::Camera(c) => Self::Camera(c.clone()),
+            Self::Light(l) => Self::Light(l.clone()),
+            Self::Custom(_) => Self::None,
+        }
+    }
+}
 
 /// Explicit visibility state set by the user.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -46,8 +91,8 @@ pub struct Node {
     parent: Option<NodeId>,
     children: Vec<NodeId>,
 
-    // Content: This node can reference an instance to be rendered
-    instance: Option<InstanceId>,
+    // Content: the typed payload carried by this node
+    payload: NodePayload,
 
     // Visibility
     visibility: Visibility,
@@ -70,7 +115,7 @@ impl Node {
             transform,
             parent: None,
             children: Vec::new(),
-            instance: None,
+            payload: NodePayload::None,
             visibility: Visibility::default(),
             cached_effective_visibility: Cell::new(None),
             cached_world_transform: Cell::new(None),
@@ -261,12 +306,16 @@ impl Node {
         self.mark_bounds_dirty();
     }
 
-    pub fn instance(&self) -> Option<InstanceId> {
-        self.instance
+    /// Returns the node's payload.
+    pub fn payload(&self) -> &NodePayload {
+        &self.payload
     }
 
-    pub fn set_instance(&mut self, instance: Option<InstanceId>) {
-        self.instance = instance;
+    /// Sets the node's payload and invalidates this node's bounds cache.
+    ///
+    /// Ancestor bounds propagation is the caller's (Scene's) responsibility.
+    pub fn set_payload(&mut self, payload: NodePayload) {
+        self.payload = payload;
         self.cached_bounds.set(None);
     }
 
@@ -381,7 +430,7 @@ mod tests {
         assert_eq!(node.name, None);
         assert_eq!(node.parent(), None);
         assert_eq!(node.children().len(), 0);
-        assert_eq!(node.instance(), None);
+        assert!(matches!(node.payload(), NodePayload::None));
     }
 
     #[test]
@@ -807,47 +856,41 @@ mod tests {
     }
 
     // ========================================================================
-    // Node Instance Tests
+    // Node Payload Tests
     // ========================================================================
 
     #[test]
-    fn test_instance_none_by_default() {
+    fn test_payload_none_by_default() {
         let node = Node::new_default(0);
-        assert_eq!(node.instance(), None);
+        assert!(matches!(node.payload(), NodePayload::None));
     }
 
     #[test]
-    fn test_set_instance() {
+    fn test_set_payload_instance() {
         let mut node = Node::new_default(0);
 
-        node.set_instance(Some(42));
-        assert_eq!(node.instance(), Some(42));
+        node.set_payload(NodePayload::Instance(42));
+        assert!(matches!(node.payload(), NodePayload::Instance(42)));
 
-        node.set_instance(Some(99));
-        assert_eq!(node.instance(), Some(99));
+        node.set_payload(NodePayload::Instance(99));
+        assert!(matches!(node.payload(), NodePayload::Instance(99)));
     }
 
     #[test]
-    fn test_instance_retrieval() {
+    fn test_set_payload_none() {
         let mut node = Node::new_default(0);
 
-        // Initially None
-        assert_eq!(node.instance(), None);
+        node.set_payload(NodePayload::Instance(123));
+        assert!(matches!(node.payload(), NodePayload::Instance(123)));
 
-        // Set to Some value
-        node.set_instance(Some(123));
-        assert_eq!(node.instance(), Some(123));
-
-        // Set back to None
-        node.set_instance(None);
-        assert_eq!(node.instance(), None);
+        node.set_payload(NodePayload::None);
+        assert!(matches!(node.payload(), NodePayload::None));
     }
 
     #[test]
-    fn test_set_instance_marks_dirty() {
+    fn test_set_payload_marks_bounds_dirty() {
         let mut node = Node::new_default(0);
 
-        // Set cache
         node.set_cached_world_transform(Matrix4::from_scale(1.0));
         node.set_cached_bounds(Some(Aabb::new(
             Point3::new(-1., -1., -1.),
@@ -855,9 +898,9 @@ mod tests {
         )));
         assert!(!node.transform_dirty());
 
-        node.set_instance(Some(42));
-        assert!(!node.transform_dirty()); // instance doesn't affect transform
-        assert!(node.bounds_dirty()); // instance affects bounds
+        node.set_payload(NodePayload::Instance(42));
+        assert!(!node.transform_dirty()); // payload doesn't affect transform
+        assert!(node.bounds_dirty()); // payload affects bounds
     }
 
     // ========================================================================

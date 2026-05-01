@@ -29,11 +29,10 @@ pub use material::MaterialId;
 pub use mesh::MeshId;
 pub use node::NodeId;
 pub use texture::TextureId;
-pub use view::ViewId;
 
 pub use camera::Camera;
 pub use coordinate_space::CoordinateSpace;
-pub use view::View;
+pub use view::{View, ViewId};
 pub use instance::Instance;
 pub use light::{Light, LightType, MAX_LIGHTS};
 pub use material::{
@@ -41,7 +40,7 @@ pub use material::{
     DEFAULT_METALLIC, DEFAULT_ROUGHNESS,
 };
 pub use mesh::{Mesh, MeshDescriptor, MeshIndex, MeshPrimitive, ObjMesh, PrimitiveType, SubMeshRange, Topology, Vertex};
-pub use node::{EffectiveVisibility, Node, Visibility};
+pub use node::{CustomNodePayload, EffectiveVisibility, Node, NodePayload, Visibility};
 pub use texture::{Texture, TextureFormat};
 pub use environment::{
     CubemapFaceData, CubemapMipData, EnvironmentMap, EnvironmentSource, PreprocessedCubemap,
@@ -103,7 +102,6 @@ pub struct SceneProperties {
 pub struct Scene {
     meshes: HashMap<MeshId, Mesh>,
     instances: HashMap<InstanceId, Instance>,
-    lights: Vec<Light>,
 
     // Scene tree
     nodes: HashMap<NodeId, Node>,
@@ -117,14 +115,15 @@ pub struct Scene {
     /// The currently active environment map for IBL lighting.
     active_environment_map: Option<EnvironmentMapId>,
 
-    /// Named views (saved camera states).
-    views: HashMap<ViewId, View>,
+    /// The node (with a Camera payload) that drives rendering when no explicit camera is passed.
+    active_camera: Option<NodeId>,
 
     /// Annotation manager
     pub annotations: AnnotationManager,
 
-    /// Generation counter for light changes (increments on any light mutation)
-    light_generation: u64,
+    /// Generation counter that increments on any node add, remove, or mutation.
+    /// Used by the renderer to detect when scene data need re-collection.
+    node_generation: u64,
 
     next_mesh_id: MeshId,
     next_instance_id: InstanceId,
@@ -132,7 +131,6 @@ pub struct Scene {
     next_material_id: MaterialId,
     next_texture_id: TextureId,
     next_environment_map_id: EnvironmentMapId,
-    next_view_id: ViewId,
 }
 
 impl Scene {
@@ -149,7 +147,6 @@ impl Scene {
         let mut scene = Self {
             meshes: HashMap::new(),
             instances: HashMap::new(),
-            lights: Vec::new(),
 
             nodes: HashMap::new(),
             root_nodes: Vec::new(),
@@ -160,11 +157,11 @@ impl Scene {
             environment_maps: HashMap::new(),
             active_environment_map: None,
 
-            views: HashMap::new(),
+            active_camera: None,
 
             annotations: AnnotationManager::new(),
 
-            light_generation: 1,
+            node_generation: initial_generation(),
 
             next_mesh_id: 0,
             next_instance_id: 0,
@@ -172,7 +169,6 @@ impl Scene {
             next_material_id: 0,
             next_texture_id: 0,
             next_environment_map_id: 0,
-            next_view_id: 0,
         };
 
         // Insert default material at the sentinel ID (not via add_material,
@@ -552,113 +548,50 @@ impl Scene {
         self.environment_maps.insert(env_map.id, env_map);
     }
 
-    // ========== View API ==========
+    // ========== Active Camera API ==========
 
-    /// Adds a named view (saved camera state) to the scene.
+    /// Returns the node ID of the active camera, if any.
+    pub fn active_camera(&self) -> Option<NodeId> {
+        self.active_camera
+    }
+
+    /// Sets the active camera node. Pass `None` to clear.
+    pub fn set_active_camera(&mut self, node_id: Option<NodeId>) {
+        self.active_camera = node_id;
+    }
+
+    // ========== Node Generation ==========
+
+    /// Returns the current node generation counter.
     ///
-    /// # Returns
-    /// The unique [`ViewId`] assigned to the new view.
-    pub fn add_view(&mut self, name: impl Into<String>, camera: Camera) -> ViewId {
-        let id = self.next_view_id;
-        self.next_view_id += 1;
-        self.views.insert(id, View::new(id, name, camera));
-        id
+    /// Increments on every node add, remove, or payload mutation. The renderer
+    /// uses this to detect when lights (and other node data) need re-collection.
+    pub fn node_generation(&self) -> u64 {
+        self.node_generation
     }
 
-    /// Gets a reference to a view by ID.
-    pub fn get_view(&self, id: ViewId) -> Option<&View> {
-        self.views.get(&id)
+    // ========== Light Node Helpers ==========
+
+    /// Returns true if any node in the scene carries a `Light` payload.
+    pub fn has_light_nodes(&self) -> bool {
+        self.nodes.values().any(|n| matches!(n.payload(), NodePayload::Light(_)))
     }
 
-    /// Gets a mutable reference to a view by ID.
-    pub fn get_view_mut(&mut self, id: ViewId) -> Option<&mut View> {
-        self.views.get_mut(&id)
-    }
-
-    /// Returns an iterator over all views.
-    pub fn views(&self) -> impl Iterator<Item = &View> {
-        self.views.values()
-    }
-
-    /// Returns the number of views in the scene.
-    pub fn view_count(&self) -> usize {
-        self.views.len()
-    }
-
-    /// Removes a view by ID. Returns the removed view, or `None` if not found.
-    pub fn remove_view(&mut self, id: ViewId) -> Option<View> {
-        self.views.remove(&id)
-    }
-
-    /// Inserts a view using its existing `id` (used during deserialization).
-    pub fn insert_view_unchecked(&mut self, view: View) {
-        self.next_view_id = self.next_view_id.max(view.id + 1);
-        self.views.insert(view.id, view);
-    }
-
-    // ========== Light Methods ==========
-
-    /// Returns a slice of all lights in the scene.
-    pub fn lights(&self) -> &[Light] {
-        &self.lights
-    }
-
-    /// Returns a mutable slice of all lights in the scene.
-    pub fn lights_mut(&mut self) -> &mut [Light] {
-        &mut self.lights
-    }
-
-    /// Adds a light to the scene.
-    pub fn add_light(&mut self, light: Light) {
-        self.lights.push(light);
-        self.light_generation += 1;
-    }
-
-    /// Replaces all lights in the scene.
-    pub fn set_lights(&mut self, lights: Vec<Light>) {
-        self.lights = lights;
-        self.light_generation += 1;
-    }
-
-    /// Removes a light from the scene by index.
-    pub fn remove_light(&mut self, light_idx: usize) {
-        self.lights.remove(light_idx);
-        self.light_generation += 1;
-    }
-
-    /// Clears all lights from the scene.
-    pub fn clear_lights(&mut self) {
-        self.lights.clear();
-        self.light_generation += 1;
-    }
-
-    /// Returns the current light generation counter.
+    /// Attaches a default two-light setup as children of the given camera node.
     ///
-    /// This increments whenever lights are modified through Scene methods.
-    pub fn light_generation(&self) -> u64 {
-        self.light_generation
-    }
-
-    /// Adds a two-light camera-space setup to the scene.
-    ///
-    /// Adds a key light (intensity 1.0, upper-left) and a fill light (intensity 0.3,
-    /// lower-right), both as camera-space directional lights. Camera-space lights move
-    /// with the camera, so the result looks correct regardless of scene orientation or scale.
-    ///
-    /// This function unconditionally appends the two lights. Callers that want to apply
-    /// default lighting only when no lights exist should check `scene.lights().is_empty()`
-    /// before calling.
-    pub fn set_default_lights(&mut self) {
+    /// Adds a key light (intensity 1.0) and fill light (intensity 0.3) as directional
+    /// light nodes parented under `camera_node_id`. The lights are camera-relative
+    /// because they are children of the camera node
+    pub fn set_default_light_nodes(&mut self, camera_node_id: NodeId) {
         let white = crate::common::RgbaColor { r: 1.0, g: 1.0, b: 1.0, a: 1.0 };
-        self.lights.push(
-            Light::directional(cgmath::Vector3::new(-1.0, -1.0, -1.0).normalize(), white, 1.0)
-                .in_space(CoordinateSpace::Camera),
-        );
-        self.lights.push(
-            Light::directional(cgmath::Vector3::new(1.0, 1.0, -1.0).normalize(), white, 0.3)
-                .in_space(CoordinateSpace::Camera),
-        );
-        self.light_generation += 1;
+        let key_id = self
+            .add_node(Some(camera_node_id), Some("DefaultKeyLight".to_string()), common::Transform::IDENTITY)
+            .expect("Failed to create key light node");
+        self.nodes.get_mut(&key_id).unwrap().set_payload(NodePayload::Light(Light::directional(white, 1.0)));
+        let fill_id = self
+            .add_node(Some(camera_node_id), Some("DefaultFillLight".to_string()), common::Transform::IDENTITY)
+            .expect("Failed to create fill light node");
+        self.nodes.get_mut(&fill_id).unwrap().set_payload(NodePayload::Light(Light::directional(white, 0.3)));
     }
 
     // ========== Node API ==========
@@ -734,6 +667,7 @@ impl Scene {
         }
 
         self.nodes.insert(id, node);
+        self.node_generation += 1;
         Ok(id)
     }
 
@@ -770,7 +704,7 @@ impl Scene {
 
         // Attach instance to node
         // Safe to unwrap since we just created the node above
-        self.nodes.get_mut(&node_id).unwrap().set_instance(Some(instance_id));
+        self.nodes.get_mut(&node_id).unwrap().set_payload(NodePayload::Instance(instance_id));
 
         Ok(node_id)
     }
@@ -838,6 +772,7 @@ impl Scene {
 
         // Finally, remove the node itself
         self.nodes.remove(&node_id);
+        self.node_generation += 1;
     }
 
     /// Clears all nodes from the scene.
@@ -850,12 +785,12 @@ impl Scene {
         self.root_nodes.clear();
         self.instances.clear();
         self.meshes.clear();
-        self.lights.clear();
-        self.light_generation += 1;
         self.textures.clear();
         self.environment_maps.clear();
         self.active_environment_map = None;
+        self.active_camera = None;
         self.annotations.clear();
+        self.node_generation += 1;
 
         // Reset all materials and re-insert a fresh default material.
         // We clear + re-insert rather than retain because the material at
@@ -884,7 +819,10 @@ impl Scene {
         let referenced_instances: HashSet<InstanceId> = self
             .nodes
             .values()
-            .filter_map(|node| node.instance())
+            .filter_map(|node| match node.payload() {
+                NodePayload::Instance(id) => Some(*id),
+                _ => None,
+            })
             .collect();
 
         // Collect mesh and material IDs referenced by retained instances
@@ -944,11 +882,11 @@ impl Scene {
 
     // ========== Node Transform Mutation API ==========
 
-    /// Sets the full transform of a node and invalidates ancestor bounds.
-    /// Attaches an instance to an existing node, replacing any previous instance.
-    pub fn set_node_instance(&mut self, node_id: NodeId, instance_id: InstanceId) {
+    /// Sets the payload of a node and invalidates ancestor bounds.
+    pub fn set_node_payload(&mut self, node_id: NodeId, payload: NodePayload) {
         let node = self.nodes.get_mut(&node_id).expect("Node not found");
-        node.set_instance(Some(instance_id));
+        node.set_payload(payload);
+        self.node_generation += 1;
         self.invalidate_ancestor_bounds(node_id);
     }
 
@@ -956,6 +894,7 @@ impl Scene {
         let node = self.nodes.get_mut(&node_id).expect("Node not found");
         node.set_transform(transform);
         self.invalidate_ancestor_bounds(node_id);
+        self.node_generation += 1;
     }
 
     /// Sets the position of a node and invalidates ancestor bounds.
@@ -963,6 +902,7 @@ impl Scene {
         let node = self.nodes.get_mut(&node_id).expect("Node not found");
         node.set_position(position);
         self.invalidate_ancestor_bounds(node_id);
+        self.node_generation += 1;
     }
 
     /// Sets the rotation of a node and invalidates ancestor bounds.
@@ -970,6 +910,7 @@ impl Scene {
         let node = self.nodes.get_mut(&node_id).expect("Node not found");
         node.set_rotation(rotation);
         self.invalidate_ancestor_bounds(node_id);
+        self.node_generation += 1;
     }
 
     /// Sets the scale of a node and invalidates ancestor bounds.
@@ -977,6 +918,7 @@ impl Scene {
         let node = self.nodes.get_mut(&node_id).expect("Node not found");
         node.set_scale(scale);
         self.invalidate_ancestor_bounds(node_id);
+        self.node_generation += 1;
     }
 
     // ========== Visibility API ==========
@@ -1175,7 +1117,11 @@ impl Scene {
         }
 
         // If this node has an instance, get its mesh bounds and transform to world space
-        let node_bounds = if let Some(instance_id) = node.instance() {
+        let instance_id = match node.payload() {
+            NodePayload::Instance(id) => Some(*id),
+            _ => None,
+        };
+        let node_bounds = if let Some(instance_id) = instance_id {
             let instance = self.instances.get(&instance_id)
                 .expect("Instance referenced by node not found in scene");
             let mesh = self.meshes.get(&instance.mesh())
@@ -1193,7 +1139,7 @@ impl Scene {
                 (None, cb) => cb,
             }
         } else {
-            // Branch node - just use merged child bounds
+            // No instance - just use merged child bounds
             merged_bounds
         };
 
@@ -1237,17 +1183,21 @@ impl Scene {
             .iter()
             .filter(|a| a.is_reified())
             .filter(|a| match a {
+                // TODO Phase 2: redesign light annotations with NodeId refs
                 Annotation::PointLight(pl) => {
-                    pl.reified_generation != Some(self.light_generation)
+                    pl.reified_generation != Some(self.node_generation)
                 }
                 Annotation::SpotLight(sl) => {
-                    sl.reified_generation != Some(self.light_generation)
+                    sl.reified_generation != Some(self.node_generation)
                 }
                 Annotation::Normals(normals) => {
                     let current_gen = self
                         .nodes
                         .get(&normals.target_node_id)
-                        .and_then(|n| n.instance())
+                        .and_then(|n| match n.payload() {
+                            NodePayload::Instance(id) => Some(*id),
+                            _ => None,
+                        })
                         .and_then(|iid| self.instances.get(&iid))
                         .and_then(|inst| self.meshes.get(&inst.mesh()))
                         .map(|m| m.generation());
@@ -1302,17 +1252,22 @@ impl Scene {
 
         // Store generation for reference-based annotations
         match self.annotations.get_mut(id) {
+            // TODO Phase 2: redesign light annotations with NodeId refs
             Some(Annotation::PointLight(pl)) => {
-                pl.reified_generation = Some(self.light_generation);
+                pl.reified_generation = Some(self.node_generation);
             }
             Some(Annotation::SpotLight(sl)) => {
-                sl.reified_generation = Some(self.light_generation);
+                sl.reified_generation = Some(self.node_generation);
             }
             Some(Annotation::Normals(normals)) => {
+                let target_node_id = normals.target_node_id;
                 normals.reified_generation = self
                     .nodes
-                    .get(&normals.target_node_id)
-                    .and_then(|n| n.instance())
+                    .get(&target_node_id)
+                    .and_then(|n| match n.payload() {
+                        NodePayload::Instance(id) => Some(*id),
+                        _ => None,
+                    })
                     .and_then(|iid| self.instances.get(&iid))
                     .and_then(|inst| self.meshes.get(&inst.mesh()))
                     .map(|m| m.generation());
@@ -1339,40 +1294,18 @@ impl Scene {
             Annotation::Axes(a) => a.to_mesh_data(),
             Annotation::Box(a) => vec![a.to_mesh_data()],
             Annotation::Grid(a) => vec![a.to_mesh_data()],
-            Annotation::PointLight(pl) => {
-                let Some(Light::Point { position, color, .. }) =
-                    self.lights.get(pl.light_index)
-                else {
-                    return vec![];
-                };
-                vec![pl.to_mesh_data(Point3::from_vec(*position), *color)]
-            }
-            Annotation::SpotLight(sl) => {
-                let Some(Light::Spot {
-                    position,
-                    direction,
-                    color,
-                    inner_cone_angle,
-                    outer_cone_angle,
-                    ..
-                }) = self.lights.get(sl.light_index)
-                else {
-                    return vec![];
-                };
-                sl.to_mesh_data(
-                    Point3::from_vec(*position),
-                    *direction,
-                    *color,
-                    *inner_cone_angle,
-                    *outer_cone_angle,
-                )
+            Annotation::PointLight(_) | Annotation::SpotLight(_) => {
+                // TODO: Phase 2 — redesign light annotations using NodeId references.
+                // Position/direction now come from the node world transform, not Light payload.
+                todo!("Light annotations require Phase 2 redesign with NodeId references")
             }
             Annotation::Normals(normals) => {
                 let Some(node) = self.nodes.get(&normals.target_node_id) else {
                     return vec![];
                 };
-                let Some(instance_id) = node.instance() else {
-                    return vec![];
+                let instance_id = match node.payload() {
+                    NodePayload::Instance(id) => *id,
+                    _ => return vec![],
                 };
                 let Some(instance) = self.instances.get(&instance_id) else {
                     return vec![];

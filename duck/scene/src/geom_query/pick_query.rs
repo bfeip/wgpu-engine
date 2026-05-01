@@ -1,7 +1,7 @@
 use cgmath::{Matrix4, SquareMatrix};
 
 use crate::common::Aabb;
-use crate::{InstanceId, Mesh, NodeId, Scene};
+use crate::{InstanceId, Mesh, NodeId, NodePayload, Scene};
 
 /// A query that can pick objects by traversing the scene tree.
 ///
@@ -81,7 +81,11 @@ fn pick_node<Q: PickQuery>(
     }
 
     // Narrow phase: If this node has an instance, test it
-    if let Some(instance_id) = node.instance() {
+    let instance_id = match node.payload() {
+        NodePayload::Instance(id) => Some(*id),
+        _ => None,
+    };
+    if let Some(instance_id) = instance_id {
         let instance = scene
             .get_instance(instance_id)
             .expect("Instance referenced by node not found in scene");
