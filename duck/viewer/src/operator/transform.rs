@@ -188,7 +188,7 @@ impl GizmoState {
             return None;
         }
 
-        let ray = ctx.camera.ray_from_screen_point(cursor_x, cursor_y, ctx.size.0, ctx.size.1);
+        let ray = ctx.camera().ray_from_screen_point(cursor_x, cursor_y, ctx.size.0, ctx.size.1);
         let results = pick_all_from_ray(&RayPickQuery::faces(ray), ctx.scene);
 
         // Find the first hit that matches a gizmo node
@@ -356,7 +356,7 @@ impl TransformState {
 
     /// Compute the translation delta based on mouse movement and constraints.
     fn compute_translation(&self, ctx: &EventContext) -> Vector3<f32> {
-        let camera = &ctx.camera;
+        let camera = ctx.camera();
         let pivot = &self.pivot_world;
         let (width, height) = ctx.size;
         let (dx, dy) = self.accumulated_delta;
@@ -387,7 +387,7 @@ impl TransformState {
         let axis = match self.get_constraint_axis() {
             None => {
                 // Free rotation: rotate around view axis
-                ctx.camera.forward()
+                ctx.camera().forward()
             }
             Some(axis) => axis,
         };

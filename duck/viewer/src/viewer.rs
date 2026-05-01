@@ -9,7 +9,7 @@ use crate::{
         BuiltinOperatorId, NavigationMode, NavigationOperator, OperatorManager,
         SelectionOperator, TransformOperator,
     },
-    scene::{Camera, Scene},
+    scene::{Camera, NodePayload, Scene, common::Transform},
     selection::SelectionManager,
     renderer::{Renderer, HighlightQuery},
 };
@@ -21,7 +21,6 @@ pub struct Viewer<'a> {
     device: wgpu::Device,
     queue: wgpu::Queue,
     renderer: Renderer,
-    camera: Camera,
     scene: Scene,
     selection: SelectionManager,
     dispatcher: EventDispatcher,
@@ -131,7 +130,7 @@ impl<'a> Viewer<'a> {
         let transform_operator =
             Box::new(TransformOperator::new(BuiltinOperatorId::Transform.into()));
         operator_manager.push_back(transform_operator, &mut dispatcher);
-        
+
         let selection_operator =
             Box::new(SelectionOperator::new(BuiltinOperatorId::Selection.into()));
         operator_manager.push_back(selection_operator, &mut dispatcher);
@@ -141,17 +140,6 @@ impl<'a> Viewer<'a> {
         let navigation_mode = nav_operator.mode_handle();
         operator_manager.push_back(Box::new(nav_operator), &mut dispatcher);
 
-        let camera = Camera {
-            eye: (0.0, 0.1, 0.2).into(),
-            target: (0.0, 0.0, 0.0).into(),
-            up: cgmath::Vector3::unit_y(),
-            aspect: width as f32 / height as f32,
-            fovy: 45.0,
-            znear: 0.001,
-            zfar: 100.0,
-            ortho: false,
-        };
-
         // Create viewer
         let mut viewer = Self {
             surface,
@@ -159,7 +147,6 @@ impl<'a> Viewer<'a> {
             device,
             queue,
             renderer,
-            camera,
             scene,
             selection: SelectionManager::new(),
             dispatcher,
@@ -171,6 +158,8 @@ impl<'a> Viewer<'a> {
 
         // Register default event handlers
         viewer.register_default_handlers();
+        // Ensure there is always an active camera in the scene
+        viewer.ensure_active_camera();
 
         viewer
     }
@@ -214,12 +203,11 @@ impl<'a> Viewer<'a> {
                 self.surface_config.height = h;
                 self.surface.configure(&self.device, &self.surface_config);
                 self.renderer.resize(*physical_size);
-                self.camera.aspect = w as f32 / h as f32;
+                self.with_camera_mut(|cam| cam.aspect = w as f32 / h as f32);
             }
         }
 
         let mut ctx = EventContext {
-            camera: &mut self.camera,
             size: self.renderer.size(),
             cursor_position: &mut self.cursor_position,
             scene: &mut self.scene,
@@ -257,19 +245,29 @@ impl<'a> Viewer<'a> {
         self.handle_event(&event);
     }
 
-    /// Get a reference to the current camera
+    /// Get a reference to the active camera.
+    ///
+    /// Panics if the scene has no active camera node.
     pub fn camera(&self) -> &Camera {
-        &self.camera
+        self.scene.active_camera_data().expect("no active camera in scene")
     }
 
-    /// Get a mutable reference to the current camera
-    pub fn camera_mut(&mut self) -> &mut Camera {
-        &mut self.camera
+    /// Clones the active camera, passes it to `f` for mutation, then writes it back.
+    pub fn with_camera_mut<F: FnOnce(&mut Camera)>(&mut self, f: F) {
+        let id = self.scene.active_camera().expect("no active camera in scene");
+        let mut cam = self.scene.active_camera_data().expect("no active camera in scene").clone();
+        f(&mut cam);
+        // TODO(camera-intrinsics): sync_camera_node_transform — remove when Camera drops eye/target/up
+        self.scene.set_node_transform(id, cam.to_node_transform());
+        self.scene.set_node_payload(id, NodePayload::Camera(cam));
     }
 
-    /// Set the camera to a new value
+    /// Replace the active camera.
     pub fn set_camera(&mut self, camera: Camera) {
-        self.camera = camera;
+        let id = self.scene.active_camera().expect("no active camera in scene");
+        // TODO(camera-intrinsics): sync_camera_node_transform — remove when Camera drops eye/target/up
+        self.scene.set_node_transform(id, camera.to_node_transform());
+        self.scene.set_node_payload(id, NodePayload::Camera(camera));
     }
 
     /// Get the current viewport size as (width, height)
@@ -322,10 +320,12 @@ impl<'a> Viewer<'a> {
     ///
     /// This clears all scene-specific GPU resources and selection state
     /// to prevent stale data from persisting across scene changes.
+    /// If the incoming scene has no active camera a default one is added.
     pub fn set_scene(&mut self, scene: Scene) {
         self.scene = scene;
         self.selection.clear();
         self.renderer.clear_gpu_resources();
+        self.ensure_active_camera();
     }
 
     /// Clear the scene, removing all geometry, materials, textures, and
@@ -340,6 +340,29 @@ impl<'a> Viewer<'a> {
         self.scene.clear();
         self.selection.clear();
         self.renderer.clear_gpu_resources();
+        self.ensure_active_camera();
+    }
+
+    /// Adds a default camera node to the scene if no active camera is set.
+    fn ensure_active_camera(&mut self) {
+        if self.scene.active_camera().is_some() {
+            return;
+        }
+        let (w, h) = self.renderer.size();
+        let cam = Camera {
+            eye: (0.0, 0.1, 0.2).into(),
+            target: (0.0, 0.0, 0.0).into(),
+            up: cgmath::Vector3::unit_y(),
+            aspect: if h > 0 { w as f32 / h as f32 } else { 16.0 / 9.0 },
+            fovy: 45.0,
+            znear: 0.001,
+            zfar: 100.0,
+            ortho: false,
+        };
+        let id = self.scene.add_node(None, Some("Camera".to_string()), Transform::IDENTITY)
+            .expect("Failed to add default camera node");
+        self.scene.set_node_payload(id, NodePayload::Camera(cam));
+        self.scene.set_active_camera(Some(id));
     }
 
     /// Get a reference to the selection manager
@@ -404,7 +427,7 @@ impl<'a> Viewer<'a> {
     ///
     /// Call [`present()`](Self::present) when done to submit commands and display the frame.
     pub fn render_scene(&mut self) -> Result<(wgpu::SurfaceTexture, wgpu::TextureView, wgpu::CommandEncoder), anyhow::Error> {
-        self.renderer.prepare_scene(&self.camera, &mut self.scene)?;
+        self.renderer.prepare_scene(&mut self.scene)?;
 
         let output = self.surface.get_current_texture()?;
         let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -412,7 +435,8 @@ impl<'a> Viewer<'a> {
             &wgpu::CommandEncoderDescriptor { label: Some("Render Encoder") },
         );
 
-        self.renderer.render_scene_to_view(&view, &mut encoder, &self.camera, &self.scene, Self::selection_for_render(&self.selection))?;
+        let highlight = Self::selection_for_render(&self.selection);
+        self.renderer.render_scene_to_view(&view, &mut encoder, None, &self.scene, highlight)?;
 
         Ok((output, view, encoder))
     }
@@ -445,7 +469,7 @@ impl<'a> Viewer<'a> {
         view: &wgpu::TextureView,
         encoder: &mut wgpu::CommandEncoder,
     ) -> Result<(), anyhow::Error> {
-        self.renderer
-            .render_scene_to_view(view, encoder, &self.camera, &self.scene, Self::selection_for_render(&self.selection))
+        let highlight = Self::selection_for_render(&self.selection);
+        self.renderer.render_scene_to_view(view, encoder, None, &self.scene, highlight)
     }
 }

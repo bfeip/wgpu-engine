@@ -24,8 +24,10 @@ impl SelectionOperator {
 
     /// Performs selection at the given position and prints results to console.
     fn perform_selection(cursor_x: f32, cursor_y: f32, ctx: &mut EventContext) {
+        let camera = ctx.camera();
+
         // Create ray from screen point
-        let ray = ctx.camera.ray_from_screen_point(
+        let ray = camera.ray_from_screen_point(
             cursor_x,
             cursor_y,
             ctx.size.0,
@@ -33,12 +35,12 @@ impl SelectionOperator {
         );
 
         // Calculate camera distance for miss visualization and line tolerance
-        let camera_distance = (ctx.camera.eye - ctx.camera.target).magnitude();
+        let camera_distance = (camera.eye - camera.target).magnitude();
 
         // Line tolerance: 6 pixels in world space, calibrated to the camera target depth.
         // Approximation: uses a single depth reference, so the effective pixel budget
         // varies with geometry depth (near objects get more pixels, far objects fewer).
-        let line_tolerance = ctx.camera.world_size_per_pixel(camera_distance, ctx.size.1) * 6.0;
+        let line_tolerance = camera.world_size_per_pixel(camera_distance, ctx.size.1) * 6.0;
 
         // Perform picking
         let results = pick_all_from_ray(&RayPickQuery::all(ray, line_tolerance), ctx.scene);

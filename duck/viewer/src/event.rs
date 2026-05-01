@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use web_time::Instant;
 
 use crate::input::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, TouchId, TouchPhase};
-use crate::scene::{Camera, Scene};
+use crate::scene::{Camera, NodePayload, Scene};
 use crate::selection::SelectionManager;
 
 /// Movement threshold in pixels before a mouse button hold becomes a drag.
@@ -12,12 +12,7 @@ const DRAG_THRESHOLD_PIXELS: f32 = 4.0;
 const CLICK_TIME_THRESHOLD_MS: u64 = 300;
 
 /// Context passed to event callbacks, providing mutable access to application state.
-///
-/// This struct bundles all the mutable state that event callbacks need to access,
-/// including the camera, scene, and selection.
 pub struct EventContext<'c> {
-    /// Mutable reference to the camera
-    pub camera: &'c mut Camera,
     /// Current viewport size (width, height)
     pub size: (u32, u32),
     /// Current cursor position in screen coordinates (x, y), or None if cursor is not over the window
@@ -26,6 +21,32 @@ pub struct EventContext<'c> {
     pub scene: &'c mut Scene,
     /// Mutable reference to the selection manager
     pub selection: &'c mut SelectionManager,
+}
+
+impl<'c> EventContext<'c> {
+    /// Returns a clone of the active camera from the scene.
+    ///
+    /// Panics if no active camera is set or the active camera node lacks a Camera payload.
+    pub fn camera(&self) -> Camera {
+        let id = self.scene.active_camera().expect("no active camera in scene");
+        match self.scene.get_node(id).expect("active camera node not found").payload() {
+            NodePayload::Camera(c) => c.clone(),
+            _ => panic!("active camera node has wrong payload"),
+        }
+    }
+
+    /// Replaces the active camera in the scene.
+    pub fn set_camera(&mut self, cam: Camera) {
+        let id = self.scene.active_camera().expect("no active camera in scene");
+        self.scene.set_node_payload(id, NodePayload::Camera(cam));
+    }
+
+    /// Clones the active camera, passes it to `f` for mutation, then writes it back.
+    pub fn with_camera_mut(&mut self, f: impl FnOnce(&mut Camera)) {
+        let mut cam = self.camera();
+        f(&mut cam);
+        self.set_camera(cam);
+    }
 }
 
 /// Unique identifier for a registered callback.
@@ -784,7 +805,7 @@ mod tests {
     ///
     /// Uses real stack-allocated values so the context fields are valid.
     /// Test callbacks that don't access context fields can safely ignore them.
-    fn create_mock_context_parts() -> (Camera, Option<(f32, f32)>, Scene, SelectionManager) {
+    fn create_mock_context_parts() -> (Option<(f32, f32)>, Scene, SelectionManager) {
         let camera = Camera {
             eye: (0.0, 0.0, 1.0).into(),
             target: (0.0, 0.0, 0.0).into(),
@@ -795,16 +816,19 @@ mod tests {
             zfar: 100.0,
             ortho: false,
         };
-        (camera, None, Scene::new(), SelectionManager::new())
+        let mut scene = Scene::new();
+        let cam_id = scene.add_node(None, None, crate::scene::common::Transform::IDENTITY).unwrap();
+        scene.set_node_payload(cam_id, NodePayload::Camera(camera));
+        scene.set_active_camera(Some(cam_id));
+        (None, scene, SelectionManager::new())
     }
 
-    fn make_context(parts: &mut (Camera, Option<(f32, f32)>, Scene, SelectionManager)) -> EventContext<'_> {
+    fn make_context(parts: &mut (Option<(f32, f32)>, Scene, SelectionManager)) -> EventContext<'_> {
         EventContext {
-            camera: &mut parts.0,
             size: (800, 600),
-            cursor_position: &mut parts.1,
-            scene: &mut parts.2,
-            selection: &mut parts.3,
+            cursor_position: &mut parts.0,
+            scene: &mut parts.1,
+            selection: &mut parts.2,
         }
     }
 

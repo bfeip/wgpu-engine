@@ -85,16 +85,16 @@ impl NavigationState {
         start_pos: (f32, f32),
         ctx: &mut EventContext,
     ) -> bool {
-        let camera = &*ctx.camera;
+        let camera = ctx.camera();
         match (self.mode(), button) {
             (NavigationMode::Turntable, MouseButton::Left | MouseButton::Right) => {
                 let pivot = ctx.scene.bounding().map(|b| b.center()).unwrap_or(camera.target);
-                self.turntable.init_with_pivot(ctx.camera, pivot);
+                self.turntable.init_with_pivot(&camera, pivot);
                 true
             }
             (NavigationMode::Trackball, MouseButton::Left | MouseButton::Right) => {
                 let pivot = ctx.scene.bounding().map(|b| b.center()).unwrap_or(camera.target);
-                self.trackball.init(ctx.camera, pivot);
+                self.trackball.init(&camera, pivot);
                 true
             }
             (_, MouseButton::Middle) => {
@@ -108,20 +108,17 @@ impl NavigationState {
                 let pivot = if let Some(hit) = hits.first() {
                     hit.hit_point
                 } else {
-                    ctx.scene
-                        .bounding()
-                        .map(|b| b.center())
-                        .unwrap_or(camera.target)
+                    ctx.scene.bounding().map(|b| b.center()).unwrap_or(camera.target)
                 };
                 match self.mode() {
-                    NavigationMode::Turntable => self.turntable.init_with_pivot(ctx.camera, pivot),
-                    NavigationMode::Trackball => self.trackball.init(ctx.camera, pivot),
+                    NavigationMode::Turntable => self.turntable.init_with_pivot(&camera, pivot),
+                    NavigationMode::Trackball => self.trackball.init(&camera, pivot),
                     NavigationMode::Walk => {}
                 }
                 true
             }
             (NavigationMode::Walk, MouseButton::Left) => {
-                self.walk.init_from_camera(camera);
+                self.walk.init_from_camera(&camera);
                 true
             }
             _ => false,
@@ -282,7 +279,9 @@ impl Operator for NavigationOperator {
         let s = self.state.clone();
         let drag_cb = dispatcher.register(EventKind::MouseDrag, move |event, ctx| {
             let Event::MouseDrag { button, delta, .. } = event else { return false };
-            s.borrow_mut().handle_drag(button, delta, ctx.camera, ctx.size)
+            let size = ctx.size;
+            ctx.with_camera_mut(|cam| { s.borrow_mut().handle_drag(button, delta, cam, size); });
+            true
         });
 
         let s = self.state.clone();
@@ -294,20 +293,23 @@ impl Operator for NavigationOperator {
                 MouseScrollDelta::PixelDelta(_x, y) => *y / 100.0,
             };
             let model_radius = scene_scale::model_radius_from_bounds(ctx.scene.bounding().as_ref());
-            s.borrow_mut().handle_wheel(scroll_amount, ctx.camera, model_radius)
+            ctx.with_camera_mut(|cam| { s.borrow_mut().handle_wheel(scroll_amount, cam, model_radius); });
+            true
         });
 
         let s = self.state.clone();
         let keyboard_cb = dispatcher.register(EventKind::KeyboardInput, move |event, ctx| {
             let Event::KeyboardInput { event: key_event, .. } = event else { return false };
-            s.borrow_mut().handle_keyboard(key_event, ctx.camera)
+            ctx.with_camera_mut(|cam| { s.borrow_mut().handle_keyboard(key_event, cam); });
+            true
         });
 
         let s = self.state.clone();
         let update_cb = dispatcher.register(EventKind::Update, move |event, ctx| {
             let Event::Update { delta_time } = event else { return false };
             let model_radius = scene_scale::model_radius_from_bounds(ctx.scene.bounding().as_ref());
-            s.borrow_mut().handle_update(*delta_time, ctx.camera, model_radius)
+            ctx.with_camera_mut(|cam| { s.borrow_mut().handle_update(*delta_time, cam, model_radius); });
+            false
         });
 
         let s = self.state.clone();
