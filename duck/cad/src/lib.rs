@@ -5,8 +5,8 @@ use cgmath::Matrix4;
 use duck_engine_common::decompose_matrix;
 use duck_engine_scene::common::Transform;
 use duck_engine_scene::{
-    Camera, InstanceId, Material, Mesh, MeshPrimitive, NodeId, PrimitiveType, Scene, SubMeshRange,
-    Topology, Vertex, ViewId,
+    Camera, InstanceId, Material, Mesh, MeshPrimitive, NodeId, NodePayload, PrimitiveType, Scene,
+    SubMeshRange, Topology, Vertex,
 };
 use duck_engine_scene::common::RgbaColor;
 use opencascade::primitives::{EdgeType, Shape};
@@ -60,10 +60,11 @@ pub struct CadImportResult {
     /// Each annotation (dimension, geometric tolerance, datum) is a named child node
     /// under this root, with its own mesh and instance.
     pub pmi_root: Option<NodeId>,
-    /// Named views imported from the CAD file, added to the scene.
+    /// Camera nodes for named views imported from the CAD file.
     ///
     /// Empty when the file contains no view definitions.
-    pub views: Vec<ViewId>,
+    /// TODO(cad-views): implement once camera/view node representation is finalized.
+    pub views: Vec<NodeId>,
 }
 
 /// Import a STEP file into `scene`, returning a [`CadImportResult`] that mirrors
@@ -284,7 +285,7 @@ fn import_leaf_part(
     );
     let mesh_id = scene.add_mesh(mesh);
     let instance_id = scene.add_instance(mesh_id, mat);
-    scene.set_node_instance(node, instance_id);
+    scene.set_node_payload(node, NodePayload::Instance(instance_id));
 
     Ok(instance_id)
 }
@@ -391,26 +392,14 @@ fn import_pmi(
 /// plane configurations without a viewpoint. When clipping plane support is added,
 /// this function should be extended to handle them.
 ///
-/// Returns the [`ViewId`]s of all views that were successfully added.
+/// TODO(cad-views): Import CAD views as camera nodes. Currently stubbed out pending
+/// finalization of the camera/view node representation in Phase 1.
 fn import_views(
-    view_tool: &opencascade::xcaf::XcafViewTool,
-    scene: &mut Scene,
-    options: &CadImportOptions,
-) -> Vec<ViewId> {
-    let mut view_ids = Vec::new();
-    for label in view_tool.view_labels() {
-        let Some(data) = view_tool.view_data(&label) else { continue };
-        if data.projection() == ViewProjection::NoCamera {
-            continue;
-        }
-        let name = data
-            .name
-            .clone()
-            .unwrap_or_else(|| format!("View {}", view_ids.len() + 1));
-        let camera = view_data_to_camera(&data, options.scale_factor);
-        view_ids.push(scene.add_view(name, camera));
-    }
-    view_ids
+    _view_tool: &opencascade::xcaf::XcafViewTool,
+    _scene: &mut Scene,
+    _options: &CadImportOptions,
+) -> Vec<NodeId> {
+    vec![]
 }
 
 /// Convert XCAF [`ViewData`] to a Duck [`Camera`].
@@ -430,6 +419,7 @@ fn import_views(
 ///
 /// Clipping planes and fov are rough defaults; callers should use [`View::apply_to`] with
 /// the active camera when they need a properly calibrated result for rendering.
+#[allow(dead_code)] // TODO(cad-views): remove when import_views is implemented
 fn view_data_to_camera(data: &opencascade::xcaf::ViewData, scale: f32) -> Camera {
     use cgmath::{EuclideanSpace, InnerSpace, MetricSpace, Point3, Vector3};
 
