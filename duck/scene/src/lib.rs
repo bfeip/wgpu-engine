@@ -555,6 +555,16 @@ impl Scene {
         self.active_camera
     }
 
+    /// Returns the [`Camera`] from the active camera node, or `None` if there is no active camera
+    /// or the node does not carry a `NodePayload::Camera` payload.
+    pub fn active_camera_data(&self) -> Option<&Camera> {
+        let node = self.get_node(self.active_camera?)?;
+        match node.payload() {
+            NodePayload::Camera(cam) => Some(cam),
+            _ => None,
+        }
+    }
+
     /// Sets the active camera node. Pass `None` to clear.
     pub fn set_active_camera(&mut self, node_id: Option<NodeId>) {
         self.active_camera = node_id;

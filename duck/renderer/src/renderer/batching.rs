@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
-use cgmath::{Matrix3, Matrix4, SquareMatrix};
+use cgmath::{InnerSpace, Matrix3, Matrix4, SquareMatrix};
 
 use cgmath::Point3;
 
 use crate::scene::{
-    AlphaMode, InstanceId, MaterialId, MeshId, NodeId, PrimitiveType, Scene,
+    AlphaMode, InstanceId, Light, MaterialId, MeshId, NodeId, NodePayload, PrimitiveType, Scene,
     Visibility,
 };
 use crate::scene::common;
@@ -93,16 +93,28 @@ impl DrawBatch {
     }
 }
 
-/// Recursively collects instance transforms by walking the scene tree.
-///
-/// Propagates world transforms top-down, caching them on nodes, and collects
-/// instances with their computed world transforms. Skips invisible subtrees.
-fn collect_transforms_recursive(
+/// A light resolved to world space, combining photometric data from `NodePayload::Light`
+/// with position and direction derived from the node's world transform.
+pub(crate) struct ResolvedLight {
+    pub light: Light,
+    /// World-space position (relevant for Point and Spot lights).
+    pub position: [f32; 3],
+    /// World-space direction pointing away from lit surfaces (relevant for Directional and Spot lights).
+    pub direction: [f32; 3],
+}
+
+/// All scene data collected in a single tree traversal.
+pub(crate) struct SceneFrameData {
+    pub instance_transforms: Vec<InstanceTransform>,
+    pub lights: Vec<ResolvedLight>,
+}
+
+fn collect_scene_data_recursive(
     scene: &Scene,
     node_id: NodeId,
     parent_transform: Matrix4<f32>,
     parent_changed: bool,
-    results: &mut Vec<InstanceTransform>,
+    data: &mut SceneFrameData,
 ) {
     let Some(node) = scene.get_node(node_id) else { return };
 
@@ -119,22 +131,32 @@ fn collect_transforms_recursive(
         return;
     }
 
-    if let Some(instance_id) = node.instance() {
-        results.push(InstanceTransform::new(node.id, instance_id, world_transform));
+    match node.payload() {
+        NodePayload::Instance(instance_id) => {
+            data.instance_transforms.push(InstanceTransform::new(node.id, *instance_id, world_transform));
+        }
+        NodePayload::Light(light) => {
+            let (position, direction) = Light::world_position_and_direction(&world_transform);
+            data.lights.push(ResolvedLight { light: light.clone(), position: position.into(), direction: direction.into() });
+        }
+        _ => {}
     }
 
     for &child_id in node.children() {
-        collect_transforms_recursive(scene, child_id, world_transform, needs_recompute, results);
+        collect_scene_data_recursive(scene, child_id, world_transform, needs_recompute, data);
     }
 }
 
-/// Walks the entire scene tree and collects all instances with their world transforms.
-pub(crate) fn collect_instance_transforms(scene: &Scene) -> Vec<InstanceTransform> {
-    let mut results = Vec::new();
+/// Walks the entire scene tree and collects all instances and lights in one pass.
+pub(crate) fn collect_scene_data(scene: &Scene) -> SceneFrameData {
+    let mut data = SceneFrameData {
+        instance_transforms: Vec::new(),
+        lights: Vec::new(),
+    };
     for &root_id in scene.root_nodes() {
-        collect_transforms_recursive(scene, root_id, Matrix4::identity(), false, &mut results);
+        collect_scene_data_recursive(scene, root_id, Matrix4::identity(), false, &mut data);
     }
-    results
+    data
 }
 
 /// Collects all instances grouped into batches by mesh, material, and primitive type.
@@ -148,7 +170,7 @@ pub(crate) fn collect_instance_transforms(scene: &Scene) -> Vec<InstanceTransfor
 /// 2. By primitive type (to minimize pipeline changes)
 /// 3. By mesh ID (for GPU cache locality)
 pub(crate) fn collect_draw_batches(scene: &Scene) -> Vec<DrawBatch> {
-    let instance_transforms = collect_instance_transforms(scene);
+    let instance_transforms = collect_scene_data(scene).instance_transforms;
     let mut batch_map: HashMap<BatchKey, DrawBatch> = HashMap::new();
 
     for inst_transform in instance_transforms {

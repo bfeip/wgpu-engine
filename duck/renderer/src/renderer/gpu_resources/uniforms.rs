@@ -1,4 +1,5 @@
 use crate::scene::{Camera, Light, LightType, Material, MAX_LIGHTS};
+use super::super::batching::ResolvedLight;
 
 /// GPU uniform buffer layout for camera data.
 ///
@@ -83,63 +84,40 @@ pub struct LightUniform {
 }
 
 impl LightUniform {
-    /// Creates a `LightUniform` from a scene `Light`.
-    pub fn from_light(light: &Light) -> Self {
-        match light {
-            Light::Point {
-                position,
-                color,
-                intensity,
-                range,
-                ..
-            } => LightUniform {
+    pub fn from_resolved_light(resolved: &ResolvedLight) -> Self {
+        match &resolved.light {
+            Light::Point { color, intensity, range } => LightUniform {
                 light_type: LightType::Point as u32,
                 range: *range,
                 inner_cone_cos: 0.0,
                 outer_cone_cos: 0.0,
-                position: (*position).into(),
+                position: resolved.position,
                 intensity: *intensity,
                 direction: [0.0, 0.0, 0.0],
                 _padding1: 0.0,
                 color: [color.r, color.g, color.b],
                 _padding2: 0.0,
             },
-
-            Light::Directional {
-                direction,
-                color,
-                intensity,
-                ..
-            } => LightUniform {
+            Light::Directional { color, intensity } => LightUniform {
                 light_type: LightType::Directional as u32,
                 range: 0.0,
                 inner_cone_cos: 0.0,
                 outer_cone_cos: 0.0,
                 position: [0.0, 0.0, 0.0],
                 intensity: *intensity,
-                direction: (*direction).into(),
+                direction: resolved.direction,
                 _padding1: 0.0,
                 color: [color.r, color.g, color.b],
                 _padding2: 0.0,
             },
-
-            Light::Spot {
-                position,
-                direction,
-                color,
-                intensity,
-                range,
-                inner_cone_angle,
-                outer_cone_angle,
-                ..
-            } => LightUniform {
+            Light::Spot { color, intensity, range, inner_cone_angle, outer_cone_angle } => LightUniform {
                 light_type: LightType::Spot as u32,
                 range: *range,
                 inner_cone_cos: inner_cone_angle.cos(),
                 outer_cone_cos: outer_cone_angle.cos(),
-                position: (*position).into(),
+                position: resolved.position,
                 intensity: *intensity,
-                direction: (*direction).into(),
+                direction: resolved.direction,
                 _padding1: 0.0,
                 color: [color.r, color.g, color.b],
                 _padding2: 0.0,
@@ -166,17 +144,14 @@ pub struct LightsArrayUniform {
 }
 
 impl LightsArrayUniform {
-    /// Creates a lights array uniform from a slice of lights.
-    ///
-    /// Only the first `MAX_LIGHTS` lights will be used.
-    pub fn from_lights(lights: &[Light]) -> Self {
+    pub fn from_resolved_lights(lights: &[ResolvedLight]) -> Self {
         let mut uniform = Self {
             light_count: lights.len().min(MAX_LIGHTS) as u32,
             _padding: [0; 3],
             lights: [bytemuck::Zeroable::zeroed(); MAX_LIGHTS],
         };
         for (i, light) in lights.iter().take(MAX_LIGHTS).enumerate() {
-            uniform.lights[i] = LightUniform::from_light(light);
+            uniform.lights[i] = LightUniform::from_resolved_light(light);
         }
         uniform
     }
@@ -255,20 +230,29 @@ pub struct SilhouetteUniform {
 mod tests {
     use super::*;
     use crate::scene::common::{RgbaColor, EPSILON};
-    use cgmath::Vector3;
+
+    fn point_resolved(position: [f32; 3], color: RgbaColor, intensity: f32) -> ResolvedLight {
+        ResolvedLight { light: Light::point(color, intensity), position, direction: [0.0, 0.0, -1.0] }
+    }
+
+    fn directional_resolved(direction: [f32; 3], color: RgbaColor, intensity: f32) -> ResolvedLight {
+        ResolvedLight { light: Light::directional(color, intensity), position: [0.0; 3], direction }
+    }
+
+    fn spot_resolved(position: [f32; 3], direction: [f32; 3], color: RgbaColor, intensity: f32, inner: f32, outer: f32) -> ResolvedLight {
+        ResolvedLight { light: Light::spot(color, intensity, inner, outer), position, direction }
+    }
 
     #[test]
     fn test_light_uniform_from_point_light() {
-        let position = Vector3::new(1.0, 2.0, 3.0);
         let color = RgbaColor { r: 0.5, g: 0.6, b: 0.7, a: 1.0 };
-        let light = Light::point(position, color, 2.0);
+        let resolved = point_resolved([1.0, 2.0, 3.0], color, 2.0);
+        let uniform = LightUniform::from_resolved_light(&resolved);
 
-        let uniform = LightUniform::from_light(&light);
-
+        assert_eq!(uniform.light_type, LightType::Point as u32);
         assert!((uniform.position[0] - 1.0).abs() < EPSILON);
         assert!((uniform.position[1] - 2.0).abs() < EPSILON);
         assert!((uniform.position[2] - 3.0).abs() < EPSILON);
-        assert_eq!(uniform.light_type, LightType::Point as u32);
         assert!((uniform.color[0] - 0.5).abs() < EPSILON);
         assert!((uniform.color[1] - 0.6).abs() < EPSILON);
         assert!((uniform.color[2] - 0.7).abs() < EPSILON);
@@ -277,11 +261,9 @@ mod tests {
 
     #[test]
     fn test_light_uniform_from_directional_light() {
-        let direction = Vector3::new(0.0, -1.0, 0.0);
         let color = RgbaColor { r: 1.0, g: 1.0, b: 0.9, a: 1.0 };
-        let light = Light::directional(direction, color, 1.5);
-
-        let uniform = LightUniform::from_light(&light);
+        let resolved = directional_resolved([0.0, -1.0, 0.0], color, 1.5);
+        let uniform = LightUniform::from_resolved_light(&resolved);
 
         assert_eq!(uniform.light_type, LightType::Directional as u32);
         assert!((uniform.direction[1] - (-1.0)).abs() < EPSILON);
@@ -290,14 +272,11 @@ mod tests {
 
     #[test]
     fn test_light_uniform_from_spotlight() {
-        let position = Vector3::new(0.0, 5.0, 0.0);
-        let direction = Vector3::new(0.0, -1.0, 0.0);
         let color = RgbaColor { r: 1.0, g: 1.0, b: 1.0, a: 1.0 };
         let inner_angle = std::f32::consts::PI / 6.0;
         let outer_angle = std::f32::consts::PI / 4.0;
-        let light = Light::spot(position, direction, color, 3.0, inner_angle, outer_angle);
-
-        let uniform = LightUniform::from_light(&light);
+        let resolved = spot_resolved([0.0, 5.0, 0.0], [0.0, -1.0, 0.0], color, 3.0, inner_angle, outer_angle);
+        let uniform = LightUniform::from_resolved_light(&resolved);
 
         assert_eq!(uniform.light_type, LightType::Spot as u32);
         assert!((uniform.position[1] - 5.0).abs() < EPSILON);
@@ -313,21 +292,12 @@ mod tests {
     }
 
     #[test]
-    fn test_lights_array_uniform_from_lights() {
+    fn test_lights_array_uniform_from_resolved_lights() {
         let lights = vec![
-            Light::point(
-                Vector3::new(1.0, 0.0, 0.0),
-                RgbaColor { r: 1.0, g: 0.0, b: 0.0, a: 1.0 },
-                1.0,
-            ),
-            Light::directional(
-                Vector3::new(0.0, -1.0, 0.0),
-                RgbaColor { r: 1.0, g: 1.0, b: 1.0, a: 1.0 },
-                1.0,
-            ),
+            point_resolved([1.0, 0.0, 0.0], RgbaColor { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }, 1.0),
+            directional_resolved([0.0, -1.0, 0.0], RgbaColor { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }, 1.0),
         ];
-
-        let uniform = LightsArrayUniform::from_lights(&lights);
+        let uniform = LightsArrayUniform::from_resolved_lights(&lights);
 
         assert_eq!(uniform.light_count, 2);
         assert_eq!(uniform.lights[0].light_type, LightType::Point as u32);

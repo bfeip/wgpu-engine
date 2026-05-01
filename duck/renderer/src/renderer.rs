@@ -18,7 +18,7 @@ use anyhow::Result;
 
 use crate::{
     ibl::IblResources,
-    scene::{Camera, Scene, SceneProperties},
+    scene::{Camera, NodePayload, Scene, SceneProperties},
     highlight_query::HighlightQuery,
     shaders::ShaderGenerator,
 };
@@ -355,14 +355,14 @@ impl Renderer {
 
         // Prepare and render — temporarily take resources out of self to avoid
         // borrow conflict with render_scene_to_view(&mut self)
-        self.prepare_scene(camera, scene)?;
+        self.prepare_scene(scene)?;
         let mut encoder = self.device.create_command_encoder(
             &wgpu::CommandEncoderDescriptor {
                 label: Some("Headless Render Encoder"),
             },
         );
         let resources = self.headless_resources.take().unwrap();
-        self.render_scene_to_view(&resources.view, &mut encoder, camera, scene, highlight)?;
+        self.render_scene_to_view(&resources.view, &mut encoder, Some(camera), scene, highlight)?;
 
         // Copy texture to staging buffer
         encoder.copy_texture_to_buffer(
@@ -425,10 +425,17 @@ impl Renderer {
         &mut self,
         view: &wgpu::TextureView,
         encoder: &mut wgpu::CommandEncoder,
-        camera: &Camera,
+        camera_override: Option<&Camera>,
         scene: &Scene,
         highlight: Option<&dyn HighlightQuery>,
     ) -> Result<()> {
+        let camera = match camera_override {
+            Some(c) => c,
+            None => scene
+                .active_camera_data()
+                .ok_or_else(|| anyhow::anyhow!("No camera_override provided and scene has no active camera"))?,
+        };
+
         // Update camera uniform
         // TODO: only when needed
         let camera_uniform_slice = &[CameraUniform::from_camera(camera)];

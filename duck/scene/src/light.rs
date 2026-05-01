@@ -56,6 +56,26 @@ pub enum Light {
 }
 
 impl Light {
+    /// Extracts world-space position and direction from the node's world transform matrix.
+    ///
+    /// - Position: translation column (W) of the matrix. Relevant for `Point` and `Spot`.
+    /// - Direction: negative Z-axis of the matrix. Relevant for `Directional` and `Spot`.
+    ///
+    /// The direction is normalized; falls back to `[0, 0, -1]` for a degenerate matrix.
+    pub fn world_position_and_direction(
+        world_transform: &cgmath::Matrix4<f32>,
+    ) -> (cgmath::Vector3<f32>, cgmath::Vector3<f32>) {
+        use cgmath::InnerSpace;
+        let position = world_transform.w.truncate();
+        let neg_z = -world_transform.z.truncate();
+        let direction = if neg_z.magnitude2() > 0.0 {
+            neg_z.normalize()
+        } else {
+            cgmath::Vector3::new(0.0, 0.0, -1.0)
+        };
+        (position, direction)
+    }
+
     /// Creates a new point light.
     pub fn point(color: RgbaColor, intensity: f32) -> Self {
         Self::Point { color, intensity, range: 0.0 }

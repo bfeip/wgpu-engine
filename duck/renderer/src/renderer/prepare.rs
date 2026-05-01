@@ -2,8 +2,9 @@ use anyhow::Result;
 use bytemuck::bytes_of;
 use wgpu::util::DeviceExt;
 
-use crate::scene::{Camera, CoordinateSpace, PrimitiveType, Scene};
+use crate::scene::{PrimitiveType, Scene};
 
+use super::batching::collect_scene_data;
 use super::gpu_resources::{LightsArrayUniform, MaterialGpuResources, PbrUniform};
 use super::Renderer;
 
@@ -16,7 +17,7 @@ impl Renderer {
     // TODO: This iterates more or less everything in the scene. For performance in the future,
     // we should keep track of the need for these updates in the scene. I.e. mark things as
     // dirty if they need to be reified.
-    pub fn prepare_scene(&mut self, camera: &Camera, scene: &mut Scene) -> Result<()> {
+    pub fn prepare_scene(&mut self, scene: &mut Scene) -> Result<()> {
         // 0. Reify any unreified annotations (creates meshes/materials/nodes)
         scene.reify_annotations();
 
@@ -60,21 +61,13 @@ impl Renderer {
         }
 
         // 4. Prepare lights
-        let has_camera_space_lights = scene
-            .lights()
-            .iter()
-            .any(|l| l.space() != CoordinateSpace::World);
-        let light_generation = scene.light_generation();
-        if self.lights.synced_generation != light_generation || has_camera_space_lights {
-            let world_lights: Vec<_> = scene
-                .lights()
-                .iter()
-                .map(|l| l.in_worldspace(camera))
-                .collect();
-            let lights_uniform = LightsArrayUniform::from_lights(&world_lights);
+        let node_gen = scene.node_generation();
+        if self.lights.synced_generation != node_gen {
+            let frame_data = collect_scene_data(scene);
+            let lights_uniform = LightsArrayUniform::from_resolved_lights(&frame_data.lights);
             self.queue
                 .write_buffer(&self.lights.buffer, 0, bytes_of(&lights_uniform));
-            self.lights.synced_generation = light_generation;
+            self.lights.synced_generation = node_gen;
         }
 
         // 5. Process environment maps for IBL
