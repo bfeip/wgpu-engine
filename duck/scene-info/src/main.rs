@@ -15,7 +15,7 @@ use duck_engine_import_export::format::{
     FileHeader, FormatError, SectionType, SerializedMetadata,
     SerializedTexture, TableOfContents, TocEntry,
 };
-use duck_engine_scene::{Instance, Light, Material, Mesh, Node, TextureFormat};
+use duck_engine_scene::{Instance, Light, Material, Mesh, Node, NodePayload, TextureFormat};
 
 #[derive(Parser)]
 #[command(name = "scene-info")]
@@ -553,10 +553,10 @@ fn print_node_hierarchy(nodes: &[Node]) {
     ) {
         let connector = if is_last { "`-- " } else { "|-- " };
         let name = node.name.as_deref().unwrap_or("<unnamed>");
-        let instance_info = node
-            .instance()
-            .map(|id| format!(" (instance:{})", id))
-            .unwrap_or_default();
+        let instance_info = match node.payload() {
+            NodePayload::Instance(id) => format!(" (instance:{})", id),
+            _ => String::new(),
+        };
         let visibility = if node.visibility() == duck_engine_scene::Visibility::Visible { "" } else { " [hidden]" };
 
         println!(

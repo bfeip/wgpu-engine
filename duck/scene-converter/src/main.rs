@@ -6,7 +6,7 @@ use image::imageops::FilterType;
 use image::GenericImageView;
 use duck_engine_import_export::format::{CompressionLevel, SaveOptions, save_to_file_with_options};
 use duck_engine_import_export::gltf::load_gltf_scene_from_path;
-use duck_engine_scene::Scene;
+use duck_engine_scene::{NodePayload, Scene};
 
 const MAX_TEXTURE_DIMENSION: u32 = 2048;
 
@@ -161,7 +161,7 @@ fn print_stats(scene: &Scene) {
     eprintln!("  Materials: {}", scene.material_count());
     eprintln!("  Textures:  {}", scene.texture_count());
     eprintln!("  Nodes:     {}", scene.node_count());
-    eprintln!("  Lights:    {}", scene.lights().len());
+    eprintln!("  Lights:    {}", scene.light_count());
     eprintln!("  Instances: {}", scene.instance_count());
     eprintln!("  Env maps:  {}", scene.environment_map_count());
 }
