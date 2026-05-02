@@ -6,7 +6,6 @@ members = [
     "scene",
     "common",
     "import-export",
-    "truck-experiment",
     "egui-demo",
     "scene-info",
     "scene-converter",
