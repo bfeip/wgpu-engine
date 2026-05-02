@@ -9,13 +9,13 @@ use winit::{
     window::{Window, WindowId},
 };
 
-use cgmath::Vector3;
 use duck_engine_viewer::common::RgbaColor;
 use duck_engine_viewer::egui_support::EguiViewerApp;
 use duck_engine_viewer::input::{ElementState, Key};
 use duck_engine_viewer::operator::NavigationMode;
 use duck_engine_viewer::import_export;
-use duck_engine_viewer::scene::{Light, LightType, Scene, MAX_LIGHTS};
+use duck_engine_viewer::common::Transform;
+use duck_engine_viewer::scene::{Light, LightType, NodePayload, Scene};
 use duck_engine_viewer::winit_support;
 
 /// Debug actions triggered by key presses
@@ -108,37 +108,23 @@ impl<'a> App<'a> {
     /// Add a new light of the specified type to the scene
     fn add_light(&mut self, light_type: LightType) {
         let viewer = self.viewer_app.as_mut().unwrap().viewer_mut();
-        let lights = &mut viewer.scene_mut().lights();
+        let white = RgbaColor { r: 1.0, g: 1.0, b: 1.0, a: 1.0 };
 
-        // Check limit
-        if lights.len() >= MAX_LIGHTS {
-            log::warn!("Cannot add light: maximum of {} lights reached", MAX_LIGHTS);
-            return;
-        }
-
-        let white = RgbaColor {
-            r: 1.0,
-            g: 1.0,
-            b: 1.0,
-            a: 1.0,
-        };
-
-        let light = match light_type {
-            LightType::Point => Light::point(Vector3::new(0.0, 3.0, 0.0), white, 1.0),
-            LightType::Directional => {
-                Light::directional(Vector3::new(0.0, -1.0, 0.0), white, 1.0)
-            }
-            LightType::Spot => Light::spot(
-                Vector3::new(0.0, 3.0, 0.0),
-                Vector3::new(0.0, -1.0, 0.0),
-                white,
-                1.0,
-                30.0_f32.to_radians(),
-                45.0_f32.to_radians(),
+        let (light, transform) = match light_type {
+            LightType::Point => (
+                Light::point(white, 1.0),
+                Transform::from_position(cgmath::Point3::new(0.0, 3.0, 0.0)),
+            ),
+            LightType::Directional => (Light::directional(white, 1.0), Transform::IDENTITY),
+            LightType::Spot => (
+                Light::spot(white, 1.0, 30.0_f32.to_radians(), 45.0_f32.to_radians()),
+                Transform::from_position(cgmath::Point3::new(0.0, 3.0, 0.0)),
             ),
         };
 
-        viewer.scene_mut().add_light(light);
+        let scene = viewer.scene_mut();
+        let node_id = scene.add_node(None, None, transform).expect("add light node");
+        scene.set_node_payload(node_id, NodePayload::Light(light));
         log::info!("Added {:?} light", light_type);
     }
 
@@ -213,7 +199,7 @@ impl<'a> App<'a> {
                 if let Some(camera) = result.camera {
                     viewer.set_camera(camera);
                 } else if let Some(bounds) = viewer.scene().bounding() {
-                    viewer.camera_mut().fit_to_bounds(&bounds);
+                    viewer.with_camera_mut(|c| c.fit_to_bounds(&bounds));
                 }
                 log::info!("Loaded scene: {}", path_str);
             }
@@ -295,8 +281,7 @@ impl<'a> App<'a> {
     /// Toggle between perspective and orthographic projection
     fn toggle_ortho(&mut self) {
         let viewer_app = self.viewer_app.as_mut().unwrap();
-        let camera = viewer_app.viewer_mut().camera_mut();
-        camera.ortho = !camera.ortho;
+        viewer_app.viewer_mut().with_camera_mut(|c| c.ortho = !c.ortho);
     }
 
     /// Cycle through the built-in rendering workflows.

@@ -1,4 +1,4 @@
-use duck_engine_viewer::scene::{EffectiveVisibility, NodeId, Visibility};
+use duck_engine_viewer::scene::{EffectiveVisibility, NodeId, NodePayload, Visibility};
 use duck_engine_viewer::Viewer;
 
 use super::{UiActions, VisibilityChange};
@@ -17,17 +17,6 @@ pub fn show(ui: &mut egui::Ui, viewer: &Viewer, actions: &mut UiActions) {
     });
 
     ui.separator();
-
-    // ===== Views =====
-    if viewer.scene().view_count() > 0 {
-        ui.heading("Views");
-        for view in viewer.scene().views() {
-            if ui.button(view.name()).clicked() {
-                actions.set_camera = Some(view.apply_to(viewer.camera()));
-            }
-        }
-        ui.separator();
-    }
 
     ui.heading("Scene Tree");
 
@@ -57,7 +46,7 @@ pub fn render_node_tree(
     };
 
     let has_children = !node.children().is_empty();
-    let has_instance = node.instance().is_some();
+    let has_instance = matches!(node.payload(), NodePayload::Instance(_));
 
     let visibility = node.visibility();
     let effective_visibility = scene.node_effective_visibility(node_id);

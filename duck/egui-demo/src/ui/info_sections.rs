@@ -1,3 +1,4 @@
+use duck_engine_viewer::scene::NodePayload;
 use duck_engine_viewer::selection::SelectionItem;
 use duck_engine_viewer::Viewer;
 
@@ -80,6 +81,5 @@ fn build_scene_info_section(ui: &mut egui::Ui, viewer: &Viewer) {
     ui.label(format!("Meshes: {}", viewer.scene().mesh_count()));
     ui.label(format!("Instances: {}", viewer.scene().instance_count()));
     ui.label(format!("Nodes: {}", viewer.scene().node_count()));
-    ui.label(format!("Lights: {}", viewer.scene().lights().len()));
-    ui.label(format!("Views: {}", viewer.scene().view_count()));
+    ui.label(format!("Lights: {}", viewer.scene().light_count()));
 }
