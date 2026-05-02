@@ -9,14 +9,14 @@ use std::path::Path;
 use std::rc::Rc;
 
 use anyhow::{Result, anyhow};
-use cgmath::{Matrix4, Point3, Vector3};
+use cgmath::{InnerSpace, Matrix4, Point3, Quaternion, Rotation3, Vector3};
 use russimp::material::{Material as RMaterial, TextureType};
 use russimp::node::Node as RNode;
 use russimp::scene::{PostProcess, Scene as RScene};
 
 use duck_engine_scene::{
     Camera, DEFAULT_MATERIAL_ID, Light, Material, MaterialId, Mesh, MeshId, MeshPrimitive,
-    NodeId, PrimitiveType, Scene, Texture, TextureId, Vertex, MAX_LIGHTS,
+    NodeId, NodePayload, PrimitiveType, Scene, Texture, TextureId, Vertex,
 };
 use duck_engine_scene::common::{RgbaColor, Transform, decompose_matrix};
 
@@ -445,40 +445,45 @@ fn build_node_tree(
 fn load_lights(assimp_lights: &[russimp::light::Light], scene: &mut Scene) {
     use russimp::light::LightSourceType;
 
-    for light in assimp_lights.iter().take(MAX_LIGHTS) {
+    for light in assimp_lights {
         let color = RgbaColor {
             r: light.color_diffuse.r,
             g: light.color_diffuse.g,
             b: light.color_diffuse.b,
             a: 1.0,
         };
-
-        // Estimate intensity from color magnitude (assimp doesn't have a separate intensity field)
         let intensity = 1.0;
 
+        let pos = cgmath::Point3::new(light.pos.x, light.pos.y, light.pos.z);
+        let dir = Vector3::new(light.direction.x, light.direction.y, light.direction.z);
+        let rotation = direction_to_rotation(dir);
+
         let engine_light = match light.light_source_type {
-            LightSourceType::Point => Light::point(
-                Vector3::new(light.pos.x, light.pos.y, light.pos.z),
-                color,
-                intensity,
-            ),
-            LightSourceType::Directional => Light::directional(
-                Vector3::new(light.direction.x, light.direction.y, light.direction.z),
-                color,
-                intensity,
-            ),
-            LightSourceType::Spot => Light::spot(
-                Vector3::new(light.pos.x, light.pos.y, light.pos.z),
-                Vector3::new(light.direction.x, light.direction.y, light.direction.z),
-                color,
-                intensity,
-                light.angle_inner_cone,
-                light.angle_outer_cone,
-            ),
+            LightSourceType::Point => Light::point(color, intensity),
+            LightSourceType::Directional => Light::directional(color, intensity),
+            LightSourceType::Spot => Light::spot(color, intensity, light.angle_inner_cone, light.angle_outer_cone),
             _ => continue, // Skip Ambient, Area, Undefined
         };
+        let transform = Transform::new(pos, rotation, Vector3::new(1.0, 1.0, 1.0));
 
-        scene.add_light(engine_light);
+        if let Ok(node_id) = scene.add_node(None, None, transform) {
+            scene.set_node_payload(node_id, NodePayload::Light(engine_light));
+        }
+    }
+}
+
+/// Computes the rotation quaternion that aligns the node's local -Z axis to the given direction.
+fn direction_to_rotation(direction: Vector3<f32>) -> Quaternion<f32> {
+    let from = Vector3::new(0.0_f32, 0.0, -1.0);
+    let to = direction.normalize();
+    let dot = from.dot(to);
+    if dot > 0.9999 {
+        Quaternion::new(1.0, 0.0, 0.0, 0.0)
+    } else if dot < -0.9999 {
+        Quaternion::from_axis_angle(Vector3::new(0.0, 1.0, 0.0), cgmath::Rad(std::f32::consts::PI))
+    } else {
+        let cross = from.cross(to);
+        Quaternion::new(dot + 1.0, cross.x, cross.y, cross.z).normalize()
     }
 }
 

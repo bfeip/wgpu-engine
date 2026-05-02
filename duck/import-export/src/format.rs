@@ -36,14 +36,12 @@ use thiserror::Error;
 
 use duck_engine_scene::{
     Instance, InstanceId,
-    Light,
     Material, MaterialId, DEFAULT_MATERIAL_ID,
     Mesh, MeshId,
-    Node, NodeId,
+    Node, NodeId, NodePayload,
     Texture, TextureFormat, TextureId,
     EnvironmentMap, EnvironmentMapId, Scene,
     PreprocessedCubemap, PreprocessedIbl,
-    View,
 };
 
 // ============================================================================
@@ -530,7 +528,10 @@ impl AnnotationContentFilter {
         filter.instances = filter.nodes
             .iter()
             .filter_map(|&node_id| scene.get_node(node_id))
-            .filter_map(|node| node.instance())
+            .filter_map(|node| match node.payload() {
+                NodePayload::Instance(id) => Some(*id),
+                _ => None,
+            })
             .collect();
 
         // Collect mesh and material IDs from annotation instances
@@ -636,10 +637,8 @@ pub struct DuckSections {
     pub meshes: Vec<Mesh>,
     pub instances: Vec<Instance>,
     pub nodes: Vec<Node>,
-    pub lights: Vec<Light>,
     pub environment_maps: Vec<SerializedEnvironmentMap>,
     pub preprocessed_ibl: Vec<SerializedPreprocessedIbl>,
-    pub views: Vec<View>,
 }
 
 /// Parse Duck header, TOC, and decompress/deserialize all sections.
@@ -674,8 +673,8 @@ pub fn parse_duck(bytes: &[u8]) -> Result<DuckSections, FormatError> {
         deserialize_section(read_section(SectionType::Instances)?)?;
     let nodes: Vec<Node> =
         deserialize_section(read_section(SectionType::Nodes)?)?;
-    let lights: Vec<Light> =
-        deserialize_section(read_section(SectionType::Lights)?)?;
+    // SectionType::Lights and SectionType::Views are no longer written;
+    // silently skip them if present in older files.
     let environment_maps: Vec<SerializedEnvironmentMap> =
         if let Some(entry) = toc.find(SectionType::EnvironmentMaps) {
             let start = entry.offset as usize;
@@ -694,15 +693,6 @@ pub fn parse_duck(bytes: &[u8]) -> Result<DuckSections, FormatError> {
             Vec::new()
         };
 
-    let views: Vec<View> =
-        if let Some(entry) = toc.find(SectionType::Views) {
-            let start = entry.offset as usize;
-            let end = start + entry.compressed_size as usize;
-            deserialize_section(&bytes[start..end])?
-        } else {
-            Vec::new()
-        };
-
     Ok(DuckSections {
         metadata,
         textures,
@@ -710,10 +700,8 @@ pub fn parse_duck(bytes: &[u8]) -> Result<DuckSections, FormatError> {
         meshes,
         instances,
         nodes,
-        lights,
         environment_maps,
         preprocessed_ibl,
-        views,
     })
 }
 
@@ -793,7 +781,6 @@ pub fn assemble_duck_scene(
     }
 
     scene.set_root_node_order(sections.metadata.root_nodes);
-    scene.set_lights(sections.lights);
 
     // Build a lookup from env_map_id -> preprocessed IBL data
     let mut preprocessed_map: HashMap<u32, PreprocessedIbl> = HashMap::new();
@@ -836,10 +823,6 @@ pub fn assemble_duck_scene(
     }
 
     scene.set_active_environment_map(sections.metadata.active_environment_map);
-
-    for view in sections.views {
-        scene.insert_view_unchecked(view);
-    }
 
     Ok(scene)
 }
@@ -920,11 +903,10 @@ pub fn estimate_serialized_size(scene: &Scene) -> usize {
         })
         .sum();
 
-    // Structured data (nodes, instances, materials, lights) compresses well
+    // Structured data (nodes, instances, materials) compresses well
     let structured = scene.node_count() * std::mem::size_of::<Node>()
         + scene.instance_count() * std::mem::size_of::<Instance>()
-        + scene.material_count() * std::mem::size_of::<Material>()
-        + std::mem::size_of_val(scene.lights());
+        + scene.material_count() * std::mem::size_of::<Material>();
     let structured_estimate = (structured as f64 * GOOD_COMPRESSION_RATIO) as usize;
 
     // Header (16 bytes) + TOC (~40 bytes per section × 8 sections)
@@ -1036,9 +1018,14 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
                     .filter_map(|&cid| node_id_map.get(&cid).copied())
                     .collect(),
             );
-            node.set_instance(
-                node.instance().and_then(|iid| instance_id_map.get(&iid).copied()),
-            );
+            let remapped_payload = match node.payload() {
+                NodePayload::Instance(iid) => match instance_id_map.get(iid).copied() {
+                    Some(remapped_iid) => NodePayload::Instance(remapped_iid),
+                    None => NodePayload::None,
+                },
+                other => other.clone(),
+            };
+            node.set_payload(remapped_payload);
             Some(node)
         })
         .collect();
@@ -1126,10 +1113,6 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
     }
     write_section(&textures, SectionType::Textures, compression_level, &mut output, &mut toc)?;
 
-    // ===== Lights Section =====
-    let lights: Vec<Light> = scene.lights().to_vec();
-    write_section(&lights, SectionType::Lights, compression_level, &mut output, &mut toc)?;
-
     // ===== Environment Maps Section =====
     if scene.has_environment_maps() {
         let mut env_maps = Vec::new();
@@ -1168,12 +1151,6 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
         if !preprocessed_ibls.is_empty() {
             write_section(&preprocessed_ibls, SectionType::PreprocessedIblData, compression_level, &mut output, &mut toc)?;
         }
-    }
-
-    // ===== Views Section =====
-    let views: Vec<View> = scene.views().cloned().collect();
-    if !views.is_empty() {
-        write_section(&views, SectionType::Views, compression_level, &mut output, &mut toc)?;
     }
 
     // ===== Write TOC =====
@@ -1270,12 +1247,16 @@ mod tests {
             Transform::from_position(Point3::new(0.5, 0.5, 0.5)),
         ).unwrap();
 
-        // Add a light
-        scene.add_light(Light::point(
-            Vector3::new(5.0, 5.0, 5.0),
-            RgbaColor::WHITE,
-            10.0,
-        ));
+        // Add a light node
+        {
+            use duck_engine_scene::{Light, NodePayload};
+            let light_node_id = scene.add_node(
+                None,
+                None,
+                Transform::from_position(Point3::new(5.0, 5.0, 5.0)),
+            ).unwrap();
+            scene.set_node_payload(light_node_id, NodePayload::Light(Light::point(RgbaColor::WHITE, 10.0)));
+        }
 
         scene
     }
@@ -1298,7 +1279,7 @@ mod tests {
         assert_eq!(loaded.mesh_count(), original.mesh_count());
         assert_eq!(loaded.material_count(), original.material_count());
         assert_eq!(loaded.instance_count(), original.instance_count());
-        assert_eq!(loaded.lights().len(), original.lights().len());
+        assert_eq!(loaded.has_light_nodes(), original.has_light_nodes());
         assert_eq!(loaded.root_nodes().len(), original.root_nodes().len());
     }
 
@@ -1413,21 +1394,23 @@ mod tests {
 
     #[test]
     fn test_round_trip_lights() {
+        use duck_engine_scene::{Light, NodePayload};
         let original = create_test_scene();
         let bytes = to_bytes(&original).expect("Failed to serialize");
         let loaded = from_bytes(&bytes).expect("Failed to deserialize");
 
-        assert_eq!(loaded.lights().len(), 1);
+        assert!(loaded.has_light_nodes());
 
-        match &loaded.lights()[0] {
-            Light::Point { position, color, intensity, .. } => {
-                assert!((position.x - 5.0).abs() < 1e-6);
-                assert!((position.y - 5.0).abs() < 1e-6);
-                assert!((position.z - 5.0).abs() < 1e-6);
+        let light_node = loaded.nodes()
+            .find(|n| matches!(n.payload(), NodePayload::Light(_)))
+            .expect("No light node found");
+
+        match light_node.payload() {
+            NodePayload::Light(Light::Point { color, intensity, .. }) => {
                 assert!((color.r - 1.0).abs() < 1e-6);
                 assert!((*intensity - 10.0).abs() < 1e-6);
             }
-            _ => panic!("Expected point light"),
+            _ => panic!("Expected point light node"),
         }
     }
 

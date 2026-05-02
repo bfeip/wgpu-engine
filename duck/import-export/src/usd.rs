@@ -9,13 +9,13 @@ use std::io::{Cursor, Read};
 use std::path::Path;
 
 use anyhow::{Result, anyhow};
-use cgmath::{Deg, Matrix3, Matrix4, Point3, SquareMatrix, Vector3};
+use cgmath::{Deg, Matrix3, Matrix4, Point3, Quaternion, Rotation3, SquareMatrix, Vector3};
 
 use openusd::sdf::{self, AbstractData, Value};
 
 use duck_engine_scene::{
     Camera, DEFAULT_MATERIAL_ID, Light, Material, MaterialId, Mesh, MeshId, MeshPrimitive,
-    NodeId, PrimitiveType, Scene, Vertex, MAX_LIGHTS,
+    NodeId, NodePayload, PrimitiveType, Scene, Vertex,
 };
 use duck_engine_scene::common::{RgbaColor, Transform, decompose_matrix};
 
@@ -904,10 +904,6 @@ fn extract_light(
     position: &Point3<f32>,
     scene: &mut Scene,
 ) {
-    if scene.lights().len() >= MAX_LIGHTS {
-        return;
-    }
-
     let intensity =
         get_float_from_prop(data, &make_property_path(light_path, "inputs:intensity"))
             .unwrap_or(1.0);
@@ -916,33 +912,29 @@ fn extract_light(
     let color = get_float_array(data, &color_path, "default")
         .and_then(|v| {
             if v.len() >= 3 {
-                Some(RgbaColor {
-                    r: v[0],
-                    g: v[1],
-                    b: v[2],
-                    a: 1.0,
-                })
+                Some(RgbaColor { r: v[0], g: v[1], b: v[2], a: 1.0 })
             } else {
                 None
             }
         })
         .unwrap_or(RgbaColor::WHITE);
 
-    let light = match type_name {
-        "DistantLight" => Light::directional(
-            Vector3::new(0.0, -1.0, 0.0), // Default downward
-            color,
-            intensity,
-        ),
-        "SphereLight" | "DiskLight" | "RectLight" => Light::point(
-            Vector3::new(position.x, position.y, position.z),
-            color,
-            intensity,
-        ),
+    let (light, transform) = match type_name {
+        "DistantLight" => {
+            // Rotate so local -Z aligns with default downward direction (0, -1, 0)
+            let rotation = Quaternion::from_angle_x(Deg(-90.0_f32));
+            let t = Transform::new(cgmath::Point3::new(0.0, 0.0, 0.0), rotation, Vector3::new(1.0, 1.0, 1.0));
+            (Light::directional(color, intensity), t)
+        }
+        "SphereLight" | "DiskLight" | "RectLight" => {
+            (Light::point(color, intensity), Transform::from_position(*position))
+        }
         _ => return,
     };
 
-    scene.add_light(light);
+    if let Ok(node_id) = scene.add_node(None, None, transform) {
+        scene.set_node_payload(node_id, NodePayload::Light(light));
+    }
 }
 
 // ============================================================================

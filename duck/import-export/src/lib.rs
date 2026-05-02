@@ -379,10 +379,8 @@ fn load_sync_with_progress(
 
     let importer = detect_importer(&bytes, path_hint.as_deref(), importers)?;
     progress.set_weights(&importer.phase_weights());
-    let mut result = importer.load(&bytes, path_hint.as_deref(), options, progress)?;
-    if result.scene.lights().is_empty() && !result.scene.has_environment_maps() {
-        result.scene.set_default_lights();
-    }
+    let result = importer.load(&bytes, path_hint.as_deref(), options, progress)?;
+
     Ok(result)
 }
 

@@ -587,6 +587,11 @@ impl Scene {
         self.nodes.values().any(|n| matches!(n.payload(), NodePayload::Light(_)))
     }
 
+    /// Returns the number of nodes with a [`NodePayload::Light`] payload.
+    pub fn light_count(&self) -> usize {
+        self.nodes.values().filter(|n| matches!(n.payload(), NodePayload::Light(_))).count()
+    }
+
     /// Adds a default key + fill directional light pair as children of `camera_node_id`.
     ///
     /// Because the lights are children of the camera node, callers must keep that
