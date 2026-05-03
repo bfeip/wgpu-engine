@@ -376,7 +376,8 @@ impl PointLightAnnotation {
     /// Creates wireframe sphere geometry for the point light visualization.
     ///
     /// The sphere is centered at `position` using the light's `color`.
-    pub(crate) fn _to_mesh_data(&self, position: Point3<f32>, color: RgbaColor) -> AnnotationMeshData {
+    #[allow(dead_code)]
+    pub(crate) fn to_mesh_data(&self, position: Point3<f32>, color: RgbaColor) -> AnnotationMeshData {
         let mesh = Mesh::sphere(self.radius, self.segments, self.segments / 2, PrimitiveType::LineList)
             .translated(position.to_vec());
 
@@ -410,7 +411,8 @@ impl SpotLightAnnotation {
     /// Creates cone outline geometry for the spot light visualization.
     ///
     /// Returns 2 meshes: outer cone (full color) and inner cone (dimmer).
-    pub(crate) fn _to_mesh_data(
+    #[allow(dead_code)]
+    pub(crate) fn to_mesh_data(
         &self,
         position: Point3<f32>,
         direction: Vector3<f32>,
