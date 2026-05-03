@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use cgmath::{InnerSpace, Matrix3, Matrix4, SquareMatrix};
+use cgmath::{Matrix3, Matrix4, SquareMatrix};
 
 use cgmath::Point3;
 

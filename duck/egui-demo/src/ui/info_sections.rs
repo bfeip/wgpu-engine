@@ -1,4 +1,3 @@
-use duck_engine_viewer::scene::NodePayload;
 use duck_engine_viewer::selection::SelectionItem;
 use duck_engine_viewer::Viewer;
 

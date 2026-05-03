@@ -17,7 +17,7 @@ mod node;
 mod texture;
 mod view;
 
-use cgmath::{EuclideanSpace, InnerSpace, Matrix4, Point3, Quaternion, SquareMatrix, Vector3};
+use cgmath::{InnerSpace, Matrix4, Point3, Quaternion, SquareMatrix, Vector3};
 use image::DynamicImage;
 use std::collections::HashMap;
 use std::path::Path;
@@ -50,7 +50,7 @@ pub use environment::{
 };
 
 use annotation::{Annotation, AnnotationManager};
-use crate::common::{Aabb, RgbaColor};
+use crate::common::{Aabb};
 
 /// Default generation counter value for newly created resources.
 /// Starts at 1 so initial change detection triggers on first use.

@@ -18,7 +18,7 @@ use anyhow::Result;
 
 use crate::{
     ibl::IblResources,
-    scene::{Camera, NodePayload, Scene, SceneProperties},
+    scene::{Camera, Scene, SceneProperties},
     highlight_query::HighlightQuery,
     shaders::ShaderGenerator,
 };
