@@ -1,6 +1,6 @@
 use std::{sync::Arc};
 
-use cgmath::{Point3, Vector3};
+use cgmath::{Point3};
 use winit::{
     application::ApplicationHandler,
     event::{DeviceEvent, DeviceId, WindowEvent},
