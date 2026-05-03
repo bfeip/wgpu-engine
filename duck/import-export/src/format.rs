@@ -36,7 +36,7 @@ use thiserror::Error;
 
 use duck_engine_scene::{
     Instance, InstanceId,
-    Material, MaterialId, DEFAULT_MATERIAL_ID,
+    Material, MaterialId,
     Mesh, MeshId,
     Node, NodeId, NodePayload,
     Texture, TextureFormat, TextureId,
@@ -53,7 +53,7 @@ pub const MAGIC: [u8; 4] = *b"DUCK";
 
 /// Current format version (major.minor encoded as single u16)
 /// major = version >> 8, minor = version & 0xFF
-pub const VERSION: u16 = 0x0002; // 0.2
+pub const VERSION: u16 = 0x0003; // 0.3 — IDs are UUID (16 bytes) instead of u32
 
 /// Size of the fixed header in bytes
 pub const HEADER_SIZE: usize = std::mem::size_of::<FileHeader>();
@@ -261,10 +261,9 @@ impl FileHeader {
         reader.read_exact(&mut version_bytes)?;
         let version = u16::from_le_bytes(version_bytes);
 
-        // Check version compatibility (support 0.1 and 0.2)
         let major = (version >> 8) as u8;
         let minor = (version & 0xFF) as u8;
-        if major > 0 || (major == 0 && minor > 2) {
+        if major != 0 || minor != 3 {
             return Err(FormatError::UnsupportedVersion(major, minor));
         }
 
@@ -337,17 +336,17 @@ pub struct SerializedMetadata {
     pub created_at: u64,
     /// Generator string (e.g., "duck-engine 0.1.0")
     pub generator: String,
-    /// Root node IDs (remapped)
-    pub root_nodes: Vec<u32>,
-    /// Active environment map ID (remapped), if any
-    pub active_environment_map: Option<u32>,
+    /// Root node IDs
+    pub root_nodes: Vec<NodeId>,
+    /// Active environment map ID, if any
+    pub active_environment_map: Option<EnvironmentMapId>,
 }
 
 
 /// Serializable texture with embedded image data.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerializedTexture {
-    pub id: u32,
+    pub id: TextureId,
     pub format: TextureFormat,
     pub width: u32,
     pub height: u32,
@@ -362,7 +361,7 @@ impl SerializedTexture {
     /// avoiding expensive re-encoding. Falls back to `fallback_format` encoding otherwise.
     pub fn from_texture(
         texture: &Texture,
-        id: u32,
+        id: TextureId,
         fallback_format: TextureFormat,
         compression: CompressionLevel,
     ) -> Result<Self, FormatError> {
@@ -474,8 +473,8 @@ impl SerializedTexture {
 /// Serializable environment map with embedded HDR data.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerializedEnvironmentMap {
-    /// Remapped environment map ID.
-    pub id: u32,
+    /// Environment map UUID.
+    pub id: EnvironmentMapId,
     /// Raw .hdr file bytes, or `None` if the HDR source was discarded (e.g. after IBL baking).
     pub hdr_data: Option<Vec<u8>>,
     /// Intensity multiplier.
@@ -487,8 +486,8 @@ pub struct SerializedEnvironmentMap {
 /// Serializable preprocessed IBL data for an environment map.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerializedPreprocessedIbl {
-    /// Remapped environment map ID this data belongs to.
-    pub env_map_id: u32,
+    /// Environment map UUID this data belongs to.
+    pub env_map_id: EnvironmentMapId,
     /// Diffuse irradiance cubemap.
     pub irradiance: PreprocessedCubemap,
     /// Pre-filtered specular cubemap.
@@ -705,9 +704,9 @@ pub fn parse_duck(bytes: &[u8]) -> Result<DuckSections, FormatError> {
     })
 }
 
-/// A single decoded texture with its file-local ID, ready for scene insertion.
+/// A single decoded texture with its UUID, ready for scene insertion.
 pub struct DecodedTexture {
-    pub file_id: u32,
+    pub file_id: TextureId,
     pub texture: Texture,
 }
 
@@ -761,29 +760,29 @@ pub fn assemble_duck_scene(
     for dt in decoded_textures {
         let mut texture = dt.texture;
         texture.id = dt.file_id;
-        scene.insert_texture_unchecked(texture);
+        scene.add_texture(texture);
     }
 
     for mesh in sections.meshes {
-        scene.insert_mesh_unchecked(mesh);
+        scene.add_mesh(mesh);
     }
 
     for material in sections.materials {
-        scene.insert_material_unchecked(material);
+        scene.add_material(material);
     }
 
     for instance in sections.instances {
-        scene.insert_instance_unchecked(instance);
+        scene.add_instance(instance);
     }
 
     for node in sections.nodes {
-        scene.insert_node_unchecked(node);
+        scene.insert_node(node);
     }
 
     scene.set_root_node_order(sections.metadata.root_nodes);
 
-    // Build a lookup from env_map_id -> preprocessed IBL data
-    let mut preprocessed_map: HashMap<u32, PreprocessedIbl> = HashMap::new();
+    // Build a lookup from env_map UUID -> preprocessed IBL data
+    let mut preprocessed_map: HashMap<EnvironmentMapId, PreprocessedIbl> = HashMap::new();
     for sibl in sections.preprocessed_ibl {
         preprocessed_map.insert(sibl.env_map_id, PreprocessedIbl {
             irradiance: sibl.irradiance,
@@ -797,13 +796,15 @@ pub fn assemble_duck_scene(
         let has_hdr = sem.hdr_data.is_some();
 
         let mut em = if let Some(hdr_data) = sem.hdr_data {
-            EnvironmentMap::from_hdr_data(sem.id, hdr_data)
+            let mut env_map = EnvironmentMap::from_hdr_data(hdr_data);
+            env_map.id = sem.id;
+            env_map
         } else if has_preprocessed {
-            // HDR was dropped; create from preprocessed data
-            EnvironmentMap::from_preprocessed(
-                sem.id,
+            let mut env_map = EnvironmentMap::from_preprocessed(
                 preprocessed_map.remove(&sem.id).unwrap(),
-            )
+            );
+            env_map.id = sem.id;
+            env_map
         } else {
             return Err(FormatError::DeserializationError(
                 format!("Environment map {} has neither HDR data nor preprocessed IBL data", sem.id),
@@ -813,13 +814,12 @@ pub fn assemble_duck_scene(
         em.set_intensity(sem.intensity);
         em.set_rotation(sem.rotation);
 
-        // Attach preprocessed data if HDR source was also kept
         if has_hdr
             && let Some(preprocessed) = preprocessed_map.remove(&sem.id) {
                 em.set_preprocessed_ibl(preprocessed);
             }
 
-        scene.insert_environment_map_unchecked(em);
+        scene.add_environment_map(em);
     }
 
     scene.set_active_environment_map(sections.metadata.active_environment_map);
@@ -933,58 +933,6 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
     output.resize(HEADER_SIZE, 0); // Reserve space for header
     let mut toc = TableOfContents::new();
 
-    // Build sequential ID maps for each type, excluding annotation content
-    let mut node_id_map: HashMap<NodeId, u32> = HashMap::new();
-    let mut instance_id_map: HashMap<InstanceId, u32> = HashMap::new();
-    let mut mesh_id_map: HashMap<MeshId, u32> = HashMap::new();
-    let mut material_id_map: HashMap<MaterialId, u32> = HashMap::new();
-    let mut texture_id_map: HashMap<TextureId, u32> = HashMap::new();
-    let mut env_map_id_map: HashMap<EnvironmentMapId, u32> = HashMap::new();
-
-    let mut node_idx = 0u32;
-    for node in scene.nodes() {
-        if !annotation_filter.nodes.contains(&node.id) {
-            node_id_map.insert(node.id, node_idx);
-            node_idx += 1;
-        }
-    }
-
-    let mut inst_idx = 0u32;
-    for inst in scene.instances() {
-        if !annotation_filter.instances.contains(&inst.id) {
-            instance_id_map.insert(inst.id, inst_idx);
-            inst_idx += 1;
-        }
-    }
-
-    let mut mesh_idx = 0u32;
-    for mesh in scene.meshes() {
-        if !annotation_filter.meshes.contains(&mesh.id) {
-            mesh_id_map.insert(mesh.id, mesh_idx);
-            mesh_idx += 1;
-        }
-    }
-
-    // The default material gets a sentinel file ID (u32::MAX) so instances
-    // can reference it, but its data is not serialized (Scene::new() recreates it).
-    material_id_map.insert(DEFAULT_MATERIAL_ID, u32::MAX);
-    let mut mat_idx = 0u32;
-    for mat in scene.materials() {
-        if mat.id == DEFAULT_MATERIAL_ID || annotation_filter.materials.contains(&mat.id) {
-            continue;
-        }
-        material_id_map.insert(mat.id, mat_idx);
-        mat_idx += 1;
-    }
-
-    for (idx, tex) in scene.textures().enumerate() {
-        texture_id_map.insert(tex.id(), idx as u32);
-    }
-
-    for (idx, em) in scene.environment_maps().enumerate() {
-        env_map_id_map.insert(em.id, idx as u32);
-    }
-
     // ===== Metadata Section =====
     let metadata = SerializedMetadata {
         name: None,
@@ -995,121 +943,69 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
         generator: format!("duck-engine {}", env!("CARGO_PKG_VERSION")),
         root_nodes: scene.root_nodes()
             .iter()
-            .filter_map(|&id| node_id_map.get(&id).copied())
+            .filter(|&&id| !annotation_filter.nodes.contains(&id))
+            .copied()
             .collect(),
-        active_environment_map: scene.active_environment_map()
-            .and_then(|id| env_map_id_map.get(&id).copied()),
+        active_environment_map: scene.active_environment_map(),
     };
-    
+
     write_section(&metadata, SectionType::Metadata, compression_level, &mut output, &mut toc)?;
 
     // ===== Nodes Section =====
     let nodes: Vec<Node> = scene.nodes()
-        .filter_map(|node| {
-            let remapped_id = *node_id_map.get(&node.id)?;
+        .filter(|node| !annotation_filter.nodes.contains(&node.id))
+        .map(|node| {
             let mut node = node.clone();
-            node.id = remapped_id;
-            node.set_parent_unchecked(
-                node.parent().and_then(|pid| node_id_map.get(&pid).copied()),
-            );
+            // Filter annotation children out of the children list
             node.set_children_unchecked(
                 node.children()
                     .iter()
-                    .filter_map(|&cid| node_id_map.get(&cid).copied())
+                    .filter(|&&cid| !annotation_filter.nodes.contains(&cid))
+                    .copied()
                     .collect(),
             );
-            let remapped_payload = match node.payload() {
-                NodePayload::Instance(iid) => match instance_id_map.get(iid).copied() {
-                    Some(remapped_iid) => NodePayload::Instance(remapped_iid),
-                    None => NodePayload::None,
-                },
+            // Convert annotation instance references to None
+            let payload = match node.payload() {
+                NodePayload::Instance(iid) if annotation_filter.instances.contains(iid) => NodePayload::None,
                 other => other.clone(),
             };
-            node.set_payload(remapped_payload);
-            Some(node)
+            node.set_payload(payload);
+            node
         })
         .collect();
     write_section(&nodes, SectionType::Nodes, compression_level, &mut output, &mut toc)?;
 
     // ===== Instances Section =====
     let instances: Vec<Instance> = scene.instances()
-        .filter_map(|inst| {
-            let remapped_id = *instance_id_map.get(&inst.id)?;
-            let mut inst = inst.clone();
-            inst.id = remapped_id;
-            inst.set_mesh_unchecked(*mesh_id_map.get(&inst.mesh())?);
-            inst.set_material_unchecked(*material_id_map.get(&inst.material())?);
-            Some(inst)
-        })
+        .filter(|inst| !annotation_filter.instances.contains(&inst.id))
+        .cloned()
         .collect();
     write_section(&instances, SectionType::Instances, compression_level, &mut output, &mut toc)?;
 
     // ===== Materials Section =====
-    // Skip the default material (it's always recreated by Scene::new())
     let materials: Vec<Material> = scene.materials()
-        .filter(|mat| mat.id != DEFAULT_MATERIAL_ID && !annotation_filter.materials.contains(&mat.id))
-        .map(|mat| {
-            let remapped_id = *material_id_map.get(&mat.id).unwrap_or(&0);
-
-            // Build a new material with remapped texture IDs
-            let mut new_mat = Material::new()
-                .with_base_color_factor(mat.base_color_factor())
-                .with_metallic_factor(mat.metallic_factor())
-                .with_roughness_factor(mat.roughness_factor())
-                .with_normal_scale(mat.normal_scale())
-                .with_flags(mat.flags())
-                .with_alpha_mode(mat.alpha_mode())
-                .with_alpha_cutoff(mat.alpha_cutoff());
-
-            if let Some(tid) = mat.base_color_texture()
-                && let Some(&remapped) = texture_id_map.get(&tid) {
-                    new_mat = new_mat.with_base_color_texture(remapped);
-                }
-            if let Some(tid) = mat.normal_texture()
-                && let Some(&remapped) = texture_id_map.get(&tid) {
-                    new_mat = new_mat.with_normal_texture(remapped);
-                }
-            if let Some(tid) = mat.metallic_roughness_texture()
-                && let Some(&remapped) = texture_id_map.get(&tid) {
-                    new_mat = new_mat.with_metallic_roughness_texture(remapped);
-                }
-            if let Some(color) = mat.line_color() {
-                new_mat = new_mat.with_line_color(color);
-            }
-            if let Some(color) = mat.point_color() {
-                new_mat = new_mat.with_point_color(color);
-            }
-
-            new_mat.id = remapped_id;
-            new_mat
-        })
+        .filter(|mat| !annotation_filter.materials.contains(&mat.id))
+        .cloned()
         .collect();
     write_section(&materials, SectionType::Materials, compression_level, &mut output, &mut toc)?;
 
     // ===== Meshes Section =====
     let meshes: Vec<Mesh> = scene.meshes()
         .filter(|mesh| !annotation_filter.meshes.contains(&mesh.id))
-        .map(|mesh| {
-            let remapped_id = *mesh_id_map.get(&mesh.id).unwrap_or(&0);
-            let mut cloned = mesh.clone();
-            cloned.id = remapped_id;
-            cloned
-        })
+        .cloned()
         .collect();
     write_section(&meshes, SectionType::Meshes, compression_level, &mut output, &mut toc)?;
 
     // ===== Textures Section =====
     let mut textures = Vec::new();
     for texture in scene.textures() {
-        if let Some(&remapped_id) = texture_id_map.get(&texture.id()) {
-            let serialized = SerializedTexture::from_texture(
-                texture,
-                remapped_id,
-                options.texture_format,
-                options.compression,
-            )?;
-            textures.push(serialized);
-        }
+        let serialized = SerializedTexture::from_texture(
+            texture,
+            texture.id(),
+            options.texture_format,
+            options.compression,
+        )?;
+        textures.push(serialized);
     }
     write_section(&textures, SectionType::Textures, compression_level, &mut output, &mut toc)?;
 
@@ -1119,7 +1015,6 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
         let mut preprocessed_ibls = Vec::new();
 
         for env_map in scene.environment_maps() {
-            let remapped_id = *env_map_id_map.get(&env_map.id).unwrap_or(&0);
             let hdr_data = match env_map.source() {
                 duck_engine_scene::EnvironmentSource::EquirectangularPath(path) => {
                     Some(std::fs::read(path).map_err(FormatError::IoError)?)
@@ -1130,16 +1025,15 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
                 duck_engine_scene::EnvironmentSource::Preprocessed => None,
             };
             env_maps.push(SerializedEnvironmentMap {
-                id: remapped_id,
+                id: env_map.id,
                 hdr_data,
                 intensity: env_map.intensity(),
                 rotation: env_map.rotation(),
             });
 
-            // Serialize preprocessed IBL data if present
             if let Some(preprocessed) = env_map.preprocessed_ibl() {
                 preprocessed_ibls.push(SerializedPreprocessedIbl {
-                    env_map_id: remapped_id,
+                    env_map_id: env_map.id,
                     irradiance: preprocessed.irradiance.clone(),
                     prefiltered: preprocessed.prefiltered.clone(),
                     brdf_lut: preprocessed.brdf_lut.clone(),
@@ -1320,14 +1214,13 @@ mod tests {
         let bytes = to_bytes(&original).expect("Failed to serialize");
         let loaded = from_bytes(&bytes).expect("Failed to deserialize");
 
-        // Skip the default material (ID 0), find our custom material
         let original_mat = original.materials()
-            .find(|m| m.id != DEFAULT_MATERIAL_ID)
-            .expect("Custom material not found in original");
+            .next()
+            .expect("No material in original");
 
         let loaded_mat = loaded.materials()
-            .find(|m| m.id != DEFAULT_MATERIAL_ID)
-            .expect("Custom material not found in loaded");
+            .next()
+            .expect("No material in loaded");
 
         // Verify base color
         let orig_color = original_mat.base_color_factor();
@@ -1420,8 +1313,7 @@ mod tests {
         let bytes = to_bytes(&scene).expect("Failed to serialize empty scene");
         let loaded = from_bytes(&bytes).expect("Failed to deserialize empty scene");
 
-        // Should only have the default material
-        assert_eq!(loaded.material_count(), 1);
+        assert_eq!(loaded.material_count(), 0);
         assert_eq!(loaded.node_count(), 0);
         assert_eq!(loaded.mesh_count(), 0);
         assert_eq!(loaded.instance_count(), 0);
@@ -1493,7 +1385,7 @@ mod tests {
         let regular_node = loaded.nodes()
             .find(|n| n.name.as_deref() == Some("RegularNode"))
             .expect("RegularNode not found");
-        assert!(regular_node.instance().is_some());
+        assert!(matches!(regular_node.payload(), duck_engine_scene::NodePayload::Instance(_)));
     }
 
     #[test]

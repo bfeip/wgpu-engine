@@ -6,7 +6,7 @@ use super::{Material, Mesh, MeshPrimitive, NodeId, PrimitiveType, Vertex};
 use crate::common::RgbaColor;
 
 /// Unique identifier for annotations
-pub type AnnotationId = u32;
+pub type AnnotationId = crate::Id;
 
 /// Data needed to create scene geometry for an annotation
 pub(crate) struct AnnotationMeshData {
@@ -615,9 +615,6 @@ pub struct AnnotationManager {
     /// All annotations indexed by their ID
     annotations: HashMap<AnnotationId, Annotation>,
 
-    /// Next annotation ID to assign
-    next_id: AnnotationId,
-
     /// Root node for all annotation geometry (lazy initialized)
     root_node: Option<NodeId>,
 }
@@ -627,7 +624,6 @@ impl AnnotationManager {
     pub fn new() -> Self {
         Self {
             annotations: HashMap::new(),
-            next_id: 0,
             root_node: None,
         }
     }
@@ -670,7 +666,6 @@ impl AnnotationManager {
     /// Clears all annotations and resets state.
     pub fn clear(&mut self) {
         self.annotations.clear();
-        self.next_id = 0;
         self.root_node = None;
     }
 
@@ -683,13 +678,6 @@ impl AnnotationManager {
         self.root_node = None;
     }
 
-    /// Allocate a new annotation ID
-    fn next_id(&mut self) -> AnnotationId {
-        let id = self.next_id;
-        self.next_id += 1;
-        id
-    }
-
     // ========== Add annotation methods ==========
     // These add annotation data but do NOT create scene nodes
 
@@ -700,7 +688,7 @@ impl AnnotationManager {
         end: Point3<f32>,
         color: RgbaColor,
     ) -> AnnotationId {
-        let id = self.next_id();
+        let id = crate::Id::new();
         let annotation = Annotation::Line(LineAnnotation {
             meta: AnnotationMeta::new(id),
             start,
@@ -718,7 +706,7 @@ impl AnnotationManager {
         color: RgbaColor,
         closed: bool,
     ) -> AnnotationId {
-        let id = self.next_id();
+        let id = crate::Id::new();
         let annotation = Annotation::Polyline(PolylineAnnotation {
             meta: AnnotationMeta::new(id),
             points,
@@ -731,7 +719,7 @@ impl AnnotationManager {
 
     /// Adds a points annotation
     pub fn add_points(&mut self, positions: Vec<Point3<f32>>, color: RgbaColor) -> AnnotationId {
-        let id = self.next_id();
+        let id = crate::Id::new();
         let annotation = Annotation::Points(PointsAnnotation {
             meta: AnnotationMeta::new(id),
             positions,
@@ -743,7 +731,7 @@ impl AnnotationManager {
 
     /// Adds an axes annotation
     pub fn add_axes(&mut self, origin: Point3<f32>, size: f32) -> AnnotationId {
-        let id = self.next_id();
+        let id = crate::Id::new();
         let annotation = Annotation::Axes(AxesAnnotation {
             meta: AnnotationMeta::new(id),
             origin,
@@ -760,7 +748,7 @@ impl AnnotationManager {
         size: Vector3<f32>,
         color: RgbaColor,
     ) -> AnnotationId {
-        let id = self.next_id();
+        let id = crate::Id::new();
         let annotation = Annotation::Box(BoxAnnotation {
             meta: AnnotationMeta::new(id),
             center,
@@ -779,7 +767,7 @@ impl AnnotationManager {
         divisions: u32,
         color: RgbaColor,
     ) -> AnnotationId {
-        let id = self.next_id();
+        let id = crate::Id::new();
         let annotation = Annotation::Grid(GridAnnotation {
             meta: AnnotationMeta::new(id),
             center,
@@ -800,7 +788,7 @@ impl AnnotationManager {
         radius: f32,
         segments: u32,
     ) -> AnnotationId {
-        let id = self.next_id();
+        let id = crate::Id::new();
         let annotation = Annotation::PointLight(PointLightAnnotation {
             meta: AnnotationMeta::new(id),
             light_index,
@@ -821,7 +809,7 @@ impl AnnotationManager {
         length: f32,
         segments: u32,
     ) -> AnnotationId {
-        let id = self.next_id();
+        let id = crate::Id::new();
         let annotation = Annotation::SpotLight(SpotLightAnnotation {
             meta: AnnotationMeta::new(id),
             light_index,
@@ -842,7 +830,7 @@ impl AnnotationManager {
         color: RgbaColor,
         length: f32,
     ) -> AnnotationId {
-        let id = self.next_id();
+        let id = crate::Id::new();
         let annotation = Annotation::Normals(NormalsAnnotation {
             meta: AnnotationMeta::new(id),
             target_node_id: node_id,
@@ -861,8 +849,7 @@ impl AnnotationManager {
         self.annotations.remove(&id)
     }
 
-    /// Inserts an annotation with a specific ID (used during deserialization).
-    /// Updates next_id if needed to avoid ID collisions.
+    /// Inserts an annotation with its existing UUID (used during deserialization).
     /// Returns an error if an annotation with the same ID already exists.
     pub fn insert_with_id(&mut self, annotation: Annotation) -> anyhow::Result<()> {
         let id = annotation.id();
@@ -870,10 +857,6 @@ impl AnnotationManager {
             anyhow::bail!("Annotation with ID {} already exists", id);
         }
         self.annotations.insert(id, annotation);
-        // Ensure next_id is greater than any inserted ID
-        if id >= self.next_id {
-            self.next_id = id + 1;
-        }
         Ok(())
     }
 

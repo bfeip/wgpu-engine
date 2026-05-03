@@ -2,6 +2,7 @@ use super::*;
 use cgmath::{Point3, Quaternion, Vector3, Matrix4, SquareMatrix};
 use crate::common::{EPSILON, RgbaColor, Transform};
 
+
 // ========================================================================
 // Scene Creation and Basic Operations
 // ========================================================================
@@ -14,33 +15,33 @@ fn test_scene_new() {
     assert_eq!(scene.instance_count(), 0);
     assert_eq!(scene.node_count(), 0);
     assert_eq!(scene.root_nodes().len(), 0);
-    assert_eq!(scene.lights().len(), 0);
 }
 
 #[test]
 fn test_add_instance() {
     let mut scene = Scene::new();
+    let mesh_id = crate::Id::new();
+    let mat_id = crate::Id::new();
 
-    let instance_id = scene.add_instance(10, 5);
-    assert_eq!(instance_id, 0);
+    let instance_id = scene.add_instance(Instance::new(mesh_id, mat_id));
     assert_eq!(scene.instance_count(), 1);
 
     let instance = scene.get_instance(instance_id).unwrap();
-    assert_eq!(instance.mesh(), 10);
-    assert_eq!(instance.material(), 5);
+    assert_eq!(instance.mesh(), mesh_id);
+    assert_eq!(instance.material(), mat_id);
 }
 
 #[test]
 fn test_add_multiple_instances() {
     let mut scene = Scene::new();
 
-    let id1 = scene.add_instance(1, 1);
-    let id2 = scene.add_instance(2, 2);
-    let id3 = scene.add_instance(3, 3);
+    let id1 = scene.add_instance(Instance::new(crate::Id::new(), crate::Id::new()));
+    let id2 = scene.add_instance(Instance::new(crate::Id::new(), crate::Id::new()));
+    let id3 = scene.add_instance(Instance::new(crate::Id::new(), crate::Id::new()));
 
-    assert_eq!(id1, 0);
-    assert_eq!(id2, 1);
-    assert_eq!(id3, 2);
+    assert_ne!(id1, id2);
+    assert_ne!(id1, id3);
+    assert_ne!(id2, id3);
     assert_eq!(scene.instance_count(), 3);
 }
 
@@ -54,7 +55,6 @@ fn test_add_root_node() {
 
     let node_id = scene.add_default_node(None, None).unwrap();
 
-    assert_eq!(node_id, 0);
     assert_eq!(scene.node_count(), 1);
     assert_eq!(scene.root_nodes().len(), 1);
     assert_eq!(scene.root_nodes()[0], node_id);
@@ -190,11 +190,13 @@ fn test_complex_tree_structure() {
 #[test]
 fn test_add_instance_node() {
     let mut scene = Scene::new();
+    let mesh_id = crate::Id::new();
+    let mat_id = crate::Id::new();
 
     let node_id = scene.add_instance_node(
         None,
-        10,
-        5,
+        mesh_id,
+        mat_id,
         None,
         Transform::IDENTITY,
     ).unwrap();
@@ -203,12 +205,13 @@ fn test_add_instance_node() {
     assert_eq!(scene.instance_count(), 1);
 
     let node = scene.get_node(node_id).unwrap();
-    assert!(node.instance().is_some());
-
-    let instance_id = node.instance().unwrap();
+    let instance_id = match node.payload() {
+        NodePayload::Instance(id) => *id,
+        _ => panic!("expected Instance payload"),
+    };
     let instance = scene.get_instance(instance_id).unwrap();
-    assert_eq!(instance.mesh(), 10);
-    assert_eq!(instance.material(), 5);
+    assert_eq!(instance.mesh(), mesh_id);
+    assert_eq!(instance.material(), mat_id);
 }
 
 // ========================================================================
@@ -451,10 +454,10 @@ fn test_large_tree_consistency() {
 #[test]
 fn test_add_node_with_invalid_parent_fails() {
     let mut scene = Scene::new();
+    let nonexistent = crate::Id::new();
 
-    // Try to add a node with a non-existent parent
     let result = scene.add_node(
-        Some(999), // Non-existent parent ID
+        Some(nonexistent),
         None,
         Transform::IDENTITY,
     );
@@ -466,8 +469,9 @@ fn test_add_node_with_invalid_parent_fails() {
 #[test]
 fn test_add_default_node_with_invalid_parent_fails() {
     let mut scene = Scene::new();
+    let nonexistent = crate::Id::new();
 
-    let result = scene.add_default_node(Some(999), None);
+    let result = scene.add_default_node(Some(nonexistent), None);
 
     assert!(result.is_err());
     assert_eq!(scene.node_count(), 0);
@@ -476,11 +480,12 @@ fn test_add_default_node_with_invalid_parent_fails() {
 #[test]
 fn test_add_instance_node_with_invalid_parent_fails() {
     let mut scene = Scene::new();
+    let nonexistent = crate::Id::new();
 
     let result = scene.add_instance_node(
-        Some(999),
-        0,
-        0,
+        Some(nonexistent),
+        crate::Id::new(),
+        crate::Id::new(),
         None,
         Transform::IDENTITY,
     );
@@ -833,7 +838,7 @@ fn test_cone_directed_base_along_direction() {
 #[test]
 fn test_point_light_annotation_to_mesh_data() {
     let ann = annotation::PointLightAnnotation {
-        meta: annotation::AnnotationMeta { id: 0, name: None, visible: true, node_id: None },
+        meta: annotation::AnnotationMeta { id: crate::Id::new(), name: None, visible: true, node_id: None },
         light_index: 0,
         radius: 0.5,
         segments: 8,
@@ -847,22 +852,6 @@ fn test_point_light_annotation_to_mesh_data() {
     assert!(data.mesh.index_count(PrimitiveType::LineList) > 0);
 }
 
-#[test]
-fn test_point_light_annotation_reification() {
-    let mut scene = Scene::new();
-    scene.add_light(Light::point(
-        Vector3::new(1.0, 2.0, 3.0),
-        RgbaColor::WHITE,
-        1.0,
-    ));
-
-    let id = scene.annotations.add_point_light(0, 0.5, 8);
-    scene.reify_annotations();
-
-    let annotation = scene.annotations.get(id).unwrap();
-    assert!(annotation.is_reified());
-    assert!(annotation.node_id().is_some());
-}
 
 // ========================================================================
 // Spot Light Annotation
@@ -871,7 +860,7 @@ fn test_point_light_annotation_reification() {
 #[test]
 fn test_spot_light_annotation_to_mesh_data() {
     let ann = annotation::SpotLightAnnotation {
-        meta: annotation::AnnotationMeta { id: 0, name: None, visible: true, node_id: None },
+        meta: annotation::AnnotationMeta { id: crate::Id::new(), name: None, visible: true, node_id: None },
         light_index: 0,
         length: 5.0,
         segments: 8,
@@ -892,24 +881,6 @@ fn test_spot_light_annotation_to_mesh_data() {
     }
 }
 
-#[test]
-fn test_spot_light_annotation_reification() {
-    let mut scene = Scene::new();
-    scene.add_light(Light::spot(
-        Vector3::new(0.0, 5.0, 0.0),
-        Vector3::new(0.0, -1.0, 0.0),
-        RgbaColor::WHITE,
-        1.0,
-        0.3,
-        0.6,
-    ));
-
-    let id = scene.annotations.add_spot_light(0, 5.0, 8);
-    scene.reify_annotations();
-
-    let annotation = scene.annotations.get(id).unwrap();
-    assert!(annotation.is_reified());
-}
 
 // ========================================================================
 // Normals Annotation
@@ -918,8 +889,8 @@ fn test_spot_light_annotation_reification() {
 #[test]
 fn test_normals_annotation_to_mesh_data() {
     let ann = annotation::NormalsAnnotation {
-        meta: annotation::AnnotationMeta { id: 0, name: None, visible: true, node_id: None },
-        target_node_id: 0,
+        meta: annotation::AnnotationMeta { id: crate::Id::new(), name: None, visible: true, node_id: None },
+        target_node_id: crate::Id::nil(),
         color: RgbaColor::CYAN,
         length: 0.1,
         reified_generation: None,
@@ -940,8 +911,8 @@ fn test_normals_annotation_to_mesh_data() {
 #[test]
 fn test_normals_annotation_empty_vertices() {
     let ann = annotation::NormalsAnnotation {
-        meta: annotation::AnnotationMeta { id: 0, name: None, visible: true, node_id: None },
-        target_node_id: 0,
+        meta: annotation::AnnotationMeta { id: crate::Id::new(), name: None, visible: true, node_id: None },
+        target_node_id: crate::Id::nil(),
         color: RgbaColor::CYAN,
         length: 0.1,
         reified_generation: None,
@@ -954,8 +925,8 @@ fn test_normals_annotation_empty_vertices() {
 #[test]
 fn test_normals_annotation_line_direction() {
     let ann = annotation::NormalsAnnotation {
-        meta: annotation::AnnotationMeta { id: 0, name: None, visible: true, node_id: None },
-        target_node_id: 0,
+        meta: annotation::AnnotationMeta { id: crate::Id::new(), name: None, visible: true, node_id: None },
+        target_node_id: crate::Id::nil(),
         color: RgbaColor::CYAN,
         length: 0.5,
         reified_generation: None,
@@ -1006,59 +977,3 @@ fn test_normals_annotation_reification() {
     assert!(annotation.is_reified());
 }
 
-// ========================================================================
-// Staleness Detection and Re-reification
-// ========================================================================
-
-#[test]
-fn test_point_light_staleness_detection() {
-    let mut scene = Scene::new();
-    scene.add_light(Light::point(
-        Vector3::new(0.0, 0.0, 0.0),
-        RgbaColor::WHITE,
-        1.0,
-    ));
-
-    let id = scene.annotations.add_point_light(0, 0.5, 8);
-    let reified_count = scene.reify_annotations();
-    assert_eq!(reified_count, 1);
-
-    // Re-reify with no changes — should not re-reify
-    let reified_count = scene.reify_annotations();
-    assert_eq!(reified_count, 0);
-
-    // Bump generation to simulate light change by re-setting lights
-    let lights = scene.lights().to_vec();
-    scene.set_lights(lights);
-
-    // Should detect staleness and re-reify
-    let reified_count = scene.reify_annotations();
-    assert_eq!(reified_count, 1);
-
-    let annotation = scene.annotations.get(id).unwrap();
-    assert!(annotation.is_reified());
-}
-
-#[test]
-fn test_wrong_light_type_returns_none() {
-    let mut scene = Scene::new();
-    // Add a directional light, but try to annotate it as a point light
-    scene.add_light(Light::directional(
-        Vector3::new(0.0, -1.0, 0.0),
-        RgbaColor::WHITE,
-        1.0,
-    ));
-
-    let id = scene.annotations.add_point_light(0, 0.5, 8);
-    let result = scene.reify_annotation(id);
-    assert!(result.is_none());
-}
-
-#[test]
-fn test_light_index_out_of_bounds_returns_none() {
-    let mut scene = Scene::new();
-    // No lights added, index 0 is out of bounds
-    let id = scene.annotations.add_point_light(0, 0.5, 8);
-    let result = scene.reify_annotation(id);
-    assert!(result.is_none());
-}

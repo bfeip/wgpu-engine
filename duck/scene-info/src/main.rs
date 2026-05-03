@@ -15,7 +15,7 @@ use duck_engine_import_export::format::{
     FileHeader, FormatError, SectionType, SerializedMetadata,
     SerializedTexture, TableOfContents, TocEntry,
 };
-use duck_engine_scene::{Instance, Light, Material, Mesh, Node, NodePayload, TextureFormat};
+use duck_engine_scene::{Instance, Light, Material, Mesh, Node, NodeId, NodePayload, TextureFormat};
 
 #[derive(Parser)]
 #[command(name = "scene-info")]
@@ -349,7 +349,7 @@ fn compute_max_depth(nodes: &[Node]) -> usize {
     }
 
     // Build parent map
-    let parent_map: HashMap<u32, Option<u32>> =
+    let parent_map: HashMap<NodeId, Option<NodeId>> =
         nodes.iter().map(|n| (n.id, n.parent())).collect();
 
     let mut max_depth = 0;
@@ -538,7 +538,7 @@ fn print_node_hierarchy(nodes: &[Node]) {
     let roots: Vec<_> = nodes.iter().filter(|n| n.parent().is_none()).collect();
 
     // Build children map
-    let mut children_map: HashMap<u32, Vec<&Node>> = HashMap::new();
+    let mut children_map: HashMap<NodeId, Vec<&Node>> = HashMap::new();
     for node in nodes {
         if let Some(parent_id) = node.parent() {
             children_map.entry(parent_id).or_default().push(node);
@@ -547,7 +547,7 @@ fn print_node_hierarchy(nodes: &[Node]) {
 
     fn print_node(
         node: &Node,
-        children_map: &HashMap<u32, Vec<&Node>>,
+        children_map: &HashMap<NodeId, Vec<&Node>>,
         prefix: &str,
         is_last: bool,
     ) {

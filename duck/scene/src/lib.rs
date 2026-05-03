@@ -2,6 +2,7 @@
 pub use duck_engine_common as common;
 
 // Scene submodules
+mod id;
 mod camera;
 pub mod annotation;
 mod environment;
@@ -22,6 +23,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 // ID types
+pub use id::Id;
 pub use annotation::AnnotationId;
 pub use environment::EnvironmentMapId;
 pub use instance::InstanceId;
@@ -36,7 +38,7 @@ pub use view::{View, ViewId};
 pub use instance::Instance;
 pub use light::{Light, LightType, MAX_LIGHTS};
 pub use material::{
-    AlphaMode, Material, MaterialFlags, MaterialProperties, DEFAULT_MATERIAL_ID,
+    AlphaMode, Material, MaterialFlags, MaterialProperties,
     DEFAULT_METALLIC, DEFAULT_ROUGHNESS,
 };
 pub use mesh::{Mesh, MeshDescriptor, MeshIndex, MeshPrimitive, ObjMesh, PrimitiveType, SubMeshRange, Topology, Vertex};
@@ -124,27 +126,12 @@ pub struct Scene {
     /// Generation counter that increments on any node add, remove, or mutation.
     /// Used by the renderer to detect when scene data need re-collection.
     node_generation: u64,
-
-    next_mesh_id: MeshId,
-    next_instance_id: InstanceId,
-    next_node_id: NodeId,
-    next_material_id: MaterialId,
-    next_texture_id: TextureId,
-    next_environment_map_id: EnvironmentMapId,
 }
 
 impl Scene {
-    /// Creates a new empty scene with a default material.
-    ///
-    /// The scene is initialized with one default material at a sentinel ID
-    /// (`DEFAULT_MATERIAL_ID`) that has:
-    /// - Face color: Magenta (for debugging unassigned faces)
-    /// - Line color: Black
-    /// - Point color: Black
-    ///
-    /// User materials are assigned sequential IDs starting from 0.
+    /// Creates a new empty scene.
     pub fn new() -> Self {
-        let mut scene = Self {
+        Self {
             meshes: HashMap::new(),
             instances: HashMap::new(),
 
@@ -162,30 +149,7 @@ impl Scene {
             annotations: AnnotationManager::new(),
 
             node_generation: initial_generation(),
-
-            next_mesh_id: 0,
-            next_instance_id: 0,
-            next_node_id: 0,
-            next_material_id: 0,
-            next_texture_id: 0,
-            next_environment_map_id: 0,
-        };
-
-        // Insert default material at the sentinel ID (not via add_material,
-        // which assigns sequential user IDs starting from 0)
-        scene.insert_default_material();
-
-        scene
-    }
-
-    /// Insert (or re-insert) the default material at the sentinel ID.
-    fn insert_default_material(&mut self) {
-        let mut default_mat = Material::new()
-            .with_base_color_factor(RgbaColor::MAGENTA) // For debugging unassigned faces
-            .with_line_color(RgbaColor::BLACK)
-            .with_point_color(RgbaColor::BLACK);
-        default_mat.id = DEFAULT_MATERIAL_ID;
-        self.materials.insert(DEFAULT_MATERIAL_ID, default_mat);
+        }
     }
 
     // ========== Mesh API ==========
@@ -198,11 +162,7 @@ impl Scene {
     /// # Returns
     /// The unique ID assigned to this mesh
     pub fn add_mesh(&mut self, mesh: Mesh) -> MeshId {
-        let id = self.next_mesh_id;
-        self.next_mesh_id += 1;
-
-        let mut mesh = mesh;
-        mesh.id = id;
+        let id = mesh.id;
         self.meshes.insert(id, mesh);
         id
     }
@@ -259,11 +219,7 @@ impl Scene {
     /// # Returns
     /// The unique ID assigned to this material
     pub fn add_material(&mut self, material: Material) -> MaterialId {
-        let id = self.next_material_id;
-        self.next_material_id += 1;
-
-        let mut material = material;
-        material.id = id;
+        let id = material.id;
         self.materials.insert(id, material);
         id
     }
@@ -308,11 +264,7 @@ impl Scene {
     /// # Returns
     /// The unique ID assigned to this texture
     pub fn add_texture(&mut self, texture: Texture) -> TextureId {
-        let id = self.next_texture_id;
-        self.next_texture_id += 1;
-
-        let mut texture = texture;
-        texture.id = id;
+        let id = texture.id;
         self.textures.insert(id, texture);
         id
     }
@@ -381,9 +333,8 @@ impl Scene {
         &mut self,
         path: impl Into<std::path::PathBuf>,
     ) -> EnvironmentMapId {
-        let id = self.next_environment_map_id;
-        let env_map = EnvironmentMap::from_hdr_path(id, path);
-        self.next_environment_map_id += 1;
+        let env_map = EnvironmentMap::from_hdr_path(path);
+        let id = env_map.id;
         self.environment_maps.insert(id, env_map);
         id
     }
@@ -401,9 +352,15 @@ impl Scene {
         &mut self,
         data: Vec<u8>,
     ) -> EnvironmentMapId {
-        let id = self.next_environment_map_id;
-        let env_map = EnvironmentMap::from_hdr_data(id, data);
-        self.next_environment_map_id += 1;
+        let env_map = EnvironmentMap::from_hdr_data(data);
+        let id = env_map.id;
+        self.environment_maps.insert(id, env_map);
+        id
+    }
+
+    /// Adds an environment map to the scene using its existing ID.
+    pub fn add_environment_map(&mut self, env_map: EnvironmentMap) -> EnvironmentMapId {
+        let id = env_map.id;
         self.environment_maps.insert(id, env_map);
         id
     }
@@ -460,15 +417,8 @@ impl Scene {
     ///
     /// # Returns
     /// The unique ID assigned to this instance
-    pub fn add_instance(
-        &mut self,
-        mesh: MeshId,
-        material: MaterialId,
-    ) -> InstanceId {
-        let id = self.next_instance_id;
-        self.next_instance_id += 1;
-
-        let instance = Instance::new(id, mesh, material);
+    pub fn add_instance(&mut self, instance: Instance) -> InstanceId {
+        let id = instance.id;
         self.instances.insert(id, instance);
         id
     }
@@ -503,50 +453,6 @@ impl Scene {
         self.instances.remove(&id);
     }
 
-    // ========== Unchecked Insert API ==========
-    //
-    // These methods insert items using their existing `id` field, without
-    // assigning a new ID or validating internal references.  They update the
-    // `next_*_id` counter so that future `add_*` calls won't collide.
-
-    /// Inserts a texture using its existing `id`.
-    pub fn insert_texture_unchecked(&mut self, texture: Texture) {
-        self.next_texture_id = self.next_texture_id.max(texture.id + 1);
-        self.textures.insert(texture.id, texture);
-    }
-
-    /// Inserts a mesh using its existing `id`.
-    pub fn insert_mesh_unchecked(&mut self, mesh: Mesh) {
-        self.next_mesh_id = self.next_mesh_id.max(mesh.id + 1);
-        self.meshes.insert(mesh.id, mesh);
-    }
-
-    /// Inserts a material using its existing `id`.
-    pub fn insert_material_unchecked(&mut self, material: Material) {
-        self.next_material_id = self.next_material_id.max(material.id + 1);
-        self.materials.insert(material.id, material);
-    }
-
-    /// Inserts an instance using its existing `id`.
-    pub fn insert_instance_unchecked(&mut self, instance: Instance) {
-        self.next_instance_id = self.next_instance_id.max(instance.id + 1);
-        self.instances.insert(instance.id, instance);
-    }
-
-    /// Inserts a node using its existing `id`.
-    ///
-    /// Does **not** update `root_nodes` or parent/child links — the caller
-    /// is responsible for tree consistency (e.g. via `set_root_node_order`).
-    pub fn insert_node_unchecked(&mut self, node: Node) {
-        self.next_node_id = self.next_node_id.max(node.id + 1);
-        self.nodes.insert(node.id, node);
-    }
-
-    /// Inserts an environment map using its existing `id`.
-    pub fn insert_environment_map_unchecked(&mut self, env_map: EnvironmentMap) {
-        self.next_environment_map_id = self.next_environment_map_id.max(env_map.id + 1);
-        self.environment_maps.insert(env_map.id, env_map);
-    }
 
     // ========== Active Camera API ==========
 
@@ -674,10 +580,8 @@ impl Scene {
                 anyhow::bail!("Parent node with ID {} not found in scene", parent_id);
             }
 
-        let id = self.next_node_id;
-        self.next_node_id += 1;
-
-        let mut node = Node::new(id, name, transform);
+        let mut node = Node::new(name, transform);
+        let id = node.id;
 
         // Set up parent-child relationship
         if let Some(parent_id) = parent {
@@ -720,7 +624,7 @@ impl Scene {
         transform: common::Transform,
     ) -> anyhow::Result<NodeId> {
         // Create the instance
-        let instance_id = self.add_instance(mesh, material);
+        let instance_id = self.add_instance(Instance::new(mesh, material));
 
         // Create the node (validates parent exists)
         let node_id = self.add_node(parent, name, transform)?;
@@ -745,6 +649,14 @@ impl Scene {
     /// Returns an error if `parent` is `Some` but the specified node doesn't exist.
     pub fn add_default_node(&mut self, parent: Option<NodeId>, name: Option<String>) -> anyhow::Result<NodeId> {
         self.add_node(parent, name, common::Transform::IDENTITY)
+    }
+
+    /// Inserts a pre-built node using its existing ID.
+    ///
+    /// Does **not** update `root_nodes` or parent/child links — the caller
+    /// is responsible for tree consistency (e.g. via `set_root_node_order`).
+    pub fn insert_node(&mut self, node: Node) {
+        self.nodes.insert(node.id, node);
     }
 
     /// Removes a node and all its children from the scene tree.
@@ -798,36 +710,19 @@ impl Scene {
         self.node_generation += 1;
     }
 
-    /// Clears all nodes from the scene.
-    ///
-    /// This removes all nodes, instances, meshes, materials (except the default),
-    /// textures, lights, environment maps, and annotations from the scene,
-    /// resetting it to an empty state.
+    /// Clears all nodes from the scene, resetting it to an empty state.
     pub fn clear(&mut self) {
         self.nodes.clear();
         self.root_nodes.clear();
         self.instances.clear();
         self.meshes.clear();
+        self.materials.clear();
         self.textures.clear();
         self.environment_maps.clear();
         self.active_environment_map = None;
         self.active_camera = None;
         self.annotations.clear();
         self.node_generation += 1;
-
-        // Reset all materials and re-insert a fresh default material.
-        // We clear + re-insert rather than retain because the material at
-        // DEFAULT_MATERIAL_ID may have been replaced by a format loader.
-        self.materials.clear();
-        self.insert_default_material();
-
-        // Reset all ID counters
-        self.next_node_id = 0;
-        self.next_instance_id = 0;
-        self.next_mesh_id = 0;
-        self.next_material_id = 0;
-        self.next_texture_id = 0;
-        self.next_environment_map_id = 0;
     }
 
     /// Removes orphaned resources not referenced by any node in the scene.
@@ -857,8 +752,6 @@ impl Scene {
                 referenced_materials.insert(inst.material());
             }
         }
-        // Always keep the default material
-        referenced_materials.insert(DEFAULT_MATERIAL_ID);
 
         // Collect texture IDs referenced by retained materials
         let mut referenced_textures = HashSet::new();

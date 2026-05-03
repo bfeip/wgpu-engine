@@ -1,7 +1,7 @@
 use std::path::Path;
 use duck_engine_scene::{
     AlphaMode, Camera, Material, MaterialFlags, Texture, TextureFormat, Mesh, MeshId, MeshPrimitive,
-    PrimitiveType, Scene, Vertex, MaterialId, DEFAULT_MATERIAL_ID,
+    PrimitiveType, Scene, Vertex, MaterialId,
 };
 
 /// A loaded primitive from a glTF mesh, containing the scene mesh ID and its material ID.
@@ -128,22 +128,18 @@ fn map_primitive_mode(mode: gltf::mesh::Mode) -> Option<PrimitiveType> {
     }
 }
 
-/// Gets an appropriate material for a glTF primitive based on its type.
+/// Gets the material for a glTF primitive, returning `None` when no material applies.
 fn get_material_for_primitive(
     primitive: &gltf::Primitive,
     primitive_type: PrimitiveType,
     material_map: &[MaterialId],
-) -> MaterialId {
+) -> Option<MaterialId> {
     match primitive_type {
-        PrimitiveType::TriangleList => {
-            // For triangles, use the glTF material if available
-            primitive
-                .material()
-                .index()
-                .and_then(|idx| material_map.get(idx).copied())
-                .unwrap_or(DEFAULT_MATERIAL_ID)
-        }
-        PrimitiveType::LineList | PrimitiveType::PointList => DEFAULT_MATERIAL_ID,
+        PrimitiveType::TriangleList => primitive
+            .material()
+            .index()
+            .and_then(|idx| material_map.get(idx).copied()),
+        PrimitiveType::LineList | PrimitiveType::PointList => None,
     }
 }
 
@@ -606,6 +602,7 @@ pub fn load_gltf_assets(
 
     // Load all meshes
     let mut mesh_map: GltfMeshMap = Vec::new();
+    let mut fallback_material_id: Option<MaterialId> = None;
     for mesh in parsed.document.meshes() {
         let mut primitives_data = Vec::new();
 
@@ -622,8 +619,11 @@ pub fn load_gltf_assets(
             let vertices = load_vertices(&primitive, &parsed.buffers)?;
             let indices_u32 = load_indices(&primitive, &parsed.buffers)?;
 
-            let material_id =
-                get_material_for_primitive(&primitive, primitive_type, &material_map);
+            let material_id = get_material_for_primitive(&primitive, primitive_type, &material_map)
+                .unwrap_or_else(|| {
+                    *fallback_material_id
+                        .get_or_insert_with(|| scene.add_material(Material::default()))
+                });
 
             let primitive = MeshPrimitive { primitive_type, indices: indices_u32 };
             let mesh_id = scene.add_mesh(Mesh::from_raw(vertices, vec![primitive]));

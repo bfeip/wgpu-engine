@@ -15,7 +15,7 @@ use russimp::node::Node as RNode;
 use russimp::scene::{PostProcess, Scene as RScene};
 
 use duck_engine_scene::{
-    Camera, DEFAULT_MATERIAL_ID, Light, Material, MaterialId, Mesh, MeshId, MeshPrimitive,
+    Camera, Light, Material, MaterialId, Mesh, MeshId, MeshPrimitive,
     NodeId, NodePayload, PrimitiveType, Scene, Texture, TextureId, Vertex,
 };
 use duck_engine_scene::common::{RgbaColor, Transform, decompose_matrix};
@@ -307,9 +307,10 @@ fn load_meshes(
     material_map: &[MaterialId],
     scene: &mut Scene,
 ) -> Vec<(MeshId, MaterialId)> {
+    let mut fallback_material_id: Option<MaterialId> = None;
     assimp_meshes
         .iter()
-        .map(|m| load_single_mesh(m, material_map, scene))
+        .map(|m| load_single_mesh(m, material_map, scene, &mut fallback_material_id))
         .collect()
 }
 
@@ -317,11 +318,15 @@ fn load_single_mesh(
     assimp_mesh: &russimp::mesh::Mesh,
     material_map: &[MaterialId],
     scene: &mut Scene,
+    fallback_material_id: &mut Option<MaterialId>,
 ) -> (MeshId, MaterialId) {
     let material_id = material_map
         .get(assimp_mesh.material_index as usize)
         .copied()
-        .unwrap_or(DEFAULT_MATERIAL_ID);
+        .unwrap_or_else(|| {
+            *fallback_material_id
+                .get_or_insert_with(|| scene.add_material(Material::default()))
+        });
 
     // Build vertex data
     let vertices: Vec<Vertex> = assimp_mesh

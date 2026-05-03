@@ -300,6 +300,8 @@ impl HighlightQuery for SelectionManager {
 mod tests {
     use super::*;
 
+    fn nid() -> NodeId { NodeId::new() }
+
     #[test]
     fn test_new_manager_is_empty() {
         let manager = SelectionManager::new();
@@ -311,21 +313,22 @@ mod tests {
     #[test]
     fn test_add_and_contains() {
         let mut manager = SelectionManager::new();
-        let item = SelectionItem::Node(42);
+        let id = nid();
+        let item = SelectionItem::Node(id);
 
         manager.add(item);
 
         assert!(!manager.is_empty());
         assert_eq!(manager.len(), 1);
         assert!(manager.contains(&item));
-        assert!(manager.is_node_selected(42));
+        assert!(manager.is_node_selected(id));
         assert_eq!(manager.primary(), Some(item));
     }
 
     #[test]
     fn test_add_duplicate() {
         let mut manager = SelectionManager::new();
-        let item = SelectionItem::Node(42);
+        let item = SelectionItem::Node(nid());
 
         manager.add(item);
         manager.add(item);
@@ -336,21 +339,26 @@ mod tests {
     #[test]
     fn test_set_clears_previous() {
         let mut manager = SelectionManager::new();
-        manager.add(SelectionItem::Node(1));
-        manager.add(SelectionItem::Node(2));
-        manager.add(SelectionItem::Node(3));
+        let id_a = nid();
+        let id_b = nid();
+        let id_c = nid();
+        let id_new = nid();
 
-        manager.set(SelectionItem::Node(42));
+        manager.add(SelectionItem::Node(id_a));
+        manager.add(SelectionItem::Node(id_b));
+        manager.add(SelectionItem::Node(id_c));
+
+        manager.set(SelectionItem::Node(id_new));
 
         assert_eq!(manager.len(), 1);
-        assert!(manager.is_node_selected(42));
-        assert!(!manager.is_node_selected(1));
+        assert!(manager.is_node_selected(id_new));
+        assert!(!manager.is_node_selected(id_a));
     }
 
     #[test]
     fn test_remove() {
         let mut manager = SelectionManager::new();
-        let item = SelectionItem::Node(42);
+        let item = SelectionItem::Node(nid());
 
         manager.add(item);
         assert!(manager.remove(&item));
@@ -363,7 +371,7 @@ mod tests {
     #[test]
     fn test_toggle() {
         let mut manager = SelectionManager::new();
-        let item = SelectionItem::Node(42);
+        let item = SelectionItem::Node(nid());
 
         manager.toggle(item);
         assert!(manager.contains(&item));
@@ -375,8 +383,8 @@ mod tests {
     #[test]
     fn test_clear() {
         let mut manager = SelectionManager::new();
-        manager.add(SelectionItem::Node(1));
-        manager.add(SelectionItem::Node(2));
+        manager.add(SelectionItem::Node(nid()));
+        manager.add(SelectionItem::Node(nid()));
 
         manager.clear();
 
@@ -387,32 +395,39 @@ mod tests {
     #[test]
     fn test_selection_order() {
         let mut manager = SelectionManager::new();
-        manager.add(SelectionItem::Node(1));
-        manager.add(SelectionItem::Node(2));
-        manager.add(SelectionItem::Node(3));
+        let id_a = nid();
+        let id_b = nid();
+        let id_c = nid();
+        manager.add(SelectionItem::Node(id_a));
+        manager.add(SelectionItem::Node(id_b));
+        manager.add(SelectionItem::Node(id_c));
 
         let nodes: Vec<NodeId> = manager.selected_nodes();
-        assert_eq!(nodes, vec![1, 2, 3]);
+        assert_eq!(nodes, vec![id_a, id_b, id_c]);
     }
 
     #[test]
     fn test_primary_updates_on_remove() {
         let mut manager = SelectionManager::new();
-        manager.add(SelectionItem::Node(1));
-        manager.add(SelectionItem::Node(2));
+        let id_a = nid();
+        let id_b = nid();
 
-        assert_eq!(manager.primary(), Some(SelectionItem::Node(2)));
+        manager.add(SelectionItem::Node(id_a));
+        manager.add(SelectionItem::Node(id_b));
 
-        manager.remove(&SelectionItem::Node(2));
-        assert_eq!(manager.primary(), Some(SelectionItem::Node(1)));
+        assert_eq!(manager.primary(), Some(SelectionItem::Node(id_b)));
 
-        manager.remove(&SelectionItem::Node(1));
+        manager.remove(&SelectionItem::Node(id_b));
+        assert_eq!(manager.primary(), Some(SelectionItem::Node(id_a)));
+
+        manager.remove(&SelectionItem::Node(id_a));
         assert_eq!(manager.primary(), None);
     }
 
     #[test]
     fn test_selection_item_node_id() {
-        let item = SelectionItem::Node(42);
-        assert_eq!(item.node_id(), 42);
+        let id = nid();
+        let item = SelectionItem::Node(id);
+        assert_eq!(item.node_id(), id);
     }
 }

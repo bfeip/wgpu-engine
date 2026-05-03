@@ -14,7 +14,7 @@ use cgmath::{Deg, Matrix3, Matrix4, Point3, Quaternion, Rotation3, SquareMatrix,
 use openusd::sdf::{self, AbstractData, Value};
 
 use duck_engine_scene::{
-    Camera, DEFAULT_MATERIAL_ID, Light, Material, MaterialId, Mesh, MeshId, MeshPrimitive,
+    Camera, Light, Material, MaterialId, Mesh, MeshId, MeshPrimitive,
     NodeId, NodePayload, PrimitiveType, Scene, Vertex,
 };
 use duck_engine_scene::common::{RgbaColor, Transform, decompose_matrix};
@@ -207,6 +207,7 @@ fn convert_scene(data: &mut dyn AbstractData) -> Result<UsdLoadResult> {
 
     // Phase 2: Build node hierarchy with meshes, lights, cameras
     let mut camera = None;
+    let mut fallback_material_id: Option<MaterialId> = None;
     let children = get_prim_children(data, &root);
     for child_name in &children {
         let child_path = make_child_path(&root, child_name);
@@ -217,6 +218,7 @@ fn convert_scene(data: &mut dyn AbstractData) -> Result<UsdLoadResult> {
             &mut scene,
             None,
             &mut camera,
+            &mut fallback_material_id,
         )?;
     }
 
@@ -346,6 +348,7 @@ fn build_node_recursive(
     scene: &mut Scene,
     parent: Option<NodeId>,
     camera_out: &mut Option<Camera>,
+    fallback_material_id: &mut Option<MaterialId>,
 ) -> Result<()> {
     let type_name = get_prim_type(data, prim_path).unwrap_or_default();
     let name = prim_path
@@ -359,14 +362,14 @@ fn build_node_recursive(
 
     match type_name.as_str() {
         "Mesh" => {
-            let mesh_entries = extract_mesh(data, prim_path, material_map, scene);
+            let mesh_entries = extract_mesh(data, prim_path, material_map, scene, fallback_material_id);
 
             if mesh_entries.len() == 1 {
                 let (mesh_id, mat_id) = mesh_entries[0];
                 let node_id = scene.add_instance_node(
                     parent, mesh_id, mat_id, name, transform,
                 )?;
-                recurse_children(data, prim_path, material_map, scene, node_id, camera_out)?;
+                recurse_children(data, prim_path, material_map, scene, node_id, camera_out, fallback_material_id)?;
             } else if mesh_entries.len() > 1 {
                 // Split mesh: create group node, then instance children
                 let group_id = scene.add_node(parent, name, transform)?;
@@ -379,7 +382,7 @@ fn build_node_recursive(
                         Transform::IDENTITY,
                     )?;
                 }
-                recurse_children(data, prim_path, material_map, scene, group_id, camera_out)?;
+                recurse_children(data, prim_path, material_map, scene, group_id, camera_out, fallback_material_id)?;
             }
         }
         "Camera" => {
@@ -396,7 +399,7 @@ fn build_node_recursive(
         _ => {
             // Xform, Scope, or unknown → create a transform node and recurse
             let node_id = scene.add_node(parent, name, transform)?;
-            recurse_children(data, prim_path, material_map, scene, node_id, camera_out)?;
+            recurse_children(data, prim_path, material_map, scene, node_id, camera_out, fallback_material_id)?;
         }
     }
 
@@ -411,6 +414,7 @@ fn recurse_children(
     scene: &mut Scene,
     parent_node: NodeId,
     camera_out: &mut Option<Camera>,
+    fallback_material_id: &mut Option<MaterialId>,
 ) -> Result<()> {
     let children = get_prim_children(data, prim_path);
     for child_name in &children {
@@ -422,6 +426,7 @@ fn recurse_children(
             scene,
             Some(parent_node),
             camera_out,
+            fallback_material_id,
         )?;
     }
     Ok(())
@@ -557,9 +562,13 @@ fn extract_mesh(
     mesh_path: &sdf::Path,
     material_map: &HashMap<String, MaterialId>,
     scene: &mut Scene,
+    fallback_material_id: &mut Option<MaterialId>,
 ) -> Vec<(MeshId, MaterialId)> {
-    // Get material binding
-    let material_id = get_material_binding(data, mesh_path, material_map);
+    let material_id = get_material_binding(data, mesh_path, material_map)
+        .unwrap_or_else(|| {
+            *fallback_material_id
+                .get_or_insert_with(|| scene.add_material(Material::default()))
+        });
 
     // Read geometry attributes
     let points_path = make_property_path(mesh_path, "points");
@@ -648,23 +657,19 @@ fn try_read_uvs(data: &mut dyn AbstractData, mesh_path: &sdf::Path) -> Option<Ve
     None
 }
 
-/// Get the material binding for a mesh prim.
+/// Get the material binding for a mesh prim, returning `None` when no material is bound.
 fn get_material_binding(
     data: &mut dyn AbstractData,
     mesh_path: &sdf::Path,
     material_map: &HashMap<String, MaterialId>,
-) -> MaterialId {
-    // Try to find material:binding relationship
+) -> Option<MaterialId> {
     let rel_path = make_property_path(mesh_path, "material:binding");
 
-    // Try various field names for relationship targets
-    let mat_id = ["targetPaths", "default"].iter().find_map(|field| {
+    ["targetPaths", "default"].iter().find_map(|field| {
         let val = data.get(&rel_path, field).ok()?;
         let path_str = extract_first_path_from_value(val.as_ref())?;
         material_map.get(&path_str).copied()
-    });
-
-    mat_id.unwrap_or(DEFAULT_MATERIAL_ID)
+    })
 }
 
 /// Try to extract a path string from various Value types used for relationships.

@@ -1,7 +1,6 @@
 use std::{sync::Arc};
 
 use cgmath::{Point3, Vector3};
-use duck_engine_scene::CoordinateSpace;
 use winit::{
     application::ApplicationHandler,
     event::{DeviceEvent, DeviceId, WindowEvent},
@@ -11,7 +10,7 @@ use winit::{
 
 use duck_engine_viewer::common::{RgbaColor, Transform};
 use duck_engine_viewer::input::{ElementState, Key};
-use duck_engine_viewer::scene::{EnvironmentMapId, Light, Material, MaterialFlags, Mesh, PrimitiveType};
+use duck_engine_viewer::scene::{EnvironmentMapId, Material, MaterialFlags, Mesh, PrimitiveType};
 use duck_engine_viewer::{Viewer, winit_support};
 
 const SPHERE_RADIUS: f32 = 0.4;
@@ -32,23 +31,9 @@ fn grid_position(row: usize, col: usize) -> Point3<f32> {
 fn build_material_scene(viewer: &mut Viewer) {
     let scene = viewer.scene_mut();
 
-    // Replace default lighting with a three-light setup
-    scene.clear_lights();
-    scene.add_light(Light::directional(
-        Vector3::new(-0.3, 0.0, -1.0),
-        RgbaColor::WHITE,
-        3.0,
-    ).in_space(CoordinateSpace::Camera));
-    //scene.lights.push(Light::point(
-    //    Vector3::new(-4.0, 3.0, -2.0),
-    //    RgbaColor { r: 0.7, g: 0.8, b: 1.0, a: 1.0 },
-    //    50.0,
-    //));
-    //scene.lights.push(Light::point(
-    //    Vector3::new(2.0, 4.0, 4.0),
-    //    RgbaColor { r: 1.0, g: 0.95, b: 0.85, a: 1.0 },
-    //    40.0,
-    //));
+    // Attach default camera-space key + fill lights to a placeholder camera node.
+    let camera_node = scene.add_node(None, Some("Camera".to_string()), Default::default()).unwrap();
+    scene.set_default_light_nodes(camera_node);
 
     // Shared sphere mesh for all instances
     let mesh_id = scene.add_mesh(Mesh::sphere(
@@ -234,12 +219,12 @@ fn build_material_scene(viewer: &mut Viewer) {
     }
 
     // Camera: elevated view looking down at the grid
-    let camera = viewer.camera_mut();
-    camera.eye = Point3::new(0.0, 6.0, 8.0);
-    camera.target = Point3::new(0.0, 0.0, 0.0);
-
+    viewer.with_camera_mut(|camera| {
+        camera.eye = Point3::new(0.0, 6.0, 8.0);
+        camera.target = Point3::new(0.0, 0.0, 0.0);
+    });
     if let Some(bounds) = viewer.scene().bounding() {
-        viewer.camera_mut().fit_to_bounds(&bounds);
+        viewer.with_camera_mut(|camera| camera.fit_to_bounds(&bounds));
     }
 }
 
@@ -248,7 +233,6 @@ struct App<'a> {
     window: Option<Arc<Window>>,
     viewer: Option<Viewer<'a>>,
     env_map_id: Option<EnvironmentMapId>,
-    default_lights: Vec<Light>,
 }
 
 impl<'a> App<'a> {
@@ -274,7 +258,6 @@ impl<'a> App<'a> {
                 .scene_mut()
                 .add_environment_map_from_hdr_path(env_map_path);
         self.env_map_id = Some(env_map_id);
-        self.default_lights = viewer.scene().lights().to_vec();
 
         window.request_redraw();
         self.window = Some(window);
@@ -333,10 +316,8 @@ impl<'a> ApplicationHandler for App<'a> {
                     let ibl_active = scene.active_environment_map().is_some();
                     if ibl_active {
                         scene.set_active_environment_map(None);
-                        scene.set_lights(self.default_lights.clone());
                     } else {
                         scene.set_active_environment_map(Some(env_id));
-                        scene.clear_lights();
                     }
                 }
             }
@@ -366,7 +347,6 @@ fn main() {
         window: None,
         viewer: None,
         env_map_id: None,
-        default_lights: Vec::new(),
     };
 
     event_loop.run_app(&mut app).unwrap();

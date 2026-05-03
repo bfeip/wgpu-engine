@@ -8,7 +8,7 @@ mod primitives;
 use crate::common::Aabb;
 
 /// Unique identifier for a mesh in the scene.
-pub type MeshId = u32;
+pub type MeshId = crate::Id;
 
 /// Index type used for mesh index buffers.
 pub type MeshIndex = u32;
@@ -230,7 +230,7 @@ impl Mesh {
     /// Creates a new empty mesh with no vertices or primitives.
     pub fn new() -> Self {
         Self {
-            id: 0, // Assigned by Scene
+            id: crate::Id::new(),
             vertices: Vec::new(),
             primitives: Vec::new(),
             generation: crate::initial_generation(),
@@ -246,7 +246,7 @@ impl Mesh {
     /// * `primitives` - Primitive data (index lists grouped by type)
     pub fn from_raw(vertices: Vec<Vertex>, primitives: Vec<MeshPrimitive>) -> Self {
         Self {
-            id: 0, // Assigned by Scene
+            id: crate::Id::new(),
             vertices,
             primitives,
             generation: crate::initial_generation(),

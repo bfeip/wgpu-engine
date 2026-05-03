@@ -5,8 +5,8 @@ use cgmath::Matrix4;
 use duck_engine_common::decompose_matrix;
 use duck_engine_scene::common::Transform;
 use duck_engine_scene::{
-    Camera, InstanceId, Material, Mesh, MeshPrimitive, NodeId, NodePayload, PrimitiveType, Scene,
-    SubMeshRange, Topology, Vertex,
+    Camera, Instance, InstanceId, Material, Mesh, MeshPrimitive, NodeId, NodePayload,
+    PrimitiveType, Scene, SubMeshRange, Topology, Vertex,
 };
 use duck_engine_scene::common::RgbaColor;
 use opencascade::primitives::{EdgeType, Shape};
@@ -284,7 +284,7 @@ fn import_leaf_part(
             .with_line_color(options.edge_color),
     );
     let mesh_id = scene.add_mesh(mesh);
-    let instance_id = scene.add_instance(mesh_id, mat);
+    let instance_id = scene.add_instance(Instance::new(mesh_id, mat));
     scene.set_node_payload(node, NodePayload::Instance(instance_id));
 
     Ok(instance_id)

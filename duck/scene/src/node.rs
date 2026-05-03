@@ -10,7 +10,7 @@ use cgmath::{Matrix4, Point3, Quaternion, Vector3};
 use std::cell::Cell;
 
 /// Unique identifier for a Node in the scene tree.
-pub type NodeId = u32;
+pub type NodeId = crate::Id;
 
 /// Trait for custom, user-defined node payloads.
 ///
@@ -108,9 +108,9 @@ pub struct Node {
 
 impl Node {
     /// Creates a new node with the given transform.
-    pub fn new(id: NodeId, name: Option<String>, transform: Transform) -> Self {
+    pub fn new(name: Option<String>, transform: Transform) -> Self {
         Self {
-            id,
+            id: crate::Id::new(),
             name,
             transform,
             parent: None,
@@ -124,8 +124,8 @@ impl Node {
     }
 
     /// Creates a new node with default transform (identity).
-    pub fn new_default(id: NodeId) -> Self {
-        Self::new(id, None, Transform::IDENTITY)
+    pub fn new_default() -> Self {
+        Self::new(None, Transform::IDENTITY)
     }
 
     // ============== Transform ==============
@@ -414,9 +414,8 @@ mod tests {
         let rotation = Quaternion::new(1.0, 0.0, 0.0, 0.0);
         let scale = Vector3::new(2.0, 2.0, 2.0);
 
-        let node = Node::new(42, None, Transform::new(position, rotation, scale));
+        let node = Node::new(None, Transform::new(position, rotation, scale));
 
-        assert_eq!(node.id, 42);
         assert_eq!(node.position(), position);
         assert_eq!(node.rotation(), rotation);
         assert_eq!(node.scale(), scale);
@@ -424,9 +423,8 @@ mod tests {
 
     #[test]
     fn test_node_default_values() {
-        let node = Node::new_default(7);
+        let node = Node::new_default();
 
-        assert_eq!(node.id, 7);
         assert_eq!(node.name, None);
         assert_eq!(node.parent(), None);
         assert_eq!(node.children().len(), 0);
@@ -435,7 +433,7 @@ mod tests {
 
     #[test]
     fn test_node_local_transform_identity() {
-        let node = Node::new_default(0);
+        let node = Node::new_default();
         let transform = node.compute_local_transform();
 
         // Identity transform should be close to Matrix4::from_scale(1.0)
@@ -464,7 +462,7 @@ mod tests {
         let rotation = Quaternion::new(1.0, 0.0, 0.0, 0.0); // Identity
         let scale = Vector3::new(1.0, 1.0, 1.0); // Unity scale
 
-        let node = Node::new(0, None, Transform::new(position, rotation, scale));
+        let node = Node::new(None, Transform::new(position, rotation, scale));
         let transform = node.compute_local_transform();
 
         // Check translation components (last column)
@@ -480,7 +478,7 @@ mod tests {
         let rotation = Quaternion::from_angle_z(Deg(90.0)); // 90 degrees around Z
         let scale = Vector3::new(1.0, 1.0, 1.0);
 
-        let node = Node::new(0, None, Transform::new(position, rotation, scale));
+        let node = Node::new(None, Transform::new(position, rotation, scale));
         let transform = node.compute_local_transform();
 
         // Apply transform to point (1, 0, 0) - should become roughly (0, 1, 0)
@@ -500,7 +498,7 @@ mod tests {
         let rotation = Quaternion::new(1.0, 0.0, 0.0, 0.0);
         let scale = Vector3::new(2.0, 3.0, 4.0);
 
-        let node = Node::new(0, None, Transform::new(position, rotation, scale));
+        let node = Node::new(None, Transform::new(position, rotation, scale));
         let transform = node.compute_local_transform();
 
         // Check diagonal elements (scale factors)
@@ -516,7 +514,7 @@ mod tests {
         let rotation = Quaternion::from_angle_y(Deg(45.0));
         let scale = Vector3::new(2.0, 2.0, 2.0);
 
-        let node = Node::new(0, None, Transform::new(position, rotation, scale));
+        let node = Node::new(None, Transform::new(position, rotation, scale));
         let transform = node.compute_local_transform();
 
         // Manually compute expected transform
@@ -544,11 +542,12 @@ mod tests {
 
     #[test]
     fn test_set_parent() {
-        let mut node = Node::new_default(1);
+        let mut node = Node::new_default();
         assert_eq!(node.parent(), None);
 
-        node.set_parent_unchecked(Some(10));
-        assert_eq!(node.parent(), Some(10));
+        let parent_id = crate::Id::new();
+        node.set_parent_unchecked(Some(parent_id));
+        assert_eq!(node.parent(), Some(parent_id));
 
         node.set_parent_unchecked(None);
         assert_eq!(node.parent(), None);
@@ -556,72 +555,81 @@ mod tests {
 
     #[test]
     fn test_add_child() {
-        let mut parent = Node::new_default(1);
-        let mut child1 = Node::new_default(5);
-        let mut child2 = Node::new_default(7);
+        let mut parent = Node::new_default();
+        let mut child1 = Node::new_default();
+        let mut child2 = Node::new_default();
+
+        let parent_id = parent.id;
+        let child1_id = child1.id;
+        let child2_id = child2.id;
 
         assert_eq!(parent.children().len(), 0);
         assert_eq!(child1.parent(), None);
         assert_eq!(child2.parent(), None);
 
         // Add first child (bidirectional setup)
-        parent.add_child_unchecked(5);
-        child1.set_parent_unchecked(Some(1));
+        parent.add_child_unchecked(child1_id);
+        child1.set_parent_unchecked(Some(parent_id));
 
         assert_eq!(parent.children().len(), 1);
-        assert_eq!(parent.children()[0], 5);
-        assert_eq!(child1.parent(), Some(1));
+        assert_eq!(parent.children()[0], child1_id);
+        assert_eq!(child1.parent(), Some(parent_id));
 
         // Add second child (bidirectional setup)
-        parent.add_child_unchecked(7);
-        child2.set_parent_unchecked(Some(1));
+        parent.add_child_unchecked(child2_id);
+        child2.set_parent_unchecked(Some(parent_id));
 
         assert_eq!(parent.children().len(), 2);
-        assert!(parent.children().contains(&5));
-        assert!(parent.children().contains(&7));
-        assert_eq!(child1.parent(), Some(1));
-        assert_eq!(child2.parent(), Some(1));
+        assert!(parent.children().contains(&child1_id));
+        assert!(parent.children().contains(&child2_id));
+        assert_eq!(child1.parent(), Some(parent_id));
+        assert_eq!(child2.parent(), Some(parent_id));
     }
 
     #[test]
     fn test_add_child_duplicate_ignored() {
-        let mut node = Node::new_default(1);
+        let mut node = Node::new_default();
+        let child_id = crate::Id::new();
 
-        node.add_child_unchecked(5);
-        node.add_child_unchecked(5); // Duplicate
-        node.add_child_unchecked(5); // Duplicate
+        node.add_child_unchecked(child_id);
+        node.add_child_unchecked(child_id); // Duplicate
+        node.add_child_unchecked(child_id); // Duplicate
 
         // Should only have one child
         assert_eq!(node.children().len(), 1);
-        assert_eq!(node.children()[0], 5);
+        assert_eq!(node.children()[0], child_id);
     }
 
     #[test]
     fn test_remove_child() {
-        let mut node = Node::new_default(1);
+        let mut node = Node::new_default();
+        let id_a = crate::Id::new();
+        let id_b = crate::Id::new();
+        let id_c = crate::Id::new();
 
-        node.add_child_unchecked(5);
-        node.add_child_unchecked(10);
-        node.add_child_unchecked(15);
+        node.add_child_unchecked(id_a);
+        node.add_child_unchecked(id_b);
+        node.add_child_unchecked(id_c);
 
         assert_eq!(node.children().len(), 3);
 
-        node.remove_child_unchecked(10);
+        node.remove_child_unchecked(id_b);
         assert_eq!(node.children().len(), 2);
-        assert!(node.children().contains(&5));
-        assert!(!node.children().contains(&10));
-        assert!(node.children().contains(&15));
+        assert!(node.children().contains(&id_a));
+        assert!(!node.children().contains(&id_b));
+        assert!(node.children().contains(&id_c));
     }
 
     #[test]
     fn test_remove_child_nonexistent() {
-        let mut node = Node::new_default(1);
-        node.add_child_unchecked(5);
+        let mut node = Node::new_default();
+        let child_id = crate::Id::new();
+        node.add_child_unchecked(child_id);
 
         // Removing non-existent child should not panic
-        node.remove_child_unchecked(999);
+        node.remove_child_unchecked(crate::Id::new());
         assert_eq!(node.children().len(), 1);
-        assert_eq!(node.children()[0], 5);
+        assert_eq!(node.children()[0], child_id);
     }
 
     // ========================================================================
@@ -630,13 +638,13 @@ mod tests {
 
     #[test]
     fn test_cached_world_transform_initially_none() {
-        let node = Node::new_default(0);
+        let node = Node::new_default();
         assert!(node.cached_world_transform().is_none());
     }
 
     #[test]
     fn test_set_cached_world_transform() {
-        let node = Node::new_default(0);
+        let node = Node::new_default();
         let transform = Matrix4::from_translation(Vector3::new(1.0, 2.0, 3.0));
 
         node.set_cached_world_transform(transform);
@@ -654,7 +662,7 @@ mod tests {
 
     #[test]
     fn test_cached_world_transform_retrieval() {
-        let node = Node::new_default(0);
+        let node = Node::new_default();
 
         // Initially None
         assert!(node.cached_world_transform().is_none());
@@ -673,13 +681,13 @@ mod tests {
 
     #[test]
     fn test_cached_bounds_initially_none() {
-        let node = Node::new_default(0);
+        let node = Node::new_default();
         assert!(node.cached_bounds().is_none());
     }
 
     #[test]
     fn test_set_cached_bounds() {
-        let node = Node::new_default(0);
+        let node = Node::new_default();
         let bounds = Aabb {
             min: Point3::new(-1.0, -1.0, -1.0),
             max: Point3::new(1.0, 1.0, 1.0),
@@ -697,7 +705,7 @@ mod tests {
 
     #[test]
     fn test_cached_bounds_retrieval() {
-        let node = Node::new_default(0);
+        let node = Node::new_default();
 
         // Initially None
         assert!(node.cached_bounds().is_none());
@@ -717,7 +725,7 @@ mod tests {
 
     #[test]
     fn test_bounds_dirty_flag() {
-        let node = Node::new_default(0);
+        let node = Node::new_default();
 
         // Initially dirty (no cache)
         assert!(node.bounds_dirty());
@@ -737,7 +745,7 @@ mod tests {
 
     #[test]
     fn test_transform_dirty_flag() {
-        let node = Node::new_default(0);
+        let node = Node::new_default();
 
         // Initially dirty (no cache)
         assert!(node.transform_dirty());
@@ -754,7 +762,7 @@ mod tests {
 
     #[test]
     fn test_dirty_flags_are_independent() {
-        let node = Node::new_default(0);
+        let node = Node::new_default();
 
         // Set both caches
         let transform = Matrix4::from_scale(1.0);
@@ -786,7 +794,7 @@ mod tests {
 
     #[test]
     fn test_set_position_marks_dirty() {
-        let mut node = Node::new_default(0);
+        let mut node = Node::new_default();
 
         // Set cache
         node.set_cached_world_transform(Matrix4::from_scale(1.0));
@@ -799,7 +807,7 @@ mod tests {
 
     #[test]
     fn test_set_rotation_marks_dirty() {
-        let mut node = Node::new_default(0);
+        let mut node = Node::new_default();
 
         // Set cache
         node.set_cached_world_transform(Matrix4::from_scale(1.0));
@@ -812,7 +820,7 @@ mod tests {
 
     #[test]
     fn test_set_scale_marks_dirty() {
-        let mut node = Node::new_default(0);
+        let mut node = Node::new_default();
 
         // Set cache
         node.set_cached_world_transform(Matrix4::from_scale(1.0));
@@ -825,20 +833,20 @@ mod tests {
 
     #[test]
     fn test_set_parent_marks_dirty() {
-        let mut node = Node::new_default(0);
+        let mut node = Node::new_default();
 
         // Set cache
         node.set_cached_world_transform(Matrix4::from_scale(1.0));
         assert!(!node.transform_dirty());
 
         // Change parent should mark dirty
-        node.set_parent_unchecked(Some(10));
+        node.set_parent_unchecked(Some(crate::Id::new()));
         assert!(node.transform_dirty());
     }
 
     #[test]
     fn test_add_child_marks_bounds_dirty() {
-        let mut node = Node::new_default(0);
+        let mut node = Node::new_default();
 
         // Set both caches
         node.set_cached_world_transform(Matrix4::from_scale(1.0));
@@ -850,7 +858,7 @@ mod tests {
         assert!(!node.bounds_dirty());
 
         // Add child should only mark bounds dirty, not transform
-        node.add_child_unchecked(2);
+        node.add_child_unchecked(crate::Id::new());
         assert!(!node.transform_dirty());
         assert!(node.bounds_dirty());
     }
@@ -861,27 +869,30 @@ mod tests {
 
     #[test]
     fn test_payload_none_by_default() {
-        let node = Node::new_default(0);
+        let node = Node::new_default();
         assert!(matches!(node.payload(), NodePayload::None));
     }
 
     #[test]
     fn test_set_payload_instance() {
-        let mut node = Node::new_default(0);
+        let mut node = Node::new_default();
+        let instance_id_a = crate::Id::new();
+        let instance_id_b = crate::Id::new();
 
-        node.set_payload(NodePayload::Instance(42));
-        assert!(matches!(node.payload(), NodePayload::Instance(42)));
+        node.set_payload(NodePayload::Instance(instance_id_a));
+        assert!(matches!(node.payload(), NodePayload::Instance(id) if *id == instance_id_a));
 
-        node.set_payload(NodePayload::Instance(99));
-        assert!(matches!(node.payload(), NodePayload::Instance(99)));
+        node.set_payload(NodePayload::Instance(instance_id_b));
+        assert!(matches!(node.payload(), NodePayload::Instance(id) if *id == instance_id_b));
     }
 
     #[test]
     fn test_set_payload_none() {
-        let mut node = Node::new_default(0);
+        let mut node = Node::new_default();
+        let instance_id = crate::Id::new();
 
-        node.set_payload(NodePayload::Instance(123));
-        assert!(matches!(node.payload(), NodePayload::Instance(123)));
+        node.set_payload(NodePayload::Instance(instance_id));
+        assert!(matches!(node.payload(), NodePayload::Instance(id) if *id == instance_id));
 
         node.set_payload(NodePayload::None);
         assert!(matches!(node.payload(), NodePayload::None));
@@ -889,7 +900,7 @@ mod tests {
 
     #[test]
     fn test_set_payload_marks_bounds_dirty() {
-        let mut node = Node::new_default(0);
+        let mut node = Node::new_default();
 
         node.set_cached_world_transform(Matrix4::from_scale(1.0));
         node.set_cached_bounds(Some(Aabb::new(
@@ -898,7 +909,7 @@ mod tests {
         )));
         assert!(!node.transform_dirty());
 
-        node.set_payload(NodePayload::Instance(42));
+        node.set_payload(NodePayload::Instance(crate::Id::new()));
         assert!(!node.transform_dirty()); // payload doesn't affect transform
         assert!(node.bounds_dirty()); // payload affects bounds
     }
@@ -909,13 +920,13 @@ mod tests {
 
     #[test]
     fn test_visibility_default() {
-        let node = Node::new_default(0);
+        let node = Node::new_default();
         assert_eq!(node.visibility(), Visibility::Visible);
     }
 
     #[test]
     fn test_set_visibility() {
-        let mut node = Node::new_default(0);
+        let mut node = Node::new_default();
 
         // Default is visible
         assert_eq!(node.visibility(), Visibility::Visible);
@@ -931,7 +942,7 @@ mod tests {
 
     #[test]
     fn test_visibility_cache_invalidation() {
-        let mut node = Node::new_default(0);
+        let mut node = Node::new_default();
 
         // Set some cached effective visibility
         node.set_cached_effective_visibility(EffectiveVisibility::Visible);
@@ -944,7 +955,7 @@ mod tests {
 
     #[test]
     fn test_effective_visibility_dirty() {
-        let node = Node::new_default(0);
+        let node = Node::new_default();
 
         // Initially dirty (no cache)
         assert!(node.effective_visibility_dirty());
@@ -960,7 +971,7 @@ mod tests {
 
     #[test]
     fn test_cached_effective_visibility() {
-        let node = Node::new_default(0);
+        let node = Node::new_default();
 
         // Initially None
         assert_eq!(node.cached_effective_visibility(), None);
@@ -980,7 +991,7 @@ mod tests {
 
     #[test]
     fn test_visibility_independent_from_transform_cache() {
-        let mut node = Node::new_default(0);
+        let mut node = Node::new_default();
 
         // Set transform cache
         let transform = Matrix4::from_scale(2.0);
@@ -995,7 +1006,7 @@ mod tests {
 
     #[test]
     fn test_mark_dirty_does_not_affect_visibility_cache() {
-        let node = Node::new_default(0);
+        let node = Node::new_default();
 
         // Set visibility cache
         node.set_cached_effective_visibility(EffectiveVisibility::Visible);
@@ -1015,7 +1026,7 @@ mod tests {
 
     #[test]
     fn test_node_with_name() {
-        let mut node = Node::new_default(0);
+        let mut node = Node::new_default();
         assert_eq!(node.name, None);
 
         node.name = Some("TestNode".to_string());
@@ -1028,7 +1039,7 @@ mod tests {
         let rotation = Quaternion::new(1.0, 0.0, 0.0, 0.0);
         let scale = Vector3::new(0.0, 0.0, 0.0);
 
-        let node = Node::new(0, None, Transform::new(position, rotation, scale));
+        let node = Node::new(None, Transform::new(position, rotation, scale));
         let transform = node.compute_local_transform();
 
         // Should produce a zero-scale transform (degenerate)
@@ -1043,7 +1054,7 @@ mod tests {
         let rotation = Quaternion::new(1.0, 0.0, 0.0, 0.0);
         let scale = Vector3::new(-1.0, 1.0, 1.0); // Flip X
 
-        let node = Node::new(0, None, Transform::new(position, rotation, scale));
+        let node = Node::new(None, Transform::new(position, rotation, scale));
         let transform = node.compute_local_transform();
 
         // X axis should be flipped
@@ -1054,18 +1065,17 @@ mod tests {
 
     #[test]
     fn test_large_hierarchy() {
-        let mut parent = Node::new_default(0);
+        let mut parent = Node::new_default();
+        let child_ids: Vec<NodeId> = (0..1000).map(|_| crate::Id::new()).collect();
 
-        // Add 1000 children
-        for i in 1..=1000 {
-            parent.add_child_unchecked(i);
+        for &id in &child_ids {
+            parent.add_child_unchecked(id);
         }
 
         assert_eq!(parent.children().len(), 1000);
 
-        // Check all children are present
-        for i in 1..=1000 {
-            assert!(parent.children().contains(&i));
+        for &id in &child_ids {
+            assert!(parent.children().contains(&id));
         }
     }
 }

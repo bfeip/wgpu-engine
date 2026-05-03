@@ -2,7 +2,7 @@ use duck_engine_renderer::{
     DrawData, FrameContext, MaterialPipelineCache, Renderer, RenderWorkflow, SceneRenderPass,
 };
 use duck_engine_renderer::scene::{
-    Camera, Light, Material, Mesh, PrimitiveType, Scene,
+    Camera, Light, Material, Mesh, NodePayload, PrimitiveType, Scene,
     common::RgbaColor,
 };
 
@@ -104,7 +104,7 @@ fn main() -> anyhow::Result<()> {
     let mut renderer = pollster::block_on(Renderer::new_headless(width, height));
 
     // Build scene: UV sphere with a plain unlit material.
-    // The Gooch pass ignores material bind groups and drives colour purely from
+    // The Gooch pass ignores material bind groups and drives color purely from
     // normal direction, so any valid material works here.
     let mut scene = Scene::new();
     let mesh_id = scene.add_mesh(Mesh::sphere(1.0, 48, 24, PrimitiveType::TriangleList));
@@ -115,13 +115,12 @@ fn main() -> anyhow::Result<()> {
         Default::default(),
     )?;
 
-    // A warm directional light from upper-left so the Gooch interpolation has
-    // a meaningful gradient across the sphere.
-    scene.add_light(Light::directional(
-        Vector3::new(-0.5, -1.0, -0.5),
+    // A warm directional light; direction is the node's -Z axis (identity = toward viewer).
+    let light_id = scene.add_node(None, Some("DirectionalLight".to_string()), Default::default()).unwrap();
+    scene.set_node_payload(light_id, NodePayload::Light(Light::directional(
         RgbaColor { r: 1.0, g: 0.95, b: 0.8, a: 1.0 },
         1.0,
-    ));
+    )));
 
     let camera = Camera {
         eye: Point3::new(0.0, 0.0, 3.5),

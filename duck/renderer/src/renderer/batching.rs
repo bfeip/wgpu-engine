@@ -456,24 +456,31 @@ mod tests {
     use cgmath::{Deg, Matrix4, Quaternion, Rotation3, SquareMatrix, Vector3};
     use crate::scene::common::EPSILON;
 
+    fn nid() -> NodeId { NodeId::new() }
+    fn iid() -> InstanceId { InstanceId::new() }
+    fn mid() -> MeshId { MeshId::new() }
+    fn matid() -> MaterialId { MaterialId::new() }
+
     // ========================================================================
     // InstanceTransform Tests
     // ========================================================================
 
     #[test]
     fn test_instance_transform_creation() {
+        let node_id = nid();
+        let instance_id = iid();
         let transform = Matrix4::from_scale(2.0);
-        let instance_transform = InstanceTransform::new(1, 42, transform);
+        let instance_transform = InstanceTransform::new(node_id, instance_id, transform);
 
-        assert_eq!(instance_transform.node_id, 1);
-        assert_eq!(instance_transform.instance_id, 42);
+        assert_eq!(instance_transform.node_id, node_id);
+        assert_eq!(instance_transform.instance_id, instance_id);
         assert_eq!(instance_transform.world_transform, transform);
     }
 
     #[test]
     fn test_instance_transform_identity() {
         let identity = Matrix4::identity();
-        let instance_transform = InstanceTransform::new(1, 1, identity);
+        let instance_transform = InstanceTransform::new(nid(), iid(), identity);
 
         // Verify identity transform
         for i in 0..4 {
@@ -501,7 +508,7 @@ mod tests {
     #[test]
     fn test_instance_transform_normal_matrix_computed() {
         let transform = Matrix4::from_scale(2.0);
-        let instance_transform = InstanceTransform::new(1, 1, transform);
+        let instance_transform = InstanceTransform::new(nid(), iid(), transform);
 
         // Normal matrix should be inverse-transpose
         // For uniform scale of 2.0, normal matrix should be 0.5
@@ -513,7 +520,7 @@ mod tests {
     #[test]
     fn test_instance_transform_translation() {
         let transform = Matrix4::from_translation(Vector3::new(5.0, 10.0, 15.0));
-        let instance_transform = InstanceTransform::new(1, 1, transform);
+        let instance_transform = InstanceTransform::new(nid(), iid(), transform);
 
         // Translation should be in the transform
         assert_eq!(instance_transform.world_transform[3][0], 5.0);
@@ -530,7 +537,7 @@ mod tests {
     fn test_instance_transform_rotation() {
         let rotation = Quaternion::from_angle_z(Deg(90.0));
         let transform = Matrix4::from(rotation);
-        let instance_transform = InstanceTransform::new(1, 1, transform);
+        let instance_transform = InstanceTransform::new(nid(), iid(), transform);
 
         // Normal matrix should match rotation (orthogonal matrices)
         // For 90 degree Z rotation: (1,0,0) -> (0,1,0)
@@ -547,7 +554,7 @@ mod tests {
     #[test]
     fn test_instance_transform_non_uniform_scale() {
         let transform = Matrix4::from_nonuniform_scale(2.0, 3.0, 4.0);
-        let instance_transform = InstanceTransform::new(1, 1, transform);
+        let instance_transform = InstanceTransform::new(nid(), iid(), transform);
 
         // Normal matrix should handle non-uniform scale correctly
         // Inverse of diagonal matrix (2,3,4) is (0.5, 0.333..., 0.25)
@@ -559,9 +566,9 @@ mod tests {
     #[test]
     fn test_instance_transform_different_instances_different_ids() {
         let transform = Matrix4::identity();
-        let instance1 = InstanceTransform::new(1, 1, transform);
-        let instance2 = InstanceTransform::new(2, 2, transform);
-        let instance3 = InstanceTransform::new(3, 3, transform);
+        let instance1 = InstanceTransform::new(nid(), iid(), transform);
+        let instance2 = InstanceTransform::new(nid(), iid(), transform);
+        let instance3 = InstanceTransform::new(nid(), iid(), transform);
 
         assert_ne!(instance1.instance_id, instance2.instance_id);
         assert_ne!(instance1.instance_id, instance3.instance_id);
@@ -576,10 +583,12 @@ mod tests {
         let scale = Matrix4::from_scale(2.0);
         let transform = translation * rotation * scale;
 
-        let instance_transform = InstanceTransform::new(1, 42, transform);
+        let node_id = nid();
+        let instance_id = iid();
+        let instance_transform = InstanceTransform::new(node_id, instance_id, transform);
 
-        assert_eq!(instance_transform.node_id, 1);
-        assert_eq!(instance_transform.instance_id, 42);
+        assert_eq!(instance_transform.node_id, node_id);
+        assert_eq!(instance_transform.instance_id, instance_id);
         assert_eq!(instance_transform.world_transform, transform);
 
         // Verify normal matrix was computed (not identity)
@@ -598,10 +607,12 @@ mod tests {
 
     #[test]
     fn test_draw_batch_new() {
-        let batch = DrawBatch::new(10, 5, PrimitiveType::TriangleList);
+        let mesh_id = mid();
+        let material_id = matid();
+        let batch = DrawBatch::new(mesh_id, material_id, PrimitiveType::TriangleList);
 
-        assert_eq!(batch.mesh_id, 10);
-        assert_eq!(batch.material_id, 5);
+        assert_eq!(batch.mesh_id, mesh_id);
+        assert_eq!(batch.material_id, material_id);
         assert_eq!(batch.primitive_type, PrimitiveType::TriangleList);
         assert!(batch.is_empty());
         assert_eq!(batch.len(), 0);
@@ -609,76 +620,79 @@ mod tests {
 
     #[test]
     fn test_draw_batch_add_instance() {
-        let mut batch = DrawBatch::new(10, 5, PrimitiveType::TriangleList);
+        let mut batch = DrawBatch::new(mid(), matid(), PrimitiveType::TriangleList);
+        let instance_id = iid();
 
-        let instance_transform = InstanceTransform::new(1, 1, Matrix4::identity());
+        let instance_transform = InstanceTransform::new(nid(), instance_id, Matrix4::identity());
         batch.add_instance(instance_transform);
 
         assert!(!batch.is_empty());
         assert_eq!(batch.len(), 1);
-        assert_eq!(batch.instances[0].instance_id, 1);
+        assert_eq!(batch.instances[0].instance_id, instance_id);
     }
 
     #[test]
     fn test_draw_batch_add_multiple_instances() {
-        let mut batch = DrawBatch::new(10, 5, PrimitiveType::TriangleList);
+        let mut batch = DrawBatch::new(mid(), matid(), PrimitiveType::TriangleList);
+        let instance_ids: Vec<InstanceId> = (0..5).map(|_| iid()).collect();
 
-        // Add 5 instances
-        for i in 0..5 {
-            let instance_transform = InstanceTransform::new(i, i, Matrix4::identity());
-            batch.add_instance(instance_transform);
+        for &id in &instance_ids {
+            batch.add_instance(InstanceTransform::new(nid(), id, Matrix4::identity()));
         }
 
         assert_eq!(batch.len(), 5);
         assert!(!batch.is_empty());
 
-        // Verify all instances were added
-        for i in 0..5_u32 {
-            assert_eq!(batch.instances[i as usize].instance_id, i);
+        for (i, &expected_id) in instance_ids.iter().enumerate() {
+            assert_eq!(batch.instances[i].instance_id, expected_id);
         }
     }
 
     #[test]
     fn test_draw_batch_mesh_material_ids() {
-        let batch1 = DrawBatch::new(10, 5, PrimitiveType::TriangleList);
-        let batch2 = DrawBatch::new(20, 7, PrimitiveType::LineList);
+        let mesh1 = mid();
+        let mat1 = matid();
+        let mesh2 = mid();
+        let mat2 = matid();
+        let batch1 = DrawBatch::new(mesh1, mat1, PrimitiveType::TriangleList);
+        let batch2 = DrawBatch::new(mesh2, mat2, PrimitiveType::LineList);
 
-        assert_eq!(batch1.mesh_id, 10);
-        assert_eq!(batch1.material_id, 5);
+        assert_eq!(batch1.mesh_id, mesh1);
+        assert_eq!(batch1.material_id, mat1);
         assert_eq!(batch1.primitive_type, PrimitiveType::TriangleList);
 
-        assert_eq!(batch2.mesh_id, 20);
-        assert_eq!(batch2.material_id, 7);
+        assert_eq!(batch2.mesh_id, mesh2);
+        assert_eq!(batch2.material_id, mat2);
         assert_eq!(batch2.primitive_type, PrimitiveType::LineList);
     }
 
     #[test]
     fn test_draw_batch_instance_count() {
-        let mut batch = DrawBatch::new(1, 1, PrimitiveType::TriangleList);
+        let mut batch = DrawBatch::new(mid(), matid(), PrimitiveType::TriangleList);
 
         assert_eq!(batch.len(), 0);
 
-        batch.add_instance(InstanceTransform::new(1, 1, Matrix4::identity()));
+        batch.add_instance(InstanceTransform::new(nid(), iid(), Matrix4::identity()));
         assert_eq!(batch.len(), 1);
 
-        batch.add_instance(InstanceTransform::new(2, 2, Matrix4::identity()));
+        batch.add_instance(InstanceTransform::new(nid(), iid(), Matrix4::identity()));
         assert_eq!(batch.len(), 2);
 
-        batch.add_instance(InstanceTransform::new(3, 3, Matrix4::identity()));
+        batch.add_instance(InstanceTransform::new(nid(), iid(), Matrix4::identity()));
         assert_eq!(batch.len(), 3);
     }
 
     #[test]
     fn test_draw_batch_instances_with_different_transforms() {
-        let mut batch = DrawBatch::new(10, 5, PrimitiveType::TriangleList);
+        let mut batch = DrawBatch::new(mid(), matid(), PrimitiveType::TriangleList);
 
         let transform1 = Matrix4::from_scale(1.0);
         let transform2 = Matrix4::from_scale(2.0);
         let transform3 = Matrix4::from_translation(Vector3::new(5.0, 0.0, 0.0));
 
-        batch.add_instance(InstanceTransform::new(1, 1, transform1));
-        batch.add_instance(InstanceTransform::new(2, 2, transform2));
-        batch.add_instance(InstanceTransform::new(3, 3, transform3));
+        batch.add_instance(InstanceTransform::new(nid(), iid(), transform1));
+        batch.add_instance(InstanceTransform::new(nid(), iid(), transform2));
+        batch.add_instance(InstanceTransform::new(nid(), iid(), transform3));
 
         assert_eq!(batch.len(), 3);
 
@@ -690,11 +704,10 @@ mod tests {
 
     #[test]
     fn test_draw_batch_large_number_of_instances() {
-        let mut batch = DrawBatch::new(1, 1, PrimitiveType::TriangleList);
+        let mut batch = DrawBatch::new(mid(), matid(), PrimitiveType::TriangleList);
 
-        // Add 1000 instances
-        for i in 0..1000_u32 {
-            batch.add_instance(InstanceTransform::new(i, i, Matrix4::identity()));
+        for _ in 0..1000 {
+            batch.add_instance(InstanceTransform::new(nid(), iid(), Matrix4::identity()));
         }
 
         assert_eq!(batch.len(), 1000);
@@ -715,9 +728,9 @@ mod tests {
 
     #[test]
     fn test_partition_batches_all_match() {
-        let mut batch = DrawBatch::new(1, 1, PrimitiveType::TriangleList);
-        batch.add_instance(InstanceTransform::new(1, 1, Matrix4::identity()));
-        batch.add_instance(InstanceTransform::new(2, 2, Matrix4::identity()));
+        let mut batch = DrawBatch::new(mid(), matid(), PrimitiveType::TriangleList);
+        batch.add_instance(InstanceTransform::new(nid(), iid(), Matrix4::identity()));
+        batch.add_instance(InstanceTransform::new(nid(), iid(), Matrix4::identity()));
 
         let (matched, unmatched) = partition_batches(&[batch], |_| true);
         assert_eq!(matched.len(), 1);
@@ -727,9 +740,9 @@ mod tests {
 
     #[test]
     fn test_partition_batches_none_match() {
-        let mut batch = DrawBatch::new(1, 1, PrimitiveType::TriangleList);
-        batch.add_instance(InstanceTransform::new(1, 1, Matrix4::identity()));
-        batch.add_instance(InstanceTransform::new(2, 2, Matrix4::identity()));
+        let mut batch = DrawBatch::new(mid(), matid(), PrimitiveType::TriangleList);
+        batch.add_instance(InstanceTransform::new(nid(), iid(), Matrix4::identity()));
+        batch.add_instance(InstanceTransform::new(nid(), iid(), Matrix4::identity()));
 
         let (matched, unmatched) = partition_batches(&[batch], |_| false);
         assert!(matched.is_empty());
@@ -739,20 +752,25 @@ mod tests {
 
     #[test]
     fn test_partition_batches_split() {
-        let mut batch = DrawBatch::new(1, 1, PrimitiveType::TriangleList);
-        batch.add_instance(InstanceTransform::new(1, 1, Matrix4::identity()));
-        batch.add_instance(InstanceTransform::new(2, 2, Matrix4::identity()));
-        batch.add_instance(InstanceTransform::new(3, 3, Matrix4::identity()));
+        let node_a = nid();
+        let node_b = nid();
+        let node_c = nid();
+        // We'll match only node_b
+        let match_id = node_b;
 
-        // Partition by node_id: even nodes in one group, odd in another
-        let (matched, unmatched) = partition_batches(&[batch], |inst| inst.node_id % 2 == 0);
+        let mut batch = DrawBatch::new(mid(), matid(), PrimitiveType::TriangleList);
+        batch.add_instance(InstanceTransform::new(node_a, iid(), Matrix4::identity()));
+        batch.add_instance(InstanceTransform::new(node_b, iid(), Matrix4::identity()));
+        batch.add_instance(InstanceTransform::new(node_c, iid(), Matrix4::identity()));
+
+        let (matched, unmatched) = partition_batches(&[batch], |inst| inst.node_id == match_id);
 
         assert_eq!(matched.len(), 1);
-        assert_eq!(matched[0].instances.len(), 1); // node 2 only
-        assert_eq!(matched[0].instances[0].node_id, 2);
+        assert_eq!(matched[0].instances.len(), 1);
+        assert_eq!(matched[0].instances[0].node_id, match_id);
 
         assert_eq!(unmatched.len(), 1);
-        assert_eq!(unmatched[0].instances.len(), 2); // nodes 1 and 3
+        assert_eq!(unmatched[0].instances.len(), 2);
     }
 
     // ========================================================================

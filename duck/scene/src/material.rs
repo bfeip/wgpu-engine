@@ -13,18 +13,8 @@ pub const DEFAULT_METALLIC: f32 = 0.0;
 pub const DEFAULT_NORMAL_SCALE: f32 = 1.0;
 /// Default alpha cutoff for mask mode (per glTF spec)
 pub const DEFAULT_ALPHA_CUTOFF: f32 = 0.5;
-/// The ID of the default material created automatically by the Scene.
-///
-/// This material is always available at a sentinel ID (`u32::MAX`) and provides
-/// fallback rendering for faces (magenta), lines (black), and points (black).
-/// Using `u32::MAX` ensures it never collides with user-assigned material IDs
-/// which are assigned sequentially starting from 0.
-pub const DEFAULT_MATERIAL_ID: MaterialId = u32::MAX;
-
 /// Unique identifier for materials.
-///
-/// Material IDs are assigned sequentially by the Scene starting from 0.
-pub type MaterialId = u32;
+pub type MaterialId = crate::Id;
 
 /// Alpha rendering mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -145,7 +135,7 @@ impl Material {
     /// Defaults: white base color, metallic=0.0, roughness=0.5, no textures.
     pub fn new() -> Self {
         Self {
-            id: 0, // Assigned by Scene
+            id: crate::Id::new(),
             base_color_texture: None,
             normal_texture: None,
             metallic_roughness_texture: None,

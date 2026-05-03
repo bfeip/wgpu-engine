@@ -1,7 +1,7 @@
 use crate::Camera;
 
 /// Unique identifier for a named view in the scene.
-pub type ViewId = u32;
+pub type ViewId = crate::Id;
 
 /// A named camera state that can be saved and restored.
 ///

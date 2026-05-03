@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use image::{DynamicImage, GenericImageView};
 
 /// Unique identifier for a texture in the scene.
-pub type TextureId = u32;
+pub type TextureId = crate::Id;
 
 /// Texture image format.
 #[repr(u8)]
@@ -112,7 +112,7 @@ impl Texture {
     /// * `image` - The image data to use for this texture
     pub fn from_image(image: DynamicImage) -> Self {
         Self {
-            id: 0, // Assigned by Scene
+            id: crate::Id::new(),
             source: TextureSource::Embedded { image, original_bytes: None },
             generation: 1,
         }
@@ -133,7 +133,7 @@ impl Texture {
         format: TextureFormat,
     ) -> Self {
         Self {
-            id: 0,
+            id: crate::Id::new(),
             source: TextureSource::Embedded {
                 image,
                 original_bytes: Some((original_bytes, format)),
@@ -151,7 +151,7 @@ impl Texture {
     /// * `path` - Path to the image file
     pub fn from_path(path: impl Into<PathBuf>) -> Self {
         Self {
-            id: 0, // Assigned by Scene
+            id: crate::Id::new(),
             source: TextureSource::File {
                 path: path.into(),
                 cache: OnceLock::new(),

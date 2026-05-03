@@ -2,7 +2,7 @@ use anyhow::Result;
 use bytemuck::bytes_of;
 use wgpu::util::DeviceExt;
 
-use crate::scene::{PrimitiveType, Scene};
+use crate::scene::{MaterialId, PrimitiveType, Scene, TextureId};
 
 use super::batching::collect_scene_data;
 use super::gpu_resources::{LightsArrayUniform, MaterialGpuResources, PbrUniform};
@@ -84,7 +84,7 @@ impl Renderer {
     /// Resolve a texture from the GPU resource manager, falling back to a default texture if not found.
     fn resolve_texture_or_default<'b>(
         &'b self,
-        texture_id: Option<u32>,
+        texture_id: Option<TextureId>,
         default: &'b super::gpu_resources::GpuTexture,
         name: &str,
     ) -> Result<(&'b wgpu::TextureView, &'b wgpu::Sampler)> {
@@ -131,7 +131,7 @@ impl Renderer {
     fn prepare_material_primitive(
         &mut self,
         scene: &mut Scene,
-        material_id: u32,
+        material_id: MaterialId,
         primitive_type: PrimitiveType,
     ) -> Result<()> {
         match primitive_type {
@@ -142,7 +142,7 @@ impl Renderer {
     }
 
     /// Prepare GPU resources for triangle (face) rendering.
-    fn prepare_triangle_material(&mut self, scene: &mut Scene, material_id: u32) -> Result<()> {
+    fn prepare_triangle_material(&mut self, scene: &mut Scene, material_id: MaterialId) -> Result<()> {
         let material = scene.get_material(material_id).unwrap();
         let has_lighting = !material.flags().contains(crate::scene::MaterialFlags::DO_NOT_LIGHT);
 
@@ -154,7 +154,7 @@ impl Renderer {
     }
 
     /// Prepare GPU resources for PBR material (normal/metallic-roughness textures).
-    fn prepare_pbr_material(&mut self, scene: &mut Scene, material_id: u32) -> Result<()> {
+    fn prepare_pbr_material(&mut self, scene: &mut Scene, material_id: MaterialId) -> Result<()> {
         let material = scene.get_material(material_id).unwrap();
 
         let pbr_uniform = PbrUniform::from_material(material);
@@ -231,7 +231,7 @@ impl Renderer {
     }
 
     /// Prepare GPU resources for color-only material (base_color_factor, no textures).
-    fn prepare_colored_material(&mut self, scene: &mut Scene, material_id: u32) -> Result<()> {
+    fn prepare_colored_material(&mut self, scene: &mut Scene, material_id: MaterialId) -> Result<()> {
         let material = scene.get_material(material_id).unwrap();
         let gpu_resources =
             self.create_color_material_resources(&material.base_color_factor(), "Base Color Factor");
@@ -242,7 +242,7 @@ impl Renderer {
     }
 
     /// Prepare GPU resources for line rendering.
-    fn prepare_line_material(&mut self, scene: &mut Scene, material_id: u32) -> Result<()> {
+    fn prepare_line_material(&mut self, scene: &mut Scene, material_id: MaterialId) -> Result<()> {
         let material = scene.get_material(material_id).unwrap();
 
         if let Some(color) = material.line_color() {
@@ -255,7 +255,7 @@ impl Renderer {
     }
 
     /// Prepare GPU resources for point rendering.
-    fn prepare_point_material(&mut self, scene: &mut Scene, material_id: u32) -> Result<()> {
+    fn prepare_point_material(&mut self, scene: &mut Scene, material_id: MaterialId) -> Result<()> {
         let material = scene.get_material(material_id).unwrap();
 
         if let Some(color) = material.point_color() {

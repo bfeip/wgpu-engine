@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 /// Unique identifier for an environment map in a scene.
-pub type EnvironmentMapId = u32;
+pub type EnvironmentMapId = crate::Id;
 
 /// Number of faces in a cubemap.
 pub const CUBEMAP_FACES: usize = 6;
@@ -84,9 +84,9 @@ impl EnvironmentMap {
     ///
     /// The HDR file will be loaded and processed when the environment is first used.
     /// This is internal - use `Scene::add_environment_map_from_hdr_path` to create environment maps.
-    pub(crate) fn from_hdr_path(id: EnvironmentMapId, path: impl Into<PathBuf>) -> Self {
+    pub(crate) fn from_hdr_path(path: impl Into<PathBuf>) -> Self {
         Self {
-            id,
+            id: crate::Id::new(),
             source: EnvironmentSource::EquirectangularPath(path.into()),
             intensity: 1.0,
             rotation: 0.0,
@@ -98,9 +98,9 @@ impl EnvironmentMap {
     /// Create an environment map from in-memory HDR data.
     ///
     /// The HDR data will be processed into IBL maps when the environment is first used.
-    pub fn from_hdr_data(id: EnvironmentMapId, data: Vec<u8>) -> Self {
+    pub fn from_hdr_data(data: Vec<u8>) -> Self {
         Self {
-            id,
+            id: crate::Id::new(),
             source: EnvironmentSource::EquirectangularHdr(data),
             intensity: 1.0,
             rotation: 0.0,
@@ -113,9 +113,9 @@ impl EnvironmentMap {
     ///
     /// Used when the original HDR source has been discarded and only the
     /// baked irradiance/prefiltered cubemaps remain.
-    pub fn from_preprocessed(id: EnvironmentMapId, preprocessed: PreprocessedIbl) -> Self {
+    pub fn from_preprocessed(preprocessed: PreprocessedIbl) -> Self {
         Self {
-            id,
+            id: crate::Id::new(),
             source: EnvironmentSource::Preprocessed,
             intensity: 1.0,
             rotation: 0.0,
