@@ -44,7 +44,7 @@ Harder but important:
 CAD integration, and network collaboration. This is a significant breaking restructuring; the work
 below supersedes the existing node, light, and camera APIs.
 
-### Phase 1 — Polymorphic Node Types
+### Phase 1 — Polymorphic Node Types - DONE
 
 Replace the single monolithic `Node` (which carries `Option<InstanceId>`) with a typed payload model.
 
@@ -81,7 +81,7 @@ Allow external crates to register node types that the scene can hold, serialize,
 
 ---
 
-### Phase 3 — Stable Resource Identity
+### Phase 3 — Stable Resource Identity - DONE
 
 Replace all auto-increment `u32` ID types (`NodeId`, `MeshId`, `MaterialId`, `TextureId`, `InstanceId`) with UUIDs.
 

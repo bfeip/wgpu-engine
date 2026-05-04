@@ -48,7 +48,7 @@ use std::sync::{Arc, Mutex};
 
 use thiserror::Error;
 
-use duck_engine_scene::Camera;
+use duck_engine_scene::PositionedCamera;
 use self::format::FormatError;
 use duck_engine_scene::Scene;
 
@@ -92,7 +92,7 @@ pub struct SceneLoadResult {
     /// The loaded scene.
     pub scene: Scene,
     /// Camera extracted from the file, if present (glTF only).
-    pub camera: Option<Camera>,
+    pub camera: Option<PositionedCamera>,
     /// Which format was detected and loaded.
     pub format: DetectedFormat,
 }

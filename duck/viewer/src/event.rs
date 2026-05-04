@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use web_time::Instant;
 
 use crate::input::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, TouchId, TouchPhase};
-use crate::scene::{Camera, NodePayload, Scene};
+use crate::scene::{NodePayload, PositionedCamera, Scene};
 use crate::selection::SelectionManager;
 
 /// Movement threshold in pixels before a mouse button hold becomes a drag.
@@ -24,25 +24,29 @@ pub struct EventContext<'c> {
 }
 
 impl<'c> EventContext<'c> {
-    /// Returns a clone of the active camera from the scene.
+    /// Returns a [`PositionedCamera`] for the active camera node.
     ///
-    /// Panics if no active camera is set or the active camera node lacks a Camera payload.
-    pub fn camera(&self) -> Camera {
-        let id = self.scene.active_camera().expect("no active camera in scene");
-        match self.scene.get_node(id).expect("active camera node not found").payload() {
-            NodePayload::Camera(c) => c.clone(),
-            _ => panic!("active camera node has wrong payload"),
-        }
+    /// Combines the node's world transform with its [`CameraProjection`] payload and
+    /// the current viewport aspect ratio. Panics if no active camera is set.
+    pub fn camera(&self) -> PositionedCamera {
+        let aspect = self.size.0 as f32 / self.size.1 as f32;
+        self.scene
+            .active_camera_positioned(aspect)
+            .expect("no active camera in scene")
     }
 
-    /// Replaces the active camera in the scene.
-    pub fn set_camera(&mut self, cam: Camera) {
+    /// Writes a [`PositionedCamera`] back to the active camera node.
+    ///
+    /// Updates both the node transform (pose) and the Camera payload (projection
+    /// intrinsics + focus distance).
+    pub fn set_camera(&mut self, cam: PositionedCamera) {
         let id = self.scene.active_camera().expect("no active camera in scene");
-        self.scene.set_node_payload(id, NodePayload::Camera(cam));
+        self.scene.set_node_transform(id, cam.to_node_transform());
+        self.scene.set_node_payload(id, NodePayload::Camera(cam.projection()));
     }
 
     /// Clones the active camera, passes it to `f` for mutation, then writes it back.
-    pub fn with_camera_mut(&mut self, f: impl FnOnce(&mut Camera)) {
+    pub fn with_camera_mut(&mut self, f: impl FnOnce(&mut PositionedCamera)) {
         let mut cam = self.camera();
         f(&mut cam);
         self.set_camera(cam);
@@ -806,7 +810,8 @@ mod tests {
     /// Uses real stack-allocated values so the context fields are valid.
     /// Test callbacks that don't access context fields can safely ignore them.
     fn create_mock_context_parts() -> (Option<(f32, f32)>, Scene, SelectionManager) {
-        let camera = Camera {
+        use crate::scene::PositionedCamera;
+        let camera = PositionedCamera {
             eye: (0.0, 0.0, 1.0).into(),
             target: (0.0, 0.0, 0.0).into(),
             up: cgmath::Vector3::unit_y(),
@@ -817,8 +822,8 @@ mod tests {
             ortho: false,
         };
         let mut scene = Scene::new();
-        let cam_id = scene.add_node(None, None, crate::scene::common::Transform::IDENTITY).unwrap();
-        scene.set_node_payload(cam_id, NodePayload::Camera(camera));
+        let cam_id = scene.add_node(None, None, camera.to_node_transform()).unwrap();
+        scene.set_node_payload(cam_id, NodePayload::Camera(camera.projection()));
         scene.set_active_camera(Some(cam_id));
         (None, scene, SelectionManager::new())
     }

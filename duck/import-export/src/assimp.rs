@@ -15,7 +15,7 @@ use russimp::node::Node as RNode;
 use russimp::scene::{PostProcess, Scene as RScene};
 
 use duck_engine_scene::{
-    Camera, Light, Material, MaterialId, Mesh, MeshId, MeshPrimitive,
+    Light, Material, MaterialId, Mesh, MeshId, MeshPrimitive, PositionedCamera,
     NodeId, NodePayload, PrimitiveType, Scene, Texture, TextureId, Vertex,
 };
 use duck_engine_scene::common::{RgbaColor, Transform, decompose_matrix};
@@ -23,7 +23,7 @@ use duck_engine_scene::common::{RgbaColor, Transform, decompose_matrix};
 /// Result of loading a scene via assimp.
 pub struct AssimpLoadResult {
     pub scene: Scene,
-    pub camera: Option<Camera>,
+    pub camera: Option<PositionedCamera>,
 }
 
 /// Default post-processing flags applied to every assimp load.
@@ -497,7 +497,7 @@ fn direction_to_rotation(direction: Vector3<f32>) -> Quaternion<f32> {
 // ============================================================================
 
 /// Extract the first camera from the assimp scene, if any.
-fn extract_camera(cameras: &[russimp::camera::Camera]) -> Option<Camera> {
+fn extract_camera(cameras: &[russimp::camera::Camera]) -> Option<PositionedCamera> {
     let cam = cameras.first()?;
 
     let eye = Point3::new(cam.position.x, cam.position.y, cam.position.z);
@@ -525,7 +525,7 @@ fn extract_camera(cameras: &[russimp::camera::Camera]) -> Option<Camera> {
         1000.0
     };
 
-    Some(Camera {
+    Some(PositionedCamera {
         eye,
         target,
         up,

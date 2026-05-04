@@ -32,7 +32,7 @@ pub use mesh::MeshId;
 pub use node::NodeId;
 pub use texture::TextureId;
 
-pub use camera::Camera;
+pub use camera::{CameraProjection, PositionedCamera};
 pub use coordinate_space::CoordinateSpace;
 pub use view::{View, ViewId};
 pub use instance::Instance;
@@ -461,14 +461,25 @@ impl Scene {
         self.active_camera
     }
 
-    /// Returns the [`Camera`] from the active camera node, or `None` if there is no active camera
-    /// or the node does not carry a `NodePayload::Camera` payload.
-    pub fn active_camera_data(&self) -> Option<&Camera> {
+    /// Returns the [`CameraProjection`] from the active camera node, or `None` if there is no
+    /// active camera or the node does not carry a `NodePayload::Camera` payload.
+    pub fn active_camera_data(&self) -> Option<&CameraProjection> {
         let node = self.get_node(self.active_camera?)?;
         match node.payload() {
             NodePayload::Camera(cam) => Some(cam),
             _ => None,
         }
+    }
+
+    /// Constructs a [`PositionedCamera`] from the active camera node's world transform,
+    /// projection payload, and the given viewport aspect ratio.
+    ///
+    /// Returns `None` if there is no active camera or the node lacks a Camera payload.
+    pub fn active_camera_positioned(&self, aspect: f32) -> Option<PositionedCamera> {
+        let id = self.active_camera?;
+        let proj = self.active_camera_data()?.clone();
+        let world_transform = self.nodes_transform(id);
+        Some(proj.into_positioned(world_transform, aspect))
     }
 
     /// Sets the active camera node. Pass `None` to clear.

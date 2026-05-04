@@ -1,4 +1,4 @@
-use crate::scene::{Camera, Light, LightType, Material, MAX_LIGHTS};
+use crate::scene::{Light, LightType, Material, PositionedCamera, MAX_LIGHTS};
 use super::super::batching::ResolvedLight;
 
 /// GPU uniform buffer layout for camera data.
@@ -17,8 +17,8 @@ pub struct CameraUniform {
 }
 
 impl CameraUniform {
-    /// Creates a `CameraUniform` from a scene `Camera`.
-    pub fn from_camera(camera: &Camera) -> Self {
+    /// Creates a `CameraUniform` from a [`PositionedCamera`].
+    pub fn from_positioned_camera(camera: &PositionedCamera) -> Self {
         Self {
             view_proj: camera.build_view_projection_matrix().into(),
             eye_position: [camera.eye.x, camera.eye.y, camera.eye.z],

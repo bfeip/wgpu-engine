@@ -14,7 +14,7 @@ use cgmath::{Deg, Matrix3, Matrix4, Point3, Quaternion, Rotation3, SquareMatrix,
 use openusd::sdf::{self, AbstractData, Value};
 
 use duck_engine_scene::{
-    Camera, Light, Material, MaterialId, Mesh, MeshId, MeshPrimitive,
+    Light, Material, MaterialId, Mesh, MeshId, MeshPrimitive, PositionedCamera,
     NodeId, NodePayload, PrimitiveType, Scene, Vertex,
 };
 use duck_engine_scene::common::{RgbaColor, Transform, decompose_matrix};
@@ -22,7 +22,7 @@ use duck_engine_scene::common::{RgbaColor, Transform, decompose_matrix};
 /// Result of loading a scene from USD.
 pub struct UsdLoadResult {
     pub scene: Scene,
-    pub camera: Option<Camera>,
+    pub camera: Option<PositionedCamera>,
 }
 
 /// File extensions handled by the USD loader.
@@ -347,7 +347,7 @@ fn build_node_recursive(
     material_map: &HashMap<String, MaterialId>,
     scene: &mut Scene,
     parent: Option<NodeId>,
-    camera_out: &mut Option<Camera>,
+    camera_out: &mut Option<PositionedCamera>,
     fallback_material_id: &mut Option<MaterialId>,
 ) -> Result<()> {
     let type_name = get_prim_type(data, prim_path).unwrap_or_default();
@@ -413,7 +413,7 @@ fn recurse_children(
     material_map: &HashMap<String, MaterialId>,
     scene: &mut Scene,
     parent_node: NodeId,
-    camera_out: &mut Option<Camera>,
+    camera_out: &mut Option<PositionedCamera>,
     fallback_material_id: &mut Option<MaterialId>,
 ) -> Result<()> {
     let children = get_prim_children(data, prim_path);
@@ -857,7 +857,7 @@ fn triangulate_mesh(
 // Camera Extraction
 // ============================================================================
 
-fn extract_camera(data: &mut dyn AbstractData, cam_path: &sdf::Path) -> Option<Camera> {
+fn extract_camera(data: &mut dyn AbstractData, cam_path: &sdf::Path) -> Option<PositionedCamera> {
     let focal_length =
         get_float_from_prop(data, &make_property_path(cam_path, "focalLength"))?;
     let h_aperture =
@@ -886,7 +886,7 @@ fn extract_camera(data: &mut dyn AbstractData, cam_path: &sdf::Path) -> Option<C
     // Use transform position as eye point
     let Transform { position, .. } = extract_transform(data, cam_path);
 
-    Some(Camera {
+    Some(PositionedCamera {
         eye: position,
         target: Point3::new(position.x, position.y, position.z - 1.0),
         up: Vector3::new(0.0, 1.0, 0.0),

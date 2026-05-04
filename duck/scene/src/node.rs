@@ -1,5 +1,5 @@
 use super::InstanceId;
-use crate::Camera;
+use crate::CameraProjection;
 use crate::Light;
 use crate::common::{
     Aabb, Transform, apply_scale, compose_rotation, local_axes, local_axis_x, local_axis_y,
@@ -26,8 +26,8 @@ pub enum NodePayload {
     None,
     /// References a mesh+material pair to be rendered.
     Instance(InstanceId),
-    /// A camera with eye/target/up defining position and fovy/znear/zfar/ortho for projection.
-    Camera(Camera),
+    /// A camera. Projection intrinsics are stored here; pose lives in the node's Transform.
+    Camera(CameraProjection),
     /// A light source. Position and direction are derived from the node's world transform:
     /// translation column → position (Point, Spot); negative Z-axis → direction (Directional, Spot).
     Light(Light),

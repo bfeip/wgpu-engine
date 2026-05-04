@@ -1,6 +1,6 @@
 use cgmath::{InnerSpace, Point3, Rotation};
 
-use crate::scene::{Camera, common::quaternion_from_axis_angle_safe};
+use crate::scene::{PositionedCamera, common::quaternion_from_axis_angle_safe};
 
 use super::ORBIT_SENSITIVITY;
 
@@ -17,14 +17,14 @@ impl TrackballState {
         Self { radius: 5.0, pivot: None }
     }
 
-    pub fn init(&mut self, camera: &Camera, pivot: Point3<f32>) {
+    pub fn init(&mut self, camera: &PositionedCamera, pivot: Point3<f32>) {
         self.pivot = Some(pivot);
         self.radius = camera.length();
     }
 
     /// Orbit around `camera.target` using camera-local yaw and pitch axes.
     /// `camera.up` is carried forward by the same rotation, accumulating roll.
-    pub fn handle_orbit(&mut self, dx: f64, dy: f64, camera: &mut Camera) {
+    pub fn handle_orbit(&mut self, dx: f64, dy: f64, camera: &mut PositionedCamera) {
         if self.pivot.is_some() {
             return self.handle_pivot_orbit(dx, dy, camera);
         }
@@ -46,7 +46,7 @@ impl TrackballState {
     ///
     /// Rotates both eye and target around the pivot by the same rotation,
     /// keeping the pivot visually stationary on screen.
-    fn handle_pivot_orbit(&mut self, dx: f64, dy: f64, camera: &mut Camera) {
+    fn handle_pivot_orbit(&mut self, dx: f64, dy: f64, camera: &mut PositionedCamera) {
         let pivot = self.pivot.unwrap();
 
         let dx = dx as f32 * ORBIT_SENSITIVITY;
@@ -63,14 +63,14 @@ impl TrackballState {
     }
 
     /// Handle zoom via mouse wheel by adjusting camera distance.
-    pub fn handle_zoom(&mut self, delta: f32, camera: &mut Camera, model_radius: f32) {
+    pub fn handle_zoom(&mut self, delta: f32, camera: &mut PositionedCamera, model_radius: f32) {
         self.radius = super::zoom_radius(camera.length(), delta, model_radius);
         let dir = (camera.eye - camera.target).normalize();
         camera.eye = camera.target + dir * self.radius;
     }
 
     /// Handle panning based on mouse movement.
-    pub fn handle_pan(&self, dx: f32, dy: f32, camera: &mut Camera, viewport: (u32, u32)) {
+    pub fn handle_pan(&self, dx: f32, dy: f32, camera: &mut PositionedCamera, viewport: (u32, u32)) {
         super::pan(dx, dy, camera, viewport);
     }
 }

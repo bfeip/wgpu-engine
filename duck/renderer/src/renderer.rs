@@ -18,7 +18,7 @@ use anyhow::Result;
 
 use crate::{
     ibl::IblResources,
-    scene::{Camera, Scene, SceneProperties},
+    scene::{PositionedCamera, Scene, SceneProperties},
     highlight_query::HighlightQuery,
     shaders::ShaderGenerator,
 };
@@ -331,7 +331,7 @@ impl Renderer {
     /// output size, or resized beforehand.
     pub fn render_scene_to_image(
         &mut self,
-        camera: &Camera,
+        camera: &PositionedCamera,
         scene: &mut Scene,
         highlight: Option<&dyn HighlightQuery>,
     ) -> Result<image::RgbaImage> {
@@ -425,20 +425,26 @@ impl Renderer {
         &mut self,
         view: &wgpu::TextureView,
         encoder: &mut wgpu::CommandEncoder,
-        camera_override: Option<&Camera>,
+        camera_override: Option<&PositionedCamera>,
         scene: &Scene,
         highlight: Option<&dyn HighlightQuery>,
     ) -> Result<()> {
-        let camera = match camera_override {
+        let owned: PositionedCamera;
+        let camera: &PositionedCamera = match camera_override {
             Some(c) => c,
-            None => scene
-                .active_camera_data()
-                .ok_or_else(|| anyhow::anyhow!("No camera_override provided and scene has no active camera"))?,
+            None => {
+                let (width, height) = self.size;
+                let aspect = width as f32 / height as f32;
+                owned = scene
+                    .active_camera_positioned(aspect)
+                    .ok_or_else(|| anyhow::anyhow!("No camera_override provided and scene has no active camera"))?;
+                &owned
+            }
         };
 
         // Update camera uniform
         // TODO: only when needed
-        let camera_uniform_slice = &[CameraUniform::from_camera(camera)];
+        let camera_uniform_slice = &[CameraUniform::from_positioned_camera(camera)];
         let camera_buffer_contents: &[u8] = bytemuck::cast_slice(camera_uniform_slice);
         self.queue
             .write_buffer(&self.camera_resources.buffer, 0, camera_buffer_contents);

@@ -5,7 +5,7 @@ use cgmath::Matrix4;
 use duck_engine_common::decompose_matrix;
 use duck_engine_scene::common::Transform;
 use duck_engine_scene::{
-    Camera, Instance, InstanceId, Material, Mesh, MeshPrimitive, NodeId, NodePayload,
+    Instance, InstanceId, Material, Mesh, MeshPrimitive, NodeId, NodePayload, PositionedCamera,
     PrimitiveType, Scene, SubMeshRange, Topology, Vertex,
 };
 use duck_engine_scene::common::RgbaColor;
@@ -402,7 +402,7 @@ fn import_views(
     vec![]
 }
 
-/// Convert XCAF [`ViewData`] to a Duck [`Camera`].
+/// Convert XCAF [`ViewData`] to a Duck [`PositionedCamera`].
 ///
 /// All positions are scaled from OCCT model units to scene units via `scale`
 /// (e.g. 0.001 for mm→m), matching how vertex positions are scaled in [`import_leaf_part`].
@@ -420,7 +420,7 @@ fn import_views(
 /// Clipping planes and fov are rough defaults; callers should use [`View::apply_to`] with
 /// the active camera when they need a properly calibrated result for rendering.
 #[allow(dead_code)] // TODO(cad-views): remove when import_views is implemented
-fn view_data_to_camera(data: &opencascade::xcaf::ViewData, scale: f32) -> Camera {
+fn view_data_to_camera(data: &opencascade::xcaf::ViewData, scale: f32) -> PositionedCamera {
     use cgmath::{EuclideanSpace, InnerSpace, MetricSpace, Point3, Vector3};
 
     let s = scale as f64;
@@ -458,7 +458,7 @@ fn view_data_to_camera(data: &opencascade::xcaf::ViewData, scale: f32) -> Camera
         (eye, target)
     };
 
-    Camera { eye, target, up, aspect: 1.0, fovy: FOVY, znear: 0.1, zfar: 100_000.0, ortho }
+    PositionedCamera { eye, target, up, aspect: 1.0, fovy: FOVY, znear: 0.1, zfar: 100_000.0, ortho }
 }
 
 #[cfg(test)]

@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::common;
-use crate::scene::{Camera, geom_query::{pick_all_from_ray, RayPickQuery}};
+use crate::scene::{PositionedCamera, geom_query::{pick_all_from_ray, RayPickQuery}};
 use crate::event::{CallbackId, Event, EventContext, EventDispatcher, EventKind};
 use crate::input::MouseButton;
 use crate::operator::{Operator, OperatorId};
@@ -18,7 +18,7 @@ use walk::WalkState;
 
 pub(super) const ORBIT_SENSITIVITY: f32 = 0.005;
 
-pub(super) fn pan(dx: f32, dy: f32, camera: &mut Camera, viewport: (u32, u32)) {
+pub(super) fn pan(dx: f32, dy: f32, camera: &mut PositionedCamera, viewport: (u32, u32)) {
     let (width, height) = viewport;
     let pivot = camera.target;
     let movement_plane = common::Plane::from_point(camera.forward(), pivot);
@@ -129,7 +129,7 @@ impl NavigationState {
         &mut self,
         button: &MouseButton,
         delta: &(f32, f32),
-        camera: &mut Camera,
+        camera: &mut PositionedCamera,
         viewport: (u32, u32),
     ) -> bool {
         match (self.mode(), button) {
@@ -176,7 +176,7 @@ impl NavigationState {
         }
     }
 
-    fn handle_wheel(&mut self, scroll_amount: f32, camera: &mut Camera, model_radius: f32) -> bool {
+    fn handle_wheel(&mut self, scroll_amount: f32, camera: &mut PositionedCamera, model_radius: f32) -> bool {
         match self.mode() {
             NavigationMode::Turntable => {
                 self.turntable.init(camera);
@@ -194,7 +194,7 @@ impl NavigationState {
     fn handle_keyboard(
         &mut self,
         key_event: &crate::input::KeyEvent,
-        camera: &Camera,
+        camera: &PositionedCamera,
     ) -> bool {
         if self.mode() != NavigationMode::Walk {
             return false;
@@ -208,7 +208,7 @@ impl NavigationState {
     fn handle_update(
         &mut self,
         delta_time: f32,
-        camera: &mut Camera,
+        camera: &mut PositionedCamera,
         model_radius: f32,
     ) -> bool {
         if self.mode() != NavigationMode::Walk {

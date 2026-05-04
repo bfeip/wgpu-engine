@@ -13,15 +13,90 @@ pub(crate) const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::
     0.0, 0.0, 0.5, 1.0,
 );
 
-/// A camera that defines the viewpoint and projection for rendering.
+/// Projection-only camera parameters, stored in a scene node's payload.
+///
+/// Describes how the camera sees (its optics) without encoding where it is.
+/// Pose (position, orientation) lives in the owning node's `Transform`.
+///
+/// `focus_distance` is the eye-to-target distance used when constructing a
+/// [`PositionedCamera`]. It is not a rendering parameter — it preserves the
+/// orbit pivot distance across node-transform round-trips so that interactive
+/// navigation (zoom, pan) remains stable after scene reload.
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct CameraProjection {
+    /// Vertical field of view in degrees (used for perspective projection).
+    pub fovy: f32,
+    /// Distance to the near clipping plane.
+    pub znear: f32,
+    /// Distance to the far clipping plane.
+    pub zfar: f32,
+    /// When true, use orthographic projection instead of perspective.
+    ///
+    /// The orthographic view size is derived from the camera distance and fovy,
+    /// so zoom (changing distance) works naturally for both projection modes.
+    pub ortho: bool,
+    /// Distance from the camera eye to its look-at target.
+    ///
+    /// Used when reconstructing a [`PositionedCamera`] from this projection and
+    /// a world transform — target = eye + forward * focus_distance.
+    pub focus_distance: f32,
+}
+
+impl CameraProjection {
+    /// Builds a [`PositionedCamera`] by combining this projection with a world
+    /// transform matrix and a viewport aspect ratio.
+    ///
+    /// The world transform is expected to follow the convention used by
+    /// [`PositionedCamera::to_node_transform`]: column 0 = right, column 1 = up,
+    /// column 2 = -forward (camera looks down -Z), column 3 = eye position.
+    pub fn into_positioned(self, world_transform: cgmath::Matrix4<f32>, aspect: f32) -> PositionedCamera {
+        use cgmath::InnerSpace;
+        let eye = cgmath::Point3::new(
+            world_transform[3][0],
+            world_transform[3][1],
+            world_transform[3][2],
+        );
+        let up = cgmath::Vector3::new(
+            world_transform[1][0],
+            world_transform[1][1],
+            world_transform[1][2],
+        ).normalize();
+        // Column 2 stores -forward (camera looks down -Z in right-handed coords).
+        let forward = -cgmath::Vector3::new(
+            world_transform[2][0],
+            world_transform[2][1],
+            world_transform[2][2],
+        ).normalize();
+        let distance = self.focus_distance.max(0.001);
+        let target = eye + forward * distance;
+        PositionedCamera {
+            eye,
+            target,
+            up,
+            aspect,
+            fovy: self.fovy,
+            znear: self.znear,
+            zfar: self.zfar,
+            ortho: self.ortho,
+        }
+    }
+}
+
+/// A fully-positioned camera combining projection intrinsics with world-space pose.
+///
+/// Used by the viewer and navigation operators wherever the camera's position and
+/// orientation must be manipulated directly.  The canonical pose for a camera node
+/// in the scene graph lives in that node's `Transform`; this type is the convenient
+/// working representation during a frame or an interaction gesture.
 ///
 /// # Example
 ///
 /// ```
 /// use cgmath::{Point3, Vector3};
-/// use duck_engine_scene::Camera;
+/// use duck_engine_scene::PositionedCamera;
 ///
-/// let camera = Camera {
+/// let camera = PositionedCamera {
 ///     eye: Point3::new(0.0, 0.0, 5.0),
 ///     target: Point3::new(0.0, 0.0, 0.0),
 ///     up: Vector3::new(0.0, 1.0, 0.0),
@@ -34,7 +109,7 @@ pub(crate) const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::
 /// ```
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Camera {
+pub struct PositionedCamera {
     /// The position of the camera in world space.
     pub eye: cgmath::Point3<f32>,
     /// The point the camera is looking at in world space.
@@ -56,7 +131,7 @@ pub struct Camera {
     pub ortho: bool,
 }
 
-impl Camera {
+impl PositionedCamera {
     /// Builds the combined view-projection matrix for this camera.
     ///
     /// The resulting matrix transforms world-space coordinates to clip-space,
@@ -330,14 +405,21 @@ impl Camera {
         crate::common::Ray::new(world_near, direction)
     }
 
+    /// Extracts the projection intrinsics from this positioned camera.
+    pub fn projection(&self) -> CameraProjection {
+        CameraProjection {
+            fovy: self.fovy,
+            znear: self.znear,
+            zfar: self.zfar,
+            ortho: self.ortho,
+            focus_distance: self.length(),
+        }
+    }
+
     /// Builds a node `Transform` that encodes this camera's pose (eye + orientation).
     ///
-    /// # TODO
-    /// When Camera is refactored to store only projection intrinsics (fovy, aspect,
-    /// znear, zfar), `eye`/`target`/`up` will be removed and this method will
-    /// no longer be needed — the node Transform itself will be the canonical source.
-    /// At that point, delete this method and all call-sites that sync the node
-    /// transform from the camera payload.
+    /// Column convention: right = +X, corrected-up = +Y, forward = -Z
+    /// (camera looks down -Z in a right-handed coordinate system).
     pub fn to_node_transform(&self) -> crate::common::Transform {
         use cgmath::{InnerSpace, Matrix3, Quaternion, Vector3};
         let forward = (self.target - self.eye).normalize();
@@ -359,9 +441,8 @@ mod tests {
 
     const EPSILON: f32 = 1e-6;
 
-    // Helper function to create a basic test camera
-    fn create_test_camera() -> Camera {
-        Camera {
+    fn create_test_camera() -> PositionedCamera {
+        PositionedCamera {
             eye: Point3::new(0.0, 0.0, 5.0),
             target: Point3::new(0.0, 0.0, 0.0),
             up: Vector3::new(0.0, 1.0, 0.0),
@@ -373,7 +454,7 @@ mod tests {
         }
     }
 
-    // ===== Camera Struct Tests =====
+    // ===== PositionedCamera Struct Tests =====
 
     #[test]
     fn test_camera_forward() {
@@ -410,7 +491,7 @@ mod tests {
 
     #[test]
     fn test_camera_length() {
-        let camera = Camera {
+        let camera = PositionedCamera {
             eye: Point3::new(3.0, 4.0, 0.0),
             target: Point3::new(0.0, 0.0, 0.0),
             up: Vector3::new(0.0, 1.0, 0.0),
@@ -427,7 +508,7 @@ mod tests {
 
     #[test]
     fn test_camera_length_zero() {
-        let camera = Camera {
+        let camera = PositionedCamera {
             eye: Point3::new(1.0, 2.0, 3.0),
             target: Point3::new(1.0, 2.0, 3.0),
             up: Vector3::new(0.0, 1.0, 0.0),
@@ -444,7 +525,7 @@ mod tests {
 
     #[test]
     fn test_build_view_projection_identity() {
-        let camera = Camera {
+        let camera = PositionedCamera {
             eye: Point3::new(0.0, 0.0, 0.0),
             target: Point3::new(0.0, 0.0, -1.0),
             up: Vector3::new(0.0, 1.0, 0.0),
@@ -658,8 +739,8 @@ mod tests {
 
     // ===== Orthographic Tests =====
 
-    fn create_ortho_test_camera() -> Camera {
-        Camera {
+    fn create_ortho_test_camera() -> PositionedCamera {
+        PositionedCamera {
             eye: Point3::new(0.0, 0.0, 5.0),
             target: Point3::new(0.0, 0.0, 0.0),
             up: Vector3::new(0.0, 1.0, 0.0),
@@ -742,5 +823,30 @@ mod tests {
             }
         }
         assert!(found_difference, "Perspective and orthographic matrices should differ");
+    }
+
+    // ===== CameraProjection round-trip test =====
+
+    #[test]
+    fn test_projection_roundtrip() {
+        let original = create_test_camera();
+        let proj = original.projection();
+
+        // focus_distance should equal the eye-to-target distance
+        assert!((proj.focus_distance - 5.0).abs() < EPSILON);
+
+        // Reconstruct via to_node_transform + into_positioned
+        let transform_mat = original.to_node_transform().to_matrix();
+        let reconstructed = proj.into_positioned(transform_mat, original.aspect);
+
+        assert!((reconstructed.eye.x - original.eye.x).abs() < 1e-4);
+        assert!((reconstructed.eye.y - original.eye.y).abs() < 1e-4);
+        assert!((reconstructed.eye.z - original.eye.z).abs() < 1e-4);
+        assert!((reconstructed.target.x - original.target.x).abs() < 1e-4);
+        assert!((reconstructed.target.y - original.target.y).abs() < 1e-4);
+        assert!((reconstructed.target.z - original.target.z).abs() < 1e-4);
+        assert!((reconstructed.up.x - original.up.x).abs() < 1e-4);
+        assert!((reconstructed.up.y - original.up.y).abs() < 1e-4);
+        assert!((reconstructed.up.z - original.up.z).abs() < 1e-4);
     }
 }

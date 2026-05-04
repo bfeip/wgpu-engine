@@ -1,6 +1,6 @@
 use cgmath::{InnerSpace, Point3, Rotation};
 
-use crate::scene::{Camera, common::quaternion_from_axis_angle_safe};
+use crate::scene::{PositionedCamera, common::quaternion_from_axis_angle_safe};
 
 use super::ORBIT_SENSITIVITY;
 
@@ -28,7 +28,7 @@ impl TurntableState {
     }
 
     /// Initialize parameters from current camera state.
-    pub fn init(&mut self, camera: &Camera) {
+    pub fn init(&mut self, camera: &PositionedCamera) {
         self.pivot = None;
         self.radius = camera.length();
 
@@ -45,7 +45,7 @@ impl TurntableState {
     }
 
     /// Initialize orbit parameters for orbiting around an explicit pivot point.
-    pub fn init_with_pivot(&mut self, camera: &Camera, pivot: Point3<f32>) {
+    pub fn init_with_pivot(&mut self, camera: &PositionedCamera, pivot: Point3<f32>) {
         self.pivot = Some(pivot);
 
         // Compute elevation from eye-to-pivot direction (for elevation clamping)
@@ -56,7 +56,7 @@ impl TurntableState {
     }
 
     /// Update camera position based on current orbit parameters (non-pivot orbit only).
-    pub fn update_camera_position(&self, camera: &mut Camera) {
+    pub fn update_camera_position(&self, camera: &mut PositionedCamera) {
         // Convert spherical coordinates to Cartesian
         let x = camera.target.x + self.radius * self.elevation.cos() * self.azimuth.sin();
         let y = camera.target.y + self.radius * self.elevation.sin();
@@ -75,7 +75,7 @@ impl TurntableState {
     ///
     /// Rotates both eye and target around the pivot by the same rotation,
     /// keeping the pivot visually stationary on screen.
-    fn handle_pivot_orbit(&mut self, dx: f64, dy: f64, camera: &mut Camera) {
+    fn handle_pivot_orbit(&mut self, dx: f64, dy: f64, camera: &mut PositionedCamera) {
         let pivot = self.pivot.unwrap();
 
         let d_azimuth = -(dx as f32) * ORBIT_SENSITIVITY;
@@ -112,13 +112,13 @@ impl TurntableState {
     }
 
     /// Handle zoom via mouse wheel by adjusting camera distance.
-    pub fn handle_zoom(&mut self, delta: f32, camera: &mut Camera, model_radius: f32) {
+    pub fn handle_zoom(&mut self, delta: f32, camera: &mut PositionedCamera, model_radius: f32) {
         self.radius = super::zoom_radius(self.radius, delta, model_radius);
         self.update_camera_position(camera);
     }
 
     /// Handle orbit rotation based on mouse movement.
-    pub fn handle_orbit(&mut self, dx: f64, dy: f64, camera: &mut Camera) {
+    pub fn handle_orbit(&mut self, dx: f64, dy: f64, camera: &mut PositionedCamera) {
         if self.pivot.is_some() {
             return self.handle_pivot_orbit(dx, dy, camera);
         }
@@ -136,7 +136,7 @@ impl TurntableState {
     }
 
     /// Handle panning based on mouse movement.
-    pub fn handle_pan(&self, dx: f32, dy: f32, camera: &mut Camera, viewport: (u32, u32)) {
+    pub fn handle_pan(&self, dx: f32, dy: f32, camera: &mut PositionedCamera, viewport: (u32, u32)) {
         super::pan(dx, dy, camera, viewport);
     }
 }

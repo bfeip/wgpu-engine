@@ -1,6 +1,6 @@
 use cgmath::{InnerSpace, Vector3};
 
-use crate::scene::Camera;
+use crate::scene::PositionedCamera;
 use crate::input::{ElementState, Key};
 use crate::scene_scale;
 
@@ -39,7 +39,7 @@ impl WalkState {
     }
 
     /// Initialize yaw and pitch from current camera orientation.
-    pub fn init_from_camera(&mut self, camera: &Camera) {
+    pub fn init_from_camera(&mut self, camera: &PositionedCamera) {
         let forward = camera.forward();
 
         // Calculate yaw from forward vector projected onto XZ plane
@@ -51,7 +51,7 @@ impl WalkState {
     }
 
     /// Handle mouse look based on mouse drag delta.
-    pub fn handle_look(&mut self, dx: f32, dy: f32, camera: &mut Camera) {
+    pub fn handle_look(&mut self, dx: f32, dy: f32, camera: &mut PositionedCamera) {
         // Update yaw (horizontal rotation) - inverted so mouse left turns view left
         self.yaw -= dx * LOOK_SENSITIVITY;
 
@@ -64,7 +64,7 @@ impl WalkState {
     }
 
     /// Update camera target based on current yaw and pitch.
-    pub fn update_camera_target(&self, camera: &mut Camera) {
+    pub fn update_camera_target(&self, camera: &mut PositionedCamera) {
         // Preserve the current eye-to-target distance
         let distance = (camera.target - camera.eye).magnitude();
 
@@ -86,7 +86,7 @@ impl WalkState {
 
     /// Apply movement based on currently pressed keys.
     /// Returns true if any movement was applied.
-    pub fn apply_movement(&self, camera: &mut Camera, delta_time: f32, model_radius: f32) -> bool {
+    pub fn apply_movement(&self, camera: &mut PositionedCamera, delta_time: f32, model_radius: f32) -> bool {
         let mut movement = Vector3::new(0.0, 0.0, 0.0);
 
         // Get horizontal forward direction (project onto XZ plane)

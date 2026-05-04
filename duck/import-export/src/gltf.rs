@@ -1,6 +1,6 @@
 use std::path::Path;
 use duck_engine_scene::{
-    AlphaMode, Camera, Material, MaterialFlags, Texture, TextureFormat, Mesh, MeshId, MeshPrimitive,
+    AlphaMode, Material, MaterialFlags, PositionedCamera, Texture, TextureFormat, Mesh, MeshId, MeshPrimitive,
     PrimitiveType, Scene, Vertex, MaterialId,
 };
 
@@ -19,7 +19,7 @@ pub struct GltfLoadResult {
     /// The loaded scene with meshes, materials, and scene tree
     pub scene: Scene,
     /// Camera from the glTF file, if one was defined
-    pub camera: Option<Camera>,
+    pub camera: Option<PositionedCamera>,
 }
 
 /// Loads vertex data from a glTF primitive.
@@ -387,12 +387,13 @@ fn decompose_transform(transform: &gltf::scene::Transform) -> duck_engine_scene:
 
 /// Extracts camera data from a glTF camera node.
 ///
-/// Returns a Camera with the appropriate parameters if the node contains a camera.
+/// Returns a [`PositionedCamera`] with pose derived from `world_transform` if the
+/// node contains a camera.
 fn extract_camera_from_node(
     gltf_node: &gltf::Node,
     world_transform: cgmath::Matrix4<f32>,
     aspect: f32,
-) -> Option<Camera> {
+) -> Option<PositionedCamera> {
     use cgmath::{InnerSpace, Point3, Vector3};
 
     let gltf_camera = gltf_node.camera()?;
@@ -404,16 +405,14 @@ fn extract_camera_from_node(
         world_transform[3][2],
     );
 
-    // Extract forward direction from world transform
-    // In glTF, cameras look down -Z in their local space
-    // The third column of the rotation matrix gives us the local Z axis
+    // Extract forward direction from world transform.
+    // In glTF, cameras look down -Z in their local space;
+    // the third column of the rotation matrix is the local Z axis.
     let local_z = Vector3::new(
         world_transform[2][0],
         world_transform[2][1],
         world_transform[2][2],
     ).normalize();
-
-    // Camera looks down -Z, so forward is -local_z
     let forward = -local_z;
 
     // Extract up direction from world transform (Y axis)
@@ -423,18 +422,16 @@ fn extract_camera_from_node(
         world_transform[1][2],
     ).normalize();
 
-    // Target is some distance in front of the camera
+    // Target is 1 unit in front of the camera (focus_distance defaults to 1.0)
     let target = eye + forward;
 
     match gltf_camera.projection() {
         gltf::camera::Projection::Perspective(persp) => {
-            // glTF perspective uses yfov in radians
             let fovy = persp.yfov().to_degrees();
             let znear = persp.znear();
-            // glTF may not specify zfar (infinite projection)
             let zfar = persp.zfar().unwrap_or(1000.0);
 
-            Some(Camera {
+            Some(PositionedCamera {
                 eye,
                 target,
                 up,
@@ -446,23 +443,20 @@ fn extract_camera_from_node(
             })
         }
         gltf::camera::Projection::Orthographic(ortho_cam) => {
-            // glTF orthographic uses xmag/ymag as half-extents
-            // We derive an equivalent fovy from the distance and ymag
+            // glTF orthographic uses xmag/ymag as half-extents.
+            // We derive an equivalent fovy from the distance and ymag:
+            //   ymag = distance * tan(fovy/2)  →  fovy = 2 * atan(ymag / distance)
             let ymag = ortho_cam.ymag();
             let znear = ortho_cam.znear();
             let zfar = ortho_cam.zfar();
-
-            // Calculate an equivalent fovy that would produce the same view height
-            // at the current distance: ymag = distance * tan(fovy/2)
-            // So: fovy = 2 * atan(ymag / distance)
             let distance = (eye - target).magnitude();
             let fovy = if distance > 0.0 {
                 2.0 * (ymag / distance).atan().to_degrees()
             } else {
-                45.0 // fallback
+                45.0
             };
 
-            Some(Camera {
+            Some(PositionedCamera {
                 eye,
                 target,
                 up,
@@ -483,7 +477,7 @@ fn find_camera_recursive(
     gltf_node: &gltf::Node,
     parent_transform: cgmath::Matrix4<f32>,
     aspect: f32,
-) -> Option<Camera> {
+) -> Option<PositionedCamera> {
     let local_transform = transform_to_matrix(&gltf_node.transform());
     let world_transform = parent_transform * local_transform;
 
@@ -645,11 +639,11 @@ pub fn build_gltf_scene(
     scene: &mut Scene,
     mesh_map: &GltfMeshMap,
     aspect: f32,
-) -> anyhow::Result<Option<Camera>> {
+) -> anyhow::Result<Option<PositionedCamera>> {
     use std::collections::HashMap;
     use cgmath::SquareMatrix;
 
-    let mut camera: Option<Camera> = None;
+    let mut camera: Option<PositionedCamera> = None;
 
     if let Some(gltf_scene) = parsed
         .document

@@ -1,4 +1,4 @@
-use crate::Camera;
+use crate::PositionedCamera;
 
 /// Unique identifier for a named view in the scene.
 pub type ViewId = crate::Id;
@@ -9,13 +9,12 @@ pub type ViewId = crate::Id;
 /// has defined specific vantage points (e.g. "Front", "Isometric", "Section A").
 /// They can also be created programmatically.
 ///
-/// A view is a complete [`Camera`] snapshot. To apply a view, clone its camera
-/// and pass it to the renderer:
+/// A view is a complete [`PositionedCamera`] snapshot. To apply a view, clone its
+/// camera and pass it to the renderer:
 ///
 /// ```rust,ignore
 /// if let Some(view) = scene.get_view(view_id) {
 ///     camera = view.camera().clone();
-///     camera.aspect = viewport_aspect; // update for current window size
 /// }
 /// ```
 #[derive(Clone, Debug)]
@@ -26,11 +25,11 @@ pub struct View {
     /// Human-readable name (e.g. "Front", "Isometric").
     pub name: String,
     /// The saved camera configuration.
-    pub camera: Camera,
+    pub camera: PositionedCamera,
 }
 
 impl View {
-    pub fn new(id: ViewId, name: impl Into<String>, camera: Camera) -> Self {
+    pub fn new(id: ViewId, name: impl Into<String>, camera: PositionedCamera) -> Self {
         Self { id, name: name.into(), camera }
     }
 
@@ -38,7 +37,7 @@ impl View {
         &self.name
     }
 
-    pub fn camera(&self) -> &Camera {
+    pub fn camera(&self) -> &PositionedCamera {
         &self.camera
     }
 
@@ -47,8 +46,8 @@ impl View {
     /// Copies `eye`, `target` (preserving `reference.length()` as the orbit distance),
     /// `up`, and `ortho` from the stored camera. All other fields — `znear`, `zfar`,
     /// `fovy`, `aspect` — are taken from `reference`, which is expected to be already
-    /// calibrated for the scene (e.g. via `Camera::fit_to_bounds`).
-    pub fn apply_to(&self, reference: &Camera) -> Camera {
+    /// calibrated for the scene (e.g. via `PositionedCamera::fit_to_bounds`).
+    pub fn apply_to(&self, reference: &PositionedCamera) -> PositionedCamera {
         use cgmath::InnerSpace;
         let orbit_dist = reference.length().max(0.001);
         let dir = (self.camera.target - self.camera.eye).normalize();

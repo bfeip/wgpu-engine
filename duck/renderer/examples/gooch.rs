@@ -2,7 +2,7 @@ use duck_engine_renderer::{
     DrawData, FrameContext, MaterialPipelineCache, Renderer, RenderWorkflow, SceneRenderPass,
 };
 use duck_engine_renderer::scene::{
-    Camera, Light, Material, Mesh, NodePayload, PrimitiveType, Scene,
+    Light, Material, Mesh, NodePayload, PositionedCamera, PrimitiveType, Scene,
     common::RgbaColor,
 };
 
@@ -122,7 +122,7 @@ fn main() -> anyhow::Result<()> {
         1.0,
     )));
 
-    let camera = Camera {
+    let camera = PositionedCamera {
         eye: Point3::new(0.0, 0.0, 3.5),
         target: Point3::new(0.0, 0.0, 0.0),
         up: Vector3::new(0.0, 1.0, 0.0),

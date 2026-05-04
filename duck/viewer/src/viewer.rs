@@ -9,7 +9,7 @@ use crate::{
         BuiltinOperatorId, NavigationMode, NavigationOperator, OperatorManager,
         SelectionOperator, TransformOperator,
     },
-    scene::{Camera, NodePayload, Scene, common::Transform},
+    scene::{NodePayload, PositionedCamera, Scene},
     selection::SelectionManager,
     renderer::{Renderer, HighlightQuery},
 };
@@ -203,7 +203,7 @@ impl<'a> Viewer<'a> {
                 self.surface_config.height = h;
                 self.surface.configure(&self.device, &self.surface_config);
                 self.renderer.resize(*physical_size);
-                self.with_camera_mut(|cam| cam.aspect = w as f32 / h as f32);
+
             }
         }
 
@@ -248,26 +248,24 @@ impl<'a> Viewer<'a> {
     /// Get a reference to the active camera.
     ///
     /// Panics if the scene has no active camera node.
-    pub fn camera(&self) -> &Camera {
-        self.scene.active_camera_data().expect("no active camera in scene")
+    pub fn camera(&self) -> PositionedCamera {
+        let (w, h) = self.renderer.size();
+        let aspect = if h > 0 { w as f32 / h as f32 } else { 16.0 / 9.0 };
+        self.scene.active_camera_positioned(aspect).expect("no active camera in scene")
     }
 
     /// Clones the active camera, passes it to `f` for mutation, then writes it back.
-    pub fn with_camera_mut<F: FnOnce(&mut Camera)>(&mut self, f: F) {
-        let id = self.scene.active_camera().expect("no active camera in scene");
-        let mut cam = self.scene.active_camera_data().expect("no active camera in scene").clone();
+    pub fn with_camera_mut<F: FnOnce(&mut PositionedCamera)>(&mut self, f: F) {
+        let mut cam = self.camera();
         f(&mut cam);
-        // TODO(camera-intrinsics): sync_camera_node_transform — remove when Camera drops eye/target/up
-        self.scene.set_node_transform(id, cam.to_node_transform());
-        self.scene.set_node_payload(id, NodePayload::Camera(cam));
+        self.set_camera(cam);
     }
 
     /// Replace the active camera.
-    pub fn set_camera(&mut self, camera: Camera) {
+    pub fn set_camera(&mut self, camera: PositionedCamera) {
         let id = self.scene.active_camera().expect("no active camera in scene");
-        // TODO(camera-intrinsics): sync_camera_node_transform — remove when Camera drops eye/target/up
         self.scene.set_node_transform(id, camera.to_node_transform());
-        self.scene.set_node_payload(id, NodePayload::Camera(camera));
+        self.scene.set_node_payload(id, NodePayload::Camera(camera.projection()));
     }
 
     /// Get the current viewport size as (width, height)
@@ -348,20 +346,19 @@ impl<'a> Viewer<'a> {
         if self.scene.active_camera().is_some() {
             return;
         }
-        let (w, h) = self.renderer.size();
-        let cam = Camera {
+        let cam = PositionedCamera {
             eye: (0.0, 0.1, 0.2).into(),
             target: (0.0, 0.0, 0.0).into(),
             up: cgmath::Vector3::unit_y(),
-            aspect: if h > 0 { w as f32 / h as f32 } else { 16.0 / 9.0 },
+            aspect: 16.0 / 9.0,
             fovy: 45.0,
             znear: 0.001,
             zfar: 100.0,
             ortho: false,
         };
-        let id = self.scene.add_node(None, Some("Camera".to_string()), Transform::IDENTITY)
+        let id = self.scene.add_node(None, Some("Camera".to_string()), cam.to_node_transform())
             .expect("Failed to add default camera node");
-        self.scene.set_node_payload(id, NodePayload::Camera(cam));
+        self.scene.set_node_payload(id, NodePayload::Camera(cam.projection()));
         self.scene.set_active_camera(Some(id));
     }
 
