@@ -16,10 +16,9 @@ pub type NodeId = crate::Id;
 ///
 /// External crates can implement this to attach arbitrary typed data to scene nodes.
 /// Custom payloads serialize as `NodePayload::None` for now.
-pub trait CustomNodePayload: std::fmt::Debug + Send + Sync {}
+pub trait CustomNodePayload: Send + Sync {}
 
 /// The typed content of a scene node.
-#[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum NodePayload {
     /// Structural container with no content (default).
@@ -40,6 +39,18 @@ pub enum NodePayload {
 impl Default for NodePayload {
     fn default() -> Self {
         Self::None
+    }
+}
+
+impl std::fmt::Debug for NodePayload {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::None => write!(f, "None"),
+            Self::Instance(id) => f.debug_tuple("Instance").field(id).finish(),
+            Self::Camera(c) => f.debug_tuple("Camera").field(c).finish(),
+            Self::Light(l) => f.debug_tuple("Light").field(l).finish(),
+            Self::Custom(_) => f.debug_tuple("Custom").field(&"..").finish(),
+        }
     }
 }
 

@@ -17,7 +17,7 @@ mod node;
 mod texture;
 mod view;
 
-use cgmath::{InnerSpace, Matrix4, Point3, Quaternion, SquareMatrix, Vector3};
+use cgmath::{Deg, InnerSpace, Matrix4, Point3, Quaternion, Rotation3, SquareMatrix, Vector3};
 use image::DynamicImage;
 use std::collections::HashMap;
 use std::path::Path;
@@ -510,25 +510,31 @@ impl Scene {
     }
 
     /// Adds a default key + fill directional light pair as children of `camera_node_id`.
-    ///
-    /// Because the lights are children of the camera node, callers must keep that
-    /// node's world Transform in sync with the viewer camera so the lights remain
-    /// camera-relative.
-    ///
-    /// # TODO
-    /// When Camera is refactored to intrinsics-only (dropping eye/target/up), the
-    /// camera node's Transform will be the canonical pose and this sync will be
-    /// automatic. At that point the `camera_node_id` relationship stays but the
-    /// manual Transform sync in the viewer can be removed.
+    /// The key light comes from the upper-left corner; the fill from the lower-right corner.
+    /// Both are expressed in camera space (node direction = its -Z axis).
     pub fn set_default_light_nodes(&mut self, camera_node_id: NodeId) {
         let white = crate::common::RgbaColor { r: 1.0, g: 1.0, b: 1.0, a: 1.0 };
+        // Upper-left: yaw +45° (toward right), then pitch -45° (downward).
+        let key_rotation = Quaternion::from_angle_x(Deg(-45.0)) * Quaternion::from_angle_y(Deg(45.0));
+        let key_transform = common::Transform::new(
+            cgmath::Point3::new(0.0, 0.0, 0.0),
+            key_rotation,
+            cgmath::Vector3::new(1.0, 1.0, 1.0),
+        );
         let key_id = self
-            .add_node(Some(camera_node_id), Some("DefaultKeyLight".to_string()), common::Transform::IDENTITY)
+            .add_node(Some(camera_node_id), Some("DefaultKeyLight".to_string()), key_transform)
             .expect("Failed to create key light node");
         self.nodes.get_mut(&key_id).unwrap().set_payload(NodePayload::Light(Light::directional(white, 1.0)));
         self.node_generation += 1;
+        // Lower-right: yaw -45° (toward left), then pitch +45° (upward) — opposite corner.
+        let fill_rotation = Quaternion::from_angle_x(Deg(45.0)) * Quaternion::from_angle_y(Deg(-45.0));
+        let fill_transform = common::Transform::new(
+            cgmath::Point3::new(0.0, 0.0, 0.0),
+            fill_rotation,
+            cgmath::Vector3::new(1.0, 1.0, 1.0),
+        );
         let fill_id = self
-            .add_node(Some(camera_node_id), Some("DefaultFillLight".to_string()), common::Transform::IDENTITY)
+            .add_node(Some(camera_node_id), Some("DefaultFillLight".to_string()), fill_transform)
             .expect("Failed to create fill light node");
         self.nodes.get_mut(&fill_id).unwrap().set_payload(NodePayload::Light(Light::directional(white, 0.3)));
         self.node_generation += 1;
@@ -807,6 +813,18 @@ impl Scene {
         }
     }
 
+    fn invalidate_subtree_transforms(&self, node_id: NodeId) {
+        let Some(node) = self.get_node(node_id) else {
+            return;
+        };
+        node.mark_transform_dirty();
+        node.mark_bounds_dirty();
+        let children: Vec<NodeId> = node.children().to_vec();
+        for child_id in children {
+            self.invalidate_subtree_transforms(child_id);
+        }
+    }
+
     // ========== Node Transform Mutation API ==========
 
     /// Sets the payload of a node and invalidates ancestor bounds.
@@ -820,6 +838,7 @@ impl Scene {
     pub fn set_node_transform(&mut self, node_id: NodeId, transform: common::Transform) {
         let node = self.nodes.get_mut(&node_id).expect("Node not found");
         node.set_transform(transform);
+        self.invalidate_subtree_transforms(node_id);
         self.invalidate_ancestor_bounds(node_id);
         self.node_generation += 1;
     }
@@ -828,6 +847,7 @@ impl Scene {
     pub fn set_node_position(&mut self, node_id: NodeId, position: Point3<f32>) {
         let node = self.nodes.get_mut(&node_id).expect("Node not found");
         node.set_position(position);
+        self.invalidate_subtree_transforms(node_id);
         self.invalidate_ancestor_bounds(node_id);
         self.node_generation += 1;
     }
@@ -836,6 +856,7 @@ impl Scene {
     pub fn set_node_rotation(&mut self, node_id: NodeId, rotation: Quaternion<f32>) {
         let node = self.nodes.get_mut(&node_id).expect("Node not found");
         node.set_rotation(rotation);
+        self.invalidate_subtree_transforms(node_id);
         self.invalidate_ancestor_bounds(node_id);
         self.node_generation += 1;
     }
@@ -844,6 +865,7 @@ impl Scene {
     pub fn set_node_scale(&mut self, node_id: NodeId, scale: Vector3<f32>) {
         let node = self.nodes.get_mut(&node_id).expect("Node not found");
         node.set_scale(scale);
+        self.invalidate_subtree_transforms(node_id);
         self.invalidate_ancestor_bounds(node_id);
         self.node_generation += 1;
     }

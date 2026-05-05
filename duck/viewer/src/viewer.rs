@@ -1,3 +1,4 @@
+use duck_engine_scene::NodeId;
 use web_time::Instant;
 
 use std::cell::RefCell;
@@ -324,6 +325,7 @@ impl<'a> Viewer<'a> {
         self.selection.clear();
         self.renderer.clear_gpu_resources();
         self.ensure_active_camera();
+        self.ensure_default_lights();
     }
 
     /// Clear the scene, removing all geometry, materials, textures, and
@@ -342,9 +344,9 @@ impl<'a> Viewer<'a> {
     }
 
     /// Adds a default camera node to the scene if no active camera is set.
-    fn ensure_active_camera(&mut self) {
-        if self.scene.active_camera().is_some() {
-            return;
+    fn ensure_active_camera(&mut self) -> NodeId {
+        if let Some(camera_id) = self.scene.active_camera() {
+            return camera_id;
         }
         let cam = PositionedCamera {
             eye: (0.0, 0.1, 0.2).into(),
@@ -360,6 +362,17 @@ impl<'a> Viewer<'a> {
             .expect("Failed to add default camera node");
         self.scene.set_node_payload(id, NodePayload::Camera(cam.projection()));
         self.scene.set_active_camera(Some(id));
+        return id;
+    }
+
+    /// Adds default lights as children of the camera if the scene is otherwise unlit.
+    fn ensure_default_lights(&mut self) {
+        if self.scene.has_light_nodes() || self.scene.active_environment_map().is_some() {
+            // If the scene has any lights or an environment map we don't add defaults
+            return;
+        }
+        let camera = self.ensure_active_camera();
+        self.scene.set_default_light_nodes(camera);
     }
 
     /// Get a reference to the selection manager
