@@ -93,16 +93,65 @@ Replace all auto-increment `u32` ID types (`NodeId`, `MeshId`, `MaterialId`, `Te
 
 ---
 
-### Phase 4 — DUCK Format v0.3
+### Phase 4 — DUCK Format Redesign
 
-Evolve the binary scene format to handle typed payloads.
+Redesign the binary format and serialization infrastructure for per-resource access and reduced complexity.
 
-- `Nodes` section: each node carries `payload_type_tag: String` + `payload_bytes: Vec<u8>`
-- Built-in types (Instance, Camera, lights) use their own compact bincode layouts under well-known tags
-- Remove `Lights` and `Views` top-level sections — these are now just nodes
-- Add `ActiveCamera` section: `Option<NodeId>`
-- v0.2 backward compatibility: on read, old light entries → light nodes, old views → camera nodes
-- Custom payload serialization is opaque to the format — scene format carries bytes, type owner provides meaning
+#### 4a — Manual serde for `Texture` and `EnvironmentMap`
+
+Eliminate `SerializedTexture`, `SerializedEnvironmentMap`, and `SerializedPreprocessedIbl` from `format.rs` by implementing `Serialize`/`Deserialize` directly on the scene types.
+
+- Add `image` crate as optional dep to `duck-engine-scene` (gated on `serde` feature)
+- **`Texture` serialize**: embed the actual image bytes as `Vec<u8>` — use `original_bytes` if in memory (e.g., from a glTF), read from `source_path` if known (getting already-compressed PNG/JPEG bytes from disk), or re-encode the decoded `DynamicImage` as PNG as a last resort. Never write the path itself.
+- **`Texture` deserialize**: reconstruct a `Texture` from the embedded bytes and stored metadata (`format`, `width`, `height`); the source path is not restored.
+- **`EnvironmentMap` serialize**: serialize `intensity`, `rotation`, and `hdr_data: Option<Vec<u8>>` — read HDR bytes from `source_path` on serialize if not already in memory.
+- **`EnvironmentMap` deserialize**: reconstruct with the HDR bytes as the source.
+- `PreprocessedIbl` already derives Serialize/Deserialize; wire it to `EnvironmentMap` by ID as today.
+
+#### 4b — Flat per-resource format (sections eliminated)
+
+Replace the section-based format with a flat sequence of independently-encoded resources. Each resource manages its own compression and encoding. The TOC maps each resource ID to its file offset and size.
+
+New file structure:
+```
+[Header: magic "DUCK", version u16, flags u16, toc_offset u64]
+[Resource bytes, one per resource, independently encoded]
+[TOC: zstd-compressed bincode Vec<TocEntry>]
+```
+
+`TocEntry`:
+```rust
+pub struct TocEntry {
+    pub resource_type: ResourceType,  // Mesh, Texture, Material, Node, Instance, EnvironmentMap, Metadata
+    pub resource_id: Uuid,
+    pub offset: u64,
+    pub size: u32,
+}
+```
+
+`ResourceType` also carries the encoding in use, so the decoder knows what to do:
+- **Texture**: PNG or JPEG bytes written directly (already compressed by the image format; no outer wrapper)
+- **EnvironmentMap**: zstd-compressed bincode (includes embedded HDR bytes)
+- **Mesh**: zstd-compressed bincode (Draco geometry compression reserved as a future `ResourceType` variant)
+- **Material, Node, Instance, Metadata**: zstd-compressed bincode individually
+
+The decoder reads the TOC first (seek to `toc_offset`, decompress, deserialize). To load a resource: look it up by ID in the TOC, seek to its offset, read `size` bytes, decode according to `resource_type`.
+
+Remove the `SectionType` enum and all section-oriented logic from `format.rs`.
+
+#### 4c — Remove annotation filtering
+
+Delete `AnnotationContentFilter` and its call site in `to_bytes_with_options`. Annotations and their reified geometry are included in the serialized file as normal nodes/instances/meshes. This removes ~80 lines of recursive collection logic.
+
+#### 4d — Break format.rs into modules
+
+Split `duck/import-export/src/format.rs` into a `format/` directory:
+
+- `format/mod.rs` — public API: `to_bytes`, `from_bytes`, `save_to_file`, `load_from_file`, `to_bytes_with_options`, `FormatError`, `SaveOptions`
+- `format/header.rs` — `FileHeader`, `TocEntry`, `ResourceType`, version constants
+- `format/compress.rs` — `CompressionLevel`, `compress_with_level`, `decompress`, zstd helpers
+- `format/encode.rs` — scene → per-resource bytes → file
+- `format/decode.rs` — file → TOC → per-resource decode → scene assembly
 
 ---
 
