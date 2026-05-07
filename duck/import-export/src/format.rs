@@ -22,14 +22,10 @@
 //! └──────────────────────────────────────────────────────────────┘
 //! ```
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::io::{Read, Write, Cursor};
 
-use image::GenericImageView;
-
-use image::codecs::png::{CompressionType, FilterType};
-#[cfg(not(target_arch = "wasm32"))]
-use rayon::prelude::*;
+use image::codecs::png::CompressionType;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -39,9 +35,8 @@ use duck_engine_scene::{
     Material, MaterialId,
     Mesh, MeshId,
     Node, NodeId, NodePayload,
-    Texture, TextureFormat, TextureId,
+    Texture,
     EnvironmentMap, EnvironmentMapId, Scene,
-    PreprocessedCubemap, PreprocessedIbl,
 };
 
 // ============================================================================
@@ -53,7 +48,7 @@ pub const MAGIC: [u8; 4] = *b"DUCK";
 
 /// Current format version (major.minor encoded as single u16)
 /// major = version >> 8, minor = version & 0xFF
-pub const VERSION: u16 = 0x0003; // 0.3 — IDs are UUID (16 bytes) instead of u32
+pub const VERSION: u16 = 0x0004; // 0.4 — Texture and EnvironmentMap use direct serde; IBL embedded in env map
 
 /// Size of the fixed header in bytes
 pub const HEADER_SIZE: usize = std::mem::size_of::<FileHeader>();
@@ -144,21 +139,10 @@ impl CompressionLevel {
 }
 
 /// Options for saving scenes.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct SaveOptions {
-    /// Compression level for data and textures.
+    /// Compression level for data sections.
     pub compression: CompressionLevel,
-    /// Fallback texture format when original bytes are unavailable (default: JPEG).
-    pub texture_format: TextureFormat,
-}
-
-impl Default for SaveOptions {
-    fn default() -> Self {
-        Self {
-            compression: CompressionLevel::Default,
-            texture_format: TextureFormat::Jpeg,
-        }
-    }
 }
 
 // ============================================================================
@@ -263,7 +247,7 @@ impl FileHeader {
 
         let major = (version >> 8) as u8;
         let minor = (version & 0xFF) as u8;
-        if major != 0 || minor != 3 {
+        if major != 0 || minor != 4 {
             return Err(FormatError::UnsupportedVersion(major, minor));
         }
 
@@ -342,159 +326,6 @@ pub struct SerializedMetadata {
     pub active_environment_map: Option<EnvironmentMapId>,
 }
 
-
-/// Serializable texture with embedded image data.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SerializedTexture {
-    pub id: TextureId,
-    pub format: TextureFormat,
-    pub width: u32,
-    pub height: u32,
-    /// Compressed image bytes (PNG/JPEG) or raw RGBA data, depending on `format`
-    pub data: Vec<u8>,
-}
-
-impl SerializedTexture {
-    /// Creates a SerializedTexture from a Texture.
-    ///
-    /// Uses original compressed bytes when available (from glTF embedded images or file paths),
-    /// avoiding expensive re-encoding. Falls back to `fallback_format` encoding otherwise.
-    pub fn from_texture(
-        texture: &Texture,
-        id: TextureId,
-        fallback_format: TextureFormat,
-        compression: CompressionLevel,
-    ) -> Result<Self, FormatError> {
-        // Priority 1: Use preserved original bytes (from glTF embedded images)
-        if let Some((data, format)) = Self::from_original_bytes(texture) {
-            let (width, height) = Self::texture_dimensions(texture)?;
-            return Ok(Self { id, format, width, height, data });
-        }
-
-        // Priority 2: Read original file bytes if texture has a source path
-        if let Some((data, format)) = Self::from_source_path(texture) {
-            let (width, height) = Self::texture_dimensions(texture)?;
-            return Ok(Self { id, format, width, height, data });
-        }
-
-        // Priority 3: Fall back to encoding with the configured format
-        let image = texture.get_image()
-            .map_err(|e| FormatError::TextureError(e.to_string()))?;
-        let (width, height) = image.dimensions();
-        let (format, data) = Self::encode_image(image, fallback_format, compression)?;
-
-        Ok(Self { id, format, width, height, data })
-    }
-
-    fn texture_dimensions(texture: &Texture) -> Result<(u32, u32), FormatError> {
-        let image = texture.get_image()
-            .map_err(|e| FormatError::TextureError(e.to_string()))?;
-        Ok(image.dimensions())
-    }
-
-    fn from_original_bytes(texture: &Texture) -> Option<(Vec<u8>, TextureFormat)> {
-        texture.original_bytes().map(|(bytes, format)| (bytes.to_vec(), format))
-    }
-
-    fn from_source_path(texture: &Texture) -> Option<(Vec<u8>, TextureFormat)> {
-        let path = texture.source_path()?;
-        let bytes = std::fs::read(path).ok()?;
-        let format = Self::detect_format(&bytes)?;
-        Some((bytes, format))
-    }
-
-    fn encode_image(
-        image: &image::DynamicImage,
-        fallback_format: TextureFormat,
-        compression: CompressionLevel,
-    ) -> Result<(TextureFormat, Vec<u8>), FormatError> {
-        use image::ImageEncoder;
-
-        match fallback_format {
-            TextureFormat::Jpeg => {
-                use image::codecs::jpeg::JpegEncoder;
-
-                let rgb = image.to_rgb8();
-                let (w, h) = image.dimensions();
-                let mut buf = Vec::new();
-                JpegEncoder::new_with_quality(&mut buf, compression.jpeg_quality())
-                    .write_image(&rgb, w, h, image::ExtendedColorType::Rgb8)
-                    .map_err(|e| FormatError::TextureError(e.to_string()))?;
-                Ok((TextureFormat::Jpeg, buf))
-            }
-            _ => {
-                use image::codecs::png::PngEncoder;
-
-                let rgba = image.to_rgba8();
-                let (w, h) = image.dimensions();
-                let mut buf = Vec::new();
-                PngEncoder::new_with_quality(
-                    &mut buf,
-                    compression.png_compression(),
-                    FilterType::Adaptive,
-                )
-                .write_image(&rgba, w, h, image::ExtendedColorType::Rgba8)
-                .map_err(|e| FormatError::TextureError(e.to_string()))?;
-                Ok((TextureFormat::Png, buf))
-            }
-        }
-    }
-
-    /// Detect image format from magic bytes.
-    fn detect_format(bytes: &[u8]) -> Option<TextureFormat> {
-        image::guess_format(bytes)
-            .ok()
-            .and_then(|f| TextureFormat::try_from(f).ok())
-    }
-
-    /// Converts to a Texture.
-    pub fn to_texture(&self) -> Result<Texture, FormatError> {
-        use image::DynamicImage;
-
-        let image = match self.format {
-            TextureFormat::Png | TextureFormat::Jpeg => {
-                image::load_from_memory(&self.data)
-                    .map_err(|e| FormatError::TextureError(e.to_string()))?
-            }
-            TextureFormat::Raw => {
-                // Raw RGBA8 data
-                let rgba = image::RgbaImage::from_raw(self.width, self.height, self.data.clone())
-                    .ok_or_else(|| FormatError::TextureError("Invalid raw image data".to_string()))?;
-                DynamicImage::ImageRgba8(rgba)
-            }
-        };
-
-        let mut texture = Texture::from_image(image);
-        texture.id = self.id;
-        Ok(texture)
-    }
-}
-
-/// Serializable environment map with embedded HDR data.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SerializedEnvironmentMap {
-    /// Environment map UUID.
-    pub id: EnvironmentMapId,
-    /// Raw .hdr file bytes, or `None` if the HDR source was discarded (e.g. after IBL baking).
-    pub hdr_data: Option<Vec<u8>>,
-    /// Intensity multiplier.
-    pub intensity: f32,
-    /// Rotation around Y axis in radians.
-    pub rotation: f32,
-}
-
-/// Serializable preprocessed IBL data for an environment map.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SerializedPreprocessedIbl {
-    /// Environment map UUID this data belongs to.
-    pub env_map_id: EnvironmentMapId,
-    /// Diffuse irradiance cubemap.
-    pub irradiance: PreprocessedCubemap,
-    /// Pre-filtered specular cubemap.
-    pub prefiltered: PreprocessedCubemap,
-    /// Optional custom BRDF LUT.
-    pub brdf_lut: Option<Vec<u8>>,
-}
 
 // ============================================================================
 // Annotation Content Filter
@@ -626,24 +457,19 @@ pub fn deserialize_section<T: for<'de> Deserialize<'de>>(compressed: &[u8]) -> R
 // Phased Deserialization
 // ============================================================================
 
-/// All deserialized sections from a Duck file, prior to texture decoding
-/// and scene assembly. Produced by [`parse_duck`], consumed by
-/// [`decode_duck_textures`] and [`assemble_duck_scene`].
+/// All deserialized sections from a Duck file, ready for scene assembly.
+/// Produced by [`parse_duck`], consumed by [`assemble_duck_scene`].
 pub struct DuckSections {
     pub metadata: SerializedMetadata,
-    pub textures: Vec<SerializedTexture>,
+    pub textures: Vec<Texture>,
     pub materials: Vec<Material>,
     pub meshes: Vec<Mesh>,
     pub instances: Vec<Instance>,
     pub nodes: Vec<Node>,
-    pub environment_maps: Vec<SerializedEnvironmentMap>,
-    pub preprocessed_ibl: Vec<SerializedPreprocessedIbl>,
+    pub environment_maps: Vec<EnvironmentMap>,
 }
 
-/// Parse Duck header, TOC, and decompress/deserialize all sections.
-///
-/// This is relatively fast (decompression + bincode deserialization).
-/// The heavy texture image decoding happens in [`decode_duck_textures`].
+/// Parse Duck header, TOC, and decompress/deserialize all sections (including texture decoding).
 pub fn parse_duck(bytes: &[u8]) -> Result<DuckSections, FormatError> {
     let mut cursor = Cursor::new(bytes);
     let header = FileHeader::read(&mut cursor)?;
@@ -662,7 +488,7 @@ pub fn parse_duck(bytes: &[u8]) -> Result<DuckSections, FormatError> {
 
     let metadata: SerializedMetadata =
         deserialize_section(read_section(SectionType::Metadata)?)?;
-    let textures: Vec<SerializedTexture> =
+    let textures: Vec<Texture> =
         deserialize_section(read_section(SectionType::Textures)?)?;
     let materials: Vec<Material> =
         deserialize_section(read_section(SectionType::Materials)?)?;
@@ -672,9 +498,9 @@ pub fn parse_duck(bytes: &[u8]) -> Result<DuckSections, FormatError> {
         deserialize_section(read_section(SectionType::Instances)?)?;
     let nodes: Vec<Node> =
         deserialize_section(read_section(SectionType::Nodes)?)?;
-    // SectionType::Lights and SectionType::Views are no longer written;
-    // silently skip them if present in older files.
-    let environment_maps: Vec<SerializedEnvironmentMap> =
+    // SectionType::Lights, SectionType::Views, and SectionType::PreprocessedIblData
+    // are no longer written; silently skip them if present in older files.
+    let environment_maps: Vec<EnvironmentMap> =
         if let Some(entry) = toc.find(SectionType::EnvironmentMaps) {
             let start = entry.offset as usize;
             let end = start + entry.compressed_size as usize;
@@ -683,83 +509,14 @@ pub fn parse_duck(bytes: &[u8]) -> Result<DuckSections, FormatError> {
             Vec::new()
         };
 
-    let preprocessed_ibl: Vec<SerializedPreprocessedIbl> =
-        if let Some(entry) = toc.find(SectionType::PreprocessedIblData) {
-            let start = entry.offset as usize;
-            let end = start + entry.compressed_size as usize;
-            deserialize_section(&bytes[start..end])?
-        } else {
-            Vec::new()
-        };
-
-    Ok(DuckSections {
-        metadata,
-        textures,
-        materials,
-        meshes,
-        instances,
-        nodes,
-        environment_maps,
-        preprocessed_ibl,
-    })
+    Ok(DuckSections { metadata, textures, materials, meshes, instances, nodes, environment_maps })
 }
 
-/// A single decoded texture with its UUID, ready for scene insertion.
-pub struct DecodedTexture {
-    pub file_id: TextureId,
-    pub texture: Texture,
-}
-
-/// Decode serialized textures into images.
-///
-/// On native this uses rayon for parallelism. On WASM it decodes sequentially.
-/// This is typically the most expensive phase of loading.
-pub fn decode_duck_textures(
-    serialized: &[SerializedTexture],
-) -> Result<Vec<DecodedTexture>, FormatError> {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        serialized
-            .par_iter()
-            .map(|st| {
-                st.to_texture()
-                    .map(|tex| DecodedTexture { file_id: st.id, texture: tex })
-            })
-            .collect()
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    {
-        serialized
-            .iter()
-            .map(|st| {
-                st.to_texture()
-                    .map(|tex| DecodedTexture { file_id: st.id, texture: tex })
-            })
-            .collect()
-    }
-}
-
-/// Decode a single serialized texture. Useful for per-item progress reporting
-/// and WASM chunked yielding.
-pub fn decode_duck_texture(
-    serialized: &SerializedTexture,
-) -> Result<DecodedTexture, FormatError> {
-    serialized
-        .to_texture()
-        .map(|tex| DecodedTexture { file_id: serialized.id, texture: tex })
-}
-
-/// Assemble a [`Scene`] from parsed sections and decoded textures.
-pub fn assemble_duck_scene(
-    sections: DuckSections,
-    decoded_textures: Vec<DecodedTexture>,
-) -> Result<Scene, FormatError> {
+/// Assemble a [`Scene`] from parsed sections.
+pub fn assemble_duck_scene(sections: DuckSections) -> Result<Scene, FormatError> {
     let mut scene = Scene::new();
 
-    for dt in decoded_textures {
-        let mut texture = dt.texture;
-        texture.id = dt.file_id;
+    for texture in sections.textures {
         scene.add_texture(texture);
     }
 
@@ -781,44 +538,7 @@ pub fn assemble_duck_scene(
 
     scene.set_root_node_order(sections.metadata.root_nodes);
 
-    // Build a lookup from env_map UUID -> preprocessed IBL data
-    let mut preprocessed_map: HashMap<EnvironmentMapId, PreprocessedIbl> = HashMap::new();
-    for sibl in sections.preprocessed_ibl {
-        preprocessed_map.insert(sibl.env_map_id, PreprocessedIbl {
-            irradiance: sibl.irradiance,
-            prefiltered: sibl.prefiltered,
-            brdf_lut: sibl.brdf_lut,
-        });
-    }
-
-    for sem in sections.environment_maps {
-        let has_preprocessed = preprocessed_map.contains_key(&sem.id);
-        let has_hdr = sem.hdr_data.is_some();
-
-        let mut em = if let Some(hdr_data) = sem.hdr_data {
-            let mut env_map = EnvironmentMap::from_hdr_data(hdr_data);
-            env_map.id = sem.id;
-            env_map
-        } else if has_preprocessed {
-            let mut env_map = EnvironmentMap::from_preprocessed(
-                preprocessed_map.remove(&sem.id).unwrap(),
-            );
-            env_map.id = sem.id;
-            env_map
-        } else {
-            return Err(FormatError::DeserializationError(
-                format!("Environment map {} has neither HDR data nor preprocessed IBL data", sem.id),
-            ));
-        };
-
-        em.set_intensity(sem.intensity);
-        em.set_rotation(sem.rotation);
-
-        if has_hdr
-            && let Some(preprocessed) = preprocessed_map.remove(&sem.id) {
-                em.set_preprocessed_ibl(preprocessed);
-            }
-
+    for em in sections.environment_maps {
         scene.add_environment_map(em);
     }
 
@@ -997,54 +717,13 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
     write_section(&meshes, SectionType::Meshes, compression_level, &mut output, &mut toc)?;
 
     // ===== Textures Section =====
-    let mut textures = Vec::new();
-    for texture in scene.textures() {
-        let serialized = SerializedTexture::from_texture(
-            texture,
-            texture.id(),
-            options.texture_format,
-            options.compression,
-        )?;
-        textures.push(serialized);
-    }
+    let textures: Vec<&Texture> = scene.textures().collect();
     write_section(&textures, SectionType::Textures, compression_level, &mut output, &mut toc)?;
 
     // ===== Environment Maps Section =====
     if scene.has_environment_maps() {
-        let mut env_maps = Vec::new();
-        let mut preprocessed_ibls = Vec::new();
-
-        for env_map in scene.environment_maps() {
-            let hdr_data = match env_map.source() {
-                duck_engine_scene::EnvironmentSource::EquirectangularPath(path) => {
-                    Some(std::fs::read(path).map_err(FormatError::IoError)?)
-                }
-                duck_engine_scene::EnvironmentSource::EquirectangularHdr(data) => {
-                    Some(data.clone())
-                }
-                duck_engine_scene::EnvironmentSource::Preprocessed => None,
-            };
-            env_maps.push(SerializedEnvironmentMap {
-                id: env_map.id,
-                hdr_data,
-                intensity: env_map.intensity(),
-                rotation: env_map.rotation(),
-            });
-
-            if let Some(preprocessed) = env_map.preprocessed_ibl() {
-                preprocessed_ibls.push(SerializedPreprocessedIbl {
-                    env_map_id: env_map.id,
-                    irradiance: preprocessed.irradiance.clone(),
-                    prefiltered: preprocessed.prefiltered.clone(),
-                    brdf_lut: preprocessed.brdf_lut.clone(),
-                });
-            }
-        }
+        let env_maps: Vec<&EnvironmentMap> = scene.environment_maps().collect();
         write_section(&env_maps, SectionType::EnvironmentMaps, compression_level, &mut output, &mut toc)?;
-
-        if !preprocessed_ibls.is_empty() {
-            write_section(&preprocessed_ibls, SectionType::PreprocessedIblData, compression_level, &mut output, &mut toc)?;
-        }
     }
 
     // ===== Write TOC =====
@@ -1062,14 +741,8 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
 }
 
 /// Deserializes a scene from Duck format bytes.
-///
-/// This is a convenience method that calls [`parse_duck`],
-/// [`decode_duck_textures`], and [`assemble_duck_scene`] sequentially.
-/// For progress reporting or async loading, call those phases individually.
 pub fn from_bytes(bytes: &[u8]) -> Result<Scene, FormatError> {
-    let sections = parse_duck(bytes)?;
-    let textures = decode_duck_textures(&sections.textures)?;
-    assemble_duck_scene(sections, textures)
+    assemble_duck_scene(parse_duck(bytes)?)
 }
 
 /// Saves the scene to a file with default options.

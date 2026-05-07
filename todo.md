@@ -101,7 +101,6 @@ Redesign the binary format and serialization infrastructure for per-resource acc
 
 Eliminate `SerializedTexture`, `SerializedEnvironmentMap`, and `SerializedPreprocessedIbl` from `format.rs` by implementing `Serialize`/`Deserialize` directly on the scene types.
 
-- Add `image` crate as optional dep to `duck-engine-scene` (gated on `serde` feature)
 - **`Texture` serialize**: embed the actual image bytes as `Vec<u8>` — use `original_bytes` if in memory (e.g., from a glTF), read from `source_path` if known (getting already-compressed PNG/JPEG bytes from disk), or re-encode the decoded `DynamicImage` as PNG as a last resort. Never write the path itself.
 - **`Texture` deserialize**: reconstruct a `Texture` from the embedded bytes and stored metadata (`format`, `width`, `height`); the source path is not restored.
 - **`EnvironmentMap` serialize**: serialize `intensity`, `rotation`, and `hdr_data: Option<Vec<u8>>` — read HDR bytes from `source_path` on serialize if not already in memory.

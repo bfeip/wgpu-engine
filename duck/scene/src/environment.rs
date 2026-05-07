@@ -197,3 +197,68 @@ impl EnvironmentMap {
         self.generation += 1;
     }
 }
+
+#[cfg(feature = "serde")]
+impl serde::Serialize for EnvironmentMap {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::{Error, SerializeStruct};
+
+        // path_bytes holds the read data when the source is a file path; the borrow
+        // below must not outlive it, so both are declared in the same scope.
+        let path_bytes;
+        let hdr_data: Option<&[u8]> = match &self.source {
+            EnvironmentSource::EquirectangularPath(path) => {
+                path_bytes = std::fs::read(path).map_err(Error::custom)?;
+                Some(&path_bytes)
+            }
+            EnvironmentSource::EquirectangularHdr(data) => Some(data.as_slice()),
+            EnvironmentSource::Preprocessed => None,
+        };
+
+        let mut s = serializer.serialize_struct("EnvironmentMap", 5)?;
+        s.serialize_field("id", &self.id)?;
+        s.serialize_field("hdr_data", &hdr_data)?;
+        s.serialize_field("intensity", &self.intensity)?;
+        s.serialize_field("rotation", &self.rotation)?;
+        s.serialize_field("preprocessed_ibl", &self.preprocessed_ibl)?;
+        s.end()
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for EnvironmentMap {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+
+        #[derive(serde::Deserialize)]
+        struct EnvMapData {
+            id: EnvironmentMapId,
+            hdr_data: Option<Vec<u8>>,
+            intensity: f32,
+            rotation: f32,
+            preprocessed_ibl: Option<PreprocessedIbl>,
+        }
+
+        let d = EnvMapData::deserialize(deserializer)?;
+
+        if d.hdr_data.is_none() && d.preprocessed_ibl.is_none() {
+            return Err(Error::custom(
+                "environment map has neither HDR data nor preprocessed IBL data",
+            ));
+        }
+
+        let source = match d.hdr_data {
+            Some(data) => EnvironmentSource::EquirectangularHdr(data),
+            None => EnvironmentSource::Preprocessed,
+        };
+
+        Ok(EnvironmentMap {
+            id: d.id,
+            source,
+            intensity: d.intensity,
+            rotation: d.rotation,
+            generation: 1,
+            preprocessed_ibl: d.preprocessed_ibl,
+        })
+    }
+}

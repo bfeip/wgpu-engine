@@ -580,26 +580,16 @@ async fn load_chunked_wasm(
 
 #[cfg(target_arch = "wasm32")]
 async fn load_duck_chunked(bytes: &[u8], progress: &LoadProgress) -> LoadResult {
-    use self::format::{assemble_duck_scene, decode_duck_texture, parse_duck};
+    use self::format::{assemble_duck_scene, parse_duck};
 
     progress.enter_phase(LoadPhase::Parsing);
     let sections = parse_duck(bytes)?;
     yield_to_event_loop().await;
 
-    progress.enter_phase(LoadPhase::DecodingTextures);
-    progress.set_item_count(sections.textures.len() as u32);
-
-    let mut decoded = Vec::with_capacity(sections.textures.len());
-    for st in &sections.textures {
-        decoded.push(decode_duck_texture(st)?);
-        progress.complete_item();
-        yield_to_event_loop().await;
-    }
-
     progress.enter_phase(LoadPhase::Assembling);
     yield_to_event_loop().await;
 
-    let scene = assemble_duck_scene(sections, decoded)?;
+    let scene = assemble_duck_scene(sections)?;
 
     progress.enter_phase(LoadPhase::Complete);
     Ok(SceneLoadResult {

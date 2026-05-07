@@ -254,3 +254,90 @@ impl Texture {
         }
     }
 }
+
+#[cfg(feature = "serde")]
+fn detect_texture_format(bytes: &[u8]) -> Option<TextureFormat> {
+    image::guess_format(bytes).ok().and_then(|f| TextureFormat::try_from(f).ok())
+}
+
+#[cfg(feature = "serde")]
+impl serde::Serialize for Texture {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::{Error, SerializeStruct};
+        use std::io::Cursor;
+
+        let image = self.get_image().map_err(Error::custom)?;
+        let (width, height) = image.dimensions();
+
+        // Last-resort: PNG-encode the decoded image.
+        let encode_png = || -> std::result::Result<Vec<u8>, S::Error> {
+            let mut buf = Vec::new();
+            image
+                .write_to(&mut Cursor::new(&mut buf), image::ImageFormat::Png)
+                .map_err(Error::custom)?;
+            Ok(buf)
+        };
+
+        let (data, format) = if let Some((bytes, fmt)) = self.original_bytes() {
+            // Best case: original compressed bytes preserved from load (e.g. from glTF).
+            (bytes.to_vec(), fmt)
+        } else if let Some(path) = self.source_path() {
+            // File texture: read the already-compressed file bytes directly.
+            let bytes = std::fs::read(path).map_err(Error::custom)?;
+            if let Some(fmt) = detect_texture_format(&bytes) {
+                (bytes, fmt)
+            } else {
+                (encode_png()?, TextureFormat::Png)
+            }
+        } else {
+            // Decoded-only texture: re-encode as PNG.
+            (encode_png()?, TextureFormat::Png)
+        };
+
+        let mut s = serializer.serialize_struct("Texture", 5)?;
+        s.serialize_field("id", &self.id)?;
+        s.serialize_field("format", &format)?;
+        s.serialize_field("width", &width)?;
+        s.serialize_field("height", &height)?;
+        s.serialize_field("data", &data)?;
+        s.end()
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for Texture {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+
+        #[derive(serde::Deserialize)]
+        struct TextureData {
+            id: TextureId,
+            format: TextureFormat,
+            width: u32,
+            height: u32,
+            data: Vec<u8>,
+        }
+
+        let td = TextureData::deserialize(deserializer)?;
+
+        let (image, original_bytes) = match td.format {
+            TextureFormat::Png | TextureFormat::Jpeg => {
+                let img = image::load_from_memory(&td.data)
+                    .map_err(|e| Error::custom(e.to_string()))?;
+                (img, Some((td.data, td.format)))
+            }
+            TextureFormat::Raw => {
+                // Raw RGBA8 data: reconstruct directly, no original_bytes to preserve.
+                let rgba = image::RgbaImage::from_raw(td.width, td.height, td.data)
+                    .ok_or_else(|| Error::custom("invalid raw image dimensions"))?;
+                (DynamicImage::ImageRgba8(rgba), None)
+            }
+        };
+
+        Ok(Texture {
+            id: td.id,
+            source: TextureSource::Embedded { image, original_bytes },
+            generation: 1,
+        })
+    }
+}

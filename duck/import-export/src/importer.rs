@@ -147,22 +147,13 @@ impl Importer for DuckImporter {
         _options: &LoadOptions,
         progress: &LoadProgress,
     ) -> Result<SceneLoadResult, LoadError> {
-        use crate::format::{assemble_duck_scene, decode_duck_texture, parse_duck};
+        use crate::format::{assemble_duck_scene, parse_duck};
 
         progress.enter_phase(LoadPhase::Parsing);
         let sections = parse_duck(bytes)?;
 
-        progress.enter_phase(LoadPhase::DecodingTextures);
-        progress.set_item_count(sections.textures.len() as u32);
-
-        let mut decoded = Vec::with_capacity(sections.textures.len());
-        for st in &sections.textures {
-            decoded.push(decode_duck_texture(st)?);
-            progress.complete_item();
-        }
-
         progress.enter_phase(LoadPhase::Assembling);
-        let scene = assemble_duck_scene(sections, decoded)?;
+        let scene = assemble_duck_scene(sections)?;
 
         progress.enter_phase(LoadPhase::Complete);
         Ok(SceneLoadResult {
