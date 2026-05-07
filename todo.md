@@ -97,7 +97,7 @@ Replace all auto-increment `u32` ID types (`NodeId`, `MeshId`, `MaterialId`, `Te
 
 Redesign the binary format and serialization infrastructure for per-resource access and reduced complexity.
 
-#### 4a — Manual serde for `Texture` and `EnvironmentMap`
+#### 4a — Manual serde for `Texture` and `EnvironmentMap` - DONE
 
 Eliminate `SerializedTexture`, `SerializedEnvironmentMap`, and `SerializedPreprocessedIbl` from `format.rs` by implementing `Serialize`/`Deserialize` directly on the scene types.
 
@@ -107,7 +107,7 @@ Eliminate `SerializedTexture`, `SerializedEnvironmentMap`, and `SerializedPrepro
 - **`EnvironmentMap` deserialize**: reconstruct with the HDR bytes as the source.
 - `PreprocessedIbl` already derives Serialize/Deserialize; wire it to `EnvironmentMap` by ID as today.
 
-#### 4b — Flat per-resource format (sections eliminated)
+#### 4b — Flat per-resource format (sections eliminated) - DONE
 
 Replace the section-based format with a flat sequence of independently-encoded resources. Each resource manages its own compression and encoding. The TOC maps each resource ID to its file offset and size.
 

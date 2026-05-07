@@ -1,7 +1,7 @@
 //! Scene file analyzer tool.
 //!
 //! Displays detailed information about .duck scene files including:
-//! - File structure and section sizes
+//! - File structure and resource sizes
 //! - Compression ratios
 //! - Mesh, material, texture, and node statistics
 
@@ -12,10 +12,10 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use duck_engine_import_export::format::{
-    FileHeader, FormatError, SectionType, SerializedMetadata,
-    SerializedTexture, TableOfContents, TocEntry,
+    FileHeader, FormatError, ResourceType, SerializedMetadata,
+    TocEntry, decode_resource,
 };
-use duck_engine_scene::{Instance, Light, Material, Mesh, Node, NodeId, NodePayload, TextureFormat};
+use duck_engine_scene::{Instance, Material, Mesh, Node, NodeId, NodePayload, Texture, TextureFormat};
 
 #[derive(Parser)]
 #[command(name = "scene-info")]
@@ -45,14 +45,13 @@ struct Cli {
     #[arg(short, long)]
     all: bool,
 
-    /// Hide the section size breakdown table
+    /// Hide the resource size breakdown table
     #[arg(long)]
     no_sections: bool,
 
-    /// Show the scene contents summary (reads all sections)
+    /// Show the scene contents summary (reads all resources)
     #[arg(short, long)]
     summary: bool,
-
 }
 
 impl Cli {
@@ -107,118 +106,106 @@ fn analyze_scene(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
     println!("  Flags: 0x{:04X}", header.flags);
     println!();
 
-    // Print section breakdown
+    // Print resource breakdown
     if !cli.no_sections {
-        print_section_breakdown(&toc, file_size);
+        print_resource_breakdown(&toc, file_size);
     }
 
-    // Determine which sections we need to read
-    let need_summary = cli.summary;
-    let needed = SectionsNeeded {
-        metadata: need_summary,
-        nodes: need_summary || cli.show_nodes(),
-        instances: need_summary,
-        materials: need_summary || cli.show_materials(),
-        meshes: need_summary || cli.show_meshes(),
-        textures: need_summary || cli.show_textures(),
-        lights: need_summary,
+    let need_content = cli.summary
+        || cli.show_nodes()
+        || cli.show_materials()
+        || cli.show_meshes()
+        || cli.show_textures();
+
+    let stats = if need_content {
+        Some(gather_statistics(&bytes, &toc)?)
+    } else {
+        None
     };
 
-    // Read and analyze each section
-    let stats = gather_statistics(&bytes, &toc, &needed)?;
+    if let Some(ref stats) = stats {
+        if cli.summary {
+            print_scene_summary(stats);
+        }
 
-    // Print scene contents summary
-    if cli.summary {
-        print_scene_summary(&stats);
-    }
+        if cli.show_textures() && !stats.textures.is_empty() {
+            print_largest_textures(&stats.textures);
+        }
 
-    // Print largest textures (when --textures flag is set)
-    if cli.show_textures() && !stats.textures.is_empty() {
-        print_largest_textures(&stats.textures);
-    }
+        if cli.show_meshes() && !stats.meshes.is_empty() {
+            print_largest_meshes(&stats.meshes);
+        }
 
-    // Print largest meshes (when --meshes flag is set)
-    if cli.show_meshes() && !stats.meshes.is_empty() {
-        print_largest_meshes(&stats.meshes);
-    }
+        let show_any_details =
+            cli.show_meshes() || cli.show_textures() || cli.show_materials() || cli.show_nodes();
 
-    // Detailed sections based on flags
-    let show_any_details =
-        cli.show_meshes() || cli.show_textures() || cli.show_materials() || cli.show_nodes();
+        if show_any_details {
+            println!();
+        }
 
-    if show_any_details {
-        println!();
-    }
+        if cli.show_meshes() && !stats.meshes.is_empty() {
+            print_mesh_details(&stats.meshes);
+        }
 
-    if cli.show_meshes() && !stats.meshes.is_empty() {
-        print_mesh_details(&stats.meshes);
-    }
+        if cli.show_materials() && !stats.materials.is_empty() {
+            print_material_details(&stats.materials);
+        }
 
-    if cli.show_materials() && !stats.materials.is_empty() {
-        print_material_details(&stats.materials);
-    }
+        if cli.show_textures() && !stats.textures.is_empty() {
+            print_texture_details(&stats.textures);
+        }
 
-    if cli.show_textures() && !stats.textures.is_empty() {
-        print_texture_details(&stats.textures);
-    }
-
-    if cli.show_nodes() && !stats.nodes.is_empty() {
-        print_node_hierarchy(&stats.nodes);
+        if cli.show_nodes() && !stats.nodes.is_empty() {
+            print_node_hierarchy(&stats.nodes);
+        }
     }
 
     Ok(())
 }
 
-fn read_toc(bytes: &[u8], toc_offset: u64) -> Result<TableOfContents, FormatError> {
+fn read_toc(bytes: &[u8], toc_offset: u64) -> Result<Vec<TocEntry>, FormatError> {
     let toc_data = &bytes[toc_offset as usize..];
-    let decompressed =
-        zstd::decode_all(toc_data).map_err(|e| FormatError::DecompressionError(e.to_string()))?;
-    let (value, _) = bincode::serde::decode_from_slice(&decompressed, bincode::config::legacy())
-        .map_err(|e| FormatError::DeserializationError(e.to_string()))?;
-    Ok(value)
+    decode_resource(toc_data)
 }
 
-fn read_section<T: serde::de::DeserializeOwned>(
-    bytes: &[u8],
-    entry: &TocEntry,
-) -> Result<T, FormatError> {
-    let start = entry.offset as usize;
-    let end = start + entry.compressed_size as usize;
-    let compressed = &bytes[start..end];
+fn print_resource_breakdown(toc: &[TocEntry], file_size: u64) {
+    // Group entries by resource type, summing sizes and counting entries
+    let mut by_type: HashMap<ResourceType, (u32, u64)> = HashMap::new();
+    for entry in toc {
+        let (count, total) = by_type.entry(entry.resource_type).or_default();
+        *count += 1;
+        *total += entry.size as u64;
+    }
 
-    let decompressed =
-        zstd::decode_all(compressed).map_err(|e| FormatError::DecompressionError(e.to_string()))?;
-
-    let (value, _) = bincode::serde::decode_from_slice(&decompressed, bincode::config::legacy())
-        .map_err(|e| FormatError::DeserializationError(e.to_string()))?;
-    Ok(value)
-}
-
-fn print_section_breakdown(toc: &TableOfContents, file_size: u64) {
-    println!("Sections:");
+    println!("Resources:");
     println!(
-        "  {:<16} {:>12} {:>14} {:>8} {:>10}",
-        "Section", "Compressed", "Uncompressed", "Ratio", "% of File"
+        "  {:<16} {:>8} {:>12} {:>10}",
+        "Type", "Count", "Total Size", "% of File"
     );
-    println!("  {}", "-".repeat(64));
+    println!("  {}", "-".repeat(50));
 
-    for entry in &toc.entries {
-        let section_name = format!("{:?}", entry.section_type);
-        let ratio = if entry.compressed_size > 0 {
-            entry.uncompressed_size as f64 / entry.compressed_size as f64
-        } else {
-            1.0
-        };
-        let percent = (entry.compressed_size as f64 / file_size as f64) * 100.0;
+    // Fixed display order
+    let order = [
+        ResourceType::Metadata,
+        ResourceType::Node,
+        ResourceType::Instance,
+        ResourceType::Material,
+        ResourceType::Mesh,
+        ResourceType::Texture,
+        ResourceType::EnvironmentMap,
+    ];
 
-        println!(
-            "  {:<16} {:>12} {:>14} {:>7.1}x {:>9.1}%",
-            section_name,
-            format_bytes(entry.compressed_size),
-            format_bytes(entry.uncompressed_size),
-            ratio,
-            percent
-        );
+    for rt in &order {
+        if let Some(&(count, total)) = by_type.get(rt) {
+            let percent = (total as f64 / file_size as f64) * 100.0;
+            println!(
+                "  {:<16} {:>8} {:>12} {:>9.1}%",
+                format!("{:?}", rt),
+                count,
+                format_bytes(total),
+                percent,
+            );
+        }
     }
     println!();
 }
@@ -229,25 +216,10 @@ struct SceneStats {
     instances: Vec<Instance>,
     materials: Vec<Material>,
     meshes: Vec<Mesh>,
-    textures: Vec<SerializedTexture>,
-    lights: Vec<Light>,
+    textures: Vec<Texture>,
 }
 
-struct SectionsNeeded {
-    metadata: bool,
-    nodes: bool,
-    instances: bool,
-    materials: bool,
-    meshes: bool,
-    textures: bool,
-    lights: bool,
-}
-
-fn gather_statistics(
-    bytes: &[u8],
-    toc: &TableOfContents,
-    needed: &SectionsNeeded,
-) -> Result<SceneStats, FormatError> {
+fn gather_statistics(bytes: &[u8], toc: &[TocEntry]) -> Result<SceneStats, FormatError> {
     let mut stats = SceneStats {
         metadata: None,
         nodes: Vec::new(),
@@ -255,34 +227,39 @@ fn gather_statistics(
         materials: Vec::new(),
         meshes: Vec::new(),
         textures: Vec::new(),
-        lights: Vec::new(),
     };
 
-    for entry in &toc.entries {
-        match entry.section_type {
-            SectionType::Metadata if needed.metadata => {
-                stats.metadata = Some(read_section(bytes, entry)?);
+    for entry in toc {
+        let resource_bytes = {
+            let start = entry.offset as usize;
+            let end = start + entry.size as usize;
+            &bytes[start..end]
+        };
+
+        match entry.resource_type {
+            ResourceType::Metadata => {
+                stats.metadata = Some(decode_resource(resource_bytes)?);
             }
-            SectionType::Nodes if needed.nodes => {
-                stats.nodes = read_section(bytes, entry)?;
+            ResourceType::Node => {
+                stats.nodes.push(decode_resource(resource_bytes)?);
             }
-            SectionType::Instances if needed.instances => {
-                stats.instances = read_section(bytes, entry)?;
+            ResourceType::Instance => {
+                stats.instances.push(decode_resource(resource_bytes)?);
             }
-            SectionType::Materials if needed.materials => {
-                stats.materials = read_section(bytes, entry)?;
+            ResourceType::Material => {
+                stats.materials.push(decode_resource(resource_bytes)?);
             }
-            SectionType::Meshes if needed.meshes => {
-                stats.meshes = read_section(bytes, entry)?;
+            ResourceType::Mesh => {
+                stats.meshes.push(decode_resource(resource_bytes)?);
             }
-            SectionType::Textures if needed.textures => {
-                stats.textures = read_section(bytes, entry)?;
+            ResourceType::Texture => {
+                let raw = resource_bytes.to_vec();
+                let tex = Texture::from_image_bytes_with_id(entry.resource_id, raw)
+                    .map_err(|e| FormatError::TextureError(e.to_string()))?;
+                stats.textures.push(tex);
             }
-            SectionType::Lights if needed.lights => {
-                stats.lights = read_section(bytes, entry)?;
-            }
-            _ => {
-                // Section not needed or not handled
+            ResourceType::EnvironmentMap => {
+                // Not displayed in current stats views
             }
         }
     }
@@ -325,8 +302,12 @@ fn print_scene_summary(stats: &SceneStats) {
         materials_with_textures
     );
 
-    // Texture stats
-    let total_texture_data: u64 = stats.textures.iter().map(|t| t.data.len() as u64).sum();
+    // Texture stats — sum original_bytes lengths
+    let total_texture_data: u64 = stats
+        .textures
+        .iter()
+        .map(|t| t.original_bytes().map_or(0, |(b, _)| b.len()) as u64)
+        .sum();
     println!(
         "  Textures: {} ({})",
         stats.textures.len(),
@@ -337,9 +318,6 @@ fn print_scene_summary(stats: &SceneStats) {
     let max_depth = compute_max_depth(&stats.nodes);
     println!("  Nodes: {} (max depth: {})", stats.nodes.len(), max_depth);
 
-    // Lights
-    println!("  Lights: {}", stats.lights.len());
-
     println!();
 }
 
@@ -348,7 +326,6 @@ fn compute_max_depth(nodes: &[Node]) -> usize {
         return 0;
     }
 
-    // Build parent map
     let parent_map: HashMap<NodeId, Option<NodeId>> =
         nodes.iter().map(|n| (n.id, n.parent())).collect();
 
@@ -365,7 +342,7 @@ fn compute_max_depth(nodes: &[Node]) -> usize {
     max_depth
 }
 
-fn print_largest_textures(textures: &[SerializedTexture]) {
+fn print_largest_textures(textures: &[Texture]) {
     println!("Largest Textures:");
     println!(
         "  {:>3} {:>4} {:>6} {:>12} {:>12}",
@@ -374,22 +351,28 @@ fn print_largest_textures(textures: &[SerializedTexture]) {
     println!("  {}", "-".repeat(42));
 
     let mut sorted: Vec<_> = textures.iter().collect();
-    sorted.sort_by(|a, b| b.data.len().cmp(&a.data.len()));
+    sorted.sort_by(|a, b| {
+        let a_size = a.original_bytes().map_or(0, |(b, _)| b.len());
+        let b_size = b.original_bytes().map_or(0, |(b, _)| b.len());
+        b_size.cmp(&a_size)
+    });
 
     for (i, tex) in sorted.iter().take(5).enumerate() {
-        let format_name = match tex.format {
-            TextureFormat::Png => "PNG",
-            TextureFormat::Jpeg => "JPEG",
-            TextureFormat::Raw => "Raw",
+        let (format_name, data_size) = match tex.original_bytes() {
+            Some((b, TextureFormat::Png)) => ("PNG", b.len()),
+            Some((b, TextureFormat::Jpeg)) => ("JPEG", b.len()),
+            Some((b, TextureFormat::Raw)) => ("Raw", b.len()),
+            None => ("?", 0),
         };
+        let (w, h) = tex.dimensions().unwrap_or((0, 0));
         println!(
             "  {:>3} {:>4} {:>6} {:>5}x{:<5} {:>12}",
             i + 1,
             tex.id,
             format_name,
-            tex.width,
-            tex.height,
-            format_bytes(tex.data.len() as u64)
+            w,
+            h,
+            format_bytes(data_size as u64)
         );
     }
     println!();
@@ -505,7 +488,7 @@ fn print_material_details(materials: &[Material]) {
     println!();
 }
 
-fn print_texture_details(textures: &[SerializedTexture]) {
+fn print_texture_details(textures: &[Texture]) {
     println!("Texture Details:");
     println!(
         "  {:>4} {:>6} {:>12} {:>12}",
@@ -514,18 +497,20 @@ fn print_texture_details(textures: &[SerializedTexture]) {
     println!("  {}", "-".repeat(40));
 
     for tex in textures {
-        let format_name = match tex.format {
-            TextureFormat::Png => "PNG",
-            TextureFormat::Jpeg => "JPEG",
-            TextureFormat::Raw => "Raw",
+        let (format_name, data_size) = match tex.original_bytes() {
+            Some((b, TextureFormat::Png)) => ("PNG", b.len()),
+            Some((b, TextureFormat::Jpeg)) => ("JPEG", b.len()),
+            Some((b, TextureFormat::Raw)) => ("Raw", b.len()),
+            None => ("?", 0),
         };
+        let (w, h) = tex.dimensions().unwrap_or((0, 0));
         println!(
             "  {:>4} {:>6} {:>5}x{:<5} {:>12}",
             tex.id,
             format_name,
-            tex.width,
-            tex.height,
-            format_bytes(tex.data.len() as u64)
+            w,
+            h,
+            format_bytes(data_size as u64)
         );
     }
     println!();
@@ -534,10 +519,8 @@ fn print_texture_details(textures: &[SerializedTexture]) {
 fn print_node_hierarchy(nodes: &[Node]) {
     println!("Node Hierarchy:");
 
-    // Find root nodes (no parent)
     let roots: Vec<_> = nodes.iter().filter(|n| n.parent().is_none()).collect();
 
-    // Build children map
     let mut children_map: HashMap<NodeId, Vec<&Node>> = HashMap::new();
     for node in nodes {
         if let Some(parent_id) = node.parent() {

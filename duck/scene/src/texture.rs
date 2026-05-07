@@ -160,6 +160,27 @@ impl Texture {
         }
     }
 
+    /// Create a texture from raw compressed image bytes (PNG or JPEG) with a specific ID.
+    ///
+    /// Used during deserialization to reconstruct a texture from embedded file bytes
+    /// while preserving the original resource ID.
+    pub fn from_image_bytes_with_id(id: TextureId, bytes: Vec<u8>) -> Result<Self> {
+        let format = image::guess_format(&bytes)
+            .ok()
+            .and_then(|f| TextureFormat::try_from(f).ok())
+            .with_context(|| "Unrecognized or unsupported image format in texture bytes")?;
+        let image = image::load_from_memory(&bytes)
+            .with_context(|| "Failed to decode texture image bytes")?;
+        Ok(Self {
+            id,
+            source: TextureSource::Embedded {
+                image,
+                original_bytes: Some((bytes, format)),
+            },
+            generation: 1,
+        })
+    }
+
     /// Load and return a reference to the image data.
     ///
     /// For path-based textures, this loads the image from disk on first access.
