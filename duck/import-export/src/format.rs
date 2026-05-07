@@ -22,7 +22,6 @@
 //! └──────────────────────────────────────────────────────────────┘
 //! ```
 
-use std::collections::HashSet;
 use std::io::{Read, Write, Cursor};
 
 use image::codecs::png::CompressionType;
@@ -32,10 +31,10 @@ use thiserror::Error;
 
 use duck_engine_scene::{
     Id,
-    Instance, InstanceId,
-    Material, MaterialId,
-    Mesh, MeshId,
-    Node, NodeId, NodePayload,
+    Instance,
+    Material,
+    Mesh,
+    Node, NodeId,
     Texture,
     EnvironmentMap, EnvironmentMapId, Scene,
 };
@@ -268,65 +267,6 @@ pub struct SerializedMetadata {
     pub active_environment_map: Option<EnvironmentMapId>,
 }
 
-
-// ============================================================================
-// Annotation Content Filter
-// ============================================================================
-
-/// Collects IDs of annotation-created content to exclude from serialization.
-struct AnnotationContentFilter {
-    nodes: HashSet<NodeId>,
-    instances: HashSet<InstanceId>,
-    meshes: HashSet<MeshId>,
-    materials: HashSet<MaterialId>,
-}
-
-impl AnnotationContentFilter {
-    /// Build the filter from a scene by collecting all annotation-created content.
-    fn from_scene(scene: &Scene) -> Self {
-        let mut filter = Self {
-            nodes: HashSet::new(),
-            instances: HashSet::new(),
-            meshes: HashSet::new(),
-            materials: HashSet::new(),
-        };
-
-        // Collect all annotation-created node IDs (recursively includes children)
-        if let Some(root_id) = scene.annotations.root_node() {
-            collect_subtree_nodes(scene, root_id, &mut filter.nodes);
-        }
-
-        // Collect instance IDs from annotation nodes
-        filter.instances = filter.nodes
-            .iter()
-            .filter_map(|&node_id| scene.get_node(node_id))
-            .filter_map(|node| match node.payload() {
-                NodePayload::Instance(id) => Some(*id),
-                _ => None,
-            })
-            .collect();
-
-        // Collect mesh and material IDs from annotation instances
-        for &instance_id in &filter.instances {
-            if let Some(instance) = scene.get_instance(instance_id) {
-                filter.meshes.insert(instance.mesh());
-                filter.materials.insert(instance.material());
-            }
-        }
-
-        filter
-    }
-}
-
-/// Recursively collects all node IDs in a subtree.
-fn collect_subtree_nodes(scene: &Scene, node_id: NodeId, collected: &mut HashSet<NodeId>) {
-    collected.insert(node_id);
-    if let Some(node) = scene.get_node(node_id) {
-        for &child_id in node.children() {
-            collect_subtree_nodes(scene, child_id, collected);
-        }
-    }
-}
 
 // ============================================================================
 // Compression Utilities
@@ -596,7 +536,6 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
     use std::time::{SystemTime, UNIX_EPOCH};
 
     let compression_level = options.compression.zstd_level();
-    let annotation_filter = AnnotationContentFilter::from_scene(scene);
     let mut output = Vec::with_capacity(estimate_serialized_size(scene));
     output.resize(HEADER_SIZE, 0); // Reserve space for header
     let mut toc: Vec<TocEntry> = Vec::new();
@@ -609,11 +548,7 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
             .map(|d| d.as_secs())
             .unwrap_or(0),
         generator: format!("duck-engine {}", env!("CARGO_PKG_VERSION")),
-        root_nodes: scene.root_nodes()
-            .iter()
-            .filter(|&&id| !annotation_filter.nodes.contains(&id))
-            .copied()
-            .collect(),
+        root_nodes: scene.root_nodes().to_vec(),
         active_environment_map: scene.active_environment_map(),
     };
     append_resource(
@@ -626,24 +561,8 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
 
     // ===== Nodes =====
     for node in scene.nodes() {
-        if annotation_filter.nodes.contains(&node.id) {
-            continue;
-        }
-        let mut node = node.clone();
-        node.set_children_unchecked(
-            node.children()
-                .iter()
-                .filter(|&&cid| !annotation_filter.nodes.contains(&cid))
-                .copied()
-                .collect(),
-        );
-        let payload = match node.payload() {
-            NodePayload::Instance(iid) if annotation_filter.instances.contains(iid) => NodePayload::None,
-            other => other.clone(),
-        };
-        node.set_payload(payload);
         append_resource(
-            encode_resource(&node, compression_level)?,
+            encode_resource(node, compression_level)?,
             ResourceType::Node,
             node.id,
             &mut output,
@@ -653,9 +572,6 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
 
     // ===== Instances =====
     for instance in scene.instances() {
-        if annotation_filter.instances.contains(&instance.id) {
-            continue;
-        }
         append_resource(
             encode_resource(instance, compression_level)?,
             ResourceType::Instance,
@@ -667,9 +583,6 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
 
     // ===== Materials =====
     for material in scene.materials() {
-        if annotation_filter.materials.contains(&material.id) {
-            continue;
-        }
         append_resource(
             encode_resource(material, compression_level)?,
             ResourceType::Material,
@@ -681,9 +594,6 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
 
     // ===== Meshes =====
     for mesh in scene.meshes() {
-        if annotation_filter.meshes.contains(&mesh.id) {
-            continue;
-        }
         append_resource(
             encode_resource(mesh, compression_level)?,
             ResourceType::Mesh,
@@ -998,45 +908,6 @@ mod tests {
 
         let result = from_bytes(&bytes);
         assert!(matches!(result, Err(FormatError::InvalidMagic)));
-    }
-
-    #[test]
-    fn test_reified_annotation_geometry_excluded() {
-
-        let mut scene = Scene::new();
-
-        let mesh = Mesh::cube(1.0, PrimitiveType::TriangleList);
-        let mesh_id = scene.add_mesh(mesh);
-        let mat_id = scene.add_material(Material::new());
-        let _node_id = scene.add_instance_node(
-            None,
-            mesh_id,
-            mat_id,
-            Some("RegularNode".to_string()),
-            Transform::IDENTITY,
-        ).unwrap();
-
-        scene.annotations.add_line(
-            Point3::new(0.0, 0.0, 0.0),
-            Point3::new(1.0, 1.0, 1.0),
-            RgbaColor::RED,
-        );
-        scene.reify_annotations();
-
-        assert!(scene.mesh_count() > 1, "Should have annotation mesh");
-        assert!(scene.node_count() > 1, "Should have annotation nodes");
-
-        let bytes = to_bytes(&scene).expect("Failed to serialize");
-        let loaded = from_bytes(&bytes).expect("Failed to deserialize");
-
-        assert_eq!(loaded.mesh_count(), 1, "Only regular mesh should be serialized");
-        assert_eq!(loaded.instance_count(), 1, "Only regular instance should be serialized");
-        assert_eq!(loaded.node_count(), 1, "Only regular node should be serialized");
-
-        let regular_node = loaded.nodes()
-            .find(|n| n.name.as_deref() == Some("RegularNode"))
-            .expect("RegularNode not found");
-        assert!(matches!(regular_node.payload(), duck_engine_scene::NodePayload::Instance(_)));
     }
 
     #[test]

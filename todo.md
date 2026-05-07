@@ -138,7 +138,7 @@ The decoder reads the TOC first (seek to `toc_offset`, decompress, deserialize).
 
 Remove the `SectionType` enum and all section-oriented logic from `format.rs`.
 
-#### 4c — Remove annotation filtering
+#### 4c — Remove annotation filtering - DONE
 
 Delete `AnnotationContentFilter` and its call site in `to_bytes_with_options`. Annotations and their reified geometry are included in the serialized file as normal nodes/instances/meshes. This removes ~80 lines of recursive collection logic.
 
