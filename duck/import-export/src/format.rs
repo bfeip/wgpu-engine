@@ -39,23 +39,13 @@ use duck_engine_scene::{
     EnvironmentMap, EnvironmentMapId, Scene,
 };
 
-// ============================================================================
-// Constants
-// ============================================================================
-
 /// Magic number identifying Duck files: "DUCK" in ASCII
 pub const MAGIC: [u8; 4] = *b"DUCK";
-
 /// Current format version (major.minor encoded as single u16)
 /// major = version >> 8, minor = version & 0xFF
 pub const VERSION: u16 = 0x0005; // 0.5 — Flat per-resource format; individual resource TOC entries
-
 /// Size of the fixed header in bytes
 pub const HEADER_SIZE: usize = std::mem::size_of::<FileHeader>();
-
-// ============================================================================
-// Error Types
-// ============================================================================
 
 /// Errors that can occur during scene serialization/deserialization.
 #[derive(Debug, Error)]
@@ -87,10 +77,6 @@ pub enum FormatError {
     #[error("Texture load error: {0}")]
     TextureError(String),
 }
-
-// ============================================================================
-// Save Options
-// ============================================================================
 
 /// Controls the compression/quality tradeoff for saving scenes.
 ///
@@ -142,10 +128,6 @@ pub struct SaveOptions {
     pub compression: CompressionLevel,
 }
 
-// ============================================================================
-// Resource Types
-// ============================================================================
-
 /// Identifies the type and encoding of a resource in the file.
 ///
 /// The variant determines both what the resource is and how its bytes are encoded:
@@ -169,10 +151,6 @@ pub enum ResourceType {
     /// Environment map. resource_id = environment_map.id.
     EnvironmentMap = 6,
 }
-
-// ============================================================================
-// File Header & TOC
-// ============================================================================
 
 /// Fixed-size file header at the start of every .duck file.
 #[derive(Debug, Clone)]
@@ -310,16 +288,16 @@ pub fn decode_resource<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, FormatErr
 
 /// Append pre-encoded resource bytes to the output buffer and record the TOC entry.
 fn append_resource(
-    bytes: Vec<u8>,
+    resource_bytes: Vec<u8>,
     resource_type: ResourceType,
     resource_id: Id,
     output: &mut Vec<u8>,
     toc: &mut Vec<TocEntry>,
 ) {
     let offset = output.len() as u64;
-    let size = bytes.len() as u32;
+    let size = resource_bytes.len() as u32;
     toc.push(TocEntry { resource_type, resource_id, offset, size });
-    output.extend(bytes);
+    output.extend(resource_bytes);
 }
 
 // ============================================================================
@@ -540,7 +518,6 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
     output.resize(HEADER_SIZE, 0); // Reserve space for header
     let mut toc: Vec<TocEntry> = Vec::new();
 
-    // ===== Metadata =====
     let metadata = SerializedMetadata {
         name: None,
         created_at: SystemTime::now()
@@ -559,7 +536,6 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
         &mut toc,
     );
 
-    // ===== Nodes =====
     for node in scene.nodes() {
         append_resource(
             encode_resource(node, compression_level)?,
@@ -570,7 +546,6 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
         );
     }
 
-    // ===== Instances =====
     for instance in scene.instances() {
         append_resource(
             encode_resource(instance, compression_level)?,
@@ -581,7 +556,6 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
         );
     }
 
-    // ===== Materials =====
     for material in scene.materials() {
         append_resource(
             encode_resource(material, compression_level)?,
@@ -592,7 +566,6 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
         );
     }
 
-    // ===== Meshes =====
     for mesh in scene.meshes() {
         append_resource(
             encode_resource(mesh, compression_level)?,
@@ -603,7 +576,7 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
         );
     }
 
-    // ===== Textures (raw PNG/JPEG bytes, no outer compression) =====
+    // raw PNG/JPEG bytes, no outer compression
     for tex in scene.textures() {
         let image_bytes = encode_texture(tex, options)?;
         append_resource(
@@ -615,7 +588,6 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
         );
     }
 
-    // ===== Environment Maps =====
     for em in scene.environment_maps() {
         append_resource(
             encode_resource(em, compression_level)?,
@@ -626,12 +598,10 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
         );
     }
 
-    // ===== Write TOC =====
     let toc_offset = output.len() as u64;
     let toc_bytes = encode_resource(&toc, compression_level)?;
     output.extend(toc_bytes);
 
-    // ===== Write Header =====
     let header = FileHeader::new(toc_offset);
     let mut header_bytes = Vec::new();
     header.write(&mut header_bytes)?;
@@ -685,10 +655,6 @@ pub fn load_from_file(path: impl AsRef<std::path::Path>) -> Result<Scene, Format
     let bytes = std::fs::read(path)?;
     from_bytes(&bytes)
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
