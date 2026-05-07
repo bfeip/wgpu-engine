@@ -22,10 +22,13 @@
 //! └──────────────────────────────────────────────────────────────┘
 //! ```
 
-use std::io::{Read, Write, Cursor};
+pub mod wire;
+pub use wire::*;
+
+use std::io::Cursor;
 
 use image::codecs::png::CompressionType;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde::de::DeserializeOwned;
 use thiserror::Error;
 
@@ -34,18 +37,10 @@ use duck_engine_scene::{
     Instance,
     Material,
     Mesh,
-    Node, NodeId,
+    Node,
     Texture,
-    EnvironmentMap, EnvironmentMapId, Scene,
+    EnvironmentMap, Scene,
 };
-
-/// Magic number identifying Duck files: "DUCK" in ASCII
-pub const MAGIC: [u8; 4] = *b"DUCK";
-/// Current format version (major.minor encoded as single u16)
-/// major = version >> 8, minor = version & 0xFF
-pub const VERSION: u16 = 0x0005; // 0.5 — Flat per-resource format; individual resource TOC entries
-/// Size of the fixed header in bytes
-pub const HEADER_SIZE: usize = std::mem::size_of::<FileHeader>();
 
 /// Errors that can occur during scene serialization/deserialization.
 #[derive(Debug, Error)]
@@ -128,128 +123,6 @@ pub struct SaveOptions {
     pub compression: CompressionLevel,
 }
 
-/// Identifies the type and encoding of a resource in the file.
-///
-/// The variant determines both what the resource is and how its bytes are encoded:
-/// - `Texture`: raw PNG or JPEG bytes (already compressed; no outer wrapper)
-/// - All others: zstd-compressed bincode of the corresponding scene type
-#[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum ResourceType {
-    /// Scene metadata (name, timestamps, generator info). resource_id = Uuid::nil().
-    Metadata = 0,
-    /// Scene graph node. resource_id = node.id.
-    Node = 1,
-    /// Mesh-material instance binding. resource_id = instance.id.
-    Instance = 2,
-    /// Material definition. resource_id = material.id.
-    Material = 3,
-    /// Mesh geometry data. resource_id = mesh.id.
-    Mesh = 4,
-    /// Embedded texture image. resource_id = texture.id. Bytes are raw PNG/JPEG.
-    Texture = 5,
-    /// Environment map. resource_id = environment_map.id.
-    EnvironmentMap = 6,
-}
-
-/// Fixed-size file header at the start of every .duck file.
-#[derive(Debug, Clone)]
-pub struct FileHeader {
-    /// Magic number (must be MAGIC)
-    pub magic: [u8; 4],
-    /// Format version
-    pub version: u16,
-    /// Reserved flags
-    pub flags: u16,
-    /// Byte offset to the table of contents
-    pub toc_offset: u64,
-}
-
-impl FileHeader {
-    pub fn new(toc_offset: u64) -> Self {
-        Self {
-            magic: MAGIC,
-            version: VERSION,
-            flags: 0,
-            toc_offset,
-        }
-    }
-
-    pub fn write<W: Write>(&self, writer: &mut W) -> Result<(), FormatError> {
-        writer.write_all(&self.magic)?;
-        writer.write_all(&self.version.to_le_bytes())?;
-        writer.write_all(&self.flags.to_le_bytes())?;
-        writer.write_all(&self.toc_offset.to_le_bytes())?;
-        Ok(())
-    }
-
-    pub fn read<R: Read>(reader: &mut R) -> Result<Self, FormatError> {
-        let mut magic = [0u8; 4];
-        reader.read_exact(&mut magic)?;
-
-        if magic != MAGIC {
-            return Err(FormatError::InvalidMagic);
-        }
-
-        let mut version_bytes = [0u8; 2];
-        reader.read_exact(&mut version_bytes)?;
-        let version = u16::from_le_bytes(version_bytes);
-
-        let major = (version >> 8) as u8;
-        let minor = (version & 0xFF) as u8;
-        if major != 0 || minor != 5 {
-            return Err(FormatError::UnsupportedVersion(major, minor));
-        }
-
-        let mut flags_bytes = [0u8; 2];
-        reader.read_exact(&mut flags_bytes)?;
-        let flags = u16::from_le_bytes(flags_bytes);
-
-        let mut toc_offset_bytes = [0u8; 8];
-        reader.read_exact(&mut toc_offset_bytes)?;
-        let toc_offset = u64::from_le_bytes(toc_offset_bytes);
-
-        Ok(Self { magic, version, flags, toc_offset })
-    }
-}
-
-/// Entry in the table of contents describing one resource.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TocEntry {
-    /// Resource type (also determines encoding)
-    pub resource_type: ResourceType,
-    /// Stable resource ID. Matches the scene ID for typed resources; nil for Metadata.
-    pub resource_id: Id,
-    /// Byte offset from start of file to the first byte of this resource's data.
-    pub offset: u64,
-    /// Size of the resource data in bytes.
-    pub size: u32,
-}
-
-// ============================================================================
-// Serializable Data Structures
-// ============================================================================
-
-/// Scene metadata.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SerializedMetadata {
-    /// Optional scene name
-    pub name: Option<String>,
-    /// Unix timestamp of creation
-    pub created_at: u64,
-    /// Generator string (e.g., "duck-engine 0.1.0")
-    pub generator: String,
-    /// Root node IDs
-    pub root_nodes: Vec<NodeId>,
-    /// Active environment map ID, if any
-    pub active_environment_map: Option<EnvironmentMapId>,
-}
-
-
-// ============================================================================
-// Compression Utilities
-// ============================================================================
-
 /// Compress data using Zstd with the specified compression level.
 pub fn compress_with_level(data: &[u8], level: i32) -> Result<Vec<u8>, FormatError> {
     zstd::encode_all(Cursor::new(data), level)
@@ -266,10 +139,6 @@ pub fn decompress(data: &[u8]) -> Result<Vec<u8>, FormatError> {
     zstd::decode_all(Cursor::new(data))
         .map_err(|e| FormatError::DecompressionError(e.to_string()))
 }
-
-// ============================================================================
-// Per-Resource Encode/Decode
-// ============================================================================
 
 /// Bincode-encode then zstd-compress a value. Used for all non-texture resources.
 fn encode_resource<T: Serialize>(data: &T, level: i32) -> Result<Vec<u8>, FormatError> {
@@ -299,10 +168,6 @@ fn append_resource(
     toc.push(TocEntry { resource_type, resource_id, offset, size });
     output.extend(resource_bytes);
 }
-
-// ============================================================================
-// Phased Deserialization
-// ============================================================================
 
 /// All deserialized resources from a Duck file, ready for scene assembly.
 /// Produced by [`parse_duck`], consumed by [`assemble_duck_scene`].
@@ -407,10 +272,6 @@ pub fn assemble_duck_scene(sections: DuckSections) -> Result<Scene, FormatError>
     Ok(scene)
 }
 
-// ============================================================================
-// Scene Serialization
-// ============================================================================
-
 /// Estimates the serialized size in bytes for buffer pre-allocation.
 ///
 /// Returns a heuristic upper bound — intentionally overestimates to avoid
@@ -421,7 +282,6 @@ pub fn estimate_serialized_size(scene: &Scene) -> usize {
 
     const GOOD_COMPRESSION_RATIO: f64 = 0.6;
 
-    // Mesh data (vertices + indices), estimate zstd compression at 60%
     let mesh_raw: usize = scene.meshes()
         .map(|m| {
             let vert_bytes = std::mem::size_of_val(m.vertices());
@@ -433,7 +293,6 @@ pub fn estimate_serialized_size(scene: &Scene) -> usize {
         .sum();
     let mesh_estimate = (mesh_raw as f64 * GOOD_COMPRESSION_RATIO) as usize;
 
-    // Texture data
     let texture_estimate: usize = scene.textures()
         .map(|tex| {
             if let Some((bytes, _)) = tex.original_bytes() {
@@ -453,7 +312,6 @@ pub fn estimate_serialized_size(scene: &Scene) -> usize {
         })
         .sum();
 
-    // Environment maps (HDR data + preprocessed IBL data)
     let env_estimate: usize = scene.environment_maps()
         .map(|em| {
             let source_size = match em.source() {
@@ -480,13 +338,11 @@ pub fn estimate_serialized_size(scene: &Scene) -> usize {
         })
         .sum();
 
-    // Structured data (nodes, instances, materials) compresses well
     let structured = scene.node_count() * std::mem::size_of::<Node>()
         + scene.instance_count() * std::mem::size_of::<Instance>()
         + scene.material_count() * std::mem::size_of::<Material>();
     let structured_estimate = (structured as f64 * GOOD_COMPRESSION_RATIO) as usize;
 
-    // Header + metadata resource + TOC entries.
     // 256-byte base covers metadata and zstd framing overhead on small scenes.
     // 64 bytes per resource accounts for zstd per-frame overhead on small payloads.
     let n_resources = scene.node_count()
@@ -500,7 +356,6 @@ pub fn estimate_serialized_size(scene: &Scene) -> usize {
 
     let total = mesh_estimate + texture_estimate + env_estimate + structured_estimate + overhead;
 
-    // 10% safety margin
     total + total / 10
 }
 
@@ -515,7 +370,7 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
 
     let compression_level = options.compression.zstd_level();
     let mut output = Vec::with_capacity(estimate_serialized_size(scene));
-    output.resize(HEADER_SIZE, 0); // Reserve space for header
+    output.resize(HEADER_SIZE, 0);
     let mut toc: Vec<TocEntry> = Vec::new();
 
     let metadata = SerializedMetadata {
@@ -576,7 +431,6 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
         );
     }
 
-    // raw PNG/JPEG bytes, no outer compression
     for tex in scene.textures() {
         let image_bytes = encode_texture(tex, options)?;
         append_resource(
@@ -618,14 +472,13 @@ fn encode_texture(tex: &Texture, options: &SaveOptions) -> Result<Vec<u8>, Forma
     if let Some(path) = tex.source_path() {
         return std::fs::read(path).map_err(FormatError::IoError);
     }
-    // Decoded-only texture: re-encode as PNG
     let image = tex.get_image()
         .map_err(|e| FormatError::TextureError(e.to_string()))?;
     let mut buf = Vec::new();
     image
         .write_to(&mut Cursor::new(&mut buf), image::ImageFormat::Png)
         .map_err(|e| FormatError::TextureError(e.to_string()))?;
-    let _ = options.compression.png_compression(); // available for future use
+    let _ = options.compression.png_compression();
     Ok(buf)
 }
 
@@ -657,244 +510,4 @@ pub fn load_from_file(path: impl AsRef<std::path::Path>) -> Result<Scene, Format
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use cgmath::{Point3, Quaternion, Vector3};
-    use duck_engine_scene::common::{RgbaColor, Transform};
-    use duck_engine_scene::PrimitiveType;
-
-    /// Creates a simple test scene with various elements.
-    fn create_test_scene() -> Scene {
-        let mut scene = Scene::new();
-
-        // Add a mesh
-        let mesh = Mesh::cube(1.0, PrimitiveType::TriangleList);
-        let mesh_id = scene.add_mesh(mesh);
-
-        // Add a material
-        let material = Material::new()
-            .with_base_color_factor(RgbaColor::RED)
-            .with_metallic_factor(0.5)
-            .with_roughness_factor(0.3)
-            .with_line_color(RgbaColor::GREEN);
-        let mat_id = scene.add_material(material);
-
-        // Add a node with instance
-        let node_id = scene.add_instance_node(
-            None,
-            mesh_id,
-            mat_id,
-            Some("TestNode".to_string()),
-            Transform::new(
-                Point3::new(1.0, 2.0, 3.0),
-                Quaternion::new(1.0, 0.0, 0.0, 0.0),
-                Vector3::new(2.0, 2.0, 2.0),
-            ),
-        ).unwrap();
-
-        // Add a child node
-        let _child_id = scene.add_node(
-            Some(node_id),
-            Some("ChildNode".to_string()),
-            Transform::from_position(Point3::new(0.5, 0.5, 0.5)),
-        ).unwrap();
-
-        // Add a light node
-        {
-            use duck_engine_scene::{Light, NodePayload};
-            let light_node_id = scene.add_node(
-                None,
-                None,
-                Transform::from_position(Point3::new(5.0, 5.0, 5.0)),
-            ).unwrap();
-            scene.set_node_payload(light_node_id, NodePayload::Light(Light::point(RgbaColor::WHITE, 10.0)));
-        }
-
-        scene
-    }
-
-    #[test]
-    fn test_round_trip_basic() {
-        let original = create_test_scene();
-
-        let bytes = to_bytes(&original).expect("Failed to serialize scene");
-
-        assert_eq!(&bytes[0..4], b"DUCK");
-
-        let loaded = from_bytes(&bytes).expect("Failed to deserialize scene");
-
-        assert_eq!(loaded.node_count(), original.node_count());
-        assert_eq!(loaded.mesh_count(), original.mesh_count());
-        assert_eq!(loaded.material_count(), original.material_count());
-        assert_eq!(loaded.instance_count(), original.instance_count());
-        assert_eq!(loaded.has_light_nodes(), original.has_light_nodes());
-        assert_eq!(loaded.root_nodes().len(), original.root_nodes().len());
-    }
-
-    #[test]
-    fn test_round_trip_node_properties() {
-        let original = create_test_scene();
-        let bytes = to_bytes(&original).expect("Failed to serialize");
-        let loaded = from_bytes(&bytes).expect("Failed to deserialize");
-
-        let original_node = original.nodes()
-            .find(|n| n.name.as_deref() == Some("TestNode"))
-            .expect("TestNode not found in original");
-
-        let loaded_node = loaded.nodes()
-            .find(|n| n.name.as_deref() == Some("TestNode"))
-            .expect("TestNode not found in loaded");
-
-        let orig_pos = original_node.position();
-        let loaded_pos = loaded_node.position();
-        assert!((orig_pos.x - loaded_pos.x).abs() < 1e-6);
-        assert!((orig_pos.y - loaded_pos.y).abs() < 1e-6);
-        assert!((orig_pos.z - loaded_pos.z).abs() < 1e-6);
-
-        let orig_scale = original_node.scale();
-        let loaded_scale = loaded_node.scale();
-        assert!((orig_scale.x - loaded_scale.x).abs() < 1e-6);
-        assert!((orig_scale.y - loaded_scale.y).abs() < 1e-6);
-        assert!((orig_scale.z - loaded_scale.z).abs() < 1e-6);
-    }
-
-    #[test]
-    #[ignore = "Fails unpredictably, possibly due to multithreaded serialization"]
-    fn test_round_trip_material_properties() {
-        let original = create_test_scene();
-        let bytes = to_bytes(&original).expect("Failed to serialize");
-        let loaded = from_bytes(&bytes).expect("Failed to deserialize");
-
-        let original_mat = original.materials()
-            .next()
-            .expect("No material in original");
-
-        let loaded_mat = loaded.materials()
-            .next()
-            .expect("No material in loaded");
-
-        let orig_color = original_mat.base_color_factor();
-        let loaded_color = loaded_mat.base_color_factor();
-        assert!((orig_color.r - loaded_color.r).abs() < 1e-6);
-        assert!((orig_color.g - loaded_color.g).abs() < 1e-6);
-        assert!((orig_color.b - loaded_color.b).abs() < 1e-6);
-
-        assert!((original_mat.metallic_factor() - loaded_mat.metallic_factor()).abs() < 1e-6);
-        assert!((original_mat.roughness_factor() - loaded_mat.roughness_factor()).abs() < 1e-6);
-
-        assert!(original_mat.line_color().is_some());
-        assert!(loaded_mat.line_color().is_some());
-    }
-
-    #[test]
-    fn test_round_trip_mesh_geometry() {
-        let original = create_test_scene();
-        let bytes = to_bytes(&original).expect("Failed to serialize");
-        let loaded = from_bytes(&bytes).expect("Failed to deserialize");
-
-        let original_mesh = original.meshes().next().expect("No mesh in original");
-        let loaded_mesh = loaded.meshes().next().expect("No mesh in loaded");
-
-        assert_eq!(original_mesh.vertices().len(), loaded_mesh.vertices().len());
-        assert_eq!(original_mesh.primitives().len(), loaded_mesh.primitives().len());
-
-        for (orig_v, loaded_v) in original_mesh.vertices().iter().zip(loaded_mesh.vertices()) {
-            assert!((orig_v.position[0] - loaded_v.position[0]).abs() < 1e-6);
-            assert!((orig_v.position[1] - loaded_v.position[1]).abs() < 1e-6);
-            assert!((orig_v.position[2] - loaded_v.position[2]).abs() < 1e-6);
-        }
-    }
-
-    #[test]
-    fn test_round_trip_hierarchy() {
-        let original = create_test_scene();
-        let bytes = to_bytes(&original).expect("Failed to serialize");
-        let loaded = from_bytes(&bytes).expect("Failed to deserialize");
-
-        let loaded_child = loaded.nodes()
-            .find(|n| n.name.as_deref() == Some("ChildNode"))
-            .expect("ChildNode not found");
-
-        assert!(loaded_child.parent().is_some());
-
-        let loaded_parent = loaded.nodes()
-            .find(|n| n.name.as_deref() == Some("TestNode"))
-            .expect("TestNode not found");
-
-        assert!(!loaded_parent.children().is_empty());
-    }
-
-    #[test]
-    fn test_round_trip_lights() {
-        use duck_engine_scene::{Light, NodePayload};
-        let original = create_test_scene();
-        let bytes = to_bytes(&original).expect("Failed to serialize");
-        let loaded = from_bytes(&bytes).expect("Failed to deserialize");
-
-        assert!(loaded.has_light_nodes());
-
-        let light_node = loaded.nodes()
-            .find(|n| matches!(n.payload(), NodePayload::Light(_)))
-            .expect("No light node found");
-
-        match light_node.payload() {
-            NodePayload::Light(Light::Point { color, intensity, .. }) => {
-                assert!((color.r - 1.0).abs() < 1e-6);
-                assert!((*intensity - 10.0).abs() < 1e-6);
-            }
-            _ => panic!("Expected point light node"),
-        }
-    }
-
-    #[test]
-    fn test_empty_scene_round_trip() {
-        let scene = Scene::new();
-        let bytes = to_bytes(&scene).expect("Failed to serialize empty scene");
-        let loaded = from_bytes(&bytes).expect("Failed to deserialize empty scene");
-
-        assert_eq!(loaded.material_count(), 0);
-        assert_eq!(loaded.node_count(), 0);
-        assert_eq!(loaded.mesh_count(), 0);
-        assert_eq!(loaded.instance_count(), 0);
-    }
-
-    #[test]
-    fn test_version_in_header() {
-        let scene = Scene::new();
-        let bytes = to_bytes(&scene).expect("Failed to serialize");
-
-        let version = u16::from_le_bytes([bytes[4], bytes[5]]);
-        assert_eq!(version, VERSION);
-    }
-
-    #[test]
-    fn test_invalid_magic_rejected() {
-        let mut bytes = vec![b'X', b'X', b'X', b'X'];
-        bytes.extend([0u8; 12]);
-
-        let result = from_bytes(&bytes);
-        assert!(matches!(result, Err(FormatError::InvalidMagic)));
-    }
-
-    #[test]
-    fn estimate_is_upper_bound() {
-        let scene = create_test_scene();
-        let estimate = estimate_serialized_size(&scene);
-        let bytes = to_bytes(&scene).expect("serialize");
-        assert!(
-            estimate >= bytes.len(),
-            "estimate ({}) should be >= actual size ({})",
-            estimate,
-            bytes.len(),
-        );
-    }
-
-    #[test]
-    fn estimate_empty_scene() {
-        let scene = Scene::new();
-        let estimate = estimate_serialized_size(&scene);
-        assert!(estimate > 0);
-        let bytes = to_bytes(&scene).expect("serialize");
-        assert!(estimate >= bytes.len());
-    }
-}
+mod tests;

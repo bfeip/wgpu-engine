@@ -142,11 +142,11 @@ Remove the `SectionType` enum and all section-oriented logic from `format.rs`.
 
 Delete `AnnotationContentFilter` and its call site in `to_bytes_with_options`. Annotations and their reified geometry are included in the serialized file as normal nodes/instances/meshes. This removes ~80 lines of recursive collection logic.
 
-#### 4d — Break format.rs into modules
+#### 4d — Break format.rs into modules - DONE
 
 Split `duck/import-export/src/format.rs` into a `format/` directory:
 
-- `format/mod.rs` — public API: `to_bytes`, `from_bytes`, `save_to_file`, `load_from_file`, `to_bytes_with_options`, `FormatError`, `SaveOptions`
+- `format.rs` — public API: `to_bytes`, `from_bytes`, `save_to_file`, `load_from_file`, `to_bytes_with_options`, `FormatError`, `SaveOptions`
 - `format/header.rs` — `FileHeader`, `TocEntry`, `ResourceType`, version constants
 - `format/compress.rs` — `CompressionLevel`, `compress_with_level`, `decompress`, zstd helpers
 - `format/encode.rs` — scene → per-resource bytes → file
