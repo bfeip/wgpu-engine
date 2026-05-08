@@ -580,16 +580,9 @@ async fn load_chunked_wasm(
 
 #[cfg(target_arch = "wasm32")]
 async fn load_duck_chunked(bytes: &[u8], progress: &LoadProgress) -> LoadResult {
-    use self::format::{assemble_duck_scene, parse_duck};
-
     progress.enter_phase(LoadPhase::Parsing);
-    let sections = parse_duck(bytes)?;
+    let scene = self::format::from_bytes(bytes)?;
     yield_to_event_loop().await;
-
-    progress.enter_phase(LoadPhase::Assembling);
-    yield_to_event_loop().await;
-
-    let scene = assemble_duck_scene(sections)?;
 
     progress.enter_phase(LoadPhase::Complete);
     Ok(SceneLoadResult {

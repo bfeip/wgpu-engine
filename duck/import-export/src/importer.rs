@@ -147,13 +147,8 @@ impl Importer for DuckImporter {
         _options: &LoadOptions,
         progress: &LoadProgress,
     ) -> Result<SceneLoadResult, LoadError> {
-        use crate::format::{assemble_duck_scene, parse_duck};
-
         progress.enter_phase(LoadPhase::Parsing);
-        let sections = parse_duck(bytes)?;
-
-        progress.enter_phase(LoadPhase::Assembling);
-        let scene = assemble_duck_scene(sections)?;
+        let scene = crate::format::from_bytes(bytes)?;
 
         progress.enter_phase(LoadPhase::Complete);
         Ok(SceneLoadResult {

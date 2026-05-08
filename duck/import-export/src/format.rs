@@ -75,15 +75,15 @@ pub enum FormatError {
 
 /// Controls the compression/quality tradeoff for saving scenes.
 ///
-/// Affects zstd data compression, JPEG texture quality, and PNG compression.
+/// Affects zstd data compression and PNG compression.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CompressionLevel {
-    /// Fastest compression, larger files. Zstd level 1, JPEG quality 80, PNG fast.
+    /// Fastest compression, larger files. Zstd level 1, PNG fast.
     Fast,
-    /// Balanced compression (default). Zstd level 3, JPEG quality 90, PNG default.
+    /// Balanced compression (default). Zstd level 3, PNG default.
     #[default]
     Default,
-    /// Best compression, smaller files. Zstd level 19, JPEG quality 95, PNG best.
+    /// Best compression, smaller files. Zstd level 19, PNG best.
     Best,
 }
 
@@ -94,15 +94,6 @@ impl CompressionLevel {
             Self::Fast => 1,
             Self::Default => 3,
             Self::Best => 19,
-        }
-    }
-
-    /// JPEG quality (1-100) for fallback texture encoding.
-    pub fn jpeg_quality(self) -> u8 {
-        match self {
-            Self::Fast => 80,
-            Self::Default => 90,
-            Self::Best => 95,
         }
     }
 
@@ -124,18 +115,13 @@ pub struct SaveOptions {
 }
 
 /// Compress data using Zstd with the specified compression level.
-pub fn compress_with_level(data: &[u8], level: i32) -> Result<Vec<u8>, FormatError> {
+fn compress(data: &[u8], level: i32) -> Result<Vec<u8>, FormatError> {
     zstd::encode_all(Cursor::new(data), level)
         .map_err(|e| FormatError::CompressionError(e.to_string()))
 }
 
-/// Compress data using Zstd with default compression level (3).
-pub fn compress(data: &[u8]) -> Result<Vec<u8>, FormatError> {
-    compress_with_level(data, 3)
-}
-
 /// Decompress Zstd-compressed data.
-pub fn decompress(data: &[u8]) -> Result<Vec<u8>, FormatError> {
+fn decompress(data: &[u8]) -> Result<Vec<u8>, FormatError> {
     zstd::decode_all(Cursor::new(data))
         .map_err(|e| FormatError::DecompressionError(e.to_string()))
 }
@@ -144,7 +130,7 @@ pub fn decompress(data: &[u8]) -> Result<Vec<u8>, FormatError> {
 fn encode_resource<T: Serialize>(data: &T, level: i32) -> Result<Vec<u8>, FormatError> {
     let uncompressed = bincode::serde::encode_to_vec(data, bincode::config::legacy())
         .map_err(|e| FormatError::SerializationError(e.to_string()))?;
-    compress_with_level(&uncompressed, level)
+    compress(&uncompressed, level)
 }
 
 /// Zstd-decompress then bincode-decode a resource.
@@ -170,19 +156,19 @@ fn append_resource(
 }
 
 /// All deserialized resources from a Duck file, ready for scene assembly.
-/// Produced by [`parse_duck`], consumed by [`assemble_duck_scene`].
-pub struct DuckSections {
-    pub metadata: SerializedMetadata,
-    pub textures: Vec<Texture>,
-    pub materials: Vec<Material>,
-    pub meshes: Vec<Mesh>,
-    pub instances: Vec<Instance>,
-    pub nodes: Vec<Node>,
-    pub environment_maps: Vec<EnvironmentMap>,
+/// Produced by [`parse_scene`], consumed by [`assemble_scene`].
+struct ParsedSceneData {
+    metadata: SerializedMetadata,
+    textures: Vec<Texture>,
+    materials: Vec<Material>,
+    meshes: Vec<Mesh>,
+    instances: Vec<Instance>,
+    nodes: Vec<Node>,
+    environment_maps: Vec<EnvironmentMap>,
 }
 
 /// Parse Duck header, TOC, and decompress/deserialize all resources.
-pub fn parse_duck(bytes: &[u8]) -> Result<DuckSections, FormatError> {
+fn parse_scene(bytes: &[u8]) -> Result<ParsedSceneData, FormatError> {
     let mut cursor = Cursor::new(bytes);
     let header = FileHeader::read(&mut cursor)?;
 
@@ -234,11 +220,11 @@ pub fn parse_duck(bytes: &[u8]) -> Result<DuckSections, FormatError> {
 
     let metadata = metadata.ok_or(FormatError::MissingMetadata)?;
 
-    Ok(DuckSections { metadata, textures, materials, meshes, instances, nodes, environment_maps })
+    Ok(ParsedSceneData { metadata, textures, materials, meshes, instances, nodes, environment_maps })
 }
 
 /// Assemble a [`Scene`] from parsed sections.
-pub fn assemble_duck_scene(sections: DuckSections) -> Result<Scene, FormatError> {
+fn assemble_scene(sections: ParsedSceneData) -> Result<Scene, FormatError> {
     let mut scene = Scene::new();
 
     for texture in sections.textures {
@@ -484,7 +470,7 @@ fn encode_texture(tex: &Texture, options: &SaveOptions) -> Result<Vec<u8>, Forma
 
 /// Deserializes a scene from Duck format bytes.
 pub fn from_bytes(bytes: &[u8]) -> Result<Scene, FormatError> {
-    assemble_duck_scene(parse_duck(bytes)?)
+    assemble_scene(parse_scene(bytes)?)
 }
 
 /// Saves the scene to a file with default options.
