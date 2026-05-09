@@ -33,33 +33,6 @@ pub enum LoadStatus {
 }
 
 #[wasm_bindgen]
-pub enum WebLoadPhase {
-    Pending = 0,
-    Reading = 1,
-    Parsing = 2,
-    DecodingTextures = 3,
-    BuildingMeshes = 4,
-    Assembling = 5,
-    Complete = 6,
-    Failed = 7,
-}
-
-impl From<loader::LoadPhase> for WebLoadPhase {
-    fn from(phase: loader::LoadPhase) -> Self {
-        match phase {
-            loader::LoadPhase::Pending => Self::Pending,
-            loader::LoadPhase::Reading => Self::Reading,
-            loader::LoadPhase::Parsing => Self::Parsing,
-            loader::LoadPhase::DecodingTextures => Self::DecodingTextures,
-            loader::LoadPhase::BuildingMeshes => Self::BuildingMeshes,
-            loader::LoadPhase::Assembling => Self::Assembling,
-            loader::LoadPhase::Complete => Self::Complete,
-            loader::LoadPhase::Failed => Self::Failed,
-        }
-    }
-}
-
-#[wasm_bindgen]
 pub struct WebViewer {
     viewer: Viewer<'static>,
     pending_load: Option<LoadHandle>,
@@ -231,20 +204,55 @@ impl WebViewer {
         }
     }
 
-    /// Current load progress percentage (0-100). Returns 0 if no load active.
+    /// Current load progress percentage (0-100). Returns 0 if no load active or progress is indeterminate.
     pub fn load_progress_pct(&self) -> u8 {
         self.pending_load
             .as_ref()
-            .map(|h| h.progress().progress_pct())
+            .and_then(|h| h.progress().snapshot().progress)
+            .map(|f| (f * 100.0) as u8)
             .unwrap_or(0)
     }
 
-    /// Current load phase. Returns `Pending` if no load active.
-    pub fn load_phase(&self) -> WebLoadPhase {
+    /// Human-readable description of the current load operation. Returns an empty string if no load active.
+    pub fn load_description(&self) -> String {
         self.pending_load
             .as_ref()
-            .map(|h| WebLoadPhase::from(h.progress().phase()))
-            .unwrap_or(WebLoadPhase::Pending)
+            .map(|h| h.progress().snapshot().description)
+            .unwrap_or_default()
+    }
+
+    /// Returns true if the active operation has indeterminate progress (show a spinner, not a bar).
+    pub fn load_progress_is_indeterminate(&self) -> bool {
+        self.pending_load
+            .as_ref()
+            .map(|h| h.progress().snapshot().progress.is_none())
+            .unwrap_or(false)
+    }
+
+    /// Returns true if there is item-level stage progress to display.
+    pub fn load_has_stage_progress(&self) -> bool {
+        self.pending_load
+            .as_ref()
+            .and_then(|h| h.progress().snapshot().stage)
+            .is_some()
+    }
+
+    /// Number of completed items in the active stage. Returns 0 if no stage progress or no active load.
+    pub fn load_stage_current(&self) -> u32 {
+        self.pending_load
+            .as_ref()
+            .and_then(|h| h.progress().snapshot().stage)
+            .map(|(done, _)| done)
+            .unwrap_or(0)
+    }
+
+    /// Total number of items in the active stage. Returns 0 if no stage progress or no active load.
+    pub fn load_stage_total(&self) -> u32 {
+        self.pending_load
+            .as_ref()
+            .and_then(|h| h.progress().snapshot().stage)
+            .map(|(_, total)| total)
+            .unwrap_or(0)
     }
 
     /// Load a scene synchronously from raw bytes. Format (glTF or duck) is auto-detected.

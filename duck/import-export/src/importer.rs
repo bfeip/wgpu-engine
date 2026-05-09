@@ -8,57 +8,8 @@
 use std::path::Path;
 
 use crate::{
-    DetectedFormat, LoadError, LoadOptions, LoadPhase, LoadProgress, SceneLoadResult,
+    DetectedFormat, LoadError, LoadOptions, ProgressReporter, ProgressState, SceneLoadResult,
 };
-
-// ============================================================================
-// PhaseWeights
-// ============================================================================
-
-/// Describes how overall progress is distributed across loading phases.
-///
-/// Weights must sum to 100. Each entry maps a [`LoadPhase`] to a relative
-/// weight that determines what fraction of the progress bar that phase occupies.
-#[derive(Debug, Clone)]
-pub struct PhaseWeights(pub(crate) [u8; LoadPhase::PHASE_COUNT]);
-
-impl PhaseWeights {
-    /// Create an empty weight table (all zeros). Used as the initial state
-    /// before an importer binds its weights.
-    pub(crate) fn empty() -> Self {
-        Self([0u8; LoadPhase::PHASE_COUNT])
-    }
-
-    /// Create from phase-weight pairs.
-    ///
-    /// # Panics
-    /// Panics if the weights do not sum to 100.
-    pub fn new(weights: &[(LoadPhase, u8)]) -> Self {
-        let mut arr = [0u8; LoadPhase::PHASE_COUNT];
-        let mut sum = 0u16;
-        for &(phase, weight) in weights {
-            arr[phase as u8 as usize] = weight;
-            sum += weight as u16;
-        }
-        assert_eq!(sum, 100, "Phase weights must sum to 100, got {sum}");
-        Self(arr)
-    }
-
-    /// Get the weight for a given phase.
-    pub fn get(&self, phase: LoadPhase) -> u8 {
-        self.0[phase as u8 as usize]
-    }
-
-    /// Sum of all phase weights.
-    pub fn total_weight(&self) -> u16 {
-        self.0.iter().map(|&x| x as u16).sum()
-    }
-
-    /// Sum of weights for all phases with discriminants below `phase`.
-    pub fn completed_weight(&self, phase: LoadPhase) -> u16 {
-        self.0.iter().take(phase as u8 as usize).map(|&x| x as u16).sum()
-    }
-}
 
 // ============================================================================
 // Importer Trait
@@ -90,24 +41,20 @@ pub trait Importer: Send + Sync {
     /// Check if this importer handles the given file extension (without dot, lowercase).
     fn detect_from_extension(&self, ext: &str) -> bool;
 
-    /// Phase weights for progress reporting.
-    fn phase_weights(&self) -> PhaseWeights;
-
     /// Load a scene from bytes.
     ///
     /// `path_hint` is provided when the source was a file path, allowing the
     /// importer to resolve external resources (textures, .bin files, etc.)
     /// relative to it.
     ///
-    /// The importer should call [`LoadProgress::enter_phase`] and
-    /// [`LoadProgress::complete_item`] to drive progress reporting. The weights
-    /// are already set before this method is called.
+    /// Call [`ProgressReporter::update`] at meaningful checkpoints. At minimum,
+    /// update once when starting work and once on completion.
     fn load(
         &self,
         bytes: &[u8],
         path_hint: Option<&Path>,
         options: &LoadOptions,
-        progress: &LoadProgress,
+        progress: &dyn ProgressReporter,
     ) -> Result<SceneLoadResult, LoadError>;
 }
 
@@ -131,26 +78,25 @@ impl Importer for DuckImporter {
         ext.eq_ignore_ascii_case("duck")
     }
 
-    fn phase_weights(&self) -> PhaseWeights {
-        PhaseWeights::new(&[
-            (LoadPhase::Reading, 10),
-            (LoadPhase::Parsing, 10),
-            (LoadPhase::DecodingTextures, 60),
-            (LoadPhase::Assembling, 20),
-        ])
-    }
-
     fn load(
         &self,
         bytes: &[u8],
         _path_hint: Option<&Path>,
         _options: &LoadOptions,
-        progress: &LoadProgress,
+        progress: &dyn ProgressReporter,
     ) -> Result<SceneLoadResult, LoadError> {
-        progress.enter_phase(LoadPhase::Parsing);
+        progress.update(ProgressState {
+            description: "Parsing scene".into(),
+            progress: Some(0.1),
+            stage: None,
+        });
         let scene = crate::format::from_bytes(bytes)?;
 
-        progress.enter_phase(LoadPhase::Complete);
+        progress.update(ProgressState {
+            description: "Complete".into(),
+            progress: Some(1.0),
+            stage: None,
+        });
         Ok(SceneLoadResult {
             scene,
             camera: None,
@@ -184,26 +130,21 @@ impl Importer for GltfImporter {
         ext.eq_ignore_ascii_case("glb") || ext.eq_ignore_ascii_case("gltf")
     }
 
-    fn phase_weights(&self) -> PhaseWeights {
-        PhaseWeights::new(&[
-            (LoadPhase::Reading, 10),
-            (LoadPhase::Parsing, 10),
-            (LoadPhase::DecodingTextures, 50),
-            (LoadPhase::Assembling, 30),
-        ])
-    }
-
     fn load(
         &self,
         bytes: &[u8],
         path_hint: Option<&Path>,
         options: &LoadOptions,
-        progress: &LoadProgress,
+        progress: &dyn ProgressReporter,
     ) -> Result<SceneLoadResult, LoadError> {
         use crate::gltf::{build_gltf_scene, load_gltf_assets, parse_gltf, parse_gltf_from_path};
         use duck_engine_scene::Scene;
 
-        progress.enter_phase(LoadPhase::Parsing);
+        progress.update(ProgressState {
+            description: "Parsing glTF".into(),
+            progress: Some(0.1),
+            stage: None,
+        });
         let parsed = if let Some(path) = path_hint {
             parse_gltf_from_path(path)
         } else {
@@ -211,16 +152,28 @@ impl Importer for GltfImporter {
         }
         .map_err(|e| LoadError::Gltf(e.to_string()))?;
 
-        progress.enter_phase(LoadPhase::DecodingTextures);
+        progress.update(ProgressState {
+            description: "Loading assets".into(),
+            progress: Some(0.2),
+            stage: None,
+        });
         let mut scene = Scene::new();
         let (_material_map, mesh_map) = load_gltf_assets(&parsed, &mut scene)
             .map_err(|e| LoadError::Gltf(e.to_string()))?;
 
-        progress.enter_phase(LoadPhase::Assembling);
+        progress.update(ProgressState {
+            description: "Building scene".into(),
+            progress: Some(0.7),
+            stage: None,
+        });
         let camera = build_gltf_scene(&parsed, &mut scene, &mesh_map, options.aspect)
             .map_err(|e| LoadError::Gltf(e.to_string()))?;
 
-        progress.enter_phase(LoadPhase::Complete);
+        progress.update(ProgressState {
+            description: "Complete".into(),
+            progress: Some(1.0),
+            stage: None,
+        });
         Ok(SceneLoadResult {
             scene,
             camera,
@@ -252,23 +205,18 @@ impl Importer for UsdImporter {
         crate::usd::is_usd_extension(ext)
     }
 
-    fn phase_weights(&self) -> PhaseWeights {
-        PhaseWeights::new(&[
-            (LoadPhase::Reading, 10),
-            (LoadPhase::Parsing, 30),
-            (LoadPhase::BuildingMeshes, 40),
-            (LoadPhase::Assembling, 20),
-        ])
-    }
-
     fn load(
         &self,
         bytes: &[u8],
         path_hint: Option<&Path>,
         _options: &LoadOptions,
-        progress: &LoadProgress,
+        progress: &dyn ProgressReporter,
     ) -> Result<SceneLoadResult, LoadError> {
-        progress.enter_phase(LoadPhase::Parsing);
+        progress.update(ProgressState {
+            description: "Parsing USD".into(),
+            progress: None,
+            stage: None,
+        });
 
         let result = if let Some(path) = path_hint {
             crate::usd::load_usd_scene_from_path(path)
@@ -278,7 +226,11 @@ impl Importer for UsdImporter {
 
         let usd_result = result.map_err(|e| LoadError::Usd(e.to_string()))?;
 
-        progress.enter_phase(LoadPhase::Complete);
+        progress.update(ProgressState {
+            description: "Complete".into(),
+            progress: Some(1.0),
+            stage: None,
+        });
         Ok(SceneLoadResult {
             scene: usd_result.scene,
             camera: usd_result.camera,
@@ -306,23 +258,18 @@ impl Importer for AssimpImporter {
         crate::assimp::is_assimp_extension(ext)
     }
 
-    fn phase_weights(&self) -> PhaseWeights {
-        PhaseWeights::new(&[
-            (LoadPhase::Reading, 10),
-            (LoadPhase::Parsing, 30),
-            (LoadPhase::BuildingMeshes, 40),
-            (LoadPhase::Assembling, 20),
-        ])
-    }
-
     fn load(
         &self,
         bytes: &[u8],
         path_hint: Option<&Path>,
         _options: &LoadOptions,
-        progress: &LoadProgress,
+        progress: &dyn ProgressReporter,
     ) -> Result<SceneLoadResult, LoadError> {
-        progress.enter_phase(LoadPhase::Parsing);
+        progress.update(ProgressState {
+            description: "Importing model".into(),
+            progress: None,
+            stage: None,
+        });
 
         let result = if let Some(path) = path_hint {
             crate::assimp::load_assimp_scene_from_path(path)
@@ -332,7 +279,11 @@ impl Importer for AssimpImporter {
 
         let assimp_result = result.map_err(|e| LoadError::Assimp(e.to_string()))?;
 
-        progress.enter_phase(LoadPhase::Complete);
+        progress.update(ProgressState {
+            description: "Complete".into(),
+            progress: Some(1.0),
+            stage: None,
+        });
         Ok(SceneLoadResult {
             scene: assimp_result.scene,
             camera: assimp_result.camera,
@@ -367,30 +318,25 @@ impl Importer for CadImporter {
         crate::cad::is_cad_extension(ext)
     }
 
-    fn phase_weights(&self) -> PhaseWeights {
-        // OCCT tessellation is a monolithic step with no item-level progress,
-        // so we give it the bulk of the weight under Parsing.
-        PhaseWeights::new(&[
-            (LoadPhase::Reading, 10),
-            (LoadPhase::Parsing, 80),
-            (LoadPhase::Assembling, 10),
-        ])
-    }
-
     fn load(
         &self,
         bytes: &[u8],
         path_hint: Option<&Path>,
         _options: &LoadOptions,
-        progress: &LoadProgress,
+        progress: &dyn ProgressReporter,
     ) -> Result<SceneLoadResult, LoadError> {
-        progress.enter_phase(LoadPhase::Parsing);
-
         let is_step = bytes.starts_with(b"ISO-10303-21")
             || path_hint
                 .and_then(|p| p.extension()?.to_str())
                 .map(crate::cad::is_step_extension)
                 .unwrap_or(false);
+
+        let format_name = if is_step { "STEP" } else { "IGES" };
+        progress.update(ProgressState {
+            description: format!("Tessellating {format_name} model"),
+            progress: None,
+            stage: None,
+        });
 
         let mut scene = duck_engine_scene::Scene::new();
         let options = duck_engine_cad::CadImportOptions::default();
@@ -412,8 +358,11 @@ impl Importer for CadImporter {
         };
         result.map_err(|e| LoadError::Cad(e.to_string()))?; // CadImportResult is intentionally discarded here
 
-        progress.enter_phase(LoadPhase::Assembling);
-        progress.enter_phase(LoadPhase::Complete);
+        progress.update(ProgressState {
+            description: "Complete".into(),
+            progress: Some(1.0),
+            stage: None,
+        });
 
         let format = if is_step {
             DetectedFormat::Step

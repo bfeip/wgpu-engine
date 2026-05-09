@@ -40,10 +40,10 @@ pub mod importer;
 #[cfg(feature = "usd")]
 pub mod usd;
 
-pub use importer::{default_importers, detect_importer, Importer, PhaseWeights};
+pub use importer::{default_importers, detect_importer, Importer};
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use thiserror::Error;
@@ -114,40 +114,6 @@ pub enum DetectedFormat {
     Other(String),
 }
 
-/// Coarse loading phases for progress display.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum LoadPhase {
-    Pending = 0,
-    Reading = 1,
-    Parsing = 2,
-    DecodingTextures = 3,
-    BuildingMeshes = 4,
-    Assembling = 5,
-    Complete = 6,
-    Failed = 7,
-}
-
-impl LoadPhase {
-    // NOTE: `std::mem::variant_count` could be used here to get the number of variants
-    // but it's nightly right now (March 2026)
-    pub const PHASE_COUNT: usize = 8;
-
-    fn from_u8(v: u8) -> Self {
-        match v {
-            0 => Self::Pending,
-            1 => Self::Reading,
-            2 => Self::Parsing,
-            3 => Self::DecodingTextures,
-            4 => Self::BuildingMeshes,
-            5 => Self::Assembling,
-            6 => Self::Complete,
-            7 => Self::Failed,
-            _ => Self::Failed,
-        }
-    }
-}
-
 /// Errors that can occur during scene loading.
 #[derive(Debug, Error)]
 pub enum LoadError {
@@ -179,115 +145,80 @@ pub enum LoadError {
     UnknownFormat,
 }
 
-/// Weights for save operations.
-fn save_weights() -> PhaseWeights {
-    PhaseWeights::new(&[
-        (LoadPhase::Parsing, 60),
-        (LoadPhase::Assembling, 40),
-    ])
-}
+// ============================================================================
+// Progress Reporting
+// ============================================================================
 
-/// Shared progress state, readable from any thread.
+/// A snapshot of the current progress state.
 ///
-/// Overall progress percentage is derived automatically from the current phase,
-/// item progress within that phase, and a weight table. Callers just call
-/// [`enter_phase`](Self::enter_phase) and [`complete_item`](Self::complete_item);
-/// no manual percentage math is needed.
-#[derive(Clone)]
-pub struct LoadProgress {
-    phase: Arc<AtomicU8>,
-    items_total: Arc<AtomicU32>,
-    items_complete: Arc<AtomicU32>,
-    weights: Arc<Mutex<PhaseWeights>>,
+/// Produced by [`SharedProgress::snapshot`] for reading on the caller's thread,
+/// or constructed by importers/exporters and pushed via [`ProgressReporter::update`].
+#[derive(Clone, Debug, Default)]
+pub struct ProgressState {
+    /// Human-readable description of the current operation.
+    /// e.g. `"Parsing glTF"`, `"Tessellating STEP model"`, `"Loading texture: Skybox"`
+    pub description: String,
+    /// Overall progress in the range 0.0–1.0.
+    /// `None` means indeterminate — show a spinner rather than a progress bar.
+    pub progress: Option<f32>,
+    /// Item-level stage progress: `(completed, total)`.
+    /// `None` when the operation has no meaningful item breakdown.
+    pub stage: Option<(u32, u32)>,
 }
 
-impl LoadProgress {
-    fn new() -> Self {
+impl ProgressState {
+    /// Initial state before any work has begun.
+    pub fn starting() -> Self {
         Self {
-            phase: Arc::new(AtomicU8::new(LoadPhase::Pending as u8)),
-            items_total: Arc::new(AtomicU32::new(0)),
-            items_complete: Arc::new(AtomicU32::new(0)),
-            weights: Arc::new(Mutex::new(PhaseWeights::empty())),
+            description: "Starting".into(),
+            progress: Some(0.0),
+            stage: None,
         }
     }
+}
 
-    /// Current loading phase.
-    pub fn phase(&self) -> LoadPhase {
-        LoadPhase::from_u8(self.phase.load(Ordering::Relaxed))
+/// Push interface for importers and exporters to report progress.
+///
+/// Call [`update`](Self::update) at meaningful checkpoints — at minimum once
+/// when starting and once when complete. The trait is object-safe and
+/// `Send + Sync` so it can be called from background threads.
+pub trait ProgressReporter: Send + Sync {
+    fn update(&self, state: ProgressState);
+}
+
+/// Thread-safe shared progress cell. Holds the most recent [`ProgressState`]
+/// behind a `Mutex`. `Clone`-able so async tasks and their callers can both
+/// hold a reference to the same cell.
+///
+/// Implements [`ProgressReporter`] (push) and exposes [`snapshot`](Self::snapshot) (pull).
+#[derive(Clone, Default)]
+pub struct SharedProgress {
+    state: Arc<Mutex<ProgressState>>,
+}
+
+impl SharedProgress {
+    /// Create a new `SharedProgress` in the default (empty) state.
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    /// Overall progress percentage (0–100), derived from the weight table.
-    ///
-    /// Completed phases contribute their full weight. The current phase
-    /// contributes proportionally to item progress (or 0% if no items are set,
-    /// since monolithic phases jump from 0% to 100% when the next phase starts).
-    pub fn progress_pct(&self) -> u8 {
-        let weights = self.weights.lock().unwrap();
-        let phase = LoadPhase::from_u8(self.phase.load(Ordering::Relaxed));
-
-        // Terminal states
-        if phase == LoadPhase::Complete {
-            return 100;
-        }
-        if phase == LoadPhase::Failed {
-            return 0;
-        }
-
-        let total_weight = weights.total_weight();
-        if total_weight == 0 {
-            return 0;
-        }
-
-        // Sum weights of all completed phases (discriminants below current)
-        let completed_weight = weights.completed_weight(phase);
-
-        // Fractional progress within current phase from items
-        let items_total = self.items_total.load(Ordering::Relaxed);
-        let items_complete = self.items_complete.load(Ordering::Relaxed);
-        let current_weight = weights.get(phase) as f32;
-        let phase_fraction = if items_total > 0 {
-            items_complete as f32 / items_total as f32
-        } else {
-            0.0
-        };
-
-        let pct = (completed_weight as f32 + current_weight * phase_fraction) * 100.0
-            / total_weight as f32;
-        (pct as u8).min(100)
+    /// Snapshot the current state for reading. Takes the lock once, clones, and returns.
+    pub fn snapshot(&self) -> ProgressState {
+        self.state.lock().unwrap().clone()
     }
+}
 
-    /// Total number of items in the current phase (e.g., textures to decode).
-    pub fn items_total(&self) -> u32 {
-        self.items_total.load(Ordering::Relaxed)
+impl ProgressReporter for SharedProgress {
+    fn update(&self, state: ProgressState) {
+        *self.state.lock().unwrap() = state;
     }
+}
 
-    /// Number of items completed in the current phase.
-    pub fn items_complete(&self) -> u32 {
-        self.items_complete.load(Ordering::Relaxed)
-    }
+/// No-op progress reporter. Use for sync operations where progress tracking is not needed.
+pub struct NullProgress;
 
-    /// Bind a weight table for this operation.
-    pub fn set_weights(&self, weights: &PhaseWeights) {
-        *self.weights.lock().unwrap() = weights.clone();
-    }
-
-    /// Enter a new phase. Resets item counters.
-    pub fn enter_phase(&self, phase: LoadPhase) {
-        self.items_total.store(0, Ordering::Relaxed);
-        self.items_complete.store(0, Ordering::Relaxed);
-        self.phase.store(phase as u8, Ordering::Relaxed);
-    }
-
-    /// Set the total number of items for the current phase.
-    pub fn set_item_count(&self, total: u32) {
-        self.items_total.store(total, Ordering::Relaxed);
-        self.items_complete.store(0, Ordering::Relaxed);
-    }
-
-    /// Mark one more item complete in the current phase.
-    pub fn complete_item(&self) {
-        self.items_complete.fetch_add(1, Ordering::Relaxed);
-    }
+impl ProgressReporter for NullProgress {
+    fn update(&self, _: ProgressState) {}
 }
 
 /// Handle to an async operation in progress.
@@ -296,7 +227,7 @@ impl LoadProgress {
 /// completion, and read [`progress`](AsyncHandle::progress) to display a
 /// progress bar.
 pub struct AsyncHandle<T> {
-    progress: LoadProgress,
+    progress: SharedProgress,
     done: Arc<AtomicBool>,
     #[cfg(not(target_arch = "wasm32"))]
     receiver: std::sync::mpsc::Receiver<T>,
@@ -321,7 +252,7 @@ impl<T> AsyncHandle<T> {
     }
 
     /// Returns the shared progress state.
-    pub fn progress(&self) -> &LoadProgress {
+    pub fn progress(&self) -> &SharedProgress {
         &self.progress
     }
 
@@ -357,17 +288,16 @@ pub fn load_sync_with(
     options: LoadOptions,
     importers: &[Box<dyn Importer>],
 ) -> LoadResult {
-    let progress = LoadProgress::new();
-    load_sync_with_progress(source, &options, &progress, importers)
+    load_sync_with_progress(source, &options, &NullProgress, importers)
 }
 
 fn load_sync_with_progress(
     source: SceneSource,
     options: &LoadOptions,
-    progress: &LoadProgress,
+    progress: &dyn ProgressReporter,
     importers: &[Box<dyn Importer>],
 ) -> LoadResult {
-    progress.enter_phase(LoadPhase::Reading);
+    progress.update(ProgressState::starting());
 
     let (bytes, path_hint) = match source {
         SceneSource::Path(ref path) => {
@@ -378,7 +308,6 @@ fn load_sync_with_progress(
     };
 
     let importer = detect_importer(&bytes, path_hint.as_deref(), importers)?;
-    progress.set_weights(&importer.phase_weights());
     let result = importer.load(&bytes, path_hint.as_deref(), options, progress)?;
 
     Ok(result)
@@ -389,13 +318,10 @@ fn load_sync_with_progress(
 // ============================================================================
 
 /// Spawn a sync closure on a background thread, returning a handle to poll for the result.
-///
-/// Sets the progress phase to [`LoadPhase::Failed`] automatically if the closure
-/// returns an `Err`.
 #[cfg(not(target_arch = "wasm32"))]
 fn spawn_async<T, E>(
-    progress: LoadProgress,
-    f: impl FnOnce(&LoadProgress) -> Result<T, E> + Send + 'static,
+    progress: SharedProgress,
+    f: impl FnOnce(&SharedProgress) -> Result<T, E> + Send + 'static,
 ) -> AsyncHandle<Result<T, E>>
 where
     T: Send + 'static,
@@ -408,9 +334,6 @@ where
 
     std::thread::spawn(move || {
         let result = f(&progress_clone);
-        if result.is_err() {
-            progress_clone.enter_phase(LoadPhase::Failed);
-        }
         done_clone.store(true, Ordering::Release);
         let _ = tx.send(result);
     });
@@ -423,12 +346,9 @@ where
 }
 
 /// Spawn a future as a WASM microtask, returning a handle to poll for the result.
-///
-/// Sets the progress phase to [`LoadPhase::Failed`] automatically if the future
-/// resolves to an `Err`.
 #[cfg(target_arch = "wasm32")]
 fn spawn_async_wasm<T, E>(
-    progress: LoadProgress,
+    progress: SharedProgress,
     fut: impl std::future::Future<Output = Result<T, E>> + 'static,
 ) -> AsyncHandle<Result<T, E>>
 where
@@ -438,7 +358,6 @@ where
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    let progress_clone = progress.clone();
     let done = Arc::new(AtomicBool::new(false));
     let done_clone = Arc::clone(&done);
     let result_cell: Rc<RefCell<Option<Result<T, E>>>> = Rc::new(RefCell::new(None));
@@ -446,9 +365,6 @@ where
 
     wasm_bindgen_futures::spawn_local(async move {
         let result = fut.await;
-        if result.is_err() {
-            progress_clone.enter_phase(LoadPhase::Failed);
-        }
         done_clone.store(true, Ordering::Release);
         *result_clone.borrow_mut() = Some(result);
     });
@@ -490,13 +406,13 @@ pub fn load_async_with(
 ) -> LoadHandle {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        spawn_async(LoadProgress::new(), move |progress| {
+        spawn_async(SharedProgress::new(), move |progress| {
             load_sync_with_progress(source, &options, progress, &importers)
         })
     }
     #[cfg(target_arch = "wasm32")]
     {
-        let progress = LoadProgress::new();
+        let progress = SharedProgress::new();
         let p = progress.clone();
         spawn_async_wasm(progress, async move {
             load_chunked_wasm(source, &options, &p, &importers).await
@@ -537,10 +453,10 @@ async fn yield_to_event_loop() {
 async fn load_chunked_wasm(
     source: SceneSource,
     options: &LoadOptions,
-    progress: &LoadProgress,
+    progress: &SharedProgress,
     importers: &[Box<dyn Importer>],
 ) -> LoadResult {
-    progress.enter_phase(LoadPhase::Reading);
+    progress.update(ProgressState::starting());
 
     let (bytes, path_hint) = match source {
         SceneSource::Path(ref path) => {
@@ -555,8 +471,6 @@ async fn load_chunked_wasm(
     yield_to_event_loop().await;
 
     let importer = detect_importer(&bytes, path_hint.as_deref(), importers)?;
-    let weights = importer.phase_weights();
-    progress.set_weights(&weights);
 
     // Use optimized chunked paths for built-in formats
     match importer.name() {
@@ -579,12 +493,20 @@ async fn load_chunked_wasm(
 }
 
 #[cfg(target_arch = "wasm32")]
-async fn load_duck_chunked(bytes: &[u8], progress: &LoadProgress) -> LoadResult {
-    progress.enter_phase(LoadPhase::Parsing);
+async fn load_duck_chunked(bytes: &[u8], progress: &SharedProgress) -> LoadResult {
+    progress.update(ProgressState {
+        description: "Parsing scene".into(),
+        progress: Some(0.1),
+        stage: None,
+    });
     let scene = self::format::from_bytes(bytes)?;
     yield_to_event_loop().await;
 
-    progress.enter_phase(LoadPhase::Complete);
+    progress.update(ProgressState {
+        description: "Complete".into(),
+        progress: Some(1.0),
+        stage: None,
+    });
     Ok(SceneLoadResult {
         scene,
         camera: None,
@@ -596,25 +518,41 @@ async fn load_duck_chunked(bytes: &[u8], progress: &LoadProgress) -> LoadResult 
 async fn load_gltf_chunked(
     bytes: &[u8],
     options: &LoadOptions,
-    progress: &LoadProgress,
+    progress: &SharedProgress,
 ) -> LoadResult {
     use self::gltf::{build_gltf_scene, load_gltf_assets, parse_gltf};
 
-    progress.enter_phase(LoadPhase::Parsing);
+    progress.update(ProgressState {
+        description: "Parsing glTF".into(),
+        progress: Some(0.1),
+        stage: None,
+    });
     let parsed = parse_gltf(bytes).map_err(|e| LoadError::Gltf(e.to_string()))?;
     yield_to_event_loop().await;
 
-    progress.enter_phase(LoadPhase::DecodingTextures);
+    progress.update(ProgressState {
+        description: "Loading assets".into(),
+        progress: Some(0.2),
+        stage: None,
+    });
     let mut scene = Scene::new();
     let (_material_map, mesh_map) =
         load_gltf_assets(&parsed, &mut scene).map_err(|e| LoadError::Gltf(e.to_string()))?;
     yield_to_event_loop().await;
 
-    progress.enter_phase(LoadPhase::Assembling);
+    progress.update(ProgressState {
+        description: "Building scene".into(),
+        progress: Some(0.7),
+        stage: None,
+    });
     let camera = build_gltf_scene(&parsed, &mut scene, &mesh_map, options.aspect)
         .map_err(|e| LoadError::Gltf(e.to_string()))?;
 
-    progress.enter_phase(LoadPhase::Complete);
+    progress.update(ProgressState {
+        description: "Complete".into(),
+        progress: Some(1.0),
+        stage: None,
+    });
     Ok(SceneLoadResult {
         scene,
         camera,
@@ -647,30 +585,40 @@ pub fn save_sync(
     dest: SaveDestination,
     options: self::format::SaveOptions,
 ) -> SaveResult {
-    let progress = LoadProgress::new();
-    save_sync_with_progress(scene, dest, &options, &progress)
+    save_sync_with_progress(scene, dest, &options, &NullProgress)
 }
 
 fn save_sync_with_progress(
     scene: &Scene,
     dest: SaveDestination,
     options: &self::format::SaveOptions,
-    progress: &LoadProgress,
+    progress: &dyn ProgressReporter,
 ) -> SaveResult {
-    progress.set_weights(&save_weights());
-    progress.enter_phase(LoadPhase::Parsing); // "Parsing" = serializing in export context
+    progress.update(ProgressState::starting());
     let bytes = format::to_bytes_with_options(scene, options)
         .map_err(LoadError::Format)?;
 
-    progress.enter_phase(LoadPhase::Assembling);
+    progress.update(ProgressState {
+        description: "Writing".into(),
+        progress: Some(0.6),
+        stage: None,
+    });
     match dest {
         SaveDestination::Path(path) => {
             std::fs::write(path, &bytes)?;
-            progress.enter_phase(LoadPhase::Complete);
+            progress.update(ProgressState {
+                description: "Complete".into(),
+                progress: Some(1.0),
+                stage: None,
+            });
             Ok(None)
         }
         SaveDestination::Bytes => {
-            progress.enter_phase(LoadPhase::Complete);
+            progress.update(ProgressState {
+                description: "Complete".into(),
+                progress: Some(1.0),
+                stage: None,
+            });
             Ok(Some(bytes))
         }
     }
@@ -695,13 +643,13 @@ pub fn save_async(
     let scene = scene.clone();
     #[cfg(not(target_arch = "wasm32"))]
     {
-        spawn_async(LoadProgress::new(), move |progress| {
+        spawn_async(SharedProgress::new(), move |progress| {
             save_sync_with_progress(&scene, dest, &options, progress)
         })
     }
     #[cfg(target_arch = "wasm32")]
     {
-        let progress = LoadProgress::new();
+        let progress = SharedProgress::new();
         let p = progress.clone();
         spawn_async_wasm(progress, async move {
             save_sync_with_progress(&scene, dest, &options, &p)
@@ -806,21 +754,23 @@ mod tests {
             fn detect_from_extension(&self, ext: &str) -> bool {
                 ext == "test"
             }
-            fn phase_weights(&self) -> PhaseWeights {
-                PhaseWeights::new(&[
-                    (LoadPhase::Reading, 50),
-                    (LoadPhase::Assembling, 50),
-                ])
-            }
             fn load(
                 &self,
                 _bytes: &[u8],
                 _path_hint: Option<&Path>,
                 _options: &LoadOptions,
-                progress: &LoadProgress,
+                progress: &dyn ProgressReporter,
             ) -> Result<SceneLoadResult, LoadError> {
-                progress.enter_phase(LoadPhase::Assembling);
-                progress.enter_phase(LoadPhase::Complete);
+                progress.update(ProgressState {
+                    description: "Testing".into(),
+                    progress: Some(0.5),
+                    stage: None,
+                });
+                progress.update(ProgressState {
+                    description: "Complete".into(),
+                    progress: Some(1.0),
+                    stage: None,
+                });
                 Ok(SceneLoadResult {
                     scene: Scene::new(),
                     camera: None,
@@ -859,55 +809,41 @@ mod tests {
     }
 
     #[test]
-    fn test_load_progress_initial_state() {
-        let progress = LoadProgress::new();
-        assert_eq!(progress.phase(), LoadPhase::Pending);
-        assert_eq!(progress.progress_pct(), 0);
-        assert_eq!(progress.items_total(), 0);
-        assert_eq!(progress.items_complete(), 0);
+    fn test_shared_progress() {
+        let progress = SharedProgress::new();
+
+        let snap = progress.snapshot();
+        assert_eq!(snap.description, "");
+        assert_eq!(snap.progress, None);
+        assert_eq!(snap.stage, None);
+
+        progress.update(ProgressState {
+            description: "Loading".into(),
+            progress: Some(0.5),
+            stage: Some((3, 10)),
+        });
+        let snap = progress.snapshot();
+        assert_eq!(snap.description, "Loading");
+        assert_eq!(snap.progress, Some(0.5));
+        assert_eq!(snap.stage, Some((3, 10)));
+
+        progress.update(ProgressState {
+            description: "Complete".into(),
+            progress: Some(1.0),
+            stage: None,
+        });
+        let snap = progress.snapshot();
+        assert_eq!(snap.progress, Some(1.0));
+        assert_eq!(snap.stage, None);
     }
 
     #[test]
-    fn test_load_progress_updates() {
-        let progress = LoadProgress::new();
-        // Simulate a Duck load: Reading(10) + Parsing(10) + DecodingTextures(60) + Assembling(20)
-        let duck_weights = PhaseWeights::new(&[
-            (LoadPhase::Reading, 10),
-            (LoadPhase::Parsing, 10),
-            (LoadPhase::DecodingTextures, 60),
-            (LoadPhase::Assembling, 20),
-        ]);
-        progress.set_weights(&duck_weights);
-
-        progress.enter_phase(LoadPhase::Reading);
-        assert_eq!(progress.phase(), LoadPhase::Reading);
-        assert_eq!(progress.progress_pct(), 0);
-
-        progress.enter_phase(LoadPhase::Parsing);
-        assert_eq!(progress.phase(), LoadPhase::Parsing);
-        // Reading(10) complete out of total 100 → 10%
-        assert_eq!(progress.progress_pct(), 10);
-
-        progress.enter_phase(LoadPhase::DecodingTextures);
-        progress.set_item_count(10);
-        assert_eq!(progress.items_total(), 10);
-        assert_eq!(progress.items_complete(), 0);
-        // Reading(10) + Parsing(10) complete → 20%
-        assert_eq!(progress.progress_pct(), 20);
-
-        // Complete 3 of 10 items → 20% + 60% * 3/10 = 38%
-        for _ in 0..3 {
-            progress.complete_item();
-        }
-        assert_eq!(progress.items_complete(), 3);
-        assert_eq!(progress.progress_pct(), 38);
-
-        progress.enter_phase(LoadPhase::Assembling);
-        // Reading(10) + Parsing(10) + DecodingTextures(60) complete → 80%
-        assert_eq!(progress.progress_pct(), 80);
-
-        progress.enter_phase(LoadPhase::Complete);
-        assert_eq!(progress.progress_pct(), 100);
+    fn test_null_progress_is_no_op() {
+        NullProgress.update(ProgressState {
+            description: "test".into(),
+            progress: Some(0.5),
+            stage: Some((1, 2)),
+        });
     }
 
     #[cfg(not(target_arch = "wasm32"))]
