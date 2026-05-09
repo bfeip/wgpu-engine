@@ -133,7 +133,8 @@ fn encode_resource<T: Serialize>(data: &T, level: i32) -> Result<Vec<u8>, Format
     compress(&uncompressed, level)
 }
 
-/// Zstd-decompress then bincode-decode a resource.
+/// Zstd-decompress then bincode-decode a resource. Useful when reading raw resource bytes
+/// directly from a WGSC file without going through [`from_bytes`].
 pub fn decode_resource<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, FormatError> {
     let uncompressed = decompress(bytes)?;
     let (value, _) = bincode::serde::decode_from_slice(&uncompressed, bincode::config::legacy())
@@ -473,13 +474,8 @@ pub fn from_bytes(bytes: &[u8]) -> Result<Scene, FormatError> {
     assemble_scene(parse_scene(bytes)?)
 }
 
-/// Saves the scene to a file with default options.
-pub fn save_to_file(scene: &Scene, path: impl AsRef<std::path::Path>) -> Result<(), FormatError> {
-    save_to_file_with_options(scene, path, &SaveOptions::default())
-}
-
-/// Saves the scene to a file with custom options.
-pub fn save_to_file_with_options(
+/// Saves the scene to a file.
+pub fn save_to_file(
     scene: &Scene,
     path: impl AsRef<std::path::Path>,
     options: &SaveOptions,

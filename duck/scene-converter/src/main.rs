@@ -4,7 +4,7 @@ use anyhow::{bail, Result};
 use clap::{Parser, ValueEnum};
 use image::imageops::FilterType;
 use image::GenericImageView;
-use duck_engine_import_export::format::{CompressionLevel, SaveOptions, save_to_file_with_options};
+use duck_engine_import_export::format::{CompressionLevel, SaveOptions, save_to_file};
 use duck_engine_import_export::gltf::load_gltf_scene_from_path;
 use duck_engine_scene::{Scene};
 
@@ -148,7 +148,7 @@ fn main() -> Result<()> {
     print_stats(&scene);
 
     eprintln!("Saving to {}...", output.display());
-    save_to_file_with_options(&scene, &output, &options)?;
+    save_to_file(&scene, &output, &options)?;
 
     let file_size = std::fs::metadata(&output)?.len();
     eprintln!("Done. Output: {} ({})", output.display(), format_bytes(file_size));

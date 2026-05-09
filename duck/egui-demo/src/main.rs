@@ -14,6 +14,7 @@ use duck_engine_viewer::egui_support::EguiViewerApp;
 use duck_engine_viewer::input::{ElementState, Key};
 use duck_engine_viewer::operator::NavigationMode;
 use duck_engine_viewer::import_export;
+use duck_engine_viewer::import_export::format::{SaveOptions, save_to_file};
 use duck_engine_viewer::common::Transform;
 use duck_engine_viewer::scene::{Light, LightType, NodePayload, Scene};
 use duck_engine_viewer::winit_support;
@@ -230,7 +231,7 @@ impl<'a> App<'a> {
         let viewer = self.viewer_app.as_mut().unwrap().viewer_mut();
         let path_str = path.display().to_string();
 
-        match import_export::format::save_to_file(viewer.scene(), &path) {
+        match save_to_file(viewer.scene(), &path, &SaveOptions::default()) {
             Ok(()) => {
                 log::info!("Saved scene: {}", path_str);
             }
