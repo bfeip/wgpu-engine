@@ -156,16 +156,116 @@ Split `duck/import-export/src/format.rs` into a `format/` directory:
 
 ### Phase 5 — Network Streaming
 
-Enable servers to stream scene subtrees to connected viewers.
+Enable servers to stream scene subtrees to connected viewers. Both initial sync and live mutations
+use a single `EventBatch` mechanism — no separate snapshot format. Resources are streamed in
+priority order (most screen-prominent first) so clients can start interacting before the full
+model arrives. The server supports live mutation and pushes ongoing delta events to all connected
+clients. Transport is abstracted behind a `ByteChannel` trait so TCP, WebSocket, HTTP SSE, or
+WebTransport can be swapped in without changing the protocol.
 
-- `SceneEvent` enum: NodeAdded, NodeRemoved, NodeTransformChanged, NodePayloadChanged,
-  NodeVisibilityChanged, ResourceAdded, ResourceMutated, ResourceRemoved
-- Scene maintains an append log of events stamped with generation numbers
-- `Scene::events_since(generation) -> &[SceneEvent]` for delta sync
-- Initial snapshot = full subtree serialized as DUCK v0.3 bytes
-- Client applies event stream; custom node types with unregistered tags stored as opaque bytes
-- Server API: `stream_subtree(root_node_id)` — client subscribes, receives snapshot + ongoing events
-- Transport layer TBD and kept out of the scene crate (WebSocket, HTTP/2 SSE, WebTransport for WASM)
+#### New crates
+
+- `duck-engine-streaming` (`duck/streaming/`) — codec, `ByteChannel` trait, `StreamingServer`,
+  `StreamingClient`, `apply_event_to_scene`, priority queue
+- `scene-server` (`duck/scene-server/`) — CLI binary: loads a model file, serves it on a TCP port
+
+#### Scene crate additions (`duck/scene/src/event.rs`)
+
+- `SceneEvent` enum (serde-gated): `MeshAdded`, `MeshRemoved`, `MaterialAdded`, `MaterialRemoved`,
+  `TextureAdded`, `InstanceAdded`, `InstanceRemoved`, `NodeAdded(Node)`, `NodeRemoved`,
+  `NodeTransformSet`, `NodePayloadSet`, `NodeVisibilitySet`, `EnvironmentMapAdded`,
+  `ActiveEnvironmentMapSet`, `ActiveCameraSet`
+- `SceneEventLog` — ring buffer of `(generation, SceneEvent)` pairs, owned by the server
+  (not by `Scene` — zero overhead for non-streaming paths)
+- Instrumented mutation wrappers (free functions): call raw `Scene` methods and record the event
+- `Scene::insert_node` updated to automatically manage `root_nodes` when `parent == None`,
+  simplifying both the DUCK deserializer and streaming
+
+#### Wire protocol
+
+Framing: `[4-byte u32 LE length][zstd-compressed bincode Message]`
+
+Client → Server:
+- `Subscribe { client_gen, root_node, camera }` — `client_gen = 0` for fresh connect;
+  `root_node = Some(id)` for partial-scene subscription; `camera` for priority sorting
+- `CameraUpdate(CameraHint)` — re-sort priority queue mid-stream
+- `Pause` / `Resume` — flow control for memory-constrained clients
+
+Server → Client:
+- `EventBatch { events: Vec<(u64, SceneEvent)> }` — used for both initial sync and live updates
+- `SyncComplete { server_gen }` — initial resource streaming done; client is in live mode
+- `Ping` / `Goodbye`
+
+Reconnect (`client_gen > 0`): server sends only events since that generation if log is warm;
+otherwise re-runs full priority sync.
+
+#### Initial sync order (priority streaming)
+
+1. All `NodeAdded` events (tree skeleton — tiny, arrives first)
+2. `MaterialAdded`, `InstanceAdded`, `MeshAdded` in priority order (screen coverage estimate
+   from camera hint; larger bounding sphere = higher priority)
+3. `TextureAdded` events (lowest priority — potentially large)
+4. `SyncComplete`
+
+#### Viewer integration
+
+- `streaming` feature flag on `duck-engine-viewer`
+- `Viewer::connect_stream(addr)`, `disconnect_stream()`, `stream_sync_complete()`
+- `poll_stream()` called from `Viewer::update()` — non-blocking `try_recv` each frame
+- Camera hint sent to server each frame so priority queue stays current as user navigates
+
+#### egui-demo UI
+
+- `streaming` feature flag on `egui-demo`
+- New "Network" tab in left panel: URL input (default `127.0.0.1:7878`), Connect/Disconnect
+  button, progress indicator while streaming, status label
+
+#### Instance-first priority streaming (follow-up)
+
+The current `build_priority_queue` in `duck/streaming/src/priority.rs` streams resources in
+type-grouped buckets: all nodes → all instances → all materials → all meshes → all textures.
+This means a client receives every material and every mesh before it can render anything — even if
+most of them are off-screen or tiny.
+
+**Goal:** stream the most visually prominent instances first, bundled with the resources they
+depend on, so the client can render partial scenes progressively.
+
+**New ordering:**
+1. All `NodeAdded` events (still first — tiny tree skeleton)
+2. Instances sorted by world-space screen coverage, each preceded by its dependencies (if not
+   already queued):
+   - Mesh for the instance
+   - Material for the instance
+   - Textures referenced by that material
+3. Remaining textures not yet queued (e.g., from low-priority instances)
+4. Environment maps
+
+**Changes required:**
+
+- `duck/streaming/src/priority.rs` — `build_priority_queue`:
+  - Replace the type-grouped loops with a single instance-driven pass
+  - Sort instances by world-space screen coverage (see below)
+  - For each instance in priority order, push its mesh, material, and material's textures
+    (guarded by a `HashSet<Id>` to skip already-queued resources), then push the instance
+  - After the instance pass, sweep any textures not yet covered; then environment maps
+
+- `duck/streaming/src/priority.rs` — replace `mesh_screen_priority` with
+  `instance_screen_priority(scene, instance_id, camera)`:
+  - The existing TODO already notes that object-space bounds without transform are wrong
+  - Look up the node carrying this instance to get its world transform
+  - Apply world transform to mesh AABB min/max corners; compute world-space bounding sphere
+  - Compute solid-angle coverage from that sphere and the camera position
+
+- `duck/scene/src/lib.rs` (or scene graph module):
+  - Add `Scene::node_for_instance(InstanceId) -> Option<NodeId>` (or equivalent) so
+    `instance_screen_priority` can look up world transforms without a linear scan
+  - `Scene::world_transform(NodeId)` already exists (cached in `Cell<Option<T>>`); confirm
+    it's accessible or expose it if private
+
+- `duck/scene/src/lib.rs` — `Material`:
+  - Add `Material::texture_ids() -> impl Iterator<Item = TextureId>` enumerating all textures
+    the material references (base color, normal, metallic-roughness, emissive, occlusion) so
+    the dependency bundling step can queue them without hard-coding field names in priority.rs
 
 ---
 
