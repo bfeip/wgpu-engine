@@ -4,6 +4,7 @@ pub use duck_engine_common as common;
 // Scene submodules
 mod id;
 mod camera;
+mod event;
 pub mod annotation;
 mod environment;
 pub mod geom_query;
@@ -48,6 +49,7 @@ pub use environment::{
     CubemapFaceData, CubemapMipData, EnvironmentMap, EnvironmentSource, PreprocessedCubemap,
     PreprocessedIbl, CUBEMAP_FACES,
 };
+pub use event::{SceneEvent, SceneEventLog, SequencedEvent};
 
 use annotation::{Annotation, AnnotationManager};
 use crate::common::{Aabb};
@@ -100,7 +102,6 @@ pub struct SceneProperties {
 /// // Create an instance node
 /// let node_id = scene.add_instance_node(None, mesh_id, mat_id, None, common::Transform::IDENTITY);
 /// ```
-#[derive(Clone)]
 pub struct Scene {
     meshes: HashMap<MeshId, Mesh>,
     instances: HashMap<InstanceId, Instance>,
@@ -126,6 +127,29 @@ pub struct Scene {
     /// Generation counter that increments on any node add, remove, or mutation.
     /// Used by the renderer to detect when scene data need re-collection.
     node_generation: u64,
+
+    /// Optional event log for streaming. When `None`, mutations run with no extra overhead.
+    /// Enable via `Scene::enable_event_log`.
+    event_log: Option<Box<SceneEventLog>>,
+}
+
+impl Clone for Scene {
+    fn clone(&self) -> Self {
+        Self {
+            meshes: self.meshes.clone(),
+            instances: self.instances.clone(),
+            nodes: self.nodes.clone(),
+            root_nodes: self.root_nodes.clone(),
+            materials: self.materials.clone(),
+            textures: self.textures.clone(),
+            environment_maps: self.environment_maps.clone(),
+            active_environment_map: self.active_environment_map,
+            active_camera: self.active_camera,
+            annotations: self.annotations.clone(),
+            node_generation: self.node_generation,
+            event_log: None,
+        }
+    }
 }
 
 impl Scene {
@@ -149,7 +173,24 @@ impl Scene {
             annotations: AnnotationManager::new(),
 
             node_generation: initial_generation(),
+
+            event_log: None,
         }
+    }
+
+    // ========== Event log API ==========
+
+    /// Enable streaming event logging with the given ring-buffer capacity.
+    ///
+    /// Once enabled, every mutation is appended to the log so a streaming server can
+    /// send incremental deltas to connected clients. Has no effect on non-streaming code.
+    pub fn enable_event_log(&mut self, capacity: usize) {
+        self.event_log = Some(Box::new(SceneEventLog::new(capacity)));
+    }
+
+    /// Returns a reference to the event log, if enabled.
+    pub fn event_log(&self) -> Option<&SceneEventLog> {
+        self.event_log.as_deref()
     }
 
     // ========== Mesh API ==========
@@ -163,6 +204,9 @@ impl Scene {
     /// The unique ID assigned to this mesh
     pub fn add_mesh(&mut self, mesh: Mesh) -> MeshId {
         let id = mesh.id;
+        if let Some(log) = &mut self.event_log {
+            log.push(SceneEvent::MeshAdded(id, mesh.clone()));
+        }
         self.meshes.insert(id, mesh);
         id
     }
@@ -207,6 +251,9 @@ impl Scene {
     /// Removes a mesh from the scene by ID.
     pub fn remove_mesh(&mut self, id: MeshId) {
         self.meshes.remove(&id);
+        if let Some(log) = &mut self.event_log {
+            log.push(SceneEvent::MeshRemoved(id));
+        }
     }
 
     // ========== Material API ==========
@@ -220,6 +267,9 @@ impl Scene {
     /// The unique ID assigned to this material
     pub fn add_material(&mut self, material: Material) -> MaterialId {
         let id = material.id;
+        if let Some(log) = &mut self.event_log {
+            log.push(SceneEvent::MaterialAdded(id, material.clone()));
+        }
         self.materials.insert(id, material);
         id
     }
@@ -252,6 +302,9 @@ impl Scene {
     /// Removes a material from the scene by ID.
     pub fn remove_material(&mut self, id: MaterialId) {
         self.materials.remove(&id);
+        if let Some(log) = &mut self.event_log {
+            log.push(SceneEvent::MaterialRemoved(id));
+        }
     }
 
     // ========== Texture API ==========
@@ -265,6 +318,9 @@ impl Scene {
     /// The unique ID assigned to this texture
     pub fn add_texture(&mut self, texture: Texture) -> TextureId {
         let id = texture.id;
+        if let Some(log) = &mut self.event_log {
+            log.push(SceneEvent::TextureAdded(id, texture.clone()));
+        }
         self.textures.insert(id, texture);
         id
     }
@@ -361,6 +417,9 @@ impl Scene {
     /// Adds an environment map to the scene using its existing ID.
     pub fn add_environment_map(&mut self, env_map: EnvironmentMap) -> EnvironmentMapId {
         let id = env_map.id;
+        if let Some(log) = &mut self.event_log {
+            log.push(SceneEvent::EnvironmentMapAdded(id, env_map.clone()));
+        }
         self.environment_maps.insert(id, env_map);
         id
     }
@@ -400,6 +459,9 @@ impl Scene {
     /// Pass `None` to disable IBL lighting.
     pub fn set_active_environment_map(&mut self, id: Option<EnvironmentMapId>) {
         self.active_environment_map = id;
+        if let Some(log) = &mut self.event_log {
+            log.push(SceneEvent::ActiveEnvironmentMapSet(id));
+        }
     }
 
     /// Gets the currently active environment map ID, if any.
@@ -419,6 +481,9 @@ impl Scene {
     /// The unique ID assigned to this instance
     pub fn add_instance(&mut self, instance: Instance) -> InstanceId {
         let id = instance.id;
+        if let Some(log) = &mut self.event_log {
+            log.push(SceneEvent::InstanceAdded(id, instance.clone()));
+        }
         self.instances.insert(id, instance);
         id
     }
@@ -451,6 +516,9 @@ impl Scene {
     /// Removes an instance from the scene by ID.
     pub fn remove_instance(&mut self, id: InstanceId) {
         self.instances.remove(&id);
+        if let Some(log) = &mut self.event_log {
+            log.push(SceneEvent::InstanceRemoved(id));
+        }
     }
 
 
@@ -485,6 +553,9 @@ impl Scene {
     /// Sets the active camera node. Pass `None` to clear.
     pub fn set_active_camera(&mut self, node_id: Option<NodeId>) {
         self.active_camera = node_id;
+        if let Some(log) = &mut self.event_log {
+            log.push(SceneEvent::ActiveCameraSet(node_id));
+        }
     }
 
     // ========== Node Generation ==========
@@ -562,12 +633,6 @@ impl Scene {
         self.nodes.contains_key(&id)
     }
 
-    // TODO: Remove this after format.rs refactor
-    /// Sets the order of root nodes (used during deserialization).
-    pub fn set_root_node_order(&mut self, order: Vec<NodeId>) {
-        self.root_nodes = order;
-    }
-
     /// Returns a slice of root node IDs.
     pub fn root_nodes(&self) -> &[NodeId] {
         &self.root_nodes
@@ -610,6 +675,9 @@ impl Scene {
             self.root_nodes.push(id);
         }
 
+        if let Some(log) = &mut self.event_log {
+            log.push(SceneEvent::NodeAdded(node.clone()));
+        }
         self.nodes.insert(id, node);
         self.node_generation += 1;
         Ok(id)
@@ -670,10 +738,18 @@ impl Scene {
 
     /// Inserts a pre-built node using its existing ID.
     ///
-    /// Does **not** update `root_nodes` or parent/child links — the caller
-    /// is responsible for tree consistency (e.g. via `set_root_node_order`).
+    /// Automatically appends to `root_nodes` when the node has no parent.
+    /// Parent/child links are the caller's responsibility (e.g. the node carries
+    /// its children list from deserialization).
     pub fn insert_node(&mut self, node: Node) {
+        if node.parent().is_none() {
+            self.root_nodes.push(node.id);
+        }
+        if let Some(log) = &mut self.event_log {
+            log.push(SceneEvent::NodeAdded(node.clone()));
+        }
         self.nodes.insert(node.id, node);
+        self.node_generation += 1;
     }
 
     /// Removes a node and all its children from the scene tree.
@@ -691,6 +767,10 @@ impl Scene {
         // Invalidate cached bounds for all ancestors
         if let Some(parent_id) = parent {
             self.invalidate_ancestor_bounds(parent_id);
+        }
+
+        if let Some(log) = &mut self.event_log {
+            log.push(SceneEvent::NodeRemoved(node_id));
         }
     }
 
@@ -829,6 +909,9 @@ impl Scene {
 
     /// Sets the payload of a node and invalidates ancestor bounds.
     pub fn set_node_payload(&mut self, node_id: NodeId, payload: NodePayload) {
+        if let Some(log) = &mut self.event_log {
+            log.push(SceneEvent::NodePayloadSet(node_id, payload.clone()));
+        }
         let node = self.nodes.get_mut(&node_id).expect("Node not found");
         node.set_payload(payload);
         self.node_generation += 1;
@@ -836,6 +919,9 @@ impl Scene {
     }
 
     pub fn set_node_transform(&mut self, node_id: NodeId, transform: common::Transform) {
+        if let Some(log) = &mut self.event_log {
+            log.push(SceneEvent::NodeTransformSet(node_id, transform));
+        }
         let node = self.nodes.get_mut(&node_id).expect("Node not found");
         node.set_transform(transform);
         self.invalidate_subtree_transforms(node_id);
@@ -877,6 +963,9 @@ impl Scene {
     /// When setting to Invisible, all descendants are also marked invisible.
     /// When setting to Visible, only this node is changed.
     pub fn set_node_visibility(&mut self, node_id: NodeId, visibility: node::Visibility) {
+        if let Some(log) = &mut self.event_log {
+            log.push(SceneEvent::NodeVisibilitySet(node_id, visibility));
+        }
         match visibility {
             node::Visibility::Visible => {
                 let node = self.nodes.get_mut(&node_id).expect("Node not found");
