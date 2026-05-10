@@ -13,7 +13,7 @@ pub const MAGIC: [u8; 4] = *b"DUCK";
 
 /// Current format version (major.minor encoded as single u16)
 /// major = version >> 8, minor = version & 0xFF
-pub const VERSION: u16 = 0x0005; // 0.5 — Flat per-resource format; individual resource TOC entries
+pub const VERSION: u16 = 0x0006; // 0.6 — Switch bincode encoding from legacy to standard config
 
 /// Size of the fixed header in bytes
 pub const HEADER_SIZE: usize = std::mem::size_of::<FileHeader>();
@@ -90,7 +90,7 @@ impl FileHeader {
 
         let major = (version >> 8) as u8;
         let minor = (version & 0xFF) as u8;
-        if major != 0 || minor != 5 {
+        if major != 0 || minor != 6 {
             return Err(super::FormatError::UnsupportedVersion(major, minor));
         }
 

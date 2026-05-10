@@ -128,7 +128,7 @@ fn decompress(data: &[u8]) -> Result<Vec<u8>, FormatError> {
 
 /// Bincode-encode then zstd-compress a value. Used for all non-texture resources.
 fn encode_resource<T: Serialize>(data: &T, level: i32) -> Result<Vec<u8>, FormatError> {
-    let uncompressed = bincode::serde::encode_to_vec(data, bincode::config::legacy())
+    let uncompressed = bincode::serde::encode_to_vec(data, bincode::config::standard())
         .map_err(|e| FormatError::SerializationError(e.to_string()))?;
     compress(&uncompressed, level)
 }
@@ -137,7 +137,7 @@ fn encode_resource<T: Serialize>(data: &T, level: i32) -> Result<Vec<u8>, Format
 /// directly from a WGSC file without going through [`from_bytes`].
 pub fn decode_resource<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, FormatError> {
     let uncompressed = decompress(bytes)?;
-    let (value, _) = bincode::serde::decode_from_slice(&uncompressed, bincode::config::legacy())
+    let (value, _) = bincode::serde::decode_from_slice(&uncompressed, bincode::config::standard())
         .map_err(|e| FormatError::DeserializationError(e.to_string()))?;
     Ok(value)
 }
@@ -247,8 +247,6 @@ fn assemble_scene(sections: ParsedSceneData) -> Result<Scene, FormatError> {
     for node in sections.nodes {
         scene.insert_node(node);
     }
-
-    scene.set_root_node_order(sections.metadata.root_nodes);
 
     for em in sections.environment_maps {
         scene.add_environment_map(em);
