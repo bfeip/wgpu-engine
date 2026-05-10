@@ -7,6 +7,7 @@ edition = "2024"
 assimp = ["duck-engine-viewer/assimp"]
 cad = ["duck-engine-viewer/cad"]
 usd = ["duck-engine-viewer/usd"]
+streaming = ["duck-engine-viewer/streaming"]
 
 [dependencies]
 duck-engine-viewer = { path = "../viewer", features = ["egui-support"] }

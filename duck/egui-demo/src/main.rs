@@ -94,6 +94,24 @@ impl<'a> App<'a> {
         if let Some(camera) = ui_actions.set_camera {
             self.viewer_app.as_mut().unwrap().viewer_mut().set_camera(camera);
         }
+        #[cfg(feature = "streaming")]
+        if let Some(url) = ui_actions.connect_stream {
+            let viewer = self.viewer_app.as_mut().unwrap().viewer_mut();
+            match viewer.connect_stream(&url) {
+                Ok(()) => {
+                    self.ui.left.network.status =
+                        ui::network_tab::NetworkStatus::Connected;
+                }
+                Err(e) => {
+                    self.ui.left.network.status =
+                        ui::network_tab::NetworkStatus::Error(e.to_string());
+                }
+            }
+        }
+        #[cfg(feature = "streaming")]
+        if ui_actions.disconnect_stream {
+            self.viewer_app.as_mut().unwrap().viewer_mut().disconnect_stream();
+        }
 
         // Request next frame
         self.viewer_app.as_ref().unwrap().request_redraw();
