@@ -9,7 +9,9 @@ members = [
     "egui-demo",
     "scene-info",
     "scene-converter",
-    "cad"
+    "cad",
+    "streaming",
+    "scene-server",
 ]
 default-members = ["viewer"]
 
