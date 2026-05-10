@@ -37,17 +37,21 @@ pub(crate) fn draw_batches(
         // so opaque portions of blend materials establish correct depth occlusion.
         let mut prepass_pipeline_key: Option<PipelineCacheKey> = None;
         for batch in batches {
-            let material = ctx.scene.get_material(batch.material_id).unwrap();
+            let Some(material) = ctx.scene.get_material(batch.material_id) else {
+                continue;
+            };
             let material_props = material.get_properties(batch.primitive_type);
 
             if material_props.alpha_mode != AlphaMode::Blend {
                 continue;
             }
 
-            let material_gpu = ctx
+            let Some(material_gpu) = ctx
                 .gpu_resources
                 .get_material(batch.material_id, batch.primitive_type)
-                .expect("Material GPU resources not initialized");
+            else {
+                continue;
+            };
             render_pass.set_bind_group(2, &material_gpu.bind_group, &[]);
 
             // Normalize key: only has_lighting (pipeline layout), double_sided
@@ -70,11 +74,12 @@ pub(crate) fn draw_batches(
                 prepass_pipeline_key = Some(pipeline_key);
             }
 
-            let mesh = ctx.scene.get_mesh(batch.mesh_id).unwrap();
-            let gpu_mesh = ctx
-                .gpu_resources
-                .get_mesh(batch.mesh_id)
-                .expect("Mesh GPU resources not initialized");
+            let Some(mesh) = ctx.scene.get_mesh(batch.mesh_id) else {
+                continue;
+            };
+            let Some(gpu_mesh) = ctx.gpu_resources.get_mesh(batch.mesh_id) else {
+                continue;
+            };
             gpu_resources::draw_mesh_instances(
                 ctx.device,
                 render_pass,
@@ -89,14 +94,20 @@ pub(crate) fn draw_batches(
     // Main draw loop
     let mut current_pipeline_key: Option<PipelineCacheKey> = None;
     for batch in batches {
-        let mesh = ctx.scene.get_mesh(batch.mesh_id).unwrap();
-        let material = ctx.scene.get_material(batch.material_id).unwrap();
+        let Some(mesh) = ctx.scene.get_mesh(batch.mesh_id) else {
+            continue;
+        };
+        let Some(material) = ctx.scene.get_material(batch.material_id) else {
+            continue;
+        };
         let material_props = material.get_properties(batch.primitive_type);
 
-        let material_gpu = ctx
+        let Some(material_gpu) = ctx
             .gpu_resources
             .get_material(batch.material_id, batch.primitive_type)
-            .expect("Material GPU resources not initialized");
+        else {
+            continue;
+        };
         render_pass.set_bind_group(2, &material_gpu.bind_group, &[]);
 
         // Only change pipeline if material properties, scene properties, or primitive type changes
@@ -112,10 +123,9 @@ pub(crate) fn draw_batches(
             current_pipeline_key = Some(pipeline_key);
         }
 
-        let gpu_mesh = ctx
-            .gpu_resources
-            .get_mesh(batch.mesh_id)
-            .expect("Mesh GPU resources not initialized");
+        let Some(gpu_mesh) = ctx.gpu_resources.get_mesh(batch.mesh_id) else {
+            continue;
+        };
         gpu_resources::draw_mesh_instances(
             ctx.device,
             render_pass,

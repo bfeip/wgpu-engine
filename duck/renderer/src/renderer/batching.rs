@@ -180,6 +180,9 @@ pub(crate) fn collect_draw_batches(scene: &Scene) -> Vec<DrawBatch> {
         let Some(mesh) = scene.get_mesh(instance.mesh()) else {
             continue;
         };
+        if scene.get_material(instance.material()).is_none() {
+            continue;
+        }
 
         // Create a separate batch for each primitive type the mesh supports
         for primitive_type in [

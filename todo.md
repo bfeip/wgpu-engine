@@ -267,6 +267,29 @@ depend on, so the client can render partial scenes progressively.
     the material references (base color, normal, metallic-roughness, emissive, occlusion) so
     the dependency bundling step can queue them without hard-coding field names in priority.rs
 
+#### Batched event send during initial sync (follow-up)
+
+Currently `run_priority_sync` sends one `EventBatch` per resource, paying zstd-compression and
+framing overhead for every event. Replace with an accumulator that flushes only when the
+pending batch reaches a configurable byte limit.
+
+**Approach:**
+
+- Add `sync_batch_size_bytes: usize` (default `200 * 1024`) to the server config struct
+  (wherever `StreamingServer` is constructed in `duck/streaming/src/server.rs` or `lib.rs`).
+- In `run_priority_sync`, maintain `pending: Vec<SequencedEvent>` and `pending_size: u64`.
+- After building each `SequencedEvent`, call `bincode::serialized_size(&se)` and add to
+  `pending_size`; push to `pending`.
+- When `pending_size >= sync_batch_size_bytes`, call
+  `channel.send(&ServerMessage::EventBatch { events: mem::take(&mut pending) })` and reset.
+- After the resource loop ends, flush any remaining events in a final `EventBatch`.
+- The existing `Pause`/`Resume` flow-control poll fires per-iteration before the resource is
+  processed — no change needed there.
+
+**Files:**
+- `duck/streaming/src/server.rs` — `run_priority_sync` (the send-one-at-a-time call)
+- `duck/streaming/src/lib.rs` or wherever the server config struct lives — add the new field
+
 ---
 
 ### Phase 6 — CAD Node Types

@@ -40,5 +40,11 @@
             "args": [],
             "cwd": "${workspaceFolder}/duck/egui-demo"
         },
+        {
+            "type": "lldb",
+            "request": "attach",
+            "name": "Attach to Rust Process",
+            "pid": "${command:pickMyProcess}"
+        },
     ]
 }
