@@ -30,3 +30,6 @@ pub mod winit_support;
 
 #[cfg(feature = "egui-support")]
 pub mod egui_support;
+
+#[cfg(feature = "streaming")]
+pub mod streaming;
