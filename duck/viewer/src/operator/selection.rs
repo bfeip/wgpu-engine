@@ -159,7 +159,7 @@ fn draw_debug_annotations(
                 continue;
             }
 
-            if let Some(bounds) = ctx.scene.nodes_bounding(root_id) {
+            if let Some(bounds) = ctx.scene.nodes_bounding(root_id).bounds {
                 // Test if ray hits the bounding box
                 if let Some(t) = bounds.intersects_ray(ray) {
                     closest_bbox_hit = Some(match closest_bbox_hit {

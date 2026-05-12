@@ -223,7 +223,7 @@ fn test_root_node_identity_transform() {
     let mut scene = Scene::new();
     let root = scene.add_default_node(None, None).unwrap();
 
-    let transform = scene.nodes_transform(root);
+    let transform = scene.nodes_transform(root).unwrap();
     let identity = Matrix4::identity();
 
     // Convert to arrays for comparison
@@ -256,7 +256,7 @@ fn test_child_transform_accumulation() {
         Transform::from_position(Point3::new(5.0, 0.0, 0.0)),
     ).unwrap();
 
-    let child_transform = scene.nodes_transform(child);
+    let child_transform = scene.nodes_transform(child).unwrap();
 
     // Child should be at (15, 0, 0) in world space
     assert!((child_transform[3][0] - 15.0).abs() < EPSILON);
@@ -286,7 +286,7 @@ fn test_transform_with_scale() {
         Transform::from_position(Point3::new(1.0, 0.0, 0.0)),
     ).unwrap();
 
-    let child_transform = scene.nodes_transform(child);
+    let child_transform = scene.nodes_transform(child).unwrap();
 
     // Child should be at (2, 0, 0) due to parent's scale
     assert!((child_transform[3][0] - 2.0).abs() < EPSILON);
@@ -298,10 +298,10 @@ fn test_transform_caching() {
     let root = scene.add_default_node(None, None).unwrap();
 
     // First computation
-    let transform1 = scene.nodes_transform(root);
+    let transform1 = scene.nodes_transform(root).unwrap();
 
     // Second computation should use cache
-    let transform2 = scene.nodes_transform(root);
+    let transform2 = scene.nodes_transform(root).unwrap();
 
     // Should be identical
     for i in 0..4 {
@@ -321,7 +321,7 @@ fn test_transform_invalidation_on_change() {
     let node_id = scene.add_default_node(None, None).unwrap();
 
     // Compute transform to populate cache
-    let _transform = scene.nodes_transform(node_id);
+    let _transform = scene.nodes_transform(node_id).unwrap();
 
     // Modify the node
     scene.set_node_position(node_id, Point3::new(5.0, 5.0, 5.0));

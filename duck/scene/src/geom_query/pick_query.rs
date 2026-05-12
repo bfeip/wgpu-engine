@@ -68,45 +68,39 @@ fn pick_node<Q: PickQuery>(
     scene: &Scene,
     results: &mut Vec<Q::Result>,
 ) {
-    let node = scene
-        .get_node(node_id)
-        .expect("Node ID not found in scene during picking");
+    let Some(node) = scene.get_node(node_id) else { return };
 
-    // Broad phase: Test against this node's bounding box
-    let Some(bounds) = scene.nodes_bounding(node_id) else {
-        return; // Subtree has no geometry, skip
-    };
+    // Broad phase: skip entire subtree if bounds are unavailable or don't intersect.
+    // nodes_bounding returns None for both "no geometry" and "all geometry still streaming",
+    // both of which mean there is nothing pickable here yet.
+    let Some(bounds) = scene.nodes_bounding(node_id).bounds else { return };
     if !query.might_intersect_bounds(&bounds) {
-        return; // Query doesn't intersect bounds, skip entire subtree
+        return;
     }
 
-    // Narrow phase: If this node has an instance, test it
-    let instance_id = match node.payload() {
-        NodePayload::Instance(id) => Some(*id),
-        _ => None,
-    };
-    if let Some(instance_id) = instance_id {
-        let instance = scene
-            .get_instance(instance_id)
-            .expect("Instance referenced by node not found in scene");
-        let mesh = scene
-            .get_mesh(instance.mesh())
-            .expect("Mesh referenced by instance not found in scene");
-
-        // Get world transform and compute inverse for local space conversion
-        let world_transform = scene.nodes_transform(node_id);
-        let world_to_local = world_transform
-            .invert()
-            .expect("Node world transform is not invertible");
-
-        // Transform query to local mesh space
-        let local_query = query.transform(&world_to_local);
-
-        // Test against mesh and collect results
-        local_query.collect_mesh_hits(mesh, node_id, instance_id, &world_transform, results);
+    // Narrow phase: If this node has an instance, test it.
+    // Missing instance/mesh/transform just means the resource hasn't arrived yet;
+    // skip the narrow phase but still recurse to children.
+    if let NodePayload::Instance(instance_id) = node.payload() {
+        if let Some(instance) = scene.get_instance(*instance_id) {
+            if let Some(mesh) = scene.get_mesh(instance.mesh()) {
+                if let Some(world_transform) = scene.nodes_transform(node_id) {
+                    if let Some(world_to_local) = world_transform.invert() {
+                        let local_query = query.transform(&world_to_local);
+                        local_query.collect_mesh_hits(
+                            mesh,
+                            node_id,
+                            *instance_id,
+                            &world_transform,
+                            results,
+                        );
+                    }
+                }
+            }
+        }
     }
 
-    // Recurse to children
+    // Recurse to children. Missing child nodes are silently skipped.
     for &child_id in node.children() {
         pick_node(query, child_id, scene, results);
     }

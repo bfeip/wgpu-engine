@@ -559,12 +559,12 @@ impl TransformState {
                 let positions: Vec<Point3<f32>> = selected
                     .iter()
                     .filter_map(|&nid| {
-                        ctx.scene.nodes_bounding(nid).map(|aabb| aabb.center())
+                        ctx.scene.nodes_bounding(nid).bounds.map(|aabb| aabb.center())
                     })
                     .collect();
                 let pivot = centroid_of_slice(&positions).unwrap_or(Point3::origin());
                 let model_radius =
-                    scene_scale::model_radius_from_bounds(ctx.scene.bounding().as_ref());
+                    scene_scale::model_radius_from_bounds(ctx.scene.bounding().bounds.as_ref());
 
                 if self.gizmo.current_type == Some(gizmo_type) {
                     self.gizmo.update_position(pivot, ctx);
@@ -645,17 +645,18 @@ impl TransformOperator {
         let mut world_positions: Vec<Point3<f32>> = Vec::new();
         for node_id in &selected_nodes {
             if let Some(node) = ctx.scene.get_node(*node_id) {
-                let world_matrix = ctx.scene.nodes_transform(*node_id);
+                let Some(world_matrix) = ctx.scene.nodes_transform(*node_id) else { continue };
                 let world_transform = decompose_matrix(&world_matrix);
 
                 let parent_world_transform = if let Some(parent_id) = node.parent() {
-                    let parent_matrix = ctx.scene.nodes_transform(parent_id);
-                    decompose_matrix(&parent_matrix)
+                    ctx.scene.nodes_transform(parent_id)
+                        .map(|m| decompose_matrix(&m))
+                        .unwrap_or(Transform::IDENTITY)
                 } else {
                     Transform::IDENTITY
                 };
 
-                let world_pos = ctx.scene.nodes_bounding(*node_id)
+                let world_pos = ctx.scene.nodes_bounding(*node_id).bounds
                     .map(|aabb| aabb.center())
                     .unwrap_or(world_transform.position);
                 world_positions.push(world_pos);
@@ -683,7 +684,7 @@ impl TransformOperator {
 
         // Get model radius for sensitivity scaling
         state.model_radius =
-            scene_scale::model_radius_from_bounds(ctx.scene.bounding().as_ref());
+            scene_scale::model_radius_from_bounds(ctx.scene.bounding().bounds.as_ref());
 
         // Activate the transform
         state.mode = Some(mode);

@@ -70,6 +70,19 @@ pub struct SceneProperties {
     pub has_ibl: bool,
 }
 
+/// The result of a bounding box computation on an incomplete scene tree.
+///
+/// `incomplete` being true means at least one node, instance, or mesh referenced
+/// in the subtree was not yet present (e.g. mid-stream). In that case the result
+/// is not cached, so the next call will retry and may return a more complete value.
+#[derive(Debug, Clone)]
+pub struct BoundingResult {
+    /// The computed bounds, or `None` if no geometry was reachable.
+    pub bounds: Option<Aabb>,
+    /// True when the subtree was not fully populated at the time of computation.
+    pub incomplete: bool,
+}
+
 /// The scene container holding all meshes, materials, textures, instances, nodes, and lights.
 ///
 /// Scene provides device-free APIs for creating and managing scene objects.
@@ -546,7 +559,7 @@ impl Scene {
     pub fn active_camera_positioned(&self, aspect: f32) -> Option<PositionedCamera> {
         let id = self.active_camera?;
         let proj = self.active_camera_data()?.clone();
-        let world_transform = self.nodes_transform(id);
+        let world_transform = self.nodes_transform(id)?;
         Some(proj.into_positioned(world_transform, aspect))
     }
 
@@ -1057,72 +1070,75 @@ impl Scene {
     /// This returns the cached transform if valid, otherwise computes it by
     /// walking from the root to the node, computing and caching transforms
     /// along the way.
-    pub fn nodes_transform(&self, node_id: NodeId) -> Matrix4<f32> {
-        let node = self.get_node(node_id).expect("Node not found");
+    ///
+    /// Returns `None` if the node itself or any ancestor is missing from the
+    /// scene (e.g. during streaming before the full tree has arrived).
+    pub fn nodes_transform(&self, node_id: NodeId) -> Option<Matrix4<f32>> {
+        let node = self.get_node(node_id)?;
 
         // If cached and valid, return it
         if let Some(cached) = node.cached_world_transform() {
-            return cached;
+            return Some(cached);
         }
 
-        // Need to compute: build path from root to node
+        // Need to compute: build path from root to node.
+        // If any ancestor is missing (incomplete streaming), return None.
         let mut path = Vec::new();
         let mut current_id = node_id;
 
-        // Walk up to root
         loop {
             path.push(current_id);
-            let current = self.get_node(current_id).unwrap();
+            let current = self.get_node(current_id)?;
             if let Some(parent_id) = current.parent() {
                 current_id = parent_id;
             } else {
-                // Reached root
-                break;
+                break; // Reached root
             }
         }
 
         // Reverse to get root-to-node path
         path.reverse();
 
-        // Walk down the path, computing transforms
+        // Walk down the path, computing and caching transforms
         let mut world_transform = Matrix4::identity();
 
         for &id in &path {
-            let node = self.get_node(id).expect("Node not found");
+            let node = self.get_node(id)?;
 
-            // Check if this node has cached transform
             if let Some(cached) = node.cached_world_transform() {
                 world_transform = cached;
             } else {
-                // Compute: world = parent_world * local
                 let local_transform = node.compute_local_transform();
                 world_transform = world_transform * local_transform;
-
-                // Cache it
                 node.set_cached_world_transform(world_transform);
             }
         }
 
-        world_transform
+        Some(world_transform)
     }
 
     /// Gets the world-space bounding box of the entire scene.
     ///
-    /// Computes bounds by merging the bounds of all root nodes and their subtrees.
-    /// Returns None if the scene has no geometry.
-    pub fn bounding(&self) -> Option<Aabb> {
+    /// Merges the bounding results of all root nodes. `incomplete` is true if any
+    /// part of the scene tree was missing at the time of computation.
+    pub fn bounding(&self) -> BoundingResult {
         let mut merged_bounds: Option<Aabb> = None;
+        let mut incomplete = false;
 
         for &root_id in &self.root_nodes {
-            if let Some(root_bounds) = self.nodes_bounding(root_id) {
-                merged_bounds = match merged_bounds {
-                    Some(existing) => Some(existing.merge(&root_bounds)),
-                    None => Some(root_bounds),
-                };
+            let result = self.nodes_bounding(root_id);
+            if result.incomplete {
+                incomplete = true;
+            }
+            if let Some(b) = result.bounds {
+                merged_bounds = Some(match merged_bounds {
+                    Some(existing) => existing.merge(&b),
+                    None => b,
+                });
             }
         }
 
-        merged_bounds
+        BoundingResult { bounds: merged_bounds, incomplete }
     }
 
     /// Gets the world-space bounding box of a node and its subtree.
@@ -1131,60 +1147,100 @@ impl Scene {
     /// them bottom-up for the entire subtree rooted at this node.
     ///
     /// The bounds include both the node's instance (if any) and all descendants.
-    pub fn nodes_bounding(&self, node_id: NodeId) -> Option<Aabb> {
-        let node = self.get_node(node_id).expect("Node not found");
+    /// Check `BoundingResult::incomplete` to know if missing resources prevented
+    /// a full computation (e.g. during streaming).
+    pub fn nodes_bounding(&self, node_id: NodeId) -> BoundingResult {
+        let Some(node) = self.get_node(node_id) else {
+            return BoundingResult { bounds: None, incomplete: true };
+        };
 
-        // If cached and valid, return it
+        // Cached value was only ever written for a complete subtree.
         if !node.bounds_dirty() {
-            return node.cached_bounds();
+            return BoundingResult { bounds: node.cached_bounds(), incomplete: false };
         }
 
-        // Need to compute: first ensure transform is valid
-        let world_transform = self.nodes_transform(node_id);
-
-        // Recursively compute bounds for children
+        let mut incomplete = false;
         let mut merged_bounds: Option<Aabb> = None;
 
         for &child_id in node.children() {
-            if let Some(child_bounds) = self.nodes_bounding(child_id) {
-                merged_bounds = match merged_bounds {
-                    Some(existing) => Some(existing.merge(&child_bounds)),
-                    None => Some(child_bounds),
-                };
+            if self.get_node(child_id).is_none() {
+                // Child listed in the tree but not yet in the scene.
+                incomplete = true;
+                continue;
+            }
+            let child = self.nodes_bounding(child_id);
+            if child.incomplete {
+                incomplete = true;
+            }
+            if let Some(b) = child.bounds {
+                merged_bounds = Some(match merged_bounds {
+                    Some(existing) => existing.merge(&b),
+                    None => b,
+                });
             }
         }
 
-        // If this node has an instance, get its mesh bounds and transform to world space
-        let instance_id = match node.payload() {
-            NodePayload::Instance(id) => Some(*id),
-            _ => None,
-        };
-        let node_bounds = if let Some(instance_id) = instance_id {
-            let instance = self.instances.get(&instance_id)
-                .expect("Instance referenced by node not found in scene");
-            let mesh = self.meshes.get(&instance.mesh())
-                .expect("Mesh referenced by instance not found in scene");
-
-            let local_bounds = mesh.bounding();
-            let world_bounds = local_bounds.map(|bounds| {
-                bounds.transform(&world_transform)
-            });
-
-            // Merge with child bounds
-            match (world_bounds, merged_bounds) {
-                (Some(wb), Some(cb)) => Some(wb.merge(&cb)),
-                (Some(wb), None) => Some(wb),
-                (None, cb) => cb,
+        let bounds = match node.payload() {
+            NodePayload::Instance(instance_id) => {
+                let Some(world_transform) = self.nodes_transform(node_id) else {
+                    incomplete = true;
+                    return BoundingResult { bounds: merged_bounds, incomplete };
+                };
+                let Some(instance) = self.get_instance(*instance_id) else {
+                    incomplete = true;
+                    return BoundingResult { bounds: merged_bounds, incomplete };
+                };
+                let Some(mesh) = self.get_mesh(instance.mesh()) else {
+                    incomplete = true;
+                    return BoundingResult { bounds: merged_bounds, incomplete };
+                };
+                let world_bounds = mesh.bounding().map(|b| b.transform(&world_transform));
+                match (world_bounds, merged_bounds) {
+                    (Some(wb), Some(cb)) => Some(wb.merge(&cb)),
+                    (Some(wb), None) => Some(wb),
+                    (None, cb) => cb,
+                }
             }
-        } else {
-            // No instance - just use merged child bounds
-            merged_bounds
+            _ => merged_bounds,
         };
 
-        // Cache it
-        node.set_cached_bounds(node_bounds);
+        // Only cache when the subtree is fully populated.
+        if !incomplete {
+            node.set_cached_bounds(bounds);
+        }
 
-        node_bounds
+        BoundingResult { bounds, incomplete }
+    }
+
+    /// Returns `true` if the scene contains no dangling ID references.
+    ///
+    /// Specifically checks that:
+    /// - Every node ID listed in any node's `children` array exists in the scene.
+    /// - Every `Instance` payload references an instance that exists.
+    /// - Every instance's mesh and material IDs exist.
+    ///
+    /// Useful for streaming clients to know when the initial sync is fully
+    /// settled, or for assertions in tests.
+    pub fn is_complete(&self) -> bool {
+        for node in self.nodes.values() {
+            for &child_id in node.children() {
+                if !self.nodes.contains_key(&child_id) {
+                    return false;
+                }
+            }
+            if let NodePayload::Instance(instance_id) = node.payload() {
+                let Some(instance) = self.instances.get(instance_id) else {
+                    return false;
+                };
+                if !self.meshes.contains_key(&instance.mesh()) {
+                    return false;
+                }
+                if !self.materials.contains_key(&instance.material()) {
+                    return false;
+                }
+            }
+        }
+        true
     }
 
     // ========== Annotation Reification API ==========
@@ -1351,7 +1407,9 @@ impl Scene {
                 let Some(mesh) = self.meshes.get(&instance.mesh()) else {
                     return vec![];
                 };
-                let world_transform = self.nodes_transform(normals.target_node_id);
+                let Some(world_transform) = self.nodes_transform(normals.target_node_id) else {
+                    return vec![];
+                };
                 let normal_matrix =
                     crate::common::compute_normal_matrix(&world_transform);
 

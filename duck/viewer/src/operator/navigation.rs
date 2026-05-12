@@ -88,12 +88,12 @@ impl NavigationState {
         let camera = ctx.camera();
         match (self.mode(), button) {
             (NavigationMode::Turntable, MouseButton::Left | MouseButton::Right) => {
-                let pivot = ctx.scene.bounding().map(|b| b.center()).unwrap_or(camera.target);
+                let pivot = ctx.scene.bounding().bounds.map(|b| b.center()).unwrap_or(camera.target);
                 self.turntable.init_with_pivot(&camera, pivot);
                 true
             }
             (NavigationMode::Trackball, MouseButton::Left | MouseButton::Right) => {
-                let pivot = ctx.scene.bounding().map(|b| b.center()).unwrap_or(camera.target);
+                let pivot = ctx.scene.bounding().bounds.map(|b| b.center()).unwrap_or(camera.target);
                 self.trackball.init(&camera, pivot);
                 true
             }
@@ -108,7 +108,7 @@ impl NavigationState {
                 let pivot = if let Some(hit) = hits.first() {
                     hit.hit_point
                 } else {
-                    ctx.scene.bounding().map(|b| b.center()).unwrap_or(camera.target)
+                    ctx.scene.bounding().bounds.map(|b| b.center()).unwrap_or(camera.target)
                 };
                 match self.mode() {
                     NavigationMode::Turntable => self.turntable.init_with_pivot(&camera, pivot),
@@ -292,7 +292,7 @@ impl Operator for NavigationOperator {
                 MouseScrollDelta::LineDelta(_, y) => *y,
                 MouseScrollDelta::PixelDelta(_x, y) => *y / 100.0,
             };
-            let model_radius = scene_scale::model_radius_from_bounds(ctx.scene.bounding().as_ref());
+            let model_radius = scene_scale::model_radius_from_bounds(ctx.scene.bounding().bounds.as_ref());
             ctx.with_camera_mut(|cam| { s.borrow_mut().handle_wheel(scroll_amount, cam, model_radius); });
             true
         });
@@ -307,7 +307,7 @@ impl Operator for NavigationOperator {
         let s = self.state.clone();
         let update_cb = dispatcher.register(EventKind::Update, move |event, ctx| {
             let Event::Update { delta_time } = event else { return false };
-            let model_radius = scene_scale::model_radius_from_bounds(ctx.scene.bounding().as_ref());
+            let model_radius = scene_scale::model_radius_from_bounds(ctx.scene.bounding().bounds.as_ref());
             ctx.with_camera_mut(|cam| { s.borrow_mut().handle_update(*delta_time, cam, model_radius); });
             false
         });
