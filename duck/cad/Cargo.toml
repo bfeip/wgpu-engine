@@ -8,4 +8,5 @@ opencascade = { path = "../../third-party/opencascade-rs/crates/opencascade" }
 duck-engine-scene = { path = "../scene" }
 duck-engine-common = { path = "../common" }
 cgmath = "0.18"
+glam = "0.24"
 anyhow = "1"

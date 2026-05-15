@@ -1060,6 +1060,7 @@ dependencies = [
  "cgmath",
  "duck-engine-common",
  "duck-engine-scene",
+ "glam",
  "opencascade",
 ]
 
