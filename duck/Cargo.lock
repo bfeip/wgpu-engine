@@ -2546,6 +2546,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "modeler"
+version = "0.1.0"
+dependencies = [
+ "duck-engine-viewer",
+ "egui",
+ "egui-wgpu",
+ "egui-winit",
+ "env_logger",
+ "log",
+ "pollster 0.4.0",
+ "wgpu",
+ "winit",
+]
+
+[[package]]
 name = "moxcms"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -1,0 +1,17 @@
+[package]
+name = "modeler"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+duck-engine-viewer = { path = "../viewer", features = ["winit-support"] }
+egui = "0.33"
+egui-wgpu = "0.33"
+env_logger = "0.11"
+log = "0.4"
+pollster = "0.4"
+wgpu = "27.0"
+winit = "0.30"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+egui-winit = "0.33"

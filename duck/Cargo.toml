@@ -7,6 +7,7 @@ members = [
     "common",
     "import-export",
     "egui-demo",
+    "modeler",
     "scene-info",
     "scene-converter",
     "cad",
