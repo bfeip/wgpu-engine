@@ -1161,9 +1161,6 @@ dependencies = [
  "duck-engine-renderer",
  "duck-engine-scene",
  "duck-engine-streaming",
- "egui",
- "egui-wgpu",
- "egui-winit",
  "env_logger",
  "image",
  "log",
@@ -1213,10 +1210,13 @@ dependencies = [
  "cgmath",
  "duck-engine-viewer",
  "egui",
+ "egui-wgpu",
+ "egui-winit",
  "env_logger",
  "log",
  "pollster 0.4.0",
  "rfd",
+ "wgpu",
  "winit",
 ]
 

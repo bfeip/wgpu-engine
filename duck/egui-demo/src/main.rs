@@ -1,16 +1,18 @@
 mod ui;
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
+use egui_wgpu::RendererOptions;
 use winit::{
     application::ApplicationHandler,
+    dpi::PhysicalSize,
     event::{DeviceEvent, WindowEvent},
     event_loop::{ActiveEventLoop, EventLoop},
-    window::{Window, WindowId},
+    window::{Window, WindowAttributes, WindowId},
 };
 
 use duck_engine_viewer::common::RgbaColor;
-use duck_engine_viewer::egui_support::EguiViewerApp;
 use duck_engine_viewer::input::{ElementState, Key};
 use duck_engine_viewer::operator::NavigationMode;
 use duck_engine_viewer::import_export;
@@ -18,6 +20,7 @@ use duck_engine_viewer::import_export::format::{SaveOptions, save_to_file};
 use duck_engine_viewer::common::Transform;
 use duck_engine_viewer::scene::{Light, LightType, NodePayload, Scene};
 use duck_engine_viewer::winit_support;
+use duck_engine_viewer::Viewer;
 
 /// Debug actions triggered by key presses
 enum DebugAction {
@@ -26,24 +29,87 @@ enum DebugAction {
     CycleWorkflow,
 }
 
-/// Application state for the winit event loop with egui integration
+/// Owns all rendering state: the 3D viewer plus egui context and GPU renderer.
+///
+/// Field order matters: Rust drops fields in declaration order, so egui
+/// resources are released before the viewer and window. This prevents
+/// segfaults from background threads on Wayland during shutdown.
+struct ViewerState<'a> {
+    egui_renderer: egui_wgpu::Renderer,
+    egui_winit: egui_winit::State,
+    egui_ctx: egui::Context,
+    viewer: Viewer<'a>,
+    window: Arc<Window>,
+}
+
+impl ViewerState<'static> {
+    async fn new(event_loop: &ActiveEventLoop, window_attrs: WindowAttributes) -> Self {
+        let window = Arc::new(
+            event_loop
+                .create_window(window_attrs)
+                .expect("Failed to create window"),
+        );
+        Self::from_window(window, None).await
+    }
+
+    async fn from_window(window: Arc<Window>, size: Option<PhysicalSize<u32>>) -> Self {
+        let size = size.unwrap_or(window.inner_size());
+        let viewer = Viewer::new(Arc::clone(&window), size.width, size.height).await;
+
+        let egui_ctx = egui::Context::default();
+        let egui_winit = egui_winit::State::new(
+            egui_ctx.clone(),
+            egui::ViewportId::ROOT,
+            &*window,
+            Some(window.scale_factor() as f32),
+            None,
+            None,
+        );
+        let egui_renderer = egui_wgpu::Renderer::new(
+            viewer.device(),
+            viewer.surface_format(),
+            RendererOptions::default(),
+        );
+
+        Self { egui_renderer, egui_winit, egui_ctx, viewer, window }
+    }
+}
+
+impl<'a> ViewerState<'a> {
+    /// Handle a window event: egui gets first priority, viewer gets the rest.
+    fn handle_window_event(&mut self, event: &WindowEvent) -> bool {
+        let response = self.egui_winit.on_window_event(&self.window, event);
+        if !response.consumed {
+            if let Some(app_event) = winit_support::convert_window_event(event.clone()) {
+                self.viewer.handle_event(&app_event);
+            }
+        }
+        response.consumed
+    }
+
+    fn handle_device_event(&mut self, event: &DeviceEvent) {
+        if let Some(app_event) = winit_support::convert_device_event(event.clone()) {
+            self.viewer.handle_event(&app_event);
+        }
+    }
+}
+
+/// Application state for the winit event loop
 struct App<'a> {
-    viewer_app: Option<EguiViewerApp<'a>>,
+    state: Option<ViewerState<'a>>,
     ui: ui::UiState,
     /// Index of the currently active workflow (cycled by the W debug key).
     workflow_index: usize,
     /// Pending HDR environment path to load
-    pending_hdr_path: Option<std::path::PathBuf>,
+    pending_hdr_path: Option<PathBuf>,
     /// Pending scene file path to load
-    pending_scene_load_path: Option<std::path::PathBuf>,
+    pending_scene_load_path: Option<PathBuf>,
     /// Pending scene file path to save
-    pending_scene_save_path: Option<std::path::PathBuf>,
+    pending_scene_save_path: Option<PathBuf>,
 }
 
 impl<'a> App<'a> {
-    /// Handle the RedrawRequested event - build UI and render the frame
     fn handle_redraw_requested(&mut self) {
-        // Process any pending file operations
         if self.pending_hdr_path.is_some() {
             self.load_hdr_file();
         }
@@ -54,19 +120,43 @@ impl<'a> App<'a> {
             self.save_scene_file();
         }
 
-        // Build egui UI and render
         let mut ui_actions = ui::UiActions::default();
-        {
-            let viewer_app = self.viewer_app.as_mut().unwrap();
+        if let Some(state) = self.state.as_mut() {
+            state.viewer.update();
+
+            let raw_input = state.egui_winit.take_egui_input(&state.window);
             let ui = &mut self.ui;
-            if let Err(e) = viewer_app.render(|ctx, viewer| {
-                ui_actions = ui.build(ctx, viewer);
-            }) {
-                log::error!("Render error: {}", e);
+            let full_output = state.egui_ctx.run(raw_input, |ctx| {
+                ui_actions = ui.build(ctx, &mut state.viewer);
+            });
+
+            state.egui_winit.handle_platform_output(
+                &state.window,
+                full_output.platform_output.clone(),
+            );
+
+            match state.viewer.render_scene() {
+                Ok((output, view, mut encoder)) => {
+                    render_egui_overlay(
+                        &mut state.egui_renderer,
+                        &state.egui_ctx,
+                        &full_output,
+                        state.viewer.size(),
+                        state.window.scale_factor() as f32,
+                        state.viewer.device(),
+                        state.viewer.queue(),
+                        &mut encoder,
+                        &view,
+                    );
+                    state.viewer.present(encoder, output);
+                }
+                Err(e) => log::error!("Render error: {}", e),
             }
+
+            state.window.request_redraw();
         }
 
-        // Handle UI actions (after releasing viewer_app borrow)
+        // Handle UI actions (after releasing the state borrow)
         if ui_actions.load_scene {
             self.open_scene_file_dialog();
         }
@@ -86,17 +176,19 @@ impl<'a> App<'a> {
             self.clear_environment();
         }
         for change in ui_actions.visibility_changes {
-            let viewer = self.viewer_app.as_mut().unwrap().viewer_mut();
-            viewer
+            self.state
+                .as_mut()
+                .unwrap()
+                .viewer
                 .scene_mut()
                 .set_node_visibility(change.node_id, change.new_visibility);
         }
         if let Some(camera) = ui_actions.set_camera {
-            self.viewer_app.as_mut().unwrap().viewer_mut().set_camera(camera);
+            self.state.as_mut().unwrap().viewer.set_camera(camera);
         }
         #[cfg(feature = "streaming")]
         if let Some(url) = ui_actions.connect_stream {
-            let viewer = self.viewer_app.as_mut().unwrap().viewer_mut();
+            let viewer = &mut self.state.as_mut().unwrap().viewer;
             match viewer.connect_stream(&url) {
                 Ok(()) => {
                     self.ui.left.network.status =
@@ -110,23 +202,20 @@ impl<'a> App<'a> {
         }
         #[cfg(feature = "streaming")]
         if ui_actions.disconnect_stream {
-            self.viewer_app.as_mut().unwrap().viewer_mut().disconnect_stream();
+            self.state.as_mut().unwrap().viewer.disconnect_stream();
         }
-
-        // Request next frame
-        self.viewer_app.as_ref().unwrap().request_redraw();
     }
 
-    /// Clear the scene (remove all nodes, meshes, instances, etc.)
     fn clear_scene(&mut self) {
-        let viewer_app = self.viewer_app.as_mut().unwrap();
-        viewer_app.viewer_mut().set_scene(Scene::new());
-        log::info!("Scene cleared");
+        if let Some(state) = self.state.as_mut() {
+            state.viewer.set_scene(Scene::new());
+            log::info!("Scene cleared");
+        }
     }
 
-    /// Add a new light of the specified type to the scene
     fn add_light(&mut self, light_type: LightType) {
-        let viewer = self.viewer_app.as_mut().unwrap().viewer_mut();
+        let Some(state) = self.state.as_mut() else { return };
+        let viewer = &mut state.viewer;
         let white = RgbaColor { r: 1.0, g: 1.0, b: 1.0, a: 1.0 };
 
         let (light, transform) = match light_type {
@@ -147,40 +236,29 @@ impl<'a> App<'a> {
         log::info!("Added {:?} light", light_type);
     }
 
-    /// Open a file dialog to select an HDR environment map
     fn open_hdr_file_dialog(&mut self) {
-        let file = rfd::FileDialog::new()
-            .add_filter("HDR", &["hdr"])
-            .pick_file();
-
-        if let Some(path) = file {
+        if let Some(path) = rfd::FileDialog::new().add_filter("HDR", &["hdr"]).pick_file() {
             self.pending_hdr_path = Some(path);
         }
     }
 
-    /// Load an HDR environment map into the scene
     fn load_hdr_file(&mut self) {
-        let Some(path) = self.pending_hdr_path.take() else {
-            return;
-        };
-
-        let viewer = self.viewer_app.as_mut().unwrap().viewer_mut();
+        let Some(path) = self.pending_hdr_path.take() else { return };
+        let Some(state) = self.state.as_mut() else { return };
         let path_str = path.display().to_string();
-
-        let scene = viewer.scene_mut();
+        let scene = state.viewer.scene_mut();
         let env_id = scene.add_environment_map_from_hdr_path(&path);
         scene.set_active_environment_map(Some(env_id));
         log::info!("Loaded HDR environment: {}", path_str);
     }
 
-    /// Clear the active environment map
     fn clear_environment(&mut self) {
-        let viewer = self.viewer_app.as_mut().unwrap().viewer_mut();
-        viewer.scene_mut().set_active_environment_map(None);
-        log::info!("Environment cleared");
+        if let Some(state) = self.state.as_mut() {
+            state.viewer.scene_mut().set_active_environment_map(None);
+            log::info!("Environment cleared");
+        }
     }
 
-    /// Open a file dialog to select a scene file to load
     fn open_scene_file_dialog(&mut self) {
         #[allow(unused_mut)]
         let mut extensions: Vec<&str> = vec!["glb", "gltf", "duck"];
@@ -194,72 +272,53 @@ impl<'a> App<'a> {
         #[cfg(feature = "cad")]
         extensions.extend_from_slice(import_export::cad::CAD_EXTENSIONS);
 
-        let file = rfd::FileDialog::new()
+        if let Some(path) = rfd::FileDialog::new()
             .add_filter("3D Scenes", &extensions)
-            .pick_file();
-
-        if let Some(path) = file {
+            .pick_file()
+        {
             self.pending_scene_load_path = Some(path);
         }
     }
 
-    /// Load a scene file using the unified loader (auto-detects format)
     fn load_scene_file(&mut self) {
         use import_export::{load_sync, SceneSource, LoadOptions};
-        let Some(path) = self.pending_scene_load_path.take() else {
-            return;
-        };
-
+        let Some(path) = self.pending_scene_load_path.take() else { return };
+        let Some(state) = self.state.as_mut() else { return };
         let path_str = path.display().to_string();
         match load_sync(SceneSource::Path(path), LoadOptions::default()) {
             Ok(result) => {
-                let viewer = self.viewer_app.as_mut().unwrap().viewer_mut();
-                viewer.set_scene(result.scene);
+                state.viewer.set_scene(result.scene);
                 if let Some(camera) = result.camera {
-                    viewer.set_camera(camera);
-                } else if let Some(bounds) = viewer.scene().bounding().bounds {
-                    viewer.with_camera_mut(|c| c.fit_to_bounds(&bounds));
+                    state.viewer.set_camera(camera);
+                } else if let Some(bounds) = state.viewer.scene().bounding().bounds {
+                    state.viewer.with_camera_mut(|c| c.fit_to_bounds(&bounds));
                 }
                 log::info!("Loaded scene: {}", path_str);
             }
-            Err(e) => {
-                log::error!("Failed to load scene {}: {}", path_str, e);
-            }
+            Err(e) => log::error!("Failed to load scene {}: {}", path_str, e),
         }
     }
 
-    /// Open a file dialog to select where to save the scene
     fn save_scene_file_dialog(&mut self) {
-        let file = rfd::FileDialog::new()
+        if let Some(path) = rfd::FileDialog::new()
             .add_filter("Duck Scene", &["duck"])
             .set_file_name("scene.duck")
-            .save_file();
-
-        if let Some(path) = file {
+            .save_file()
+        {
             self.pending_scene_save_path = Some(path);
         }
     }
 
-    /// Save the scene to a file
     fn save_scene_file(&mut self) {
-        let Some(path) = self.pending_scene_save_path.take() else {
-            return;
-        };
-
-        let viewer = self.viewer_app.as_mut().unwrap().viewer_mut();
+        let Some(path) = self.pending_scene_save_path.take() else { return };
+        let Some(state) = self.state.as_mut() else { return };
         let path_str = path.display().to_string();
-
-        match save_to_file(viewer.scene(), &path, &SaveOptions::default()) {
-            Ok(()) => {
-                log::info!("Saved scene: {}", path_str);
-            }
-            Err(e) => {
-                log::error!("Failed to save scene {}: {}", path_str, e);
-            }
+        match save_to_file(state.viewer.scene(), &path, &SaveOptions::default()) {
+            Ok(()) => log::info!("Saved scene: {}", path_str),
+            Err(e) => log::error!("Failed to save scene {}: {}", path_str, e),
         }
     }
 
-    /// Handle debug key actions
     fn handle_debug_key_action(&mut self, action: DebugAction, _event_loop: &ActiveEventLoop) {
         match action {
             DebugAction::CycleOperator => self.cycle_operator_mode(),
@@ -268,16 +327,13 @@ impl<'a> App<'a> {
         }
     }
 
-    /// Check if event is a debug key press and return the action
     fn get_debug_key_action(event: &duck_engine_viewer::event::Event) -> Option<DebugAction> {
         let duck_engine_viewer::event::Event::KeyboardInput { event: key_event, .. } = event else {
             return None;
         };
-
         if key_event.state != ElementState::Pressed || key_event.repeat {
             return None;
         }
-
         match &key_event.logical_key {
             Key::Character('c') => Some(DebugAction::CycleOperator),
             Key::Character('o') => Some(DebugAction::ToggleOrtho),
@@ -286,52 +342,47 @@ impl<'a> App<'a> {
         }
     }
 
-    /// Cycle between Orbit and Walk navigation modes
     fn cycle_operator_mode(&mut self) {
-        let viewer = self.viewer_app.as_mut().unwrap().viewer_mut();
-        let new_mode = match viewer.navigation_mode() {
+        let Some(state) = self.state.as_mut() else { return };
+        let new_mode = match state.viewer.navigation_mode() {
             NavigationMode::Turntable => NavigationMode::Walk,
             NavigationMode::Walk => NavigationMode::Trackball,
             NavigationMode::Trackball => NavigationMode::Turntable,
         };
-        viewer.set_navigation_mode(new_mode);
+        state.viewer.set_navigation_mode(new_mode);
     }
 
-    /// Toggle between perspective and orthographic projection
     fn toggle_ortho(&mut self) {
-        let viewer_app = self.viewer_app.as_mut().unwrap();
-        viewer_app.viewer_mut().with_camera_mut(|c| c.ortho = !c.ortho);
+        if let Some(state) = self.state.as_mut() {
+            state.viewer.with_camera_mut(|c| c.ortho = !c.ortho);
+        }
     }
 
-    /// Cycle through the built-in rendering workflows.
     fn cycle_workflow(&mut self) {
         use duck_engine_viewer::renderer::RenderWorkflow;
-        let viewer = self.viewer_app.as_mut().unwrap().viewer_mut();
+        let Some(state) = self.state.as_mut() else { return };
         self.workflow_index = (self.workflow_index + 1) % 2;
         let workflow: Box<dyn RenderWorkflow> = match self.workflow_index {
-            0 => Box::new(viewer.shaded_workflow()),
-            _ => Box::new(viewer.hidden_line_workflow(Default::default())),
+            0 => Box::new(state.viewer.shaded_workflow()),
+            _ => Box::new(state.viewer.hidden_line_workflow(Default::default())),
         };
         log::info!("Switched to '{}' workflow", workflow.name());
-        viewer.set_workflow(workflow);
+        state.viewer.set_workflow(workflow);
     }
 }
 
 impl<'a> ApplicationHandler for App<'a> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        // Initialize on first resume
-        if self.viewer_app.is_none() {
+        if self.state.is_none() {
             let window_attrs = Window::default_attributes()
                 .with_title("Duck Engine - egui Example")
                 .with_inner_size(winit::dpi::LogicalSize::new(1600, 800));
 
-            let viewer_app = pollster::block_on(EguiViewerApp::with_window_attrs(
-                event_loop,
-                window_attrs,
-            ));
+            let state =
+                pollster::block_on(ViewerState::new(event_loop, window_attrs));
 
-            viewer_app.request_redraw();
-            self.viewer_app = Some(viewer_app);
+            state.window.request_redraw();
+            self.state = Some(state);
 
             let assets_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets");
             let default_scene = assets_dir.join("default-scene.duck");
@@ -349,8 +400,6 @@ impl<'a> ApplicationHandler for App<'a> {
         _window_id: WindowId,
         event: WindowEvent,
     ) {
-        let viewer_app = self.viewer_app.as_mut().unwrap();
-
         match event {
             WindowEvent::CloseRequested => {
                 event_loop.exit();
@@ -359,14 +408,14 @@ impl<'a> ApplicationHandler for App<'a> {
                 self.handle_redraw_requested();
             }
             _ => {
-                // Handle event - egui gets priority via handle_window_event
-                viewer_app.handle_window_event(&event);
-
-                // Check for debug keys (convert to app event for checking)
+                if let Some(state) = self.state.as_mut() {
+                    state.handle_window_event(&event);
+                }
                 if let Some(app_event) = winit_support::convert_window_event(event)
-                    && let Some(action) = Self::get_debug_key_action(&app_event) {
-                        self.handle_debug_key_action(action, event_loop);
-                    }
+                    && let Some(action) = Self::get_debug_key_action(&app_event)
+                {
+                    self.handle_debug_key_action(action, event_loop);
+                }
             }
         }
     }
@@ -377,22 +426,73 @@ impl<'a> ApplicationHandler for App<'a> {
         _device_id: winit::event::DeviceId,
         event: DeviceEvent,
     ) {
-        if let Some(viewer_app) = &mut self.viewer_app {
-            viewer_app.handle_device_event(&event);
+        if let Some(state) = self.state.as_mut() {
+            state.handle_device_event(&event);
         }
     }
 }
 
+/// Render egui on top of the 3D scene already in `encoder`/`view`.
+fn render_egui_overlay(
+    egui_renderer: &mut egui_wgpu::Renderer,
+    egui_ctx: &egui::Context,
+    full_output: &egui::FullOutput,
+    viewer_size: (u32, u32),
+    scale_factor: f32,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    encoder: &mut wgpu::CommandEncoder,
+    view: &wgpu::TextureView,
+) {
+    for (id, image_delta) in &full_output.textures_delta.set {
+        egui_renderer.update_texture(device, queue, *id, image_delta);
+    }
+
+    let clipped_primitives =
+        egui_ctx.tessellate(full_output.shapes.clone(), full_output.pixels_per_point);
+
+    let screen_descriptor = egui_wgpu::ScreenDescriptor {
+        size_in_pixels: [viewer_size.0, viewer_size.1],
+        pixels_per_point: scale_factor,
+    };
+
+    egui_renderer.update_buffers(device, queue, encoder, &clipped_primitives, &screen_descriptor);
+
+    {
+        let render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("egui Render Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
+        egui_renderer.render(
+            &mut render_pass.forget_lifetime(),
+            &clipped_primitives,
+            &screen_descriptor,
+        );
+    }
+
+    for id in &full_output.textures_delta.free {
+        egui_renderer.free_texture(id);
+    }
+}
+
 fn main() {
-    // Initialize logging
     env_logger::init();
 
-    // Create event loop
     let event_loop = EventLoop::new().unwrap();
 
-    // Create application state
     let mut app = App {
-        viewer_app: None,
+        state: None,
         ui: ui::UiState::default(),
         workflow_index: 0,
         pending_hdr_path: None,
@@ -400,6 +500,5 @@ fn main() {
         pending_scene_save_path: None,
     };
 
-    // Run the event loop
     event_loop.run_app(&mut app).unwrap();
 }
