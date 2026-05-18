@@ -1,12 +1,12 @@
-use cgmath::{EuclideanSpace, Matrix4, Point3, Quaternion, Vector3};
+use crate::{EuclideanSpace, Matrix4, Point3, Quaternion, Vector3};
 
 /// A decomposed 3D transform consisting of position, rotation, and scale (TRS order).
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Transform {
-    pub position: Point3<f32>,
-    pub rotation: Quaternion<f32>,
-    pub scale: Vector3<f32>,
+    pub position: Point3,
+    pub rotation: Quaternion,
+    pub scale: Vector3,
 }
 
 impl Transform {
@@ -31,7 +31,7 @@ impl Transform {
         },
     };
 
-    pub fn new(position: Point3<f32>, rotation: Quaternion<f32>, scale: Vector3<f32>) -> Self {
+    pub fn new(position: Point3, rotation: Quaternion, scale: Vector3) -> Self {
         Self {
             position,
             rotation,
@@ -39,7 +39,7 @@ impl Transform {
         }
     }
 
-    pub fn from_position(position: Point3<f32>) -> Self {
+    pub fn from_position(position: Point3) -> Self {
         Self {
             position,
             ..Self::IDENTITY
@@ -47,7 +47,7 @@ impl Transform {
     }
 
     /// Computes the 4x4 transformation matrix (Translation * Rotation * Scale).
-    pub fn to_matrix(&self) -> Matrix4<f32> {
+    pub fn to_matrix(&self) -> Matrix4 {
         let translation = Matrix4::from_translation(self.position.to_vec());
         let rotation = Matrix4::from(self.rotation);
         let scale =
@@ -66,7 +66,8 @@ impl Default for Transform {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cgmath::{SquareMatrix, assert_relative_eq};
+    use crate::{SquareMatrix, Point3, Quaternion, Vector3};
+    use cgmath::assert_relative_eq;
 
     #[test]
     fn test_identity() {

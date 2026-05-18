@@ -1,6 +1,6 @@
 use std::{sync::Arc};
 
-use cgmath::{Point3};
+use duck_engine_common::Point3;
 use winit::{
     application::ApplicationHandler,
     event::{DeviceEvent, DeviceId, WindowEvent},

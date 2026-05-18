@@ -1,23 +1,23 @@
-use cgmath::{Matrix4, Point3};
+use crate::{Matrix4, Point3};
 
 use crate::{EPSILON, ray::Ray};
 
 /// An axis-aligned bounding box (AABB) in 3D space.
 #[derive(Debug, Copy, Clone)]
 pub struct Aabb {
-    pub min: Point3<f32>,
-    pub max: Point3<f32>,
+    pub min: Point3,
+    pub max: Point3,
 }
 
 impl Aabb {
     /// Creates a new AABB from min and max points.
-    pub fn new(min: Point3<f32>, max: Point3<f32>) -> Self {
+    pub fn new(min: Point3, max: Point3) -> Self {
         Self { min, max }
     }
 
     /// Creates an AABB that encompasses all the given points.
     /// Returns None if the points slice is empty.
-    pub fn from_points(points: &[Point3<f32>]) -> Option<Self> {
+    pub fn from_points(points: &[Point3]) -> Option<Self> {
         if points.is_empty() {
             return None;
         }
@@ -39,7 +39,7 @@ impl Aabb {
     }
 
     /// Returns the 8 corner points of the AABB.
-    pub fn corners(&self) -> [Point3<f32>; 8] {
+    pub fn corners(&self) -> [Point3; 8] {
         [
             Point3::new(self.min.x, self.min.y, self.min.z),
             Point3::new(self.max.x, self.min.y, self.min.z),
@@ -55,11 +55,11 @@ impl Aabb {
     /// Transforms the AABB by the given 4x4 transformation matrix.
     /// This handles rotation/scaling/shearing by transforming all 8 corners
     /// and computing a new axis-aligned bounding box.
-    pub fn transform(&self, matrix: &Matrix4<f32>) -> Self {
+    pub fn transform(&self, matrix: &Matrix4) -> Self {
         // Transform all 8 corners of the box
         let corners = self.corners();
 
-        let transformed_corners: Vec<Point3<f32>> = corners
+        let transformed_corners: Vec<Point3> = corners
             .iter()
             .map(|corner| {
                 let homogeneous = matrix * corner.to_homogeneous();
@@ -124,7 +124,7 @@ impl Aabb {
     }
 
     /// Expands the AABB to include the given point.
-    pub fn expand(&self, point: Point3<f32>) -> Self {
+    pub fn expand(&self, point: Point3) -> Self {
         Self {
             min: Point3::new(
                 self.min.x.min(point.x),
@@ -156,7 +156,7 @@ impl Aabb {
     }
 
     /// Returns the center point of the AABB.
-    pub fn center(&self) -> Point3<f32> {
+    pub fn center(&self) -> Point3 {
         Point3::new(
             (self.min.x + self.max.x) / 2.0,
             (self.min.y + self.max.y) / 2.0,
@@ -186,7 +186,7 @@ impl Aabb {
     }
 
     /// Tests if a point is inside the AABB (inclusive of boundaries).
-    pub fn contains_point(&self, point: Point3<f32>) -> bool {
+    pub fn contains_point(&self, point: Point3) -> bool {
         point.x >= self.min.x && point.x <= self.max.x &&
         point.y >= self.min.y && point.y <= self.max.y &&
         point.z >= self.min.z && point.z <= self.max.z
@@ -203,7 +203,7 @@ impl Aabb {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cgmath::{InnerSpace, Matrix4, Vector3, Rad};
+    use crate::{InnerSpace, Matrix4, Vector3, Rad, EPSILON};
 
     #[test]
     fn test_aabb_new() {
@@ -236,7 +236,7 @@ mod tests {
 
     #[test]
     fn test_aabb_from_empty_points() {
-        let points: Vec<Point3<f32>> = vec![];
+        let points: Vec<Point3> = vec![];
         assert!(Aabb::from_points(&points).is_none());
     }
 

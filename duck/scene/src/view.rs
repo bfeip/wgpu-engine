@@ -1,4 +1,5 @@
 use crate::PositionedCamera;
+use duck_engine_common::InnerSpace;
 
 /// Unique identifier for a named view in the scene.
 pub type ViewId = crate::Id;
@@ -48,7 +49,6 @@ impl View {
     /// `fovy`, `aspect` — are taken from `reference`, which is expected to be already
     /// calibrated for the scene (e.g. via `PositionedCamera::fit_to_bounds`).
     pub fn apply_to(&self, reference: &PositionedCamera) -> PositionedCamera {
-        use cgmath::InnerSpace;
         let orbit_dist = reference.length().max(0.001);
         let dir = (self.camera.target - self.camera.eye).normalize();
         let mut camera = reference.clone();

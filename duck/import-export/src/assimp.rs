@@ -9,7 +9,7 @@ use std::path::Path;
 use std::rc::Rc;
 
 use anyhow::{Result, anyhow};
-use cgmath::{InnerSpace, Matrix4, Point3, Quaternion, Rotation3, Vector3};
+use duck_engine_common::{InnerSpace, Matrix4, Point3, Quaternion, Rad, Rotation3, Vector3};
 use russimp::material::{Material as RMaterial, TextureType};
 use russimp::node::Node as RNode;
 use russimp::scene::{PostProcess, Scene as RScene};
@@ -460,7 +460,7 @@ fn load_lights(assimp_lights: &[russimp::light::Light], scene: &mut Scene) {
         };
         let intensity = 1.0;
 
-        let pos = cgmath::Point3::new(light.pos.x, light.pos.y, light.pos.z);
+        let pos = Point3::new(light.pos.x, light.pos.y, light.pos.z);
         let dir = Vector3::new(light.direction.x, light.direction.y, light.direction.z);
         let rotation = direction_to_rotation(dir);
 
@@ -479,14 +479,14 @@ fn load_lights(assimp_lights: &[russimp::light::Light], scene: &mut Scene) {
 }
 
 /// Computes the rotation quaternion that aligns the node's local -Z axis to the given direction.
-fn direction_to_rotation(direction: Vector3<f32>) -> Quaternion<f32> {
+fn direction_to_rotation(direction: Vector3) -> Quaternion {
     let from = Vector3::new(0.0_f32, 0.0, -1.0);
     let to = direction.normalize();
     let dot = from.dot(to);
     if dot > 0.9999 {
         Quaternion::new(1.0, 0.0, 0.0, 0.0)
     } else if dot < -0.9999 {
-        Quaternion::from_axis_angle(Vector3::new(0.0, 1.0, 0.0), cgmath::Rad(std::f32::consts::PI))
+        Quaternion::from_axis_angle(Vector3::new(0.0, 1.0, 0.0), Rad(std::f32::consts::PI))
     } else {
         let cross = from.cross(to);
         Quaternion::new(dot + 1.0, cross.x, cross.y, cross.z).normalize()

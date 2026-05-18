@@ -1,4 +1,4 @@
-use cgmath::{InnerSpace, Matrix4, Point3, Vector3};
+use crate::{InnerSpace, Matrix4, Point3, Vector3};
 
 use crate::EPSILON;
 
@@ -10,7 +10,7 @@ pub struct SegmentApproach {
     /// Parameter along the ray at the closest approach point
     pub t: f32,
     /// Closest point on the segment to the ray
-    pub closest_on_segment: Point3<f32>,
+    pub closest_on_segment: Point3,
     /// Minimum 3D distance between the ray and the segment
     pub distance: f32,
 }
@@ -18,14 +18,14 @@ pub struct SegmentApproach {
 /// A ray in 3D space, defined by an origin point and a direction vector.
 #[derive(Debug, Copy, Clone)]
 pub struct Ray {
-    pub origin: Point3<f32>,
-    pub direction: Vector3<f32>, // Should be normalized
+    pub origin: Point3,
+    pub direction: Vector3, // Should be normalized
 }
 
 impl Ray {
     /// Creates a new ray with the given origin and direction.
     /// The direction will be normalized automatically.
-    pub fn new(origin: Point3<f32>, direction: Vector3<f32>) -> Self {
+    pub fn new(origin: Point3, direction: Vector3) -> Self {
         Self {
             origin,
             direction: direction.normalize(),
@@ -34,12 +34,12 @@ impl Ray {
 
     /// Returns a point along the ray at parameter t.
     /// The point is calculated as: origin + t * direction
-    pub fn point_at(&self, t: f32) -> Point3<f32> {
+    pub fn point_at(&self, t: f32) -> Point3 {
         self.origin + self.direction * t
     }
 
     /// Transforms the ray by the given 4x4 transformation matrix.
-    pub fn transform(&self, matrix: &Matrix4<f32>) -> Self {
+    pub fn transform(&self, matrix: &Matrix4) -> Self {
         // Transform origin as a point (with w=1)
         let origin_homogeneous = matrix * self.origin.to_homogeneous();
         let new_origin = Point3::from_homogeneous(origin_homogeneous);
@@ -62,8 +62,8 @@ impl Ray {
     /// Returns `None` if the closest approach is behind the ray origin (t ≤ 0).
     pub fn closest_approach_to_segment(
         &self,
-        p0: Point3<f32>,
-        p1: Point3<f32>,
+        p0: Point3,
+        p1: Point3,
     ) -> Option<SegmentApproach> {
         let d = p1 - p0; // segment direction
         let w = self.origin - p0;
@@ -126,9 +126,9 @@ impl Ray {
     /// Returns None if there's no intersection or if the intersection is behind the ray origin.
     pub fn intersect_triangle(
         &self,
-        v0: Point3<f32>,
-        v1: Point3<f32>,
-        v2: Point3<f32>,
+        v0: Point3,
+        v1: Point3,
+        v2: Point3,
     ) -> Option<(f32, f32, f32)> {
         let edge1 = v1 - v0;
         let edge2 = v2 - v0;
@@ -185,7 +185,7 @@ impl Ray {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cgmath::{Matrix4, Point3, Vector3, Rad};
+    use crate::{Matrix4, Point3, Vector3, Rad, EPSILON};
 
     #[test]
     fn test_ray_creation_normalizes_direction() {

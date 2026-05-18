@@ -19,7 +19,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use cgmath::{
+use duck_engine_common::{
     EuclideanSpace, InnerSpace, Matrix4, Point3, Quaternion, Rotation, SquareMatrix, Vector3,
 };
 use duck_engine_scene::{Mesh, NodeFlags, Scene, common};
@@ -128,7 +128,7 @@ impl GizmoState {
     ///
     /// Handles are parented under the annotation root so they inherit annotation
     /// visibility and stay grouped with other overlay geometry.
-    fn show(&mut self, gizmo_type: GizmoType, pivot: Point3<f32>, size: f32, ctx: &mut EventContext) {
+    fn show(&mut self, gizmo_type: GizmoType, pivot: Point3, size: f32, ctx: &mut EventContext) {
         self.hide(ctx);
 
         self.root_node.get_or_insert(
@@ -183,7 +183,7 @@ impl GizmoState {
     }
 
     /// Update the gizmo position (e.g. when pivot changes).
-    fn update_position(&self, pivot: Point3<f32>, ctx: &mut EventContext) {
+    fn update_position(&self, pivot: Point3, ctx: &mut EventContext) {
         for &node_id in &self.node_ids {
             if ctx.scene.has_node(node_id) {
                 ctx.scene.set_node_position(node_id, pivot);
@@ -280,13 +280,13 @@ struct TransformState {
     original_transforms: Vec<OriginalTransform>,
 
     /// The rotation of the primary selected node (for local axis transforms).
-    primary_rotation: Quaternion<f32>,
+    primary_rotation: Quaternion,
 
     /// Accumulated mouse movement since transform started.
     accumulated_delta: (f32, f32),
 
     /// Center point of selection in world space (pivot point for rotation/scale).
-    pivot_world: Point3<f32>,
+    pivot_world: Point3,
 
     /// Model radius for scaling sensitivity.
     model_radius: f32,
@@ -359,7 +359,7 @@ impl TransformState {
     }
 
     /// Get the constraint axis direction in world space.
-    fn get_constraint_axis(&self) -> Option<Vector3<f32>> {
+    fn get_constraint_axis(&self) -> Option<Vector3> {
         match self.axis_constraint {
             AxisConstraint::None => None,
             AxisConstraint::WorldX => Some(Vector3::unit_x()),
@@ -372,7 +372,7 @@ impl TransformState {
     }
 
     /// Compute the translation delta based on mouse movement and constraints.
-    fn compute_translation(&self, ctx: &EventContext) -> Vector3<f32> {
+    fn compute_translation(&self, ctx: &EventContext) -> Vector3 {
         let camera = ctx.camera();
         let pivot = &self.pivot_world;
         let (width, height) = ctx.size;
@@ -396,7 +396,7 @@ impl TransformState {
     }
 
     /// Compute the rotation based on mouse movement and constraints.
-    fn compute_rotation(&self, ctx: &EventContext) -> Quaternion<f32> {
+    fn compute_rotation(&self, ctx: &EventContext) -> Quaternion {
         // 0.5 degrees per pixel
         let sensitivity = 0.5_f32.to_radians();
         let angle = self.accumulated_delta.0 * sensitivity;
@@ -413,7 +413,7 @@ impl TransformState {
     }
 
     /// Compute the scale factor based on mouse movement and constraints.
-    fn compute_scale(&self) -> Vector3<f32> {
+    fn compute_scale(&self) -> Vector3 {
         // 0.5% change per pixel
         let sensitivity = 0.005;
         let factor = 1.0 + self.accumulated_delta.0 * sensitivity;
@@ -605,7 +605,7 @@ impl TransformState {
         let selected = ctx.selection.selected_nodes();
         match (self.gizmo_mode, selected.is_empty()) {
             (Some(gizmo_type), false) => {
-                let positions: Vec<Point3<f32>> = selected
+                let positions: Vec<Point3> = selected
                     .iter()
                     .filter_map(|&nid| {
                         ctx.scene.nodes_bounding(nid).bounds.map(|aabb| aabb.center())
@@ -641,7 +641,7 @@ impl TransformState {
 /// For uniform scale (no constraint), returns as-is. For single-axis world
 /// constraints, rotates the scale axis into local space and decomposes it
 /// into per-axis scale contributions.
-fn world_scale_to_local(scale: Vector3<f32>, parent_rotation_inv: Quaternion<f32>) -> Vector3<f32> {
+fn world_scale_to_local(scale: Vector3, parent_rotation_inv: Quaternion) -> Vector3 {
     // For uniform scale (no constraint), return as-is
     if (scale.x - scale.y).abs() < 1e-6 && (scale.y - scale.z).abs() < 1e-6 {
         return scale;
@@ -691,7 +691,7 @@ impl TransformOperator {
         }
 
         // Store original transforms with world-space info
-        let mut world_positions: Vec<Point3<f32>> = Vec::new();
+        let mut world_positions: Vec<Point3> = Vec::new();
         for node_id in &selected_nodes {
             if let Some(node) = ctx.scene.get_node(*node_id) {
                 let Some(world_matrix) = ctx.scene.nodes_transform(*node_id) else { continue };

@@ -7,7 +7,7 @@ use crate::common::{
     scale_position_about_pivot_world,
 };
 use bitflags::bitflags;
-use cgmath::{Matrix4, Point3, Quaternion, Vector3};
+use duck_engine_common::{Matrix4, Point3, Quaternion, Vector3};
 use std::cell::Cell;
 
 /// Unique identifier for a Node in the scene tree.
@@ -137,7 +137,7 @@ pub struct Node {
 
     // Cached computed values
     #[cfg_attr(feature = "serde", serde(skip))]
-    cached_world_transform: Cell<Option<Matrix4<f32>>>,
+    cached_world_transform: Cell<Option<Matrix4>>,
     #[cfg_attr(feature = "serde", serde(skip))]
     cached_bounds: Cell<Option<Aabb>>,
 }
@@ -170,7 +170,7 @@ impl Node {
     /// Computes the local transform matrix from position, rotation, and scale.
     ///
     /// The order of operations is: Translation * Rotation * Scale (TRS)
-    pub fn compute_local_transform(&self) -> Matrix4<f32> {
+    pub fn compute_local_transform(&self) -> Matrix4 {
         self.transform.to_matrix()
     }
 
@@ -187,31 +187,31 @@ impl Node {
     // Methods to get and set individual parts of the transform. This is
     // for convince and to make sure that individual mutations of the transform
     // properly update the dirty state.
-    pub fn position(&self) -> Point3<f32> {
+    pub fn position(&self) -> Point3 {
         self.transform.position
     }
 
-    pub fn set_position(&mut self, position: Point3<f32>) {
+    pub fn set_position(&mut self, position: Point3) {
         self.transform.position = position;
         self.mark_transform_dirty();
         self.mark_bounds_dirty();
     }
 
-    pub fn rotation(&self) -> Quaternion<f32> {
+    pub fn rotation(&self) -> Quaternion {
         self.transform.rotation
     }
 
-    pub fn set_rotation(&mut self, rotation: Quaternion<f32>) {
+    pub fn set_rotation(&mut self, rotation: Quaternion) {
         self.transform.rotation = rotation;
         self.mark_transform_dirty();
         self.mark_bounds_dirty();
     }
 
-    pub fn scale(&self) -> Vector3<f32> {
+    pub fn scale(&self) -> Vector3 {
         self.transform.scale
     }
 
-    pub fn set_scale(&mut self, scale: Vector3<f32>) {
+    pub fn set_scale(&mut self, scale: Vector3) {
         self.transform.scale = scale;
         self.mark_transform_dirty();
         self.mark_bounds_dirty();
@@ -220,7 +220,7 @@ impl Node {
     // ========== Transform Manipulation Methods ==========
 
     /// Rotates the node's position and orientation around a world-space pivot point.
-    pub fn rotate_about_pivot(&mut self, pivot: Point3<f32>, rotation: Quaternion<f32>) {
+    pub fn rotate_about_pivot(&mut self, pivot: Point3, rotation: Quaternion) {
         let new_position = rotate_position_about_pivot(self.transform.position, pivot, rotation);
         let new_rotation = compose_rotation(self.transform.rotation, rotation);
         self.set_position(new_position);
@@ -228,7 +228,7 @@ impl Node {
     }
 
     /// Scales the node's position and scale relative to a world-space pivot point.
-    pub fn scale_about_pivot(&mut self, pivot: Point3<f32>, scale_factor: Vector3<f32>) {
+    pub fn scale_about_pivot(&mut self, pivot: Point3, scale_factor: Vector3) {
         let new_position = scale_position_about_pivot_world(self.transform.position, pivot, scale_factor);
         let new_scale = apply_scale(self.transform.scale, scale_factor);
         self.set_position(new_position);
@@ -240,9 +240,9 @@ impl Node {
     /// The local space is defined by the given orientation.
     pub fn scale_about_pivot_local(
         &mut self,
-        pivot: Point3<f32>,
-        scale_factor: Vector3<f32>,
-        local_orientation: Quaternion<f32>,
+        pivot: Point3,
+        scale_factor: Vector3,
+        local_orientation: Quaternion,
     ) {
         let new_position =
             scale_position_about_pivot_local(self.transform.position, pivot, scale_factor, local_orientation);
@@ -252,27 +252,27 @@ impl Node {
     }
 
     /// Translates the node by the given world space offset.
-    pub fn translate(&mut self, offset: Vector3<f32>) {
+    pub fn translate(&mut self, offset: Vector3) {
         self.set_position(self.transform.position + offset);
     }
 
     /// Returns the local X axis (right) in world space.
-    pub fn local_x_axis(&self) -> Vector3<f32> {
+    pub fn local_x_axis(&self) -> Vector3 {
         local_axis_x(self.transform.rotation)
     }
 
     /// Returns the local Y axis (up) in world space.
-    pub fn local_y_axis(&self) -> Vector3<f32> {
+    pub fn local_y_axis(&self) -> Vector3 {
         local_axis_y(self.transform.rotation)
     }
 
     /// Returns the local Z axis (forward) in world space.
-    pub fn local_z_axis(&self) -> Vector3<f32> {
+    pub fn local_z_axis(&self) -> Vector3 {
         local_axis_z(self.transform.rotation)
     }
 
     /// Returns all local axes (right, up, forward) in world space.
-    pub fn local_axes(&self) -> (Vector3<f32>, Vector3<f32>, Vector3<f32>) {
+    pub fn local_axes(&self) -> (Vector3, Vector3, Vector3) {
         local_axes(self.transform.rotation)
     }
 
@@ -374,12 +374,12 @@ impl Node {
 
     /// Gets the cached world transform if valid
     /// You probably want [crate::Scene::nodes_transform]
-    pub fn cached_world_transform(&self) -> Option<Matrix4<f32>> {
+    pub fn cached_world_transform(&self) -> Option<Matrix4> {
         self.cached_world_transform.get()
     }
 
     /// Sets the cached world transform
-    pub fn set_cached_world_transform(&self, transform: Matrix4<f32>) {
+    pub fn set_cached_world_transform(&self, transform: Matrix4) {
         self.cached_world_transform.set(Some(transform));
     }
 
@@ -432,7 +432,7 @@ impl Node {
 mod tests {
     use super::*;
     use crate::common::{EPSILON, Transform};
-    use cgmath::{Deg, EuclideanSpace, Quaternion, Rotation3, Vector3};
+    use duck_engine_common::{Deg, EuclideanSpace, Quaternion, Rotation3, Vector3};
 
     // ========================================================================
     // Node Creation Tests

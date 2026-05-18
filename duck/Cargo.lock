@@ -1083,6 +1083,7 @@ dependencies = [
  "cgmath",
  "criterion",
  "duck-engine-cad",
+ "duck-engine-common",
  "duck-engine-scene",
  "gltf",
  "image",
@@ -1106,6 +1107,7 @@ dependencies = [
  "anyhow",
  "bytemuck",
  "cgmath",
+ "duck-engine-common",
  "duck-engine-scene",
  "half",
  "image",
@@ -1139,6 +1141,7 @@ dependencies = [
  "anyhow",
  "bincode",
  "cgmath",
+ "duck-engine-common",
  "duck-engine-import-export",
  "duck-engine-scene",
  "log",
@@ -1158,6 +1161,7 @@ dependencies = [
  "cgmath",
  "console_error_panic_hook",
  "console_log",
+ "duck-engine-common",
  "duck-engine-import-export",
  "duck-engine-renderer",
  "duck-engine-scene",
@@ -1209,6 +1213,7 @@ name = "egui-demo"
 version = "0.1.0"
 dependencies = [
  "cgmath",
+ "duck-engine-common",
  "duck-engine-viewer",
  "egui",
  "egui-wgpu",
@@ -2552,6 +2557,7 @@ version = "0.1.0"
 dependencies = [
  "cgmath",
  "duck-engine-cad",
+ "duck-engine-common",
  "duck-engine-viewer",
  "egui",
  "egui-wgpu",

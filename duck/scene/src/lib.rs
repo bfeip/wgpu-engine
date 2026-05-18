@@ -16,7 +16,7 @@ mod node;
 mod texture;
 mod view;
 
-use cgmath::{Deg, Matrix4, Point3, Quaternion, Rotation3, SquareMatrix, Vector3};
+use duck_engine_common::{Deg, Matrix4, Point3, Quaternion, Rotation3, SquareMatrix, Vector3};
 use image::DynamicImage;
 use std::collections::HashMap;
 use std::path::Path;
@@ -536,9 +536,9 @@ impl Scene {
         // Upper-left: yaw +45° (toward right), then pitch -45° (downward).
         let key_rotation = Quaternion::from_angle_x(Deg(-45.0)) * Quaternion::from_angle_y(Deg(45.0));
         let key_transform = common::Transform::new(
-            cgmath::Point3::new(0.0, 0.0, 0.0),
+            Point3::new(0.0, 0.0, 0.0),
             key_rotation,
-            cgmath::Vector3::new(1.0, 1.0, 1.0),
+            Vector3::new(1.0, 1.0, 1.0),
         );
         let key_id = self
             .add_node(Some(camera_node_id), Some("DefaultKeyLight".to_string()), key_transform, NodeFlags::NONE)
@@ -548,9 +548,9 @@ impl Scene {
         // Lower-right: yaw -45° (toward left), then pitch +45° (upward) — opposite corner.
         let fill_rotation = Quaternion::from_angle_x(Deg(45.0)) * Quaternion::from_angle_y(Deg(-45.0));
         let fill_transform = common::Transform::new(
-            cgmath::Point3::new(0.0, 0.0, 0.0),
+            Point3::new(0.0, 0.0, 0.0),
             fill_rotation,
-            cgmath::Vector3::new(1.0, 1.0, 1.0),
+            Vector3::new(1.0, 1.0, 1.0),
         );
         let fill_id = self
             .add_node(Some(camera_node_id), Some("DefaultFillLight".to_string()), fill_transform, NodeFlags::NONE)
@@ -845,7 +845,7 @@ impl Scene {
     }
 
     /// Sets the position of a node and invalidates ancestor bounds.
-    pub fn set_node_position(&mut self, node_id: NodeId, position: Point3<f32>) {
+    pub fn set_node_position(&mut self, node_id: NodeId, position: Point3) {
         let node = self.nodes.get_mut(&node_id).expect("Node not found");
         node.set_position(position);
         self.invalidate_subtree_transforms(node_id);
@@ -854,7 +854,7 @@ impl Scene {
     }
 
     /// Sets the rotation of a node and invalidates ancestor bounds.
-    pub fn set_node_rotation(&mut self, node_id: NodeId, rotation: Quaternion<f32>) {
+    pub fn set_node_rotation(&mut self, node_id: NodeId, rotation: Quaternion) {
         let node = self.nodes.get_mut(&node_id).expect("Node not found");
         node.set_rotation(rotation);
         self.invalidate_subtree_transforms(node_id);
@@ -863,7 +863,7 @@ impl Scene {
     }
 
     /// Sets the scale of a node and invalidates ancestor bounds.
-    pub fn set_node_scale(&mut self, node_id: NodeId, scale: Vector3<f32>) {
+    pub fn set_node_scale(&mut self, node_id: NodeId, scale: Vector3) {
         let node = self.nodes.get_mut(&node_id).expect("Node not found");
         node.set_scale(scale);
         self.invalidate_subtree_transforms(node_id);
@@ -975,7 +975,7 @@ impl Scene {
     ///
     /// Returns `None` if the node itself or any ancestor is missing from the
     /// scene (e.g. during streaming before the full tree has arrived).
-    pub fn nodes_transform(&self, node_id: NodeId) -> Option<Matrix4<f32>> {
+    pub fn nodes_transform(&self, node_id: NodeId) -> Option<Matrix4> {
         let node = self.get_node(node_id)?;
 
         // If cached and valid, return it

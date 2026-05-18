@@ -1,5 +1,5 @@
 use super::*;
-use cgmath::{Point3, Quaternion, Vector3, Matrix4, SquareMatrix};
+use duck_engine_common::{Point3, Quaternion, Vector3, Matrix4, SquareMatrix};
 use crate::common::{EPSILON, Transform};
 
 #[test]

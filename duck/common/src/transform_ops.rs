@@ -5,7 +5,7 @@
 //! These functions are designed to be reusable across operators, animation systems,
 //! gizmos, and other subsystems.
 
-use cgmath::{EuclideanSpace, InnerSpace, Point3, Quaternion, Rotation, Rotation3, Vector3};
+use crate::{EuclideanSpace, InnerSpace, Point3, Quaternion, Rad, Rotation, Rotation3, Vector3};
 
 use crate::EPSILON;
 
@@ -23,10 +23,10 @@ use crate::EPSILON;
 /// # Returns
 /// The new position after rotation around the pivot
 pub fn rotate_position_about_pivot(
-    position: Point3<f32>,
-    pivot: Point3<f32>,
-    rotation: Quaternion<f32>,
-) -> Point3<f32> {
+    position: Point3,
+    pivot: Point3,
+    rotation: Quaternion,
+) -> Point3 {
     let offset = position - pivot;
     let rotated_offset = rotation.rotate_vector(offset);
     pivot + rotated_offset
@@ -43,9 +43,9 @@ pub fn rotate_position_about_pivot(
 /// # Returns
 /// The new orientation
 pub fn compose_rotation(
-    current_rotation: Quaternion<f32>,
-    rotation: Quaternion<f32>,
-) -> Quaternion<f32> {
+    current_rotation: Quaternion,
+    rotation: Quaternion,
+) -> Quaternion {
     rotation * current_rotation
 }
 
@@ -59,10 +59,10 @@ pub fn compose_rotation(
 /// # Returns
 /// The new position after scaling about the pivot
 pub fn scale_position_about_pivot_world(
-    position: Point3<f32>,
-    pivot: Point3<f32>,
-    scale: Vector3<f32>,
-) -> Point3<f32> {
+    position: Point3,
+    pivot: Point3,
+    scale: Vector3,
+) -> Point3 {
     let offset = position - pivot;
     let scaled_offset = Vector3::new(offset.x * scale.x, offset.y * scale.y, offset.z * scale.z);
     pivot + scaled_offset
@@ -82,11 +82,11 @@ pub fn scale_position_about_pivot_world(
 /// # Returns
 /// The new position after scaling about the pivot in local space
 pub fn scale_position_about_pivot_local(
-    position: Point3<f32>,
-    pivot: Point3<f32>,
-    scale: Vector3<f32>,
-    local_orientation: Quaternion<f32>,
-) -> Point3<f32> {
+    position: Point3,
+    pivot: Point3,
+    scale: Vector3,
+    local_orientation: Quaternion,
+) -> Point3 {
     let offset = position - pivot;
     // Transform offset to local space
     let local_offset = local_orientation.conjugate().rotate_vector(offset);
@@ -109,7 +109,7 @@ pub fn scale_position_about_pivot_local(
 ///
 /// # Returns
 /// The new scale
-pub fn apply_scale(current_scale: Vector3<f32>, scale_factor: Vector3<f32>) -> Vector3<f32> {
+pub fn apply_scale(current_scale: Vector3, scale_factor: Vector3) -> Vector3 {
     Vector3::new(
         current_scale.x * scale_factor.x,
         current_scale.y * scale_factor.y,
@@ -128,7 +128,7 @@ pub fn apply_scale(current_scale: Vector3<f32>, scale_factor: Vector3<f32>) -> V
 ///
 /// # Returns
 /// A unit vector representing the local X axis in world space
-pub fn local_axis_x(rotation: Quaternion<f32>) -> Vector3<f32> {
+pub fn local_axis_x(rotation: Quaternion) -> Vector3 {
     rotation.rotate_vector(Vector3::unit_x())
 }
 
@@ -139,7 +139,7 @@ pub fn local_axis_x(rotation: Quaternion<f32>) -> Vector3<f32> {
 ///
 /// # Returns
 /// A unit vector representing the local Y axis in world space
-pub fn local_axis_y(rotation: Quaternion<f32>) -> Vector3<f32> {
+pub fn local_axis_y(rotation: Quaternion) -> Vector3 {
     rotation.rotate_vector(Vector3::unit_y())
 }
 
@@ -150,7 +150,7 @@ pub fn local_axis_y(rotation: Quaternion<f32>) -> Vector3<f32> {
 ///
 /// # Returns
 /// A unit vector representing the local Z axis in world space
-pub fn local_axis_z(rotation: Quaternion<f32>) -> Vector3<f32> {
+pub fn local_axis_z(rotation: Quaternion) -> Vector3 {
     rotation.rotate_vector(Vector3::unit_z())
 }
 
@@ -161,7 +161,7 @@ pub fn local_axis_z(rotation: Quaternion<f32>) -> Vector3<f32> {
 ///
 /// # Returns
 /// A tuple of (right, up, forward) unit vectors in world space
-pub fn local_axes(rotation: Quaternion<f32>) -> (Vector3<f32>, Vector3<f32>, Vector3<f32>) {
+pub fn local_axes(rotation: Quaternion) -> (Vector3, Vector3, Vector3) {
     (
         local_axis_x(rotation),
         local_axis_y(rotation),
@@ -183,9 +183,9 @@ pub fn local_axes(rotation: Quaternion<f32>) -> (Vector3<f32>, Vector3<f32>, Vec
 ///
 /// # Returns
 /// A rotation quaternion, or identity if the axis is degenerate
-pub fn quaternion_from_axis_angle_safe(axis: Vector3<f32>, angle: f32) -> Quaternion<f32> {
+pub fn quaternion_from_axis_angle_safe(axis: Vector3, angle: f32) -> Quaternion {
     if axis.magnitude2() > EPSILON {
-        Quaternion::from_axis_angle(axis.normalize(), cgmath::Rad(angle))
+        Quaternion::from_axis_angle(axis.normalize(), Rad(angle))
     } else {
         Quaternion::new(1.0, 0.0, 0.0, 0.0)
     }
@@ -202,7 +202,7 @@ pub fn quaternion_from_axis_angle_safe(axis: Vector3<f32>, angle: f32) -> Quater
 ///
 /// # Returns
 /// The centroid, or None if the iterator is empty
-pub fn centroid<'a>(points: impl Iterator<Item = &'a Point3<f32>>) -> Option<Point3<f32>> {
+pub fn centroid<'a>(points: impl Iterator<Item = &'a Point3>) -> Option<Point3> {
     let mut sum = Vector3::new(0.0, 0.0, 0.0);
     let mut count = 0;
 
@@ -225,14 +225,14 @@ pub fn centroid<'a>(points: impl Iterator<Item = &'a Point3<f32>>) -> Option<Poi
 ///
 /// # Returns
 /// The centroid, or None if the slice is empty
-pub fn centroid_of_slice(points: &[Point3<f32>]) -> Option<Point3<f32>> {
+pub fn centroid_of_slice(points: &[Point3]) -> Option<Point3> {
     centroid(points.iter())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cgmath::{Deg, Rotation3};
+    use crate::{Deg, Rotation3, EPSILON};
 
     const TEST_EPSILON: f32 = 1e-5;
 
@@ -477,7 +477,7 @@ mod tests {
 
     #[test]
     fn test_centroid_empty() {
-        let points: Vec<Point3<f32>> = vec![];
+        let points: Vec<Point3> = vec![];
         let result = centroid_of_slice(&points);
 
         assert!(result.is_none());

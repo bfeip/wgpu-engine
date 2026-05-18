@@ -1,6 +1,6 @@
 use std::f32::consts::PI;
 
-use cgmath::{InnerSpace, Matrix4, Point3, Vector3};
+use duck_engine_common::{InnerSpace, Matrix4, Point3, Vector3};
 
 use super::{Mesh, MeshIndex, MeshPrimitive, PrimitiveType, Vertex};
 
@@ -499,8 +499,8 @@ impl Mesh {
     /// This is a convenience wrapper around [`Mesh::cone`] that orients the cone
     /// so the apex is at `apex` and the base extends `height` units along `direction`.
     pub fn cone_directed(
-        apex: Point3<f32>,
-        direction: Vector3<f32>,
+        apex: Point3,
+        direction: Vector3,
         radius: f32,
         height: f32,
         segments: u32,
@@ -764,7 +764,7 @@ impl Mesh {
     }
 
     /// Creates a line segment going from start to end.
-    pub fn line(start: Point3<f32>, end: Point3<f32>) -> Self {
+    pub fn line(start: Point3, end: Point3) -> Self {
         let vertices = vec![
             Vertex {
                 position: start.into(),
@@ -788,7 +788,7 @@ impl Mesh {
 
     /// Creates a polyline linking each point to the next. If closed, links the final
     /// Point back to the first.
-    pub fn polyline(points: Vec<Point3<f32>>, closed: bool) -> Self {
+    pub fn polyline(points: Vec<Point3>, closed: bool) -> Self {
         let vertices: Vec<Vertex> = points
             .iter()
             .map(|&p| Vertex {

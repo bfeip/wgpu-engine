@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use cgmath::{MetricSpace, Point3, Quaternion, Vector3};
+use duck_engine_common::{MetricSpace, Point3, Quaternion, Vector3};
 use duck_engine_cad::{CadImportOptions, CadShape};
 use duck_engine_viewer::{
     common::{Ray, RgbaColor, Transform},
@@ -15,7 +15,7 @@ pub const SPHERE_OP_ID: OperatorId = 100;
 
 enum Phase {
     Idle,
-    Defining { center: Point3<f32>, preview_node: NodeId },
+    Defining { center: Point3, preview_node: NodeId },
 }
 
 struct Inner {
@@ -36,7 +36,7 @@ impl SphereOperator {
     }
 }
 
-fn intersect_xz(ray: &Ray) -> Option<Point3<f32>> {
+fn intersect_xz(ray: &Ray) -> Option<Point3> {
     if ray.direction.y.abs() < 1e-6 {
         return None;
     }
@@ -59,7 +59,7 @@ fn preview_options() -> CadImportOptions {
     }
 }
 
-fn set_sphere_transform(ctx: &mut EventContext, node: NodeId, center: Point3<f32>, radius: f32) {
+fn set_sphere_transform(ctx: &mut EventContext, node: NodeId, center: Point3, radius: f32) {
     ctx.scene.set_node_transform(node, Transform {
         position: center,
         rotation: Quaternion::new(1.0, 0.0, 0.0, 0.0),

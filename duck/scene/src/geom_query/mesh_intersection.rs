@@ -1,4 +1,4 @@
-use cgmath::Point3;
+use duck_engine_common::Point3;
 
 use crate::common::{ConvexPolyhedron, Ray};
 use crate::Mesh;
@@ -9,7 +9,7 @@ pub struct TriangleMeshHit {
     /// Distance along the ray to the hit point (in local space)
     pub distance: f32,
     /// Hit location in local mesh space
-    pub hit_point: Point3<f32>,
+    pub hit_point: Point3,
     /// Index of the triangle that was hit (index into the mesh's index buffer / 3)
     pub triangle_index: usize,
     /// Barycentric coordinates of the hit point on the triangle (u, v, w) where w = 1 - u - v
@@ -22,7 +22,7 @@ pub struct LineMeshHit {
     /// Parameter along the ray at the closest approach point (in local space)
     pub t: f32,
     /// Closest point on the segment to the ray (in local mesh space)
-    pub closest_point: Point3<f32>,
+    pub closest_point: Point3,
     /// Minimum distance between the ray and the segment
     pub distance_to_ray: f32,
     /// Index of the segment (0-based pair index into the mesh's line index buffer)
@@ -164,7 +164,7 @@ pub fn intersect_volume(
 
 #[cfg(test)]
 mod tests {
-    use cgmath::{Point3, Vector3};
+    use duck_engine_common::{Point3, Vector3};
 
     use crate::common::{Aabb, ConvexPolyhedron, Ray};
     use crate::{Mesh, MeshPrimitive, PrimitiveType, Vertex};

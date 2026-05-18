@@ -811,10 +811,11 @@ mod tests {
     /// Test callbacks that don't access context fields can safely ignore them.
     fn create_mock_context_parts() -> (Option<(f32, f32)>, Scene, SelectionManager) {
         use crate::scene::PositionedCamera;
+        use duck_engine_common::Vector3;
         let camera = PositionedCamera {
             eye: (0.0, 0.0, 1.0).into(),
             target: (0.0, 0.0, 0.0).into(),
-            up: cgmath::Vector3::unit_y(),
+            up: Vector3::unit_y(),
             aspect: 800.0 / 600.0,
             fovy: 45.0,
             znear: 0.1,

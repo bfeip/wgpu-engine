@@ -2,7 +2,7 @@ use crate::event::{CallbackId, Event, EventContext, EventDispatcher, EventKind};
 use crate::geom_query::{RayHit, RayPickQuery, RayPickResult, pick_all_from_ray};
 use crate::operator::{Operator, OperatorId};
 use crate::selection::SelectionItem;
-use cgmath::{InnerSpace};
+use duck_engine_common::InnerSpace;
 
 /// Operator for selecting objects in the scene via mouse click.
 ///

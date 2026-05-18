@@ -1,4 +1,5 @@
 use std::path::Path;
+use duck_engine_common::{InnerSpace, Matrix4, Point3, SquareMatrix, Vector3};
 use duck_engine_scene::{
     AlphaMode, Material, MaterialFlags, MaterialId, Mesh, MeshId, MeshPrimitive,
     NodeFlags, PositionedCamera, PrimitiveType, Scene, Texture, TextureFormat, Vertex
@@ -376,8 +377,8 @@ fn load_material(
 }
 
 /// Converts a glTF transform to a 4x4 matrix.
-fn transform_to_matrix(transform: &gltf::scene::Transform) -> cgmath::Matrix4<f32> {
-    cgmath::Matrix4::from(transform.clone().matrix())
+fn transform_to_matrix(transform: &gltf::scene::Transform) -> Matrix4 {
+    Matrix4::from(transform.clone().matrix())
 }
 
 /// Decomposes a glTF transform into position, rotation, and scale.
@@ -391,10 +392,9 @@ fn decompose_transform(transform: &gltf::scene::Transform) -> duck_engine_scene:
 /// node contains a camera.
 fn extract_camera_from_node(
     gltf_node: &gltf::Node,
-    world_transform: cgmath::Matrix4<f32>,
+    world_transform: Matrix4,
     aspect: f32,
 ) -> Option<PositionedCamera> {
-    use cgmath::{InnerSpace, Point3, Vector3};
 
     let gltf_camera = gltf_node.camera()?;
 
@@ -475,7 +475,7 @@ fn extract_camera_from_node(
 /// Returns the first camera found along with its world transform.
 fn find_camera_recursive(
     gltf_node: &gltf::Node,
-    parent_transform: cgmath::Matrix4<f32>,
+    parent_transform: Matrix4,
     aspect: f32,
 ) -> Option<PositionedCamera> {
     let local_transform = transform_to_matrix(&gltf_node.transform());
@@ -641,7 +641,6 @@ pub fn build_gltf_scene(
     aspect: f32,
 ) -> anyhow::Result<Option<PositionedCamera>> {
     use std::collections::HashMap;
-    use cgmath::SquareMatrix;
 
     let mut camera: Option<PositionedCamera> = None;
 
@@ -658,7 +657,7 @@ pub fn build_gltf_scene(
             if camera.is_none() {
                 camera = find_camera_recursive(
                     &gltf_node,
-                    cgmath::Matrix4::identity(),
+                    Matrix4::identity(),
                     aspect,
                 );
             }

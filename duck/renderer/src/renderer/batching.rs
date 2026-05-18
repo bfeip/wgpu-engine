@@ -1,8 +1,6 @@
 use std::collections::HashMap;
 
-use cgmath::{Matrix3, Matrix4, SquareMatrix};
-
-use cgmath::Point3;
+use duck_engine_common::{Matrix3, Matrix4, Point3, SquareMatrix};
 
 use crate::scene::{
     AlphaMode, InstanceId, Light, MaterialId, MeshId, NodeId, NodePayload, PrimitiveType, Scene,
@@ -35,14 +33,14 @@ pub type BatchKey = (MeshId, MaterialId, PrimitiveType);
 pub struct InstanceTransform {
     pub node_id: NodeId,
     pub instance_id: InstanceId,
-    pub world_transform: Matrix4<f32>,
-    pub normal_matrix: Matrix3<f32>,
+    pub world_transform: Matrix4,
+    pub normal_matrix: Matrix3,
 }
 
 impl InstanceTransform {
     /// Creates a new InstanceTransform with the given world transform.
     /// The normal matrix is computed from the world transform.
-    pub fn new(node_id: NodeId, instance_id: InstanceId, world_transform: Matrix4<f32>) -> Self {
+    pub fn new(node_id: NodeId, instance_id: InstanceId, world_transform: Matrix4) -> Self {
         let normal_matrix = common::compute_normal_matrix(&world_transform);
         Self {
             node_id,
@@ -112,7 +110,7 @@ pub(crate) struct SceneFrameData {
 fn collect_scene_data_recursive(
     scene: &Scene,
     node_id: NodeId,
-    parent_transform: Matrix4<f32>,
+    parent_transform: Matrix4,
     parent_changed: bool,
     data: &mut SceneFrameData,
 ) {
@@ -216,7 +214,7 @@ pub(crate) fn collect_draw_batches(scene: &Scene) -> Vec<DrawBatch> {
 pub(crate) fn sort_batches_for_transparency(
     batches: &mut Vec<DrawBatch>,
     scene: &Scene,
-    camera_position: Point3<f32>,
+    camera_position: Point3,
 ) {
     // Stable partition: opaque/mask first, then blend
     batches.sort_by(|a, b| {
@@ -245,7 +243,7 @@ fn is_transparent_batch(batch: &DrawBatch, scene: &Scene) -> bool {
         .unwrap_or(false)
 }
 
-fn batch_centroid_distance_sq(batch: &DrawBatch, camera_position: Point3<f32>) -> f32 {
+fn batch_centroid_distance_sq(batch: &DrawBatch, camera_position: Point3) -> f32 {
     if batch.instances.is_empty() {
         return 0.0;
     }
@@ -377,7 +375,7 @@ impl DrawData {
     /// - Partitions highlighted instances if a non-empty highlight is provided
     pub(crate) fn new(
         scene: &Scene,
-        camera_position: Point3<f32>,
+        camera_position: Point3,
         highlight: Option<&dyn HighlightQuery>,
     ) -> Self {
         let mut batches = collect_draw_batches(scene);
@@ -456,7 +454,7 @@ impl DrawData {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cgmath::{Deg, Matrix4, Quaternion, Rotation3, SquareMatrix, Vector3};
+    use duck_engine_common::{Deg, Matrix4, Quaternion, Rotation3, SquareMatrix, Vector3};
     use crate::scene::common::EPSILON;
 
     fn nid() -> NodeId { NodeId::new() }

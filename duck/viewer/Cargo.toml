@@ -31,6 +31,7 @@ streaming = ["dep:duck-engine-streaming"]
 
 # Shared dependencies
 [dependencies]
+duck-engine-common = { path = "../common" }
 duck-engine-renderer = { path = "../renderer" }
 duck-engine-streaming = { path = "../streaming", optional = true }
 duck-engine-scene = { path = "../scene" }

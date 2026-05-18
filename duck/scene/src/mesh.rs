@@ -1,7 +1,8 @@
 use std::{cell::Cell, collections::HashSet, fs::File, io::BufReader, path::Path};
 
 use anyhow::{Context, Result};
-use cgmath::{InnerSpace, Matrix4, Point3, Transform, Vector3};
+use duck_engine_common::{InnerSpace, Matrix4, Point3, Vector3};
+use cgmath::Transform as _;
 
 mod primitives;
 
@@ -351,7 +352,7 @@ impl Mesh {
     }
 
     /// Translates all vertex positions by the given offset.
-    pub fn translate(&mut self, offset: Vector3<f32>) {
+    pub fn translate(&mut self, offset: Vector3) {
         for v in &mut self.vertices {
             v.position[0] += offset.x;
             v.position[1] += offset.y;
@@ -362,7 +363,7 @@ impl Mesh {
     }
 
     /// Translates all vertex positions by the given offset (consuming variant).
-    pub fn translated(mut self, offset: Vector3<f32>) -> Self {
+    pub fn translated(mut self, offset: Vector3) -> Self {
         self.translate(offset);
         self
     }
@@ -372,7 +373,7 @@ impl Mesh {
     /// Positions are transformed as points (affected by translation).
     /// Normals are transformed by the inverse-transpose of the upper 3x3
     /// to handle non-uniform scaling correctly.
-    pub fn transform(&mut self, matrix: &Matrix4<f32>) {
+    pub fn transform(&mut self, matrix: &Matrix4) {
         let normal_matrix = crate::common::compute_normal_matrix(matrix);
 
         for v in &mut self.vertices {
@@ -391,7 +392,7 @@ impl Mesh {
     }
 
     /// Transforms all vertex positions and normals by a 4x4 matrix (consuming variant).
-    pub fn transformed(mut self, matrix: &Matrix4<f32>) -> Self {
+    pub fn transformed(mut self, matrix: &Matrix4) -> Self {
         self.transform(matrix);
         self
     }
@@ -565,7 +566,7 @@ impl Mesh {
         }
 
         // Extract positions from vertices
-        let positions: Vec<Point3<f32>> = self
+        let positions: Vec<Point3> = self
             .vertices
             .iter()
             .map(|v| Point3::new(v.position[0], v.position[1], v.position[2]))

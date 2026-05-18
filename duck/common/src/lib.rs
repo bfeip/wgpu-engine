@@ -1,4 +1,4 @@
-use cgmath::{InnerSpace, Matrix, Matrix3, Matrix4, Point3, Quaternion, SquareMatrix, Vector3};
+
 
 /// Epsilon value for floating-point comparisons
 pub const EPSILON: f32 = 1e-6;
@@ -21,6 +21,26 @@ pub use transform_ops::{
     local_axis_y, local_axis_z, quaternion_from_axis_angle_safe, rotate_position_about_pivot,
     scale_position_about_pivot_local, scale_position_about_pivot_world,
 };
+
+// Math type aliases — all cgmath generics fixed to f32
+pub type Point3 = cgmath::Point3<f32>;
+pub type Vector2 = cgmath::Vector2<f32>;
+pub type Vector3 = cgmath::Vector3<f32>;
+pub type Vector4 = cgmath::Vector4<f32>;
+pub type Matrix3 = cgmath::Matrix3<f32>;
+pub type Matrix4 = cgmath::Matrix4<f32>;
+pub type Quaternion = cgmath::Quaternion<f32>;
+pub type PerspectiveFov = cgmath::PerspectiveFov<f32>;
+pub type Euler = cgmath::Euler<cgmath::Rad<f32>>;
+
+// Math trait re-exports (must be in scope to call methods like .normalize(), .dot(), .invert())
+pub use cgmath::{InnerSpace, EuclideanSpace, MetricSpace, SquareMatrix, Matrix, Rotation, Rotation3, Angle, Zero, One};
+
+// Angle types: re-exported generically so constructors like Deg(90.0) and Rad(PI) work
+pub use cgmath::{Rad, Deg};
+
+// Math free function re-exports
+pub use cgmath::{point3, vec2, vec3, vec4, ortho, perspective};
 
 /// An RGBA color, with values between 0.0 and 1.0
 #[repr(C)]
@@ -54,7 +74,7 @@ impl RgbaColor {
 /// when non-uniform scaling is present.
 ///
 /// If the matrix is not invertible, returns an identity matrix.
-pub fn compute_normal_matrix(world_transform: &Matrix4<f32>) -> Matrix3<f32> {
+pub fn compute_normal_matrix(world_transform: &Matrix4) -> Matrix3 {
     // Extract the upper-left 3x3 matrix
     let mat3 = Matrix3::from([
         [world_transform[0][0], world_transform[0][1], world_transform[0][2]],
@@ -79,7 +99,7 @@ pub fn compute_normal_matrix(world_transform: &Matrix4<f32>) -> Matrix3<f32> {
 ///
 /// # Returns
 /// A [`Transform`] containing the decomposed translation, rotation, and scale.
-pub fn decompose_matrix(matrix: &Matrix4<f32>) -> Transform {
+pub fn decompose_matrix(matrix: &Matrix4) -> Transform {
     // Extract translation from the last column
     let position = Point3::new(matrix[3][0], matrix[3][1], matrix[3][2]);
 
@@ -104,7 +124,7 @@ pub fn decompose_matrix(matrix: &Matrix4<f32>) -> Transform {
     let rotation_matrix = Matrix3::from([rot_x.into(), rot_y.into(), rot_z.into()]);
 
     // Convert rotation matrix to quaternion
-    let rotation: Quaternion<f32> = rotation_matrix.into();
+    let rotation: Quaternion = rotation_matrix.into();
 
     Transform::new(position, rotation, scale)
 }
@@ -122,20 +142,20 @@ pub fn array_to_rgba(a: [f32; 4]) -> RgbaColor {
     }
 }
 
-pub fn point3_to_array(p: cgmath::Point3<f32>) -> [f32; 3] {
+pub fn point3_to_array(p: Point3) -> [f32; 3] {
     [p.x, p.y, p.z]
 }
 
-pub fn array_to_point3(a: [f32; 3]) -> cgmath::Point3<f32> {
-    cgmath::Point3::new(a[0], a[1], a[2])
+pub fn array_to_point3(a: [f32; 3]) -> Point3 {
+    Point3::new(a[0], a[1], a[2])
 }
 
-pub fn vec3_to_array(v: cgmath::Vector3<f32>) -> [f32; 3] {
+pub fn vec3_to_array(v: Vector3) -> [f32; 3] {
     [v.x, v.y, v.z]
 }
 
-pub fn array_to_vec3(a: [f32; 3]) -> cgmath::Vector3<f32> {
-    cgmath::Vector3::new(a[0], a[1], a[2])
+pub fn array_to_vec3(a: [f32; 3]) -> Vector3 {
+    Vector3::new(a[0], a[1], a[2])
 }
 
 /// Computes an orthonormal basis from a direction vector.
@@ -145,7 +165,7 @@ pub fn array_to_vec3(a: [f32; 3]) -> cgmath::Vector3<f32> {
 ///
 /// # Panics
 /// Panics if `direction` is a zero vector.
-pub fn orthonormal_basis(direction: Vector3<f32>) -> (Vector3<f32>, Vector3<f32>) {
+pub fn orthonormal_basis(direction: Vector3) -> (Vector3, Vector3) {
     let dir = direction.normalize();
     let up_hint = if dir.y.abs() > 0.99 {
         Vector3::new(1.0, 0.0, 0.0)
@@ -167,7 +187,7 @@ pub enum Axis {
 
 impl Axis {
     /// Unit direction vector for this axis.
-    pub fn direction(&self) -> Vector3<f32> {
+    pub fn direction(&self) -> Vector3 {
         match self {
             Axis::X => Vector3::unit_x(),
             Axis::Y => Vector3::unit_y(),
@@ -188,8 +208,7 @@ impl Axis {
     ///
     /// Useful for orienting primitives (cylinders, cones) that are built along +Y
     /// to instead point along the desired axis.
-    pub fn rotation_from_y(&self) -> Matrix4<f32> {
-        use cgmath::Deg;
+    pub fn rotation_from_y(&self) -> Matrix4 {
         match self {
             Axis::Y => Matrix4::from_scale(1.0),
             Axis::X => Matrix4::from_angle_z(Deg(-90.0)),
@@ -198,8 +217,7 @@ impl Axis {
     }
 
     /// Quaternion that rotates Y-up geometry to align with this axis.
-    pub fn quaternion_from_y(&self) -> Quaternion<f32> {
-        use cgmath::{Deg, Rotation3};
+    pub fn quaternion_from_y(&self) -> Quaternion {
         match self {
             Axis::Y => Quaternion::new(1.0, 0.0, 0.0, 0.0),
             Axis::X => Quaternion::from_angle_z(Deg(-90.0)),
@@ -214,15 +232,14 @@ impl Axis {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cgmath::{Matrix3, Matrix4, Vector3};
 
     // ===== compute_normal_matrix Tests =====
 
     #[test]
     fn test_normal_matrix_identity() {
-        let identity = Matrix4::<f32>::identity();
+        let identity = Matrix4::identity();
         let normal_mat = compute_normal_matrix(&identity);
-        let expected = Matrix3::<f32>::identity();
+        let expected = Matrix3::identity();
 
         // Compare each element
         for i in 0..3 {
@@ -248,7 +265,6 @@ mod tests {
 
     #[test]
     fn test_normal_matrix_non_uniform_scale() {
-        use cgmath::Matrix4;
         // Non-uniform scale
         let scale = Matrix4::from_nonuniform_scale(2.0, 3.0, 4.0);
         let normal_mat = compute_normal_matrix(&scale);
@@ -262,7 +278,6 @@ mod tests {
 
     #[test]
     fn test_normal_matrix_rotation() {
-        use cgmath::{Matrix4, Rad};
         // Rotation should preserve the rotation in normal matrix
         let rotation = Matrix4::from_angle_z(Rad(std::f32::consts::PI / 4.0));
         let normal_mat = compute_normal_matrix(&rotation);
@@ -277,7 +292,6 @@ mod tests {
 
     #[test]
     fn test_normal_matrix_combined_transforms() {
-        use cgmath::{Matrix4, Rad};
         // Translation doesn't affect normal matrix, but rotation and scale do
         // Transform: T(10,20,30) * R_y(90°) * S(2)
         let transform = Matrix4::from_translation(Vector3::new(10.0, 20.0, 30.0))
@@ -323,7 +337,7 @@ mod tests {
         let normal_mat = compute_normal_matrix(&zero_scale);
 
         // Should return identity for non-invertible matrix
-        let identity = Matrix3::<f32>::identity();
+        let identity = Matrix3::identity();
         for i in 0..3 {
             for j in 0..3 {
                 let diff: f32 = normal_mat[i][j] - identity[i][j];
@@ -368,7 +382,6 @@ mod tests {
 
     #[test]
     fn test_decompose_rotation_only() {
-        use cgmath::Rad;
         let matrix = Matrix4::from_angle_y(Rad(std::f32::consts::PI / 2.0));
         let t = decompose_matrix(&matrix);
 
@@ -407,7 +420,6 @@ mod tests {
 
     #[test]
     fn test_decompose_trs_composition() {
-        use cgmath::Rad;
         // Create a TRS matrix
         let t = Matrix4::from_translation(Vector3::new(1.0, 2.0, 3.0));
         let r = Matrix4::from_angle_z(Rad(std::f32::consts::PI / 4.0));

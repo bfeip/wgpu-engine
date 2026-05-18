@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+duck-engine-common = { path = "../common" }
 duck-engine-scene = { path = "../scene", features = ["serde"] }
 duck-engine-import-export = { path = "../import-export" }
 anyhow = "1.0"

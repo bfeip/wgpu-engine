@@ -4,7 +4,7 @@
 //! a mesh and material ready to be added to the scene. All geometry is built at
 //! the origin; positioning at the selection pivot is done via node transforms.
 
-use cgmath::{Deg, Matrix4, Vector3};
+use duck_engine_common::{Deg, Matrix4, Vector3};
 
 use crate::common::{Axis, RgbaColor};
 use crate::scene::{AlphaMode, Material, MaterialFlags, Mesh, PrimitiveType};
@@ -256,7 +256,7 @@ mod tests {
     fn translate_handles_pickable_by_ray() {
         use crate::common::Ray;
         use crate::geom_query::intersect_ray;
-        use cgmath::Vector3;
+        use duck_engine_common::Vector3;
 
         for handle in build_translate_handles(1.0) {
             let aabb = handle.mesh.bounding().expect("handle should have bounds");
@@ -301,7 +301,7 @@ mod tests {
     fn scale_handles_pickable_by_ray() {
         use crate::common::Ray;
         use crate::geom_query::intersect_ray;
-        use cgmath::Vector3;
+        use duck_engine_common::Vector3;
 
         for handle in build_scale_handles(1.0) {
             let aabb = handle.mesh.bounding().expect("handle should have bounds");
@@ -341,7 +341,7 @@ mod tests {
     fn rotate_handles_pickable_by_ray() {
         use crate::common::Ray;
         use crate::geom_query::intersect_ray;
-        use cgmath::Vector3;
+        use duck_engine_common::Vector3;
 
         for handle in build_rotate_handles(1.0) {
             let aabb = handle.mesh.bounding().expect("handle should have bounds");
@@ -384,7 +384,7 @@ mod tests {
         use crate::common::Ray;
         use crate::geom_query::pick_all_from_ray;
         use crate::scene::{Material, Mesh, PrimitiveType, Scene};
-        use cgmath::{Point3, Vector3};
+        use duck_engine_common::{Point3, Vector3};
 
         let pivot = Point3::new(5.0, 3.0, 0.0);
 
@@ -477,7 +477,7 @@ mod tests {
         use crate::common::Ray;
         use crate::geom_query::pick_all_from_ray;
         use crate::scene::{Material, Mesh, PrimitiveType, Scene};
-        use cgmath::{Point3, Vector3};
+        use duck_engine_common::{Point3, Vector3};
 
         let initial_pivot = Point3::new(0.0, 0.0, 0.0);
         let new_pivot = Point3::new(10.0, 5.0, 3.0);

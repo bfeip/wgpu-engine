@@ -1,4 +1,4 @@
-use cgmath::{EuclideanSpace, InnerSpace, Matrix, Matrix4, Point3, SquareMatrix, Vector3, Vector4};
+use crate::{EuclideanSpace, InnerSpace, Matrix, Matrix4, Point3, SquareMatrix, Vector3, Vector4};
 
 use crate::ray::Ray;
 use crate::EPSILON;
@@ -11,7 +11,7 @@ use crate::EPSILON;
 #[derive(Debug, Copy, Clone)]
 pub struct Plane {
     /// Unit normal pointing "outside" the half-space
-    pub normal: Vector3<f32>,
+    pub normal: Vector3,
     /// Signed distance from origin along the normal
     pub d: f32,
 }
@@ -19,14 +19,14 @@ pub struct Plane {
 impl Plane {
     /// Creates a plane from a normal and a distance.
     /// The normal will be normalized automatically.
-    pub fn new(normal: Vector3<f32>, d: f32) -> Self {
+    pub fn new(normal: Vector3, d: f32) -> Self {
         let normal = normal.normalize();
         Self { normal, d }
     }
 
     /// Creates a plane from a normal vector and a point on the plane.
     /// The normal will be normalized automatically.
-    pub fn from_point(normal: Vector3<f32>, point: Point3<f32>) -> Self {
+    pub fn from_point(normal: Vector3, point: Point3) -> Self {
         let normal = normal.normalize();
         let distance = -normal.dot(point.to_vec());
         Self { normal, d: distance }
@@ -54,12 +54,12 @@ impl Plane {
     /// - Positive: point is on the "outside" (same side as normal)
     /// - Zero: point is on the plane
     /// - Negative: point is on the "inside" (opposite side from normal)
-    pub fn signed_distance(&self, point: Point3<f32>) -> f32 {
+    pub fn signed_distance(&self, point: Point3) -> f32 {
         self.normal.dot(point.to_vec()) + self.d
     }
 
     /// Returns true if the point is on the inside (negative side) of the plane.
-    pub fn contains_point(&self, point: Point3<f32>) -> bool {
+    pub fn contains_point(&self, point: Point3) -> bool {
         self.signed_distance(point) <= EPSILON
     }
 
@@ -67,7 +67,7 @@ impl Plane {
     ///
     /// For correct plane transformation, we need to use the inverse-transpose
     /// of the matrix to transform the plane normal correctly under non-uniform scaling.
-    pub fn transform(&self, matrix: &Matrix4<f32>) -> Self {
+    pub fn transform(&self, matrix: &Matrix4) -> Self {
         // Planes transform by the inverse-transpose of the matrix.
         // A plane can be represented as a 4D vector (a, b, c, d) where ax + by + cz + d = 0.
         // If M transforms points, then M^(-T) transforms planes.
@@ -86,7 +86,7 @@ impl Plane {
     /// Finds the intersection of a ray with the plane.
     /// Returns Some((t, point)) where t is the distance along the ray.
     /// Returns None if the ray is parallel to the plane or points away from it.
-    pub fn intersect_ray(&self, ray: &Ray) -> Option<(f32, Point3<f32>)> {
+    pub fn intersect_ray(&self, ray: &Ray) -> Option<(f32, Point3)> {
         let denom = self.normal.dot(ray.direction);
 
         if denom.abs() < EPSILON {
@@ -108,9 +108,9 @@ impl Plane {
     /// Returns None if the segment is parallel to the plane or doesn't intersect.
     pub fn intersect_segment(
         &self,
-        start: Point3<f32>,
-        end: Point3<f32>,
-    ) -> Option<(f32, Point3<f32>)> {
+        start: Point3,
+        end: Point3,
+    ) -> Option<(f32, Point3)> {
         let direction = end - start;
         let denom = self.normal.dot(direction);
 
@@ -134,7 +134,7 @@ impl Plane {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cgmath::Rad;
+    use crate::{Matrix4, Point3, Vector3, Rad, EPSILON};
 
     #[test]
     fn test_plane_from_normal_and_point() {

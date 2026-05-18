@@ -59,7 +59,7 @@ pub fn walk_speed(model_radius: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cgmath::Point3;
+    use duck_engine_common::Point3;
 
     #[test]
     fn test_model_radius_from_bounds_none() {

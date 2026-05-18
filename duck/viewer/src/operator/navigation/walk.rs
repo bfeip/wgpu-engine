@@ -1,4 +1,4 @@
-use cgmath::{InnerSpace, Vector3};
+use duck_engine_common::{InnerSpace, Vector3};
 
 use crate::scene::PositionedCamera;
 use crate::input::{ElementState, Key};

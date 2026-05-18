@@ -9,7 +9,7 @@ use winit::{
     event_loop::{ActiveEventLoop, EventLoop},
     window::{Window, WindowId},
 };
-use cgmath::InnerSpace;
+use duck_engine_common::{Vector3, InnerSpace};
 
 use duck_engine_viewer::winit_support;
 use duck_engine_viewer::Viewer;
@@ -67,7 +67,7 @@ impl ViewerState<'static> {
         // Setup default camera and lighting
         let eye = [75.0, 50.0, 75.0].into();
         let target = [0.0, 0.0, 0.0].into();
-        let forward: cgmath::Vector3<f32> = target - eye;
+        let forward: Vector3 = target - eye;
         let right = forward.cross([0.0, 1.0, 0.0].into()).normalize();
         let up = right.cross(forward);
 

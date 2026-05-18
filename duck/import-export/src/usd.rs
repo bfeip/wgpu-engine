@@ -9,7 +9,7 @@ use std::io::{Cursor, Read};
 use std::path::Path;
 
 use anyhow::{Result, anyhow};
-use cgmath::{Deg, Matrix3, Matrix4, Point3, Quaternion, Rotation3, SquareMatrix, Vector3};
+use duck_engine_common::{Deg, Matrix3, Matrix4, Point3, Quaternion, Rotation3, SquareMatrix, Vector3};
 
 use openusd::sdf::{self, AbstractData, Value};
 
@@ -512,7 +512,7 @@ fn compose_xform_ops(
 
 /// Get Matrix4 from a property spec's default value.
 /// USD stores matrices row-major; cgmath uses column-major, so we transpose.
-fn get_matrix4_from_prop(data: &mut dyn AbstractData, prop_path: &sdf::Path) -> Option<Matrix4<f32>> {
+fn get_matrix4_from_prop(data: &mut dyn AbstractData, prop_path: &sdf::Path) -> Option<Matrix4> {
     let val = data.get(prop_path, "default").ok()?;
     match val.as_ref() {
         Value::Matrix4d(v) if v.len() >= 16 => {
@@ -531,7 +531,7 @@ fn get_matrix4_from_prop(data: &mut dyn AbstractData, prop_path: &sdf::Path) -> 
 }
 
 /// Get Vec3 from a property spec's default value.
-fn get_vec3_from_prop(data: &mut dyn AbstractData, prop_path: &sdf::Path) -> Option<Vector3<f32>> {
+fn get_vec3_from_prop(data: &mut dyn AbstractData, prop_path: &sdf::Path) -> Option<Vector3> {
     let val = data.get(prop_path, "default").ok()?;
     match val.as_ref() {
         Value::Vec3f(v) if v.len() >= 3 => Some(Vector3::new(v[0], v[1], v[2])),
@@ -907,7 +907,7 @@ fn extract_light(
     data: &mut dyn AbstractData,
     light_path: &sdf::Path,
     type_name: &str,
-    position: &Point3<f32>,
+    position: &Point3,
     scene: &mut Scene,
 ) {
     let intensity =
@@ -929,7 +929,7 @@ fn extract_light(
         "DistantLight" => {
             // Rotate so local -Z aligns with default downward direction (0, -1, 0)
             let rotation = Quaternion::from_angle_x(Deg(-90.0_f32));
-            let t = Transform::new(cgmath::Point3::new(0.0, 0.0, 0.0), rotation, Vector3::new(1.0, 1.0, 1.0));
+            let t = Transform::new(Point3::new(0.0, 0.0, 0.0), rotation, Vector3::new(1.0, 1.0, 1.0));
             (Light::directional(color, intensity), t)
         }
         "SphereLight" | "DiskLight" | "RectLight" => {

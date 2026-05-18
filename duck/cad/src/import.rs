@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use cgmath::Matrix4;
+use duck_engine_common::Matrix4;
 use duck_engine_common::decompose_matrix;
 use duck_engine_scene::common::{RgbaColor, Transform};
 use duck_engine_scene::{
@@ -208,7 +208,7 @@ pub(crate) fn import_views(
 /// Convert XCAF [`ViewData`] to a Duck [`PositionedCamera`].
 #[allow(dead_code)] // TODO(cad-views): remove when import_views is implemented
 fn view_data_to_camera(data: &opencascade::xcaf::ViewData, scale: f32) -> PositionedCamera {
-    use cgmath::{EuclideanSpace, InnerSpace, MetricSpace, Point3, Vector3};
+    use duck_engine_common::{EuclideanSpace, InnerSpace, MetricSpace, Point3, Vector3};
 
     let s = scale as f64;
     let pp = data.projection_point;

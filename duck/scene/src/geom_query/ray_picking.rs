@@ -1,4 +1,5 @@
-use cgmath::{InnerSpace, Matrix4, Point3};
+use duck_engine_common::{InnerSpace, Matrix4, Point3};
+use cgmath::Transform as _;
 
 use crate::common::{Aabb, Ray};
 use crate::{InstanceId, Mesh, NodeId, Scene};
@@ -38,7 +39,7 @@ pub struct RayPickResult {
     /// World-space distance from the ray origin to the hit (used for depth sorting)
     pub distance: f32,
     /// World-space hit location
-    pub hit_point: Point3<f32>,
+    pub hit_point: Point3,
     /// Which primitive was hit and its geometry-specific data
     pub hit: RayHit,
 }
@@ -123,7 +124,7 @@ impl PickQuery for RayPickQuery {
         false
     }
 
-    fn transform(&self, matrix: &Matrix4<f32>) -> Self {
+    fn transform(&self, matrix: &Matrix4) -> Self {
         // Scale the line tolerance into the local coordinate space.
         // world_to_local (= matrix) embeds the inverse of the world scale, so a
         // world-space distance d maps to d * column_magnitude in local space.
@@ -148,13 +149,13 @@ impl PickQuery for RayPickQuery {
         mesh: &Mesh,
         node_id: NodeId,
         instance_id: InstanceId,
-        world_transform: &Matrix4<f32>,
+        world_transform: &Matrix4,
         results: &mut Vec<Self::Result>,
     ) {
         if self.pick_faces {
             for mesh_hit in mesh_intersection::intersect_ray(mesh, &self.ray) {
                 let world_hit_point =
-                    cgmath::Transform::transform_point(world_transform, mesh_hit.hit_point);
+                    world_transform.transform_point(mesh_hit.hit_point);
                 let distance = (world_hit_point - self.world_ray.origin).magnitude();
                 results.push(RayPickResult {
                     node_id,
@@ -174,7 +175,7 @@ impl PickQuery for RayPickQuery {
                 mesh_intersection::intersect_ray_with_lines(mesh, &self.ray, self.local_line_tolerance)
             {
                 let world_closest =
-                    cgmath::Transform::transform_point(world_transform, line_hit.closest_point);
+                    world_transform.transform_point(line_hit.closest_point);
                 let distance = (world_closest - self.world_ray.origin).magnitude();
 
                 // Compute world-space perpendicular distance by comparing the closest
@@ -182,7 +183,7 @@ impl PickQuery for RayPickQuery {
                 // then transforming both to world space.
                 let local_ray_point = self.ray.point_at(line_hit.t);
                 let world_ray_point =
-                    cgmath::Transform::transform_point(world_transform, local_ray_point);
+                    world_transform.transform_point(local_ray_point);
                 let distance_to_ray = (world_closest - world_ray_point).magnitude();
 
                 results.push(RayPickResult {

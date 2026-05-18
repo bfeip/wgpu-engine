@@ -1,3 +1,5 @@
+use duck_engine_common::{Deg, InnerSpace, Matrix3, Matrix4, MetricSpace, Point3, Quaternion, SquareMatrix, Vector3, ortho, perspective};
+
 /// Matrix to convert from OpenGL clip-space depth [-1, 1] to WGPU depth [0, 1].
 ///
 /// WGPU uses a different depth convention than OpenGL:
@@ -6,7 +8,7 @@
 ///
 /// This matrix remaps Z: `z' = 0.5 * z + 0.5`
 #[rustfmt::skip]
-pub(crate) const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
+pub(crate) const OPENGL_TO_WGPU_MATRIX: Matrix4 = Matrix4::new(
     1.0, 0.0, 0.0, 0.0,
     0.0, 1.0, 0.0, 0.0,
     0.0, 0.0, 0.5, 0.0,
@@ -50,20 +52,19 @@ impl CameraProjection {
     /// The world transform is expected to follow the convention used by
     /// [`PositionedCamera::to_node_transform`]: column 0 = right, column 1 = up,
     /// column 2 = -forward (camera looks down -Z), column 3 = eye position.
-    pub fn into_positioned(self, world_transform: cgmath::Matrix4<f32>, aspect: f32) -> PositionedCamera {
-        use cgmath::InnerSpace;
-        let eye = cgmath::Point3::new(
+    pub fn into_positioned(self, world_transform: Matrix4, aspect: f32) -> PositionedCamera {
+        let eye = Point3::new(
             world_transform[3][0],
             world_transform[3][1],
             world_transform[3][2],
         );
-        let up = cgmath::Vector3::new(
+        let up = Vector3::new(
             world_transform[1][0],
             world_transform[1][1],
             world_transform[1][2],
         ).normalize();
         // Column 2 stores -forward (camera looks down -Z in right-handed coords).
-        let forward = -cgmath::Vector3::new(
+        let forward = -Vector3::new(
             world_transform[2][0],
             world_transform[2][1],
             world_transform[2][2],
@@ -111,11 +112,11 @@ impl CameraProjection {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct PositionedCamera {
     /// The position of the camera in world space.
-    pub eye: cgmath::Point3<f32>,
+    pub eye: Point3,
     /// The point the camera is looking at in world space.
-    pub target: cgmath::Point3<f32>,
+    pub target: Point3,
     /// The up direction vector.
-    pub up: cgmath::Vector3<f32>,
+    pub up: Vector3,
     /// The aspect ratio of the viewport (width / height).
     pub aspect: f32,
     /// Vertical field of view in degrees (used for perspective projection).
@@ -139,37 +140,34 @@ impl PositionedCamera {
     /// - View matrix: transforms world space to camera/view space
     /// - Projection matrix: transforms view space to clip space (perspective or orthographic)
     /// - Depth remapping: converts OpenGL depth convention to WGPU convention
-    pub fn build_view_projection_matrix(&self) -> cgmath::Matrix4<f32> {
-        let view = cgmath::Matrix4::look_at_rh(self.eye, self.target, self.up);
+    pub fn build_view_projection_matrix(&self) -> Matrix4 {
+        let view = Matrix4::look_at_rh(self.eye, self.target, self.up);
         let proj = if self.ortho {
             // Derive orthographic bounds from camera distance and fovy.
             // This allows zoom (changing distance) to work naturally.
             let half_height = self.length() * (self.fovy.to_radians() / 2.0).tan();
             let half_width = half_height * self.aspect;
-            cgmath::ortho(-half_width, half_width, -half_height, half_height, self.znear, self.zfar)
+            ortho(-half_width, half_width, -half_height, half_height, self.znear, self.zfar)
         } else {
-            cgmath::perspective(cgmath::Deg(self.fovy), self.aspect, self.znear, self.zfar)
+            perspective(Deg(self.fovy), self.aspect, self.znear, self.zfar)
         };
 
         OPENGL_TO_WGPU_MATRIX * proj * view
     }
 
     /// Returns the camera's forward vector
-    pub fn forward(&self) -> cgmath::Vector3<f32> {
-        use cgmath::InnerSpace;
+    pub fn forward(&self) -> Vector3 {
         (self.target - self.eye).normalize()
     }
 
     /// Returns the right vector of the camera
-    pub fn right(&self) -> cgmath::Vector3<f32> {
-        use cgmath::InnerSpace;
+    pub fn right(&self) -> Vector3 {
         self.forward().cross(self.up).normalize()
     }
 
     /// Returns length of the camera's look vector
     /// (the distance from the camera eye to the target)
     pub fn length(&self) -> f32 {
-        use cgmath::MetricSpace;
         self.eye.distance(self.target)
     }
 
@@ -192,8 +190,6 @@ impl PositionedCamera {
     /// # Arguments
     /// * `bounds` - The axis-aligned bounding box to fit in view
     pub fn fit_to_bounds(&mut self, bounds: &crate::common::Aabb) {
-        use cgmath::{InnerSpace, MetricSpace};
-
         let center = bounds.center();
         let (size_x, size_y, size_z) = bounds.size();
 
@@ -216,7 +212,7 @@ impl PositionedCamera {
 
         // Get current view direction (or default to -Z if eye == target)
         let view_dir = if self.eye.distance(self.target) < 1e-6 {
-            cgmath::Vector3::new(0.0, 0.0, -1.0)
+            Vector3::new(0.0, 0.0, -1.0)
         } else {
             (self.target - self.eye).normalize()
         };
@@ -241,12 +237,12 @@ impl PositionedCamera {
     /// A 3D point in NDC space where:
     /// - X and Y are in range [-1, 1] (left/right, bottom/top)
     /// - Z is in range [0, 1] (near/far in WGPU depth convention)
-    pub fn project_point_ndc(&self, world_point: cgmath::Point3<f32>) -> cgmath::Point3<f32> {
+    pub fn project_point_ndc(&self, world_point: Point3) -> Point3 {
         let vp = self.build_view_projection_matrix();
         let homogeneous = vp * world_point.to_homogeneous();
 
         // Perform perspective division
-        cgmath::Point3::from_homogeneous(homogeneous)
+        Point3::from_homogeneous(homogeneous)
     }
 
     /// Unprojects a point from normalized device coordinates (NDC) to world space.
@@ -258,9 +254,7 @@ impl PositionedCamera {
     ///
     /// # Returns
     /// A 3D point in world space, or None if the view-projection matrix is not invertible.
-    pub fn unproject_point_ndc(&self, ndc_point: cgmath::Point3<f32>) -> Option<cgmath::Point3<f32>> {
-        use cgmath::SquareMatrix;
-
+    pub fn unproject_point_ndc(&self, ndc_point: Point3) -> Option<Point3> {
         let viewproj = self.build_view_projection_matrix();
 
         let inv_vp = viewproj.invert()?;
@@ -269,7 +263,7 @@ impl PositionedCamera {
         let homogeneous = inv_vp * ndc_point.to_homogeneous();
 
         // Perform perspective division
-        Some(cgmath::Point3::from_homogeneous(homogeneous))
+        Some(Point3::from_homogeneous(homogeneous))
     }
 
     /// Projects a 3D world-space point to screen-space pixel coordinates.
@@ -286,10 +280,10 @@ impl PositionedCamera {
     /// - Z is the depth value in range [0, 1]
     pub fn project_point_screen(
         &self,
-        world_point: cgmath::Point3<f32>,
+        world_point: Point3,
         screen_width: u32,
         screen_height: u32,
-    ) -> cgmath::Point3<f32> {
+    ) -> Point3 {
         let ndc = self.project_point_ndc(world_point);
 
         // Convert NDC to screen coordinates
@@ -299,7 +293,7 @@ impl PositionedCamera {
         let screen_y = (1.0 - ndc.y) * 0.5 * screen_height as f32; // Flip Y
         let screen_z = ndc.z; // Keep depth as-is
 
-        cgmath::Point3::new(screen_x, screen_y, screen_z)
+        Point3::new(screen_x, screen_y, screen_z)
     }
 
 
@@ -321,7 +315,7 @@ impl PositionedCamera {
         depth: f32,
         screen_width: u32,
         screen_height: u32,
-    ) -> Option<cgmath::Point3<f32>> {
+    ) -> Option<Point3> {
         // Convert screen coordinates to NDC
         // Screen: [0, width] × [0, height], Y-down
         // NDC: [-1, 1] × [-1, 1], Y-up
@@ -329,7 +323,7 @@ impl PositionedCamera {
         let ndc_y = 1.0 - (screen_y / screen_height as f32) * 2.0; // Flip Y
         let ndc_z = depth;
 
-        let ndc_point = cgmath::Point3::new(ndc_x, ndc_y, ndc_z);
+        let ndc_point = Point3::new(ndc_x, ndc_y, ndc_z);
         self.unproject_point_ndc(ndc_point)
     }
 
@@ -347,14 +341,13 @@ impl PositionedCamera {
     /// into the 3D world.
     pub fn ray_from_ndc_point(&self, ndc_x: f32, ndc_y: f32) -> crate::common::Ray {
         let world_near = self
-            .unproject_point_ndc(cgmath::Point3::new(ndc_x, ndc_y, 0.0))
+            .unproject_point_ndc(Point3::new(ndc_x, ndc_y, 0.0))
             .expect("Camera view-projection matrix should be invertible");
 
         let world_far = self
-            .unproject_point_ndc(cgmath::Point3::new(ndc_x, ndc_y, 1.0))
+            .unproject_point_ndc(Point3::new(ndc_x, ndc_y, 1.0))
             .expect("Camera view-projection matrix should be invertible");
 
-        use cgmath::InnerSpace;
         let direction = (world_far - world_near).normalize();
 
         crate::common::Ray::new(world_near, direction)
@@ -399,7 +392,6 @@ impl PositionedCamera {
         ).expect("Camera view-projection matrix should be invertible");
 
         // Direction is from near point to far point
-        use cgmath::InnerSpace;
         let direction = (world_far - world_near).normalize();
 
         crate::common::Ray::new(world_near, direction)
@@ -421,7 +413,6 @@ impl PositionedCamera {
     /// Column convention: right = +X, corrected-up = +Y, forward = -Z
     /// (camera looks down -Z in a right-handed coordinate system).
     pub fn to_node_transform(&self) -> crate::common::Transform {
-        use cgmath::{InnerSpace, Matrix3, Quaternion, Vector3};
         let forward = (self.target - self.eye).normalize();
         let right = forward.cross(self.up).normalize();
         let up = right.cross(forward);
@@ -437,7 +428,7 @@ impl PositionedCamera {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cgmath::{Point3, Vector3, InnerSpace, SquareMatrix};
+    use duck_engine_common::{Point3, Vector3, Vector4, InnerSpace, SquareMatrix};
 
     const EPSILON: f32 = 1e-6;
 
@@ -598,7 +589,6 @@ mod tests {
 
     #[test]
     fn test_depth_remapping() {
-        use cgmath::Vector4;
 
         let m = OPENGL_TO_WGPU_MATRIX;
 

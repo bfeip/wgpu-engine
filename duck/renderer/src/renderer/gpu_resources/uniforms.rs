@@ -28,9 +28,9 @@ impl CameraUniform {
 
     /// Creates a new camera uniform initialized to identity matrix and origin.
     pub fn new() -> Self {
-        use cgmath::SquareMatrix;
+        use duck_engine_common::{Matrix4, SquareMatrix};
         Self {
-            view_proj: cgmath::Matrix4::identity().into(),
+            view_proj: Matrix4::identity().into(),
             eye_position: [0.0, 0.0, 0.0],
             _padding: 0,
         }

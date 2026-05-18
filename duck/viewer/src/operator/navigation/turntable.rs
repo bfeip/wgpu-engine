@@ -1,4 +1,4 @@
-use cgmath::{InnerSpace, Point3, Rotation};
+use duck_engine_common::{InnerSpace, Point3, Rotation, point3, vec3};
 
 use crate::scene::{PositionedCamera, common::quaternion_from_axis_angle_safe};
 
@@ -14,7 +14,7 @@ pub(super) struct TurntableState {
     pub radius: f32,
     /// Custom orbit pivot point. When set, orbit rotates the camera around
     /// this point instead of `camera.target`.
-    pub pivot: Option<Point3<f32>>,
+    pub pivot: Option<Point3>,
 }
 
 impl TurntableState {
@@ -45,7 +45,7 @@ impl TurntableState {
     }
 
     /// Initialize orbit parameters for orbiting around an explicit pivot point.
-    pub fn init_with_pivot(&mut self, camera: &PositionedCamera, pivot: Point3<f32>) {
+    pub fn init_with_pivot(&mut self, camera: &PositionedCamera, pivot: Point3) {
         self.pivot = Some(pivot);
 
         // Compute elevation from eye-to-pivot direction (for elevation clamping)
@@ -62,11 +62,11 @@ impl TurntableState {
         let y = camera.target.y + self.radius * self.elevation.sin();
         let z = camera.target.z + self.radius * self.elevation.cos() * self.azimuth.cos();
 
-        camera.eye = cgmath::point3(x, y, z);
+        camera.eye = point3(x, y, z);
 
         // Update up vector to maintain proper orientation
         let forward = (camera.target - camera.eye).normalize();
-        let world_up = cgmath::vec3(0.0, 1.0, 0.0);
+        let world_up = vec3(0.0, 1.0, 0.0);
         let right = world_up.cross(forward).normalize();
         camera.up = forward.cross(right).normalize();
     }
@@ -90,7 +90,7 @@ impl TurntableState {
 
         // Compute the camera's right axis for elevation rotation
         let forward = (camera.target - camera.eye).normalize();
-        let world_up = cgmath::vec3(0.0, 1.0, 0.0);
+        let world_up = vec3(0.0, 1.0, 0.0);
         let right = world_up.cross(forward).normalize();
 
         // Build combined rotation quaternion: azimuth (around Y) then elevation (around right)

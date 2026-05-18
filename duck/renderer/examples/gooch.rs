@@ -6,7 +6,7 @@ use duck_engine_renderer::scene::{
     common::RgbaColor,
 };
 
-use cgmath::{Point3, Vector3};
+use duck_engine_common::{Point3, Vector3};
 
 const GOOCH_WESL: &str = include_str!("gooch.wesl");
 

@@ -1,4 +1,4 @@
-use cgmath::Matrix4;
+use duck_engine_common::Matrix4;
 
 use crate::common::{Aabb, ConvexPolyhedron};
 use crate::{InstanceId, Mesh, NodeId, Scene};
@@ -45,7 +45,7 @@ impl PickQuery for VolumePickQuery {
         self.volume.intersects_aabb(bounds)
     }
 
-    fn transform(&self, matrix: &Matrix4<f32>) -> Self {
+    fn transform(&self, matrix: &Matrix4) -> Self {
         Self {
             volume: self.volume.transform(matrix),
             thorough: self.thorough,
@@ -57,7 +57,7 @@ impl PickQuery for VolumePickQuery {
         mesh: &Mesh,
         node_id: NodeId,
         instance_id: InstanceId,
-        _world_transform: &Matrix4<f32>,
+        _world_transform: &Matrix4,
         results: &mut Vec<Self::Result>,
     ) {
         // Test against mesh (volume is already in local space)

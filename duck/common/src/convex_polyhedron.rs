@@ -1,4 +1,4 @@
-use cgmath::{InnerSpace, Matrix4, Point3, Vector3};
+use crate::{InnerSpace, Matrix4, Point3, Vector3};
 
 use crate::{Aabb, Plane, Ray, EPSILON};
 
@@ -30,7 +30,7 @@ impl ConvexPolyhedron {
     ///
     /// The normals point inward (toward the center of the frustum), so we negate them
     /// to follow our convention of normals pointing outward.
-    pub fn from_frustum(view_proj: &Matrix4<f32>) -> Self {
+    pub fn from_frustum(view_proj: &Matrix4) -> Self {
         // Extract rows from the matrix (cgmath is column-major, so we access columns)
         let row0 = Vector3::new(view_proj[0][0], view_proj[1][0], view_proj[2][0]);
         let row1 = Vector3::new(view_proj[0][1], view_proj[1][1], view_proj[2][1]);
@@ -115,7 +115,7 @@ impl ConvexPolyhedron {
     }
 
     /// Tests if a point is inside the polyhedron (on the inside of all planes).
-    pub fn contains_point(&self, point: Point3<f32>) -> bool {
+    pub fn contains_point(&self, point: Point3) -> bool {
         self.planes
             .iter()
             .all(|plane| plane.signed_distance(point) <= EPSILON)
@@ -160,9 +160,9 @@ impl ConvexPolyhedron {
     ///   the polyhedron boundary. This is more expensive but more accurate.
     pub fn intersects_triangle(
         &self,
-        v0: Point3<f32>,
-        v1: Point3<f32>,
-        v2: Point3<f32>,
+        v0: Point3,
+        v1: Point3,
+        v2: Point3,
         thorough: bool,
     ) -> bool {
         // Test 1: Any vertex inside the polyhedron?
@@ -190,15 +190,15 @@ impl ConvexPolyhedron {
     /// Tests if a triangle is fully contained within the polyhedron.
     pub fn contains_triangle(
         &self,
-        v0: Point3<f32>,
-        v1: Point3<f32>,
-        v2: Point3<f32>,
+        v0: Point3,
+        v1: Point3,
+        v2: Point3,
     ) -> bool {
         self.contains_point(v0) && self.contains_point(v1) && self.contains_point(v2)
     }
 
     /// Tests if an edge enters the volume (crosses from outside to inside).
-    fn edge_enters_volume(&self, start: Point3<f32>, end: Point3<f32>) -> bool {
+    fn edge_enters_volume(&self, start: Point3, end: Point3) -> bool {
         // For each plane, check if the edge crosses it and if so,
         // check if the crossing point is inside all other planes
         for (i, plane) in self.planes.iter().enumerate() {
@@ -221,9 +221,9 @@ impl ConvexPolyhedron {
     /// This requires computing the polyhedron's edges from plane intersections.
     fn polyhedron_edges_intersect_triangle(
         &self,
-        v0: Point3<f32>,
-        v1: Point3<f32>,
-        v2: Point3<f32>,
+        v0: Point3,
+        v1: Point3,
+        v2: Point3,
     ) -> bool {
         // For a frustum or simple convex polyhedron, we can compute edges
         // by finding intersections of plane pairs that form edges.
@@ -281,7 +281,7 @@ impl ConvexPolyhedron {
     }
 
     /// Transforms all planes by the given matrix.
-    pub fn transform(&self, matrix: &Matrix4<f32>) -> Self {
+    pub fn transform(&self, matrix: &Matrix4) -> Self {
         let transformed_planes = self
             .planes
             .iter()
@@ -296,9 +296,7 @@ impl ConvexPolyhedron {
 
 /// Finds the intersection line of two planes.
 /// Returns Some((point_on_line, direction)) or None if planes are parallel.
-fn plane_plane_intersection(p1: &Plane, p2: &Plane) -> Option<(Point3<f32>, Vector3<f32>)> {
-    use cgmath::InnerSpace;
-
+fn plane_plane_intersection(p1: &Plane, p2: &Plane) -> Option<(Point3, Vector3)> {
     // Direction of intersection line is perpendicular to both normals
     let direction = p1.normal.cross(p2.normal);
 
@@ -352,7 +350,7 @@ fn plane_plane_intersection(p1: &Plane, p2: &Plane) -> Option<(Point3<f32>, Vect
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cgmath::{Deg, EuclideanSpace, Matrix4, PerspectiveFov, Point3, Rad, SquareMatrix, Vector3};
+    use crate::{Deg, EuclideanSpace, Matrix4, PerspectiveFov, Point3, Rad, SquareMatrix, Vector3, EPSILON};
 
     fn create_unit_cube_polyhedron() -> ConvexPolyhedron {
         // Create a unit cube centered at origin (-0.5 to 0.5 on each axis)
@@ -516,13 +514,13 @@ mod tests {
     #[test]
     fn test_from_frustum_basic() {
         // Create a simple perspective projection
-        let fov: PerspectiveFov<f32> = PerspectiveFov {
+        let fov: PerspectiveFov = PerspectiveFov {
             fovy: Rad::from(Deg(90.0)),
             aspect: 1.0,
             near: 0.1,
             far: 100.0,
         };
-        let proj: Matrix4<f32> = fov.into();
+        let proj: Matrix4 = fov.into();
 
         // Simple view matrix (identity = camera at origin looking down -Z)
         let view = Matrix4::identity();

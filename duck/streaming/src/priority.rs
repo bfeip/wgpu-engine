@@ -1,3 +1,4 @@
+use duck_engine_common::Point3;
 use duck_engine_import_export::format::ResourceType;
 use duck_engine_scene::{Id, MeshId, Scene};
 
@@ -97,7 +98,7 @@ fn mesh_screen_priority(scene: &Scene, mesh_id: MeshId, camera: Option<&CameraHi
     };
 
     let center = bounds.min + extent * 0.5;
-    let cam_pos = cgmath::Point3::from(cam.position);
+    let cam_pos = Point3::from(cam.position);
     let diff = center - cam_pos;
     let dist_sq = diff.x * diff.x + diff.y * diff.y + diff.z * diff.z;
 

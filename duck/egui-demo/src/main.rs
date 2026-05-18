@@ -12,6 +12,7 @@ use winit::{
     window::{Window, WindowAttributes, WindowId},
 };
 
+use duck_engine_common::Point3;
 use duck_engine_viewer::common::RgbaColor;
 use duck_engine_viewer::input::{ElementState, Key};
 use duck_engine_viewer::operator::NavigationMode;
@@ -221,12 +222,12 @@ impl<'a> App<'a> {
         let (light, transform) = match light_type {
             LightType::Point => (
                 Light::point(white, 1.0),
-                Transform::from_position(cgmath::Point3::new(0.0, 3.0, 0.0)),
+                Transform::from_position(Point3::new(0.0, 3.0, 0.0)),
             ),
             LightType::Directional => (Light::directional(white, 1.0), Transform::IDENTITY),
             LightType::Spot => (
                 Light::spot(white, 1.0, 30.0_f32.to_radians(), 45.0_f32.to_radians()),
-                Transform::from_position(cgmath::Point3::new(0.0, 3.0, 0.0)),
+                Transform::from_position(Point3::new(0.0, 3.0, 0.0)),
             ),
         };
 

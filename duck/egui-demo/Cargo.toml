@@ -10,6 +10,7 @@ usd = ["duck-engine-viewer/usd"]
 streaming = ["duck-engine-viewer/streaming"]
 
 [dependencies]
+duck-engine-common = { path = "../common" }
 duck-engine-viewer = { path = "../viewer", features = ["winit-support"] }
 cgmath = "0.18"
 egui = "0.33"

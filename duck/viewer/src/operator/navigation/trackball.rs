@@ -1,4 +1,4 @@
-use cgmath::{InnerSpace, Point3, Rotation};
+use duck_engine_common::{InnerSpace, Point3, Rotation};
 
 use crate::scene::{PositionedCamera, common::quaternion_from_axis_angle_safe};
 
@@ -9,7 +9,7 @@ pub(super) struct TrackballState {
     pub radius: f32,
     /// Custom orbit pivot point. When set, orbit rotates the camera around
     /// this point instead of `camera.target`.
-    pub pivot: Option<Point3<f32>>,
+    pub pivot: Option<Point3>,
 }
 
 impl TrackballState {
@@ -17,7 +17,7 @@ impl TrackballState {
         Self { radius: 5.0, pivot: None }
     }
 
-    pub fn init(&mut self, camera: &PositionedCamera, pivot: Point3<f32>) {
+    pub fn init(&mut self, camera: &PositionedCamera, pivot: Point3) {
         self.pivot = Some(pivot);
         self.radius = camera.length();
     }

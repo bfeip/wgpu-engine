@@ -1,4 +1,4 @@
-use cgmath::{Matrix4, SquareMatrix};
+use duck_engine_common::{Matrix4, SquareMatrix};
 
 use crate::common::Aabb;
 use crate::{InstanceId, Mesh, NodeFlags, NodeId, NodePayload, Scene};
@@ -23,7 +23,7 @@ pub trait PickQuery {
     /// Transform this query to a different coordinate space.
     ///
     /// Used to transform the query from world space to local mesh space.
-    fn transform(&self, matrix: &Matrix4<f32>) -> Self;
+    fn transform(&self, matrix: &Matrix4) -> Self;
 
     /// Narrow phase test: test the query against a mesh and collect results.
     ///
@@ -41,7 +41,7 @@ pub trait PickQuery {
         mesh: &Mesh,
         node_id: NodeId,
         instance_id: InstanceId,
-        world_transform: &Matrix4<f32>,
+        world_transform: &Matrix4,
         results: &mut Vec<Self::Result>,
     );
 }
@@ -113,7 +113,7 @@ fn pick_node<Q: PickQuery>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cgmath::Matrix4;
+    use duck_engine_common::Matrix4;
     use crate::{
         Mesh, MeshPrimitive, NodeFlags, PrimitiveType, Scene, Vertex,
         common::Transform,
@@ -128,7 +128,7 @@ mod tests {
             true
         }
 
-        fn transform(&self, _matrix: &Matrix4<f32>) -> Self {
+        fn transform(&self, _matrix: &Matrix4) -> Self {
             AlwaysHitQuery
         }
 
@@ -137,7 +137,7 @@ mod tests {
             _mesh: &Mesh,
             node_id: NodeId,
             _instance_id: InstanceId,
-            _world_transform: &Matrix4<f32>,
+            _world_transform: &Matrix4,
             results: &mut Vec<NodeId>,
         ) {
             results.push(node_id);

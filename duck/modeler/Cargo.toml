@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+duck-engine-common = { path = "../common" }
 duck-engine-viewer = { path = "../viewer", features = ["winit-support"] }
 duck-engine-cad = { path = "../cad" }
 egui = "0.33"
