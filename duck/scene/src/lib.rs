@@ -7,7 +7,6 @@ mod camera;
 mod event;
 mod environment;
 pub mod geom_query;
-pub mod gizmo;
 mod instance;
 mod coordinate_space;
 mod light;

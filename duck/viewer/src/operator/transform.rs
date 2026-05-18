@@ -34,7 +34,7 @@ use crate::geom_query::{pick_all_from_ray, RayPickQuery};
 use crate::input::{ElementState, Key, MouseButton, NamedKey};
 use crate::operator::{Operator, OperatorId};
 use crate::scene::annotation::AnnotationId;
-use crate::scene::gizmo::{self, GizmoType};
+use crate::gizmo::{self, GizmoType};
 use crate::scene::{MaterialId, MeshId, NodeId};
 use crate::scene_scale;
 
@@ -94,6 +94,8 @@ impl AxisConstraint {
 // consider introducing a dedicated overlay system with its own root node
 // rather than piggy-backing on the annotation root.
 struct GizmoState {
+    /// Root node for all gizmo geometry. Created when first needed.
+    root_node: Option<NodeId>,
     /// Node IDs of the gizmo handles (one per axis: X, Y, Z).
     node_ids: Vec<NodeId>,
     /// Mesh IDs added to the scene for gizmo geometry.
@@ -109,6 +111,7 @@ struct GizmoState {
 impl GizmoState {
     fn new() -> Self {
         Self {
+            root_node: None,
             node_ids: Vec::new(),
             mesh_ids: Vec::new(),
             material_ids: Vec::new(),
@@ -128,8 +131,13 @@ impl GizmoState {
     fn show(&mut self, gizmo_type: GizmoType, pivot: Point3<f32>, size: f32, ctx: &mut EventContext) {
         self.hide(ctx);
 
+        self.root_node.get_or_insert(
+            ctx.scene.add_node(
+                None, Some("Gizmo root".to_owned()), Transform::IDENTITY
+            ).expect("Failed to create Gizmo root node")
+        );
+
         let handles = gizmo::build_handles(gizmo_type, size);
-        let annotation_root = ctx.scene.ensure_annotation_root();
         let pivot_transform = common::Transform::from_position(pivot);
 
         for handle in handles {
@@ -138,7 +146,7 @@ impl GizmoState {
             let node_id = ctx
                 .scene
                 .add_instance_node(
-                    Some(annotation_root),
+                    self.root_node,
                     mesh_id,
                     material_id,
                     None,

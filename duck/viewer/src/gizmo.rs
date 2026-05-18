@@ -7,8 +7,13 @@
 use cgmath::{Deg, Matrix4, Vector3};
 
 use crate::common::{Axis, RgbaColor};
-use crate::material::{AlphaMode, Material, MaterialFlags};
-use crate::mesh::{Mesh, PrimitiveType};
+use crate::scene::{AlphaMode, Material, MaterialFlags, Mesh, PrimitiveType};
+
+const GIZMO_FLAGS: MaterialFlags = MaterialFlags::DO_NOT_LIGHT
+    .union(MaterialFlags::DOUBLE_SIDED)
+    .union(MaterialFlags::ALWAYS_ON_TOP);
+
+const SEGMENTS: u32 = 16;
 
 /// Which type of gizmo to display.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,12 +39,6 @@ pub fn highlight_color(axis: Axis) -> RgbaColor {
     }
 }
 
-const GIZMO_FLAGS: MaterialFlags = MaterialFlags::DO_NOT_LIGHT
-    .union(MaterialFlags::DOUBLE_SIDED)
-    .union(MaterialFlags::ALWAYS_ON_TOP);
-
-const SEGMENTS: u32 = 16;
-
 /// Create a gizmo material for the given axis color.
 fn gizmo_material(color: RgbaColor) -> Material {
     Material::new()
@@ -47,8 +46,6 @@ fn gizmo_material(color: RgbaColor) -> Material {
         .with_flags(GIZMO_FLAGS)
         .with_alpha_mode(AlphaMode::Opaque)
 }
-
-// ─── Translation Gizmo ────────────────────────────────────────────────
 
 /// Build translation gizmo handles: cylinder shaft + cone arrowhead per axis.
 pub fn build_translate_handles(size: f32) -> Vec<GizmoHandle> {
@@ -98,8 +95,6 @@ pub fn build_translate_handles(size: f32) -> Vec<GizmoHandle> {
         .collect()
 }
 
-// ─── Scale Gizmo ──────────────────────────────────────────────────────
-
 /// Build scale gizmo handles: cylinder shaft + cube tip per axis.
 pub fn build_scale_handles(size: f32) -> Vec<GizmoHandle> {
     let shaft_radius = size * 0.025;
@@ -140,8 +135,6 @@ pub fn build_scale_handles(size: f32) -> Vec<GizmoHandle> {
         })
         .collect()
 }
-
-// ─── Rotation Gizmo ──────────────────────────────────────────────────
 
 /// Build rotation gizmo handles: one torus ring per axis.
 pub fn build_rotate_handles(size: f32) -> Vec<GizmoHandle> {
@@ -390,7 +383,7 @@ mod tests {
     fn translate_handles_pickable_through_scene() {
         use crate::common::Ray;
         use crate::geom_query::pick_all_from_ray;
-        use crate::Scene;
+        use crate::scene::{Material, Mesh, PrimitiveType, Scene};
         use cgmath::{Point3, Vector3};
 
         let pivot = Point3::new(5.0, 3.0, 0.0);
@@ -398,9 +391,9 @@ mod tests {
         let mut scene = Scene::new();
 
         // Add a model cube so the scene isn't empty (like the real app)
-        let cube = crate::Mesh::cube(2.0, crate::PrimitiveType::TriangleList);
+        let cube = Mesh::cube(2.0, PrimitiveType::TriangleList);
         let cube_mesh_id = scene.add_mesh(cube);
-        let cube_mat_id = scene.add_material(crate::Material::new());
+        let cube_mat_id = scene.add_material(Material::new());
         scene
             .add_instance_node(
                 None,
@@ -415,7 +408,6 @@ mod tests {
         // (this is what the real code does — it reads model_radius first)
         let _ = scene.bounding();
 
-        let annotation_root = scene.ensure_annotation_root();
         let pivot_transform = crate::common::Transform::from_position(pivot);
 
         let handles = build_translate_handles(1.0);
@@ -426,7 +418,7 @@ mod tests {
             let material_id = scene.add_material(handle.material.clone());
             let node_id = scene
                 .add_instance_node(
-                    Some(annotation_root),
+                    None,
                     mesh_id,
                     material_id,
                     None,
@@ -484,14 +476,13 @@ mod tests {
     fn translate_handles_pickable_after_position_update() {
         use crate::common::Ray;
         use crate::geom_query::pick_all_from_ray;
-        use crate::Scene;
+        use crate::scene::{Material, Mesh, PrimitiveType, Scene};
         use cgmath::{Point3, Vector3};
 
         let initial_pivot = Point3::new(0.0, 0.0, 0.0);
         let new_pivot = Point3::new(10.0, 5.0, 3.0);
 
         let mut scene = Scene::new();
-        let annotation_root = scene.ensure_annotation_root();
         let pivot_transform = crate::common::Transform::from_position(initial_pivot);
 
         let handles = build_translate_handles(1.0);
@@ -502,7 +493,7 @@ mod tests {
             let material_id = scene.add_material(handle.material.clone());
             let node_id = scene
                 .add_instance_node(
-                    Some(annotation_root),
+                    None,
                     mesh_id,
                     material_id,
                     None,
