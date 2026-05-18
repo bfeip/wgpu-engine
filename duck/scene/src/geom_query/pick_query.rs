@@ -1,7 +1,7 @@
 use cgmath::{Matrix4, SquareMatrix};
 
 use crate::common::Aabb;
-use crate::{InstanceId, Mesh, NodeId, NodePayload, Scene};
+use crate::{InstanceId, Mesh, NodeFlags, NodeId, NodePayload, Scene};
 
 /// A query that can pick objects by traversing the scene tree.
 ///
@@ -70,6 +70,10 @@ fn pick_node<Q: PickQuery>(
 ) {
     let Some(node) = scene.get_node(node_id) else { return };
 
+    if node.flags().contains(NodeFlags::DO_NOT_SELECT) {
+        return;
+    }
+
     // Broad phase: skip entire subtree if bounds are unavailable or don't intersect.
     // nodes_bounding returns None for both "no geometry" and "all geometry still streaming",
     // both of which mean there is nothing pickable here yet.
@@ -103,5 +107,83 @@ fn pick_node<Q: PickQuery>(
     // Recurse to children. Missing child nodes are silently skipped.
     for &child_id in node.children() {
         pick_node(query, child_id, scene, results);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cgmath::Matrix4;
+    use crate::{
+        Mesh, MeshPrimitive, NodeFlags, PrimitiveType, Scene, Vertex,
+        common::Transform,
+    };
+
+    struct AlwaysHitQuery;
+
+    impl PickQuery for AlwaysHitQuery {
+        type Result = NodeId;
+
+        fn might_intersect_bounds(&self, _bounds: &Aabb) -> bool {
+            true
+        }
+
+        fn transform(&self, _matrix: &Matrix4<f32>) -> Self {
+            AlwaysHitQuery
+        }
+
+        fn collect_mesh_hits(
+            &self,
+            _mesh: &Mesh,
+            node_id: NodeId,
+            _instance_id: InstanceId,
+            _world_transform: &Matrix4<f32>,
+            results: &mut Vec<NodeId>,
+        ) {
+            results.push(node_id);
+        }
+    }
+
+    fn make_geometry_node(scene: &mut Scene, parent: Option<NodeId>, flags: NodeFlags) -> NodeId {
+        let mesh = Mesh::from_raw(
+            vec![
+                Vertex { position: [0.0, 0.0, 0.0], tex_coords: [0.0, 0.0, 0.0], normal: [0.0, 1.0, 0.0] },
+                Vertex { position: [1.0, 0.0, 0.0], tex_coords: [1.0, 0.0, 0.0], normal: [0.0, 1.0, 0.0] },
+                Vertex { position: [0.0, 1.0, 0.0], tex_coords: [0.0, 1.0, 0.0], normal: [0.0, 1.0, 0.0] },
+            ],
+            vec![MeshPrimitive { primitive_type: PrimitiveType::TriangleList, indices: vec![0, 1, 2] }],
+        );
+        let mesh_id = scene.add_mesh(mesh);
+        let mat_id = crate::Id::new();
+        scene.add_instance_node(parent, mesh_id, mat_id, None, Transform::IDENTITY, flags).unwrap()
+    }
+
+    #[test]
+    fn test_normal_node_is_pickable() {
+        let mut scene = Scene::new();
+        let node_id = make_geometry_node(&mut scene, None, NodeFlags::NONE);
+
+        let hits = pick_all(&AlwaysHitQuery, &scene);
+        assert_eq!(hits, vec![node_id]);
+    }
+
+    #[test]
+    fn test_do_not_select_skips_node() {
+        let mut scene = Scene::new();
+        let _node_id = make_geometry_node(&mut scene, None, NodeFlags::DO_NOT_SELECT);
+
+        let hits = pick_all(&AlwaysHitQuery, &scene);
+        assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn test_do_not_select_skips_children() {
+        let mut scene = Scene::new();
+        // DO_NOT_SELECT group parent with a selectable child
+        let parent = scene.add_node(None, None, Transform::IDENTITY, NodeFlags::DO_NOT_SELECT).unwrap();
+        let _child = make_geometry_node(&mut scene, Some(parent), NodeFlags::NONE);
+
+        let hits = pick_all(&AlwaysHitQuery, &scene);
+        assert!(hits.is_empty());
     }
 }

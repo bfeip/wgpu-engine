@@ -26,12 +26,14 @@ fn create_test_scene() -> Scene {
             Quaternion::new(1.0, 0.0, 0.0, 0.0),
             Vector3::new(2.0, 2.0, 2.0),
         ),
+        NodeFlags::NONE,
     ).unwrap();
 
     let _child_id = scene.add_node(
         Some(node_id),
         Some("ChildNode".to_string()),
         Transform::from_position(Point3::new(0.5, 0.5, 0.5)),
+        NodeFlags::NONE,
     ).unwrap();
 
     {
@@ -40,6 +42,7 @@ fn create_test_scene() -> Scene {
             None,
             None,
             Transform::from_position(Point3::new(5.0, 5.0, 5.0)),
+            NodeFlags::NONE,
         ).unwrap();
         scene.set_node_payload(light_node_id, NodePayload::Light(Light::point(RgbaColor::WHITE, 10.0)));
     }
@@ -225,4 +228,80 @@ fn estimate_empty_scene() {
     assert!(estimate > 0);
     let bytes = to_bytes(&scene).expect("serialize");
     assert!(estimate >= bytes.len());
+}
+
+// ============== DO_NOT_EXPORT tests ==============
+
+#[test]
+fn test_do_not_export_excludes_node() {
+    use duck_engine_scene::NodeFlags;
+
+    let mut scene = Scene::new();
+    let mesh_id = scene.add_mesh(Mesh::cube(1.0, PrimitiveType::TriangleList));
+    let mat_id = scene.add_material(Material::new());
+
+    let _normal = scene.add_instance_node(
+        None, mesh_id, mat_id, Some("Normal".to_string()), Transform::IDENTITY, NodeFlags::NONE,
+    ).unwrap();
+    let _hidden = scene.add_instance_node(
+        None, mesh_id, mat_id, Some("Hidden".to_string()), Transform::IDENTITY, NodeFlags::DO_NOT_EXPORT,
+    ).unwrap();
+
+    let bytes = to_bytes(&scene).expect("serialize");
+    let loaded = from_bytes(&bytes).expect("deserialize");
+
+    assert_eq!(loaded.node_count(), 1);
+    assert!(loaded.nodes().any(|n| n.name.as_deref() == Some("Normal")));
+    assert!(!loaded.nodes().any(|n| n.name.as_deref() == Some("Hidden")));
+}
+
+#[test]
+fn test_do_not_export_excludes_subtree() {
+    use duck_engine_scene::NodeFlags;
+
+    let mut scene = Scene::new();
+    let root = scene.add_default_node(None, Some("Root".to_string())).unwrap();
+    let _normal_child = scene.add_default_node(Some(root), Some("NormalChild".to_string())).unwrap();
+    let hidden_parent = scene.add_node(
+        Some(root), Some("HiddenParent".to_string()), Transform::IDENTITY, NodeFlags::DO_NOT_EXPORT,
+    ).unwrap();
+    let _hidden_grandchild = scene.add_default_node(Some(hidden_parent), Some("HiddenGrandchild".to_string())).unwrap();
+
+    let bytes = to_bytes(&scene).expect("serialize");
+    let loaded = from_bytes(&bytes).expect("deserialize");
+
+    // Root + NormalChild survive; HiddenParent and HiddenGrandchild are excluded.
+    assert_eq!(loaded.node_count(), 2);
+    assert!(loaded.nodes().any(|n| n.name.as_deref() == Some("Root")));
+    assert!(loaded.nodes().any(|n| n.name.as_deref() == Some("NormalChild")));
+    assert!(!loaded.nodes().any(|n| n.name.as_deref() == Some("HiddenParent")));
+    assert!(!loaded.nodes().any(|n| n.name.as_deref() == Some("HiddenGrandchild")));
+}
+
+#[test]
+fn test_do_not_export_excludes_instance_and_mesh() {
+    use duck_engine_scene::NodeFlags;
+
+    let mut scene = Scene::new();
+    let shared_mesh_id = scene.add_mesh(Mesh::cube(1.0, PrimitiveType::TriangleList));
+    let exclusive_mesh_id = scene.add_mesh(Mesh::cube(2.0, PrimitiveType::TriangleList));
+    let mat_id = scene.add_material(Material::new());
+
+    // One normal node using the shared mesh.
+    scene.add_instance_node(
+        None, shared_mesh_id, mat_id, Some("Normal".to_string()), Transform::IDENTITY, NodeFlags::NONE,
+    ).unwrap();
+    // One hidden node using the exclusive mesh (not shared with anyone else).
+    scene.add_instance_node(
+        None, exclusive_mesh_id, mat_id, Some("Hidden".to_string()), Transform::IDENTITY, NodeFlags::DO_NOT_EXPORT,
+    ).unwrap();
+
+    let bytes = to_bytes(&scene).expect("serialize");
+    let loaded = from_bytes(&bytes).expect("deserialize");
+
+    // Only the normal node and its resources survive.
+    assert_eq!(loaded.node_count(), 1);
+    assert_eq!(loaded.instance_count(), 1);
+    // The shared mesh is retained; the exclusive mesh is gone.
+    assert_eq!(loaded.mesh_count(), 1);
 }

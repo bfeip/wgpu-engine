@@ -678,6 +678,7 @@ mod tests {
                 mat_id,
                 Some("TestNode".into()),
                 duck_engine_scene::common::Transform::IDENTITY,
+                duck_engine_scene::NodeFlags::NONE,
             )
             .unwrap();
         scene

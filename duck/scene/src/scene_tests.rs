@@ -186,6 +186,7 @@ fn test_add_instance_node() {
         mat_id,
         None,
         Transform::IDENTITY,
+        NodeFlags::NONE,
     ).unwrap();
 
     assert_eq!(scene.node_count(), 1);
@@ -230,6 +231,7 @@ fn test_child_transform_accumulation() {
         None,
         None,
         Transform::from_position(Point3::new(10.0, 0.0, 0.0)),
+        NodeFlags::NONE,
     ).unwrap();
 
     // Child at (5, 0, 0) relative to parent
@@ -237,6 +239,7 @@ fn test_child_transform_accumulation() {
         Some(root),
         None,
         Transform::from_position(Point3::new(5.0, 0.0, 0.0)),
+        NodeFlags::NONE,
     ).unwrap();
 
     let child_transform = scene.nodes_transform(child).unwrap();
@@ -260,6 +263,7 @@ fn test_transform_with_scale() {
             Quaternion::new(1.0, 0.0, 0.0, 0.0),
             Vector3::new(2.0, 2.0, 2.0),
         ),
+        NodeFlags::NONE,
     ).unwrap();
 
     // Child at (1, 0, 0)
@@ -267,6 +271,7 @@ fn test_transform_with_scale() {
         Some(parent),
         None,
         Transform::from_position(Point3::new(1.0, 0.0, 0.0)),
+        NodeFlags::NONE,
     ).unwrap();
 
     let child_transform = scene.nodes_transform(child).unwrap();
@@ -435,6 +440,7 @@ fn test_add_node_with_invalid_parent_fails() {
         Some(nonexistent),
         None,
         Transform::IDENTITY,
+        NodeFlags::NONE,
     );
 
     assert!(result.is_err());
@@ -463,6 +469,7 @@ fn test_add_instance_node_with_invalid_parent_fails() {
         crate::Id::new(),
         None,
         Transform::IDENTITY,
+        NodeFlags::NONE,
     );
 
     assert!(result.is_err());
@@ -792,5 +799,76 @@ fn test_cone_directed_base_along_direction() {
     assert!(bounds.max.z > 0.0, "Cone should extend in +Z direction");
     // And min.z should be near the apex
     assert!(bounds.min.z < height, "Cone min.z should be less than height");
+}
+
+// ============== NodeFlags bounding tests ==============
+
+fn make_unit_mesh() -> Mesh {
+    Mesh::from_raw(
+        vec![
+            Vertex { position: [0.0, 0.0, 0.0], tex_coords: [0.0, 0.0, 0.0], normal: [0.0, 1.0, 0.0] },
+            Vertex { position: [1.0, 0.0, 0.0], tex_coords: [1.0, 0.0, 0.0], normal: [0.0, 1.0, 0.0] },
+            Vertex { position: [0.0, 1.0, 0.0], tex_coords: [0.0, 1.0, 0.0], normal: [0.0, 1.0, 0.0] },
+        ],
+        vec![MeshPrimitive { primitive_type: PrimitiveType::TriangleList, indices: vec![0, 1, 2] }],
+    )
+}
+
+fn add_geometry_node(scene: &mut Scene, parent: Option<NodeId>, flags: NodeFlags) -> NodeId {
+    let mesh_id = scene.add_mesh(make_unit_mesh());
+    let mat_id = crate::Id::new();
+    scene.add_instance_node(parent, mesh_id, mat_id, None, Transform::IDENTITY, flags).unwrap()
+}
+
+#[test]
+fn test_does_not_contribute_bounding_returns_no_bounds() {
+    let mut scene = Scene::new();
+    let node_id = add_geometry_node(&mut scene, None, NodeFlags::DOES_NOT_CONTRIBUTE_BOUNDING);
+
+    let result = scene.nodes_bounding(node_id);
+    assert!(result.bounds.is_none());
+    assert!(!result.incomplete);
+}
+
+#[test]
+fn test_does_not_contribute_bounding_excluded_from_parent() {
+    let mut scene = Scene::new();
+    let root = scene.add_default_node(None, None).unwrap();
+    let _normal = add_geometry_node(&mut scene, Some(root), NodeFlags::NONE);
+    let _flagged = add_geometry_node(&mut scene, Some(root), NodeFlags::DOES_NOT_CONTRIBUTE_BOUNDING);
+
+    // Root bounds should come only from the normal child — both have unit geometry
+    // at the origin so the bounds should match a single unit mesh.
+    let result = scene.nodes_bounding(root);
+    assert!(result.bounds.is_some());
+    assert!(!result.incomplete);
+
+    // The normal child contributes bounds; the flagged one is excluded.
+    // Both use the same unit mesh, so the result matches one unit mesh's bounds.
+    let bounds = result.bounds.unwrap();
+    assert!((bounds.max.x - 1.0).abs() < EPSILON);
+    assert!((bounds.max.y - 1.0).abs() < EPSILON);
+}
+
+#[test]
+fn test_does_not_contribute_bounding_children_also_excluded() {
+    let mut scene = Scene::new();
+    // Flagged parent whose only child has real geometry.
+    let flagged_parent = scene.add_node(None, None, Transform::IDENTITY, NodeFlags::DOES_NOT_CONTRIBUTE_BOUNDING).unwrap();
+    let _child = add_geometry_node(&mut scene, Some(flagged_parent), NodeFlags::NONE);
+
+    let result = scene.nodes_bounding(flagged_parent);
+    assert!(result.bounds.is_none());
+    assert!(!result.incomplete);
+}
+
+#[test]
+fn test_normal_node_contributes_bounding() {
+    let mut scene = Scene::new();
+    let node_id = add_geometry_node(&mut scene, None, NodeFlags::NONE);
+
+    let result = scene.nodes_bounding(node_id);
+    assert!(result.bounds.is_some());
+    assert!(!result.incomplete);
 }
 

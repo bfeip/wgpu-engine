@@ -86,7 +86,7 @@ pub struct BoundingResult {
 /// # Examples
 ///
 /// ```
-/// use duck_engine_scene::{Scene, Mesh, MeshPrimitive, Vertex, Material, PrimitiveType, common};
+/// use duck_engine_scene::{Scene, Mesh, MeshPrimitive, Vertex, Material, NodeFlags, PrimitiveType, common};
 /// use duck_engine_scene::common::RgbaColor;
 ///
 /// let mut scene = Scene::new();
@@ -109,7 +109,7 @@ pub struct BoundingResult {
 /// let mat_id = scene.add_material(material);
 ///
 /// // Create an instance node
-/// let node_id = scene.add_instance_node(None, mesh_id, mat_id, None, common::Transform::IDENTITY);
+/// let node_id = scene.add_instance_node(None, mesh_id, mat_id, None, common::Transform::IDENTITY, NodeFlags::NONE);
 /// ```
 pub struct Scene {
     meshes: HashMap<MeshId, Mesh>,
@@ -1055,6 +1055,10 @@ impl Scene {
         let Some(node) = self.get_node(node_id) else {
             return BoundingResult { bounds: None, incomplete: true };
         };
+
+        if node.flags().contains(NodeFlags::DOES_NOT_CONTRIBUTE_BOUNDING) {
+            return BoundingResult { bounds: None, incomplete: false };
+        }
 
         // Cached value was only ever written for a complete subtree.
         if !node.bounds_dirty() {

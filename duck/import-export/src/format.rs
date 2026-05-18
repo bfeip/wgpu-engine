@@ -25,6 +25,7 @@
 pub mod wire;
 pub use wire::*;
 
+use std::collections::HashSet;
 use std::io::Cursor;
 
 use image::codecs::png::CompressionType;
@@ -35,10 +36,17 @@ use thiserror::Error;
 use duck_engine_scene::{
     Id,
     Instance,
+    InstanceId,
     Material,
+    MaterialId,
     Mesh,
+    MeshId,
     Node,
+    NodeFlags,
+    NodeId,
+    NodePayload,
     Texture,
+    TextureId,
     EnvironmentMap, Scene,
 };
 
@@ -344,6 +352,75 @@ pub fn estimate_serialized_size(scene: &Scene) -> usize {
     total + total / 10
 }
 
+struct ExportableResources {
+    root_nodes: Vec<NodeId>,
+    nodes: HashSet<NodeId>,
+    instances: HashSet<InstanceId>,
+    meshes: HashSet<MeshId>,
+    materials: HashSet<MaterialId>,
+    textures: HashSet<TextureId>,
+}
+
+/// Collects the IDs of all resources that should appear in an export.
+///
+/// Walks the scene tree, skipping subtrees rooted at a `DO_NOT_EXPORT` node, then
+/// follows instance → mesh/material → texture references to determine the complete
+/// set of reachable resources.
+fn collect_exportable(scene: &Scene) -> ExportableResources {
+    fn visit(
+        node_id: NodeId,
+        scene: &Scene,
+        nodes: &mut HashSet<NodeId>,
+        instances: &mut HashSet<InstanceId>,
+    ) {
+        let Some(node) = scene.get_node(node_id) else { return };
+        if node.flags().contains(NodeFlags::DO_NOT_EXPORT) {
+            return;
+        }
+        nodes.insert(node_id);
+        if let NodePayload::Instance(iid) = node.payload() {
+            instances.insert(*iid);
+        }
+        for &child_id in node.children() {
+            visit(child_id, scene, nodes, instances);
+        }
+    }
+
+    let mut res = ExportableResources {
+        root_nodes: Vec::new(),
+        nodes: HashSet::new(),
+        instances: HashSet::new(),
+        meshes: HashSet::new(),
+        materials: HashSet::new(),
+        textures: HashSet::new(),
+    };
+
+    for &root_id in scene.root_nodes() {
+        let is_exportable = scene
+            .get_node(root_id)
+            .map_or(false, |n| !n.flags().contains(NodeFlags::DO_NOT_EXPORT));
+        if is_exportable {
+            res.root_nodes.push(root_id);
+        }
+        visit(root_id, scene, &mut res.nodes, &mut res.instances);
+    }
+
+    for &iid in &res.instances {
+        let Some(instance) = scene.get_instance(iid) else { continue };
+        res.meshes.insert(instance.mesh());
+        res.materials.insert(instance.material());
+    }
+
+    for &mid in &res.materials {
+        let Some(mat) = scene.get_material(mid) else { continue };
+        for tex_id in [mat.base_color_texture(), mat.normal_texture(), mat.metallic_roughness_texture()].into_iter().flatten() {
+            res.textures.insert(tex_id);
+        }
+    }
+
+    res
+}
+
 /// Serializes the scene to bytes in Duck format with default options.
 pub fn to_bytes(scene: &Scene) -> Result<Vec<u8>, FormatError> {
     to_bytes_with_options(scene, &SaveOptions::default())
@@ -353,6 +430,7 @@ pub fn to_bytes(scene: &Scene) -> Result<Vec<u8>, FormatError> {
 pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec<u8>, FormatError> {
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    let exportable = collect_exportable(scene);
     let compression_level = options.compression.zstd_level();
     let mut output = Vec::with_capacity(estimate_serialized_size(scene));
     output.resize(HEADER_SIZE, 0);
@@ -365,7 +443,7 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
             .map(|d| d.as_secs())
             .unwrap_or(0),
         generator: format!("duck-engine {}", env!("CARGO_PKG_VERSION")),
-        root_nodes: scene.root_nodes().to_vec(),
+        root_nodes: exportable.root_nodes,
         active_environment_map: scene.active_environment_map(),
     };
     append_resource(
@@ -376,7 +454,8 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
         &mut toc,
     );
 
-    for node in scene.nodes() {
+    for &node_id in &exportable.nodes {
+        let Some(node) = scene.get_node(node_id) else { continue };
         append_resource(
             encode_resource(node, compression_level)?,
             ResourceType::Node,
@@ -386,7 +465,8 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
         );
     }
 
-    for instance in scene.instances() {
+    for &instance_id in &exportable.instances {
+        let Some(instance) = scene.get_instance(instance_id) else { continue };
         append_resource(
             encode_resource(instance, compression_level)?,
             ResourceType::Instance,
@@ -396,7 +476,8 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
         );
     }
 
-    for material in scene.materials() {
+    for &material_id in &exportable.materials {
+        let Some(material) = scene.get_material(material_id) else { continue };
         append_resource(
             encode_resource(material, compression_level)?,
             ResourceType::Material,
@@ -406,7 +487,8 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
         );
     }
 
-    for mesh in scene.meshes() {
+    for &mesh_id in &exportable.meshes {
+        let Some(mesh) = scene.get_mesh(mesh_id) else { continue };
         append_resource(
             encode_resource(mesh, compression_level)?,
             ResourceType::Mesh,
@@ -416,7 +498,8 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
         );
     }
 
-    for tex in scene.textures() {
+    for &tex_id in &exportable.textures {
+        let Some(tex) = scene.get_texture(tex_id) else { continue };
         let image_bytes = encode_texture(tex, options)?;
         append_resource(
             image_bytes,

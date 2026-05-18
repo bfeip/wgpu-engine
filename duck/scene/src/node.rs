@@ -333,6 +333,7 @@ impl Node {
 
     pub fn set_flags(&mut self, flags: NodeFlags) {
         self.flags = flags;
+        self.mark_bounds_dirty();
     }
 
     /// Returns the node's payload.
