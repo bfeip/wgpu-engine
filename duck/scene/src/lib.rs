@@ -40,7 +40,7 @@ pub use material::{
     DEFAULT_METALLIC, DEFAULT_ROUGHNESS,
 };
 pub use mesh::{Mesh, MeshDescriptor, MeshIndex, MeshPrimitive, ObjMesh, PrimitiveType, SubMeshRange, Topology, Vertex};
-pub use node::{CustomNodePayload, EffectiveVisibility, Node, NodePayload, Visibility};
+pub use node::{CustomNodePayload, EffectiveVisibility, Node, NodePayload, Visibility, NodeFlags};
 pub use texture::{Texture, TextureFormat};
 pub use environment::{
     CubemapFaceData, CubemapMipData, EnvironmentMap, EnvironmentSource, PreprocessedCubemap,
@@ -48,7 +48,7 @@ pub use environment::{
 };
 pub use event::{SceneEvent, SceneEventLog, SequencedEvent};
 
-use crate::common::{Aabb};
+use crate::{common::Aabb};
 
 /// Default generation counter value for newly created resources.
 /// Starts at 1 so initial change detection triggers on first use.
@@ -199,12 +199,6 @@ impl Scene {
     // ========== Mesh API ==========
 
     /// Adds a mesh to the scene.
-    ///
-    /// # Arguments
-    /// * `mesh` - The mesh to add
-    ///
-    /// # Returns
-    /// The unique ID assigned to this mesh
     pub fn add_mesh(&mut self, mesh: Mesh) -> MeshId {
         let id = mesh.id;
         if let Some(log) = &mut self.event_log {
@@ -215,12 +209,6 @@ impl Scene {
     }
 
     /// Creates and adds a mesh from a descriptor.
-    ///
-    /// # Arguments
-    /// * `descriptor` - Source data for the mesh
-    ///
-    /// # Returns
-    /// The unique ID assigned to this mesh, or an error if loading fails
     pub fn add_mesh_from_descriptor(&mut self, descriptor: MeshDescriptor) -> anyhow::Result<MeshId> {
         let mesh = Mesh::from_descriptor(descriptor)?;
         Ok(self.add_mesh(mesh))
@@ -262,12 +250,6 @@ impl Scene {
     // ========== Material API ==========
 
     /// Adds a material to the scene.
-    ///
-    /// # Arguments
-    /// * `material` - The material to add
-    ///
-    /// # Returns
-    /// The unique ID assigned to this material
     pub fn add_material(&mut self, material: Material) -> MaterialId {
         let id = material.id;
         if let Some(log) = &mut self.event_log {
@@ -313,12 +295,6 @@ impl Scene {
     // ========== Texture API ==========
 
     /// Adds a texture to the scene.
-    ///
-    /// # Arguments
-    /// * `texture` - The texture to add
-    ///
-    /// # Returns
-    /// The unique ID assigned to this texture
     pub fn add_texture(&mut self, texture: Texture) -> TextureId {
         let id = texture.id;
         if let Some(log) = &mut self.event_log {
@@ -329,12 +305,6 @@ impl Scene {
     }
 
     /// Creates and adds a texture from an image.
-    ///
-    /// # Arguments
-    /// * `image` - The image data
-    ///
-    /// # Returns
-    /// The unique ID assigned to this texture
     pub fn add_texture_from_image(&mut self, image: DynamicImage) -> TextureId {
         self.add_texture(Texture::from_image(image))
     }
@@ -342,12 +312,6 @@ impl Scene {
     /// Creates and adds a texture from a file path.
     ///
     /// The image is not loaded immediately - it will be loaded lazily when first needed.
-    ///
-    /// # Arguments
-    /// * `path` - Path to the image file
-    ///
-    /// # Returns
-    /// The unique ID assigned to this texture
     pub fn add_texture_from_path(&mut self, path: impl AsRef<Path>) -> TextureId {
         self.add_texture(Texture::from_path(path.as_ref()))
     }
@@ -382,12 +346,6 @@ impl Scene {
     /// Creates and adds an environment map from an equirectangular HDR file path.
     ///
     /// The HDR file will be loaded and processed into IBL maps when first rendered.
-    ///
-    /// # Arguments
-    /// * `path` - Path to an HDR file (.hdr format)
-    ///
-    /// # Returns
-    /// The unique ID assigned to this environment map
     pub fn add_environment_map_from_hdr_path(
         &mut self,
         path: impl Into<std::path::PathBuf>,
@@ -401,12 +359,6 @@ impl Scene {
     /// Creates and adds an environment map from in-memory HDR data.
     ///
     /// The HDR data will be processed into IBL maps when first rendered.
-    ///
-    /// # Arguments
-    /// * `data` - Raw .hdr file bytes
-    ///
-    /// # Returns
-    /// The unique ID assigned to this environment map
     pub fn add_environment_map_from_hdr_data(
         &mut self,
         data: Vec<u8>,
@@ -475,13 +427,6 @@ impl Scene {
     // ========== Instance API ==========
 
     /// Adds an instance to the scene, binding a mesh to a material.
-    ///
-    /// # Arguments
-    /// * `mesh` - The mesh ID for this instance
-    /// * `material` - The material ID for this instance
-    ///
-    /// # Returns
-    /// The unique ID assigned to this instance
     pub fn add_instance(&mut self, instance: Instance) -> InstanceId {
         let id = instance.id;
         if let Some(log) = &mut self.event_log {
@@ -596,7 +541,7 @@ impl Scene {
             cgmath::Vector3::new(1.0, 1.0, 1.0),
         );
         let key_id = self
-            .add_node(Some(camera_node_id), Some("DefaultKeyLight".to_string()), key_transform)
+            .add_node(Some(camera_node_id), Some("DefaultKeyLight".to_string()), key_transform, NodeFlags::NONE)
             .expect("Failed to create key light node");
         self.nodes.get_mut(&key_id).unwrap().set_payload(NodePayload::Light(Light::directional(white, 1.0)));
         self.node_generation += 1;
@@ -608,7 +553,7 @@ impl Scene {
             cgmath::Vector3::new(1.0, 1.0, 1.0),
         );
         let fill_id = self
-            .add_node(Some(camera_node_id), Some("DefaultFillLight".to_string()), fill_transform)
+            .add_node(Some(camera_node_id), Some("DefaultFillLight".to_string()), fill_transform, NodeFlags::NONE)
             .expect("Failed to create fill light node");
         self.nodes.get_mut(&fill_id).unwrap().set_payload(NodePayload::Light(Light::directional(white, 0.3)));
         self.node_generation += 1;
@@ -642,22 +587,12 @@ impl Scene {
     }
 
     /// Adds a new node to the scene tree.
-    ///
-    /// # Arguments
-    /// * `parent` - Optional parent node ID. If `Some`, the parent must exist in the scene.
-    /// * `position` - Local position of the node.
-    /// * `transform` - Local transform of the node.
-    ///
-    /// # Returns
-    /// The ID of the newly created node, or an error if the parent doesn't exist.
-    ///
-    /// # Errors
-    /// Returns an error if `parent` is `Some` but the specified node doesn't exist.
     pub fn add_node(
         &mut self,
         parent: Option<NodeId>,
         name: Option<String>,
         transform: common::Transform,
+        flags: NodeFlags
     ) -> anyhow::Result<NodeId> {
         // Validate parent exists if specified
         if let Some(parent_id) = parent
@@ -665,7 +600,7 @@ impl Scene {
                 anyhow::bail!("Parent node with ID {} not found in scene", parent_id);
             }
 
-        let mut node = Node::new(name, transform);
+        let mut node = Node::new(name, transform, flags);
         let id = node.id;
 
         // Set up parent-child relationship
@@ -690,19 +625,6 @@ impl Scene {
     ///
     /// This is a convenience method that creates both an instance and a node
     /// in one call.
-    ///
-    /// # Arguments
-    /// * `parent` - Optional parent node ID. If `Some`, the parent must exist in the scene.
-    /// * `mesh` - The mesh ID for this instance.
-    /// * `material` - The material ID for this instance.
-    /// * `name` - Optional name for the node.
-    /// * `transform` - Local transform of the node.
-    ///
-    /// # Returns
-    /// The ID of the newly created node, or an error if the parent doesn't exist.
-    ///
-    /// # Errors
-    /// Returns an error if `parent` is `Some` but the specified node doesn't exist.
     pub fn add_instance_node(
         &mut self,
         parent: Option<NodeId>,
@@ -710,12 +632,13 @@ impl Scene {
         material: MaterialId,
         name: Option<String>,
         transform: common::Transform,
+        flags: NodeFlags
     ) -> anyhow::Result<NodeId> {
         // Create the instance
         let instance_id = self.add_instance(Instance::new(mesh, material));
 
         // Create the node (validates parent exists)
-        let node_id = self.add_node(parent, name, transform)?;
+        let node_id = self.add_node(parent, name, transform, flags)?;
 
         // Attach instance to node
         // Safe to unwrap since we just created the node above
@@ -725,18 +648,8 @@ impl Scene {
     }
 
     /// Adds a node with default transform (identity).
-    ///
-    /// # Arguments
-    /// * `parent` - Optional parent node ID. If `Some`, the parent must exist in the scene.
-    /// * `name` - Optional name for the node.
-    ///
-    /// # Returns
-    /// The ID of the newly created node, or an error if the parent doesn't exist.
-    ///
-    /// # Errors
-    /// Returns an error if `parent` is `Some` but the specified node doesn't exist.
     pub fn add_default_node(&mut self, parent: Option<NodeId>, name: Option<String>) -> anyhow::Result<NodeId> {
-        self.add_node(parent, name, common::Transform::IDENTITY)
+        self.add_node(parent, name, common::Transform::IDENTITY, NodeFlags::NONE)
     }
 
     /// Inserts a pre-built node using its existing ID.

@@ -1,4 +1,4 @@
-use duck_engine_scene::NodeId;
+use duck_engine_scene::{NodeFlags, NodeId};
 use web_time::Instant;
 
 #[cfg(feature = "streaming")]
@@ -408,7 +408,7 @@ impl<'a> Viewer<'a> {
             zfar: 100.0,
             ortho: false,
         };
-        let id = self.scene.add_node(None, Some("Camera".to_string()), cam.to_node_transform())
+        let id = self.scene.add_node(None, Some("Camera".to_string()), cam.to_node_transform(), NodeFlags::NONE)
             .expect("Failed to add default camera node");
         self.scene.set_node_payload(id, NodePayload::Camera(cam.projection()));
         self.scene.set_active_camera(Some(id));

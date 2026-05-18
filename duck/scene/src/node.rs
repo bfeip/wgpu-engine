@@ -6,6 +6,7 @@ use crate::common::{
     local_axis_z, rotate_position_about_pivot, scale_position_about_pivot_local,
     scale_position_about_pivot_world,
 };
+use bitflags::bitflags;
 use cgmath::{Matrix4, Point3, Quaternion, Vector3};
 use std::cell::Cell;
 
@@ -88,6 +89,32 @@ pub enum EffectiveVisibility {
     Mixed,
 }
 
+bitflags! {
+    /// Flags that dictate certain node behaviors.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+    #[cfg_attr(feature = "serde", serde(transparent))]
+    pub struct NodeFlags: u32 {
+        /// No special behavior.
+        const NONE = 0;
+        /// Marks a node as non-selectable. Geometry queries will not search this node or its children.
+        const DO_NOT_SELECT = 1 << 0;
+        /// Marks a node as not for export. Nodes marked with this will not appear in exported
+        /// scenes, nor will their children.
+        const DO_NOT_EXPORT = 1 << 1;
+        /// Marks a node as not part of the scene bounding. This node will not be used for bounding calculations.
+        const DOES_NOT_CONTRIBUTE_BOUNDING = 1 << 2;
+    }
+}
+
+impl NodeFlags {
+    /// A set of flags marking a node as (more or less) non-interactive. Geometry will be visible,
+    /// but that is all.
+    pub fn inert() -> Self {
+        Self::DO_NOT_SELECT | Self::DO_NOT_EXPORT | Self::DOES_NOT_CONTRIBUTE_BOUNDING
+    }
+}
+
 /// A node in the scene tree hierarchy.
 #[derive(Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -95,14 +122,12 @@ pub struct Node {
     pub id: NodeId,
     pub name: Option<String>,
 
-    // Local transform
     transform: Transform,
 
-    // Hierarchy
     parent: Option<NodeId>,
     children: Vec<NodeId>,
+    flags: NodeFlags,
 
-    // Content: the typed payload carried by this node
     payload: NodePayload,
 
     // Visibility
@@ -119,13 +144,14 @@ pub struct Node {
 
 impl Node {
     /// Creates a new node with the given transform.
-    pub fn new(name: Option<String>, transform: Transform) -> Self {
+    pub fn new(name: Option<String>, transform: Transform, flags: NodeFlags) -> Self {
         Self {
             id: crate::Id::new(),
             name,
             transform,
             parent: None,
             children: Vec::new(),
+            flags,
             payload: NodePayload::None,
             visibility: Visibility::default(),
             cached_effective_visibility: Cell::new(None),
@@ -136,7 +162,7 @@ impl Node {
 
     /// Creates a new node with default transform (identity).
     pub fn new_default() -> Self {
-        Self::new(None, Transform::IDENTITY)
+        Self::new(None, Transform::IDENTITY, NodeFlags::NONE)
     }
 
     // ============== Transform ==============
@@ -194,10 +220,6 @@ impl Node {
     // ========== Transform Manipulation Methods ==========
 
     /// Rotates the node's position and orientation around a world-space pivot point.
-    ///
-    /// # Arguments
-    /// * `pivot` - The world-space pivot point
-    /// * `rotation` - The rotation to apply
     pub fn rotate_about_pivot(&mut self, pivot: Point3<f32>, rotation: Quaternion<f32>) {
         let new_position = rotate_position_about_pivot(self.transform.position, pivot, rotation);
         let new_rotation = compose_rotation(self.transform.rotation, rotation);
@@ -206,10 +228,6 @@ impl Node {
     }
 
     /// Scales the node's position and scale relative to a world-space pivot point.
-    ///
-    /// # Arguments
-    /// * `pivot` - The world-space pivot point
-    /// * `scale_factor` - The scale factors (x, y, z)
     pub fn scale_about_pivot(&mut self, pivot: Point3<f32>, scale_factor: Vector3<f32>) {
         let new_position = scale_position_about_pivot_world(self.transform.position, pivot, scale_factor);
         let new_scale = apply_scale(self.transform.scale, scale_factor);
@@ -220,11 +238,6 @@ impl Node {
     /// Scales the node's position and scale relative to a pivot point in local space.
     ///
     /// The local space is defined by the given orientation.
-    ///
-    /// # Arguments
-    /// * `pivot` - The world-space pivot point
-    /// * `scale_factor` - The scale factors in local space (x, y, z)
-    /// * `local_orientation` - The orientation defining local space
     pub fn scale_about_pivot_local(
         &mut self,
         pivot: Point3<f32>,
@@ -238,10 +251,7 @@ impl Node {
         self.set_scale(new_scale);
     }
 
-    /// Translates the node by the given offset.
-    ///
-    /// # Arguments
-    /// * `offset` - The translation offset in world space
+    /// Translates the node by the given world space offset.
     pub fn translate(&mut self, offset: Vector3<f32>) {
         self.set_position(self.transform.position + offset);
     }
@@ -315,6 +325,14 @@ impl Node {
     pub fn set_children_unchecked(&mut self, children: Vec<NodeId>) {
         self.children = children;
         self.mark_bounds_dirty();
+    }
+
+    pub fn flags(&self) -> NodeFlags {
+        self.flags
+    }
+
+    pub fn set_flags(&mut self, flags: NodeFlags) {
+        self.flags = flags;
     }
 
     /// Returns the node's payload.
@@ -425,7 +443,7 @@ mod tests {
         let rotation = Quaternion::new(1.0, 0.0, 0.0, 0.0);
         let scale = Vector3::new(2.0, 2.0, 2.0);
 
-        let node = Node::new(None, Transform::new(position, rotation, scale));
+        let node = Node::new(None, Transform::new(position, rotation, scale), NodeFlags::NONE);
 
         assert_eq!(node.position(), position);
         assert_eq!(node.rotation(), rotation);
@@ -473,7 +491,7 @@ mod tests {
         let rotation = Quaternion::new(1.0, 0.0, 0.0, 0.0); // Identity
         let scale = Vector3::new(1.0, 1.0, 1.0); // Unity scale
 
-        let node = Node::new(None, Transform::new(position, rotation, scale));
+        let node = Node::new(None, Transform::new(position, rotation, scale), NodeFlags::NONE);
         let transform = node.compute_local_transform();
 
         // Check translation components (last column)
@@ -489,7 +507,7 @@ mod tests {
         let rotation = Quaternion::from_angle_z(Deg(90.0)); // 90 degrees around Z
         let scale = Vector3::new(1.0, 1.0, 1.0);
 
-        let node = Node::new(None, Transform::new(position, rotation, scale));
+        let node = Node::new(None, Transform::new(position, rotation, scale), NodeFlags::NONE);
         let transform = node.compute_local_transform();
 
         // Apply transform to point (1, 0, 0) - should become roughly (0, 1, 0)
@@ -509,7 +527,7 @@ mod tests {
         let rotation = Quaternion::new(1.0, 0.0, 0.0, 0.0);
         let scale = Vector3::new(2.0, 3.0, 4.0);
 
-        let node = Node::new(None, Transform::new(position, rotation, scale));
+        let node = Node::new(None, Transform::new(position, rotation, scale), NodeFlags::NONE);
         let transform = node.compute_local_transform();
 
         // Check diagonal elements (scale factors)
@@ -525,7 +543,7 @@ mod tests {
         let rotation = Quaternion::from_angle_y(Deg(45.0));
         let scale = Vector3::new(2.0, 2.0, 2.0);
 
-        let node = Node::new(None, Transform::new(position, rotation, scale));
+        let node = Node::new(None, Transform::new(position, rotation, scale), NodeFlags::NONE);
         let transform = node.compute_local_transform();
 
         // Manually compute expected transform
@@ -1050,7 +1068,7 @@ mod tests {
         let rotation = Quaternion::new(1.0, 0.0, 0.0, 0.0);
         let scale = Vector3::new(0.0, 0.0, 0.0);
 
-        let node = Node::new(None, Transform::new(position, rotation, scale));
+        let node = Node::new(None, Transform::new(position, rotation, scale), NodeFlags::NONE);
         let transform = node.compute_local_transform();
 
         // Should produce a zero-scale transform (degenerate)
@@ -1065,7 +1083,7 @@ mod tests {
         let rotation = Quaternion::new(1.0, 0.0, 0.0, 0.0);
         let scale = Vector3::new(-1.0, 1.0, 1.0); // Flip X
 
-        let node = Node::new(None, Transform::new(position, rotation, scale));
+        let node = Node::new(None, Transform::new(position, rotation, scale), NodeFlags::NONE);
         let transform = node.compute_local_transform();
 
         // X axis should be flipped

@@ -15,7 +15,7 @@ use openusd::sdf::{self, AbstractData, Value};
 
 use duck_engine_scene::{
     Light, Material, MaterialId, Mesh, MeshId, MeshPrimitive, PositionedCamera,
-    NodeId, NodePayload, PrimitiveType, Scene, Vertex,
+    NodeId, NodePayload, PrimitiveType, Scene, Vertex, NodeFlags
 };
 use duck_engine_scene::common::{RgbaColor, Transform, decompose_matrix};
 
@@ -367,12 +367,12 @@ fn build_node_recursive(
             if mesh_entries.len() == 1 {
                 let (mesh_id, mat_id) = mesh_entries[0];
                 let node_id = scene.add_instance_node(
-                    parent, mesh_id, mat_id, name, transform,
+                    parent, mesh_id, mat_id, name, transform, NodeFlags::NONE
                 )?;
                 recurse_children(data, prim_path, material_map, scene, node_id, camera_out, fallback_material_id)?;
             } else if mesh_entries.len() > 1 {
                 // Split mesh: create group node, then instance children
-                let group_id = scene.add_node(parent, name, transform)?;
+                let group_id = scene.add_node(parent, name, transform, NodeFlags::NONE)?;
                 for (i, &(mesh_id, mat_id)) in mesh_entries.iter().enumerate() {
                     scene.add_instance_node(
                         Some(group_id),
@@ -380,6 +380,7 @@ fn build_node_recursive(
                         mat_id,
                         Some(format!("chunk_{}", i)),
                         Transform::IDENTITY,
+                        NodeFlags::NONE
                     )?;
                 }
                 recurse_children(data, prim_path, material_map, scene, group_id, camera_out, fallback_material_id)?;
@@ -398,7 +399,7 @@ fn build_node_recursive(
         }
         _ => {
             // Xform, Scope, or unknown → create a transform node and recurse
-            let node_id = scene.add_node(parent, name, transform)?;
+            let node_id = scene.add_node(parent, name, transform, NodeFlags::NONE)?;
             recurse_children(data, prim_path, material_map, scene, node_id, camera_out, fallback_material_id)?;
         }
     }
@@ -937,7 +938,7 @@ fn extract_light(
         _ => return,
     };
 
-    if let Ok(node_id) = scene.add_node(None, None, transform) {
+    if let Ok(node_id) = scene.add_node(None, None, transform, NodeFlags::NONE) {
         scene.set_node_payload(node_id, NodePayload::Light(light));
     }
 }

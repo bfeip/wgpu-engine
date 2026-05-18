@@ -1,7 +1,7 @@
 use std::path::Path;
 use duck_engine_scene::{
-    AlphaMode, Material, MaterialFlags, PositionedCamera, Texture, TextureFormat, Mesh, MeshId, MeshPrimitive,
-    PrimitiveType, Scene, Vertex, MaterialId,
+    AlphaMode, Material, MaterialFlags, MaterialId, Mesh, MeshId, MeshPrimitive,
+    NodeFlags, PositionedCamera, PrimitiveType, Scene, Texture, TextureFormat, Vertex
 };
 
 /// A loaded primitive from a glTF mesh, containing the scene mesh ID and its material ID.
@@ -710,11 +710,11 @@ fn load_node_recursive(
         let primitives = &mesh_map[mesh.index()];
 
         if primitives.is_empty() {
-            // Mesh has no triangle primitives (only lines/points), treat as transform node
-            scene.add_node(parent, name, transform)?
+            // This is likely composed solely of primitives we don't support, like triangle fan
+            scene.add_node(parent, name, transform, NodeFlags::NONE)?
         } else if primitives.len() > 1 {
             // Multi-primitive mesh: create parent node and child nodes for each primitive
-            let parent_node_id = scene.add_node(parent, name, transform)?;
+            let parent_node_id = scene.add_node(parent, name, transform, NodeFlags::NONE)?;
 
             // Create child nodes for each primitive with identity transform
             for (mesh_id, material_id) in primitives {
@@ -724,6 +724,7 @@ fn load_node_recursive(
                     *material_id,
                     None,
                     duck_engine_scene::common::Transform::IDENTITY,
+                    NodeFlags::NONE
                 )?;
             }
 
@@ -731,11 +732,11 @@ fn load_node_recursive(
         } else {
             // Single primitive: create a single instance node
             let (mesh_id, material_id) = primitives[0];
-            scene.add_instance_node(parent, mesh_id, material_id, name, transform)?
+            scene.add_instance_node(parent, mesh_id, material_id, name, transform, NodeFlags::NONE)?
         }
     } else {
         // No mesh, just a transform node
-        scene.add_node(parent, name, transform)?
+        scene.add_node(parent, name, transform, NodeFlags::NONE)?
     };
 
     node_map.insert(gltf_node.index(), node_id);

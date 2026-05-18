@@ -22,7 +22,7 @@ use std::rc::Rc;
 use cgmath::{
     EuclideanSpace, InnerSpace, Matrix4, Point3, Quaternion, Rotation, SquareMatrix, Vector3,
 };
-use duck_engine_scene::{Mesh, Scene, common};
+use duck_engine_scene::{Mesh, NodeFlags, Scene, common};
 
 use crate::common::{
     apply_scale, centroid_of_slice, compose_rotation, decompose_matrix, local_axis_x, local_axis_y,
@@ -133,7 +133,7 @@ impl GizmoState {
 
         self.root_node.get_or_insert(
             ctx.scene.add_node(
-                None, Some("Gizmo root".to_owned()), Transform::IDENTITY
+                None, Some("Gizmo root".to_owned()), Transform::IDENTITY, NodeFlags::DO_NOT_EXPORT
             ).expect("Failed to create Gizmo root node")
         );
 
@@ -151,6 +151,7 @@ impl GizmoState {
                     material_id,
                     None,
                     pivot_transform,
+                    NodeFlags::DO_NOT_EXPORT
                 )
                 .expect("Failed to add gizmo node");
 
@@ -547,7 +548,7 @@ impl TransformState {
         // Create annotation root node if it does not exist
         self.annotation_root.get_or_insert(
             ctx.scene.add_node(
-                None, Some("Transform annotations".to_owned()), Transform::IDENTITY
+                None, Some("Transform annotations".to_owned()), Transform::IDENTITY, NodeFlags::inert()
             ).expect("Failed to create transform annotation root node")
         );
 
@@ -585,7 +586,8 @@ impl TransformState {
                     mesh_id,
                     material,
                     Some("Transform axis annotation".to_owned()),
-                    Transform::IDENTITY
+                    Transform::IDENTITY,
+                    NodeFlags::inert()
                 ).expect("Failed to create axis annotation");
                 self.annotations.push(id);
             }

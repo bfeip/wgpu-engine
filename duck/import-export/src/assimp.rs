@@ -15,8 +15,8 @@ use russimp::node::Node as RNode;
 use russimp::scene::{PostProcess, Scene as RScene};
 
 use duck_engine_scene::{
-    Light, Material, MaterialId, Mesh, MeshId, MeshPrimitive, PositionedCamera,
-    NodeId, NodePayload, PrimitiveType, Scene, Texture, TextureId, Vertex,
+    Light, Material, MaterialId, Mesh, MeshId, MeshPrimitive, NodeFlags, NodeId,
+    NodePayload, PositionedCamera, PrimitiveType, Scene, Texture, TextureId, Vertex
 };
 use duck_engine_scene::common::{RgbaColor, Transform, decompose_matrix};
 
@@ -400,7 +400,7 @@ fn build_node_tree(
 
     if node.meshes.is_empty() {
         // Pure transform node (no geometry)
-        let node_id = scene.add_node(parent, name, transform)?;
+        let node_id = scene.add_node(parent, name, transform, NodeFlags::NONE)?;
 
         // Recurse into children
         for child in node.children.borrow().iter() {
@@ -412,14 +412,14 @@ fn build_node_tree(
             // Single mesh: create one instance node
             let mesh_idx = node.meshes[0] as usize;
             if let Some(&(mesh_id, mat_id)) = mesh_map.get(mesh_idx) {
-                let node_id = scene.add_instance_node(parent, mesh_id, mat_id, name, transform)?;
+                let node_id = scene.add_instance_node(parent, mesh_id, mat_id, name, transform, NodeFlags::NONE)?;
                 for child in node.children.borrow().iter() {
                     build_node_tree(child, scene, mesh_map, material_map, Some(node_id))?;
                 }
             }
         } else {
             // Multiple meshes on one node: create parent + instance children
-            let group_id = scene.add_node(parent, name, transform)?;
+            let group_id = scene.add_node(parent, name, transform, NodeFlags::NONE)?;
 
             for &mesh_idx in &node.meshes {
                 if let Some(&(mesh_id, mat_id)) = mesh_map.get(mesh_idx as usize) {
@@ -429,6 +429,7 @@ fn build_node_tree(
                         mat_id,
                         None,
                         Transform::IDENTITY,
+                        NodeFlags::NONE
                     )?;
                 }
             }
@@ -471,7 +472,7 @@ fn load_lights(assimp_lights: &[russimp::light::Light], scene: &mut Scene) {
         };
         let transform = Transform::new(pos, rotation, Vector3::new(1.0, 1.0, 1.0));
 
-        if let Ok(node_id) = scene.add_node(None, None, transform) {
+        if let Ok(node_id) = scene.add_node(None, None, transform, NodeFlags::NONE) {
             scene.set_node_payload(node_id, NodePayload::Light(engine_light));
         }
     }
