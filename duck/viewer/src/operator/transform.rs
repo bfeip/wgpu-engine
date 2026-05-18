@@ -16,12 +16,13 @@
 //!    axis-constrained transform that confirms on mouse release.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use cgmath::{
     EuclideanSpace, InnerSpace, Matrix4, Point3, Quaternion, Rotation, SquareMatrix, Vector3,
 };
-use duck_engine_scene::common;
+use duck_engine_scene::{Mesh, Scene, common};
 
 use crate::common::{
     apply_scale, centroid_of_slice, compose_rotation, decompose_matrix, local_axis_x, local_axis_y,
@@ -33,9 +34,8 @@ use crate::event::{CallbackId, Event, EventContext, EventDispatcher, EventKind};
 use crate::geom_query::{pick_all_from_ray, RayPickQuery};
 use crate::input::{ElementState, Key, MouseButton, NamedKey};
 use crate::operator::{Operator, OperatorId};
-use crate::scene::annotation::AnnotationId;
 use crate::gizmo::{self, GizmoType};
-use crate::scene::{MaterialId, MeshId, NodeId};
+use crate::scene::{Material, MaterialId, MeshId, NodeId};
 use crate::scene_scale;
 
 /// The type of transform being performed.
@@ -290,9 +290,6 @@ struct TransformState {
     /// Model radius for scaling sensitivity.
     model_radius: f32,
 
-    /// Annotation IDs for visual feedback (cleaned up on finish).
-    annotation_ids: Vec<AnnotationId>,
-
     /// Gizmo handle state (3D visual handles for the active transform).
     gizmo: GizmoState,
 
@@ -300,6 +297,15 @@ struct TransformState {
     /// Independent of `mode` — the gizmo is a persistent visual tool, while
     /// `mode` tracks the active keyboard-driven transform.
     gizmo_mode: Option<GizmoType>,
+
+    /// Root node for transform annotations, created when needed.
+    annotation_root: Option<NodeId>,
+
+    /// Transform annotations, cleaned up after transform is complete
+    annotations: Vec<NodeId>,
+
+    /// Materials for the colored annotations (So we're not making dozens of copies)
+    annotation_axis_materials: HashMap<Axis, MaterialId>
 }
 
 impl TransformState {
@@ -312,9 +318,11 @@ impl TransformState {
             accumulated_delta: (0.0, 0.0),
             pivot_world: Point3::origin(),
             model_radius: 1.0,
-            annotation_ids: Vec::new(),
             gizmo: GizmoState::new(),
             gizmo_mode: None,
+            annotation_root: None,
+            annotations: Vec::new(),
+            annotation_axis_materials: HashMap::new()
         }
     }
 
@@ -536,9 +544,16 @@ impl TransformState {
 
     /// Update visual feedback annotations.
     fn update_visual_feedback(&mut self, ctx: &mut EventContext) {
+        // Create annotation root node if it does not exist
+        self.annotation_root.get_or_insert(
+            ctx.scene.add_node(
+                None, Some("Transform annotations".to_owned()), Transform::IDENTITY
+            ).expect("Failed to create transform annotation root node")
+        );
+
         // Clear previous annotations
-        for id in self.annotation_ids.drain(..) {
-            ctx.scene.remove_annotation(id);
+        for id in self.annotations.drain(..) {
+            ctx.scene.remove_node(id);
         }
 
         // Add axis constraint line if constrained
@@ -547,15 +562,39 @@ impl TransformState {
                 let half_length = self.model_radius * 2.0;
                 let start = self.pivot_world - axis * half_length;
                 let end = self.pivot_world + axis * half_length;
-                let id = ctx.scene.annotations.add_line(start, end, color);
-                self.annotation_ids.push(id);
+                let mesh = Mesh::line(start, end);
+                let mesh_id = ctx.scene.add_mesh(mesh);
+
+                // Get or insert the material for this axis annotation
+                let create_color_material = |scene: &mut Scene| {
+                    let material = Material::new().with_line_color(color);
+                    scene.add_material(material)
+                };
+                let mut material = self.annotation_axis_materials.entry(
+                    axis_from_constraint(&self.axis_constraint).unwrap()
+                ).or_insert(create_color_material(ctx.scene)).to_owned();
+                if ctx.scene.get_material(material).is_none() {
+                    // Our material was removed from the scene since we last used it.
+                    // This can happen if, while unused, the scene removed all unreferenced
+                    // resources. We'll have to reinsert the material.
+                    material = create_color_material(ctx.scene);
+                }
+
+                let id = ctx.scene.add_instance_node(
+                    self.annotation_root,
+                    mesh_id,
+                    material,
+                    Some("Transform axis annotation".to_owned()),
+                    Transform::IDENTITY
+                ).expect("Failed to create axis annotation");
+                self.annotations.push(id);
             }
     }
 
     /// Clean up annotations.
     fn cleanup_annotations(&mut self, ctx: &mut EventContext) {
-        for id in self.annotation_ids.drain(..) {
-            ctx.scene.remove_annotation(id);
+        for id in self.annotations.drain(..) {
+            ctx.scene.remove_node(id);
         }
     }
 

@@ -18,9 +18,6 @@ impl Renderer {
     // we should keep track of the need for these updates in the scene. I.e. mark things as
     // dirty if they need to be reified.
     pub fn prepare_scene(&mut self, scene: &mut Scene) -> Result<()> {
-        // 0. Reify any unreified annotations (creates meshes/materials/nodes)
-        scene.reify_annotations();
-
         // 1. Prepare all textures first (materials depend on them)
         for texture in scene.textures() {
             self.gpu_resources.ensure_texture(texture, &self.device, &self.queue)?;
