@@ -324,29 +324,27 @@ impl Mesh {
         Ok(Self::from_raw(vertices, primitives))
     }
 
-    // ========== Mutation methods (increment generation) ==========
-
-    /// Set the mesh's vertex data, incrementing the generation counter.
+    /// Set the mesh's vertex data.
     pub fn set_vertices(&mut self, vertices: Vec<Vertex>) {
         self.vertices = vertices;
         self.generation += 1;
         self.cached_bounding.set(None);
     }
 
-    /// Set the mesh's primitive data, incrementing the generation counter.
+    /// Set the mesh's primitive data.
     pub fn set_primitives(&mut self, primitives: Vec<MeshPrimitive>) {
         self.primitives = primitives;
         self.generation += 1;
     }
 
-    /// Add vertices to the mesh, incrementing the generation counter.
+    /// Add vertices to the mesh.
     pub fn add_vertices(&mut self, vertices: &[Vertex]) {
         self.vertices.extend_from_slice(vertices);
         self.generation += 1;
         self.cached_bounding.set(None);
     }
 
-    /// Add a primitive to the mesh, incrementing the generation counter.
+    /// Add a primitive to the mesh.
     pub fn add_primitive(&mut self, primitive: MeshPrimitive) {
         self.primitives.push(primitive);
         self.generation += 1;
@@ -441,8 +439,6 @@ impl Mesh {
     pub fn generation(&self) -> u64 {
         self.generation
     }
-
-    // ========== Query methods ==========
 
     /// Returns a reference to the mesh's vertex data.
     pub fn vertices(&self) -> &[Vertex] {

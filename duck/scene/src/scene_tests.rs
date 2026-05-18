@@ -1,11 +1,6 @@
 use super::*;
 use cgmath::{Point3, Quaternion, Vector3, Matrix4, SquareMatrix};
-use crate::common::{EPSILON, RgbaColor, Transform};
-
-
-// ========================================================================
-// Scene Creation and Basic Operations
-// ========================================================================
+use crate::common::{EPSILON, Transform};
 
 #[test]
 fn test_scene_new() {
@@ -44,10 +39,6 @@ fn test_add_multiple_instances() {
     assert_ne!(id2, id3);
     assert_eq!(scene.instance_count(), 3);
 }
-
-// ========================================================================
-// Scene Tree Construction
-// ========================================================================
 
 #[test]
 fn test_add_root_node() {
@@ -183,10 +174,6 @@ fn test_complex_tree_structure() {
     assert_eq!(scene.get_node(gc3).unwrap().children().len(), 0);
 }
 
-// ========================================================================
-// Node with Instance
-// ========================================================================
-
 #[test]
 fn test_add_instance_node() {
     let mut scene = Scene::new();
@@ -213,10 +200,6 @@ fn test_add_instance_node() {
     assert_eq!(instance.mesh(), mesh_id);
     assert_eq!(instance.material(), mat_id);
 }
-
-// ========================================================================
-// Transform Computation and Caching
-// ========================================================================
 
 #[test]
 fn test_root_node_identity_transform() {
@@ -331,10 +314,6 @@ fn test_transform_invalidation_on_change() {
     assert!(node.transform_dirty());
 }
 
-// ========================================================================
-// Scene Tree Consistency
-// ========================================================================
-
 #[test]
 fn test_tree_consistency_after_multiple_operations() {
     let mut scene = Scene::new();
@@ -447,10 +426,6 @@ fn test_large_tree_consistency() {
     }
 }
 
-// ========================================================================
-// Parent Validation Tests
-// ========================================================================
-
 #[test]
 fn test_add_node_with_invalid_parent_fails() {
     let mut scene = Scene::new();
@@ -496,10 +471,6 @@ fn test_add_instance_node_with_invalid_parent_fails() {
     // But instance is created before the node validation - this is a side effect
     // that could be improved in the future
 }
-
-// ========================================================================
-// Visibility Tests
-// ========================================================================
 
 #[test]
 fn test_set_node_visibility_to_invisible() {
@@ -739,10 +710,6 @@ fn test_visibility_leaf_node_always_visible_or_invisible() {
     assert_eq!(scene.node_effective_visibility(leaf), EffectiveVisibility::Invisible);
 }
 
-// ========================================================================
-// Mesh Transform Methods
-// ========================================================================
-
 #[test]
 fn test_mesh_translate() {
     let mut mesh = Mesh::sphere(1.0, 8, 4, PrimitiveType::LineList);
@@ -796,10 +763,6 @@ fn test_mesh_transform_translation() {
     assert!((bounds.min.z - 4.5).abs() < EPSILON);
 }
 
-// ========================================================================
-// Mesh::cone_directed
-// ========================================================================
-
 #[test]
 fn test_cone_directed_apex_position() {
     let apex = Point3::new(1.0, 2.0, 3.0);
@@ -829,151 +792,5 @@ fn test_cone_directed_base_along_direction() {
     assert!(bounds.max.z > 0.0, "Cone should extend in +Z direction");
     // And min.z should be near the apex
     assert!(bounds.min.z < height, "Cone min.z should be less than height");
-}
-
-// ========================================================================
-// Point Light Annotation
-// ========================================================================
-
-#[test]
-fn test_point_light_annotation_to_mesh_data() {
-    let ann = annotation::PointLightAnnotation {
-        meta: annotation::AnnotationMeta { id: crate::Id::new(), name: None, visible: true, node_id: None },
-        light_index: 0,
-        radius: 0.5,
-        segments: 8,
-        reified_generation: None,
-    };
-
-    let data = ann.to_mesh_data(Point3::new(1.0, 2.0, 3.0), RgbaColor::YELLOW);
-    assert!(data.mesh.has_primitive_type(PrimitiveType::LineList));
-    assert!(data.mesh.vertices().len() > 0);
-    // Wireframe sphere: 3+ rings of 8 segments each
-    assert!(data.mesh.index_count(PrimitiveType::LineList) > 0);
-}
-
-
-// ========================================================================
-// Spot Light Annotation
-// ========================================================================
-
-#[test]
-fn test_spot_light_annotation_to_mesh_data() {
-    let ann = annotation::SpotLightAnnotation {
-        meta: annotation::AnnotationMeta { id: crate::Id::new(), name: None, visible: true, node_id: None },
-        light_index: 0,
-        length: 5.0,
-        segments: 8,
-        reified_generation: None,
-    };
-
-    let meshes = ann.to_mesh_data(
-        Point3::new(0.0, 0.0, 0.0),
-        Vector3::new(0.0, -1.0, 0.0),
-        RgbaColor::RED,
-        0.3,  // inner
-        0.6,  // outer
-    );
-    // Should produce 2 meshes: outer and inner cone
-    assert_eq!(meshes.len(), 2);
-    for data in &meshes {
-        assert!(data.mesh.has_primitive_type(PrimitiveType::LineList));
-    }
-}
-
-
-// ========================================================================
-// Normals Annotation
-// ========================================================================
-
-#[test]
-fn test_normals_annotation_to_mesh_data() {
-    let ann = annotation::NormalsAnnotation {
-        meta: annotation::AnnotationMeta { id: crate::Id::new(), name: None, visible: true, node_id: None },
-        target_node_id: crate::Id::nil(),
-        color: RgbaColor::CYAN,
-        length: 0.1,
-        reified_generation: None,
-    };
-
-    let vertices = vec![
-        (Point3::new(0.0, 0.0, 0.0), Vector3::new(0.0, 1.0, 0.0)),
-        (Point3::new(1.0, 0.0, 0.0), Vector3::new(0.0, 1.0, 0.0)),
-    ];
-
-    let meshes = ann.to_mesh_data(&vertices);
-    assert_eq!(meshes.len(), 1);
-    // 2 normals = 4 vertices, 4 indices
-    assert_eq!(meshes[0].mesh.vertices().len(), 4);
-    assert_eq!(meshes[0].mesh.index_count(PrimitiveType::LineList), 4);
-}
-
-#[test]
-fn test_normals_annotation_empty_vertices() {
-    let ann = annotation::NormalsAnnotation {
-        meta: annotation::AnnotationMeta { id: crate::Id::new(), name: None, visible: true, node_id: None },
-        target_node_id: crate::Id::nil(),
-        color: RgbaColor::CYAN,
-        length: 0.1,
-        reified_generation: None,
-    };
-
-    let meshes = ann.to_mesh_data(&[]);
-    assert!(meshes.is_empty());
-}
-
-#[test]
-fn test_normals_annotation_line_direction() {
-    let ann = annotation::NormalsAnnotation {
-        meta: annotation::AnnotationMeta { id: crate::Id::new(), name: None, visible: true, node_id: None },
-        target_node_id: crate::Id::nil(),
-        color: RgbaColor::CYAN,
-        length: 0.5,
-        reified_generation: None,
-    };
-
-    let vertices = vec![
-        (Point3::new(0.0, 0.0, 0.0), Vector3::new(0.0, 1.0, 0.0)),
-    ];
-
-    let meshes = ann.to_mesh_data(&vertices);
-    let verts = meshes[0].mesh.vertices();
-    // First vertex: position at origin
-    assert!((verts[0].position[0]).abs() < EPSILON);
-    assert!((verts[0].position[1]).abs() < EPSILON);
-    // Second vertex: position at (0, 0.5, 0) — origin + normal * length
-    assert!((verts[1].position[0]).abs() < EPSILON);
-    assert!((verts[1].position[1] - 0.5).abs() < EPSILON);
-    assert!((verts[1].position[2]).abs() < EPSILON);
-}
-
-#[test]
-fn test_normals_annotation_reification() {
-    let mut scene = Scene::new();
-
-    // Create a simple triangle mesh
-    let mesh = Mesh::from_raw(
-        vec![
-            Vertex { position: [0.0, 0.0, 0.0], tex_coords: [0.0; 3], normal: [0.0, 1.0, 0.0] },
-            Vertex { position: [1.0, 0.0, 0.0], tex_coords: [0.0; 3], normal: [0.0, 1.0, 0.0] },
-            Vertex { position: [0.5, 1.0, 0.0], tex_coords: [0.0; 3], normal: [0.0, 1.0, 0.0] },
-        ],
-        vec![MeshPrimitive {
-            primitive_type: PrimitiveType::TriangleList,
-            indices: vec![0, 1, 2],
-        }],
-    );
-    let mesh_id = scene.add_mesh(mesh);
-    let mat_id = scene.add_material(Material::new());
-    let node_id = scene.add_instance_node(
-        None, mesh_id, mat_id, None,
-        Transform::IDENTITY,
-    ).unwrap();
-
-    let ann_id = scene.annotations.add_normals(node_id, RgbaColor::CYAN, 0.1);
-    scene.reify_annotations();
-
-    let annotation = scene.annotations.get(ann_id).unwrap();
-    assert!(annotation.is_reified());
 }
 

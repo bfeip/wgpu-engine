@@ -6,20 +6,7 @@ use super::{Mesh, MeshIndex, MeshPrimitive, PrimitiveType, Vertex};
 
 impl Mesh {
     /// Creates a box (cuboid) mesh centered at the origin.
-    ///
-    /// # Arguments
-    /// * `width` - Size along the X axis
-    /// * `height` - Size along the Y axis
-    /// * `depth` - Size along the Z axis
-    /// * `primitive_type` - Kind of primitive to create the mesh from
-    ///
-    /// # Example
-    /// ```
-    /// use duck_engine_scene::{Mesh, PrimitiveType};
-    /// let cube = Mesh::box_mesh(1.0, 1.0, 1.0, PrimitiveType::TriangleList);
-    /// let rectangular = Mesh::box_mesh(2.0, 1.0, 0.5, PrimitiveType::TriangleList);
-    /// ```
-    pub fn box_mesh(width: f32, height: f32, depth: f32, primitive_type: PrimitiveType) -> Self {
+    pub fn upright_box(width: f32, height: f32, depth: f32, primitive_type: PrimitiveType) -> Self {
         struct Face {
             normal: [f32; 3],
             corners: [[f32; 3]; 4],
@@ -116,27 +103,11 @@ impl Mesh {
     /// Creates a cube mesh centered at the origin.
     ///
     /// Convenience method equivalent to `Mesh::box_mesh(size, size, size)`.
-    ///
-    /// # Arguments
-    /// * `size` - The length of each edge
-    /// * `primitive_type` - Kind of primitive to create the mesh from
     pub fn cube(size: f32, primitive_type: PrimitiveType) -> Self {
-        Self::box_mesh(size, size, size, primitive_type)
+        Self::upright_box(size, size, size, primitive_type)
     }
 
     /// Creates a UV sphere mesh centered at the origin.
-    ///
-    /// # Arguments
-    /// * `radius` - Radius of the sphere
-    /// * `segments` - Number of longitudinal segments (minimum 3)
-    /// * `rings` - Number of latitudinal rings (minimum 2)
-    /// * `primitive_type` - Kind of primitive to create the mesh from
-    ///
-    /// # Example
-    /// ```
-    /// use duck_engine_scene::{Mesh, PrimitiveType};
-    /// let sphere = Mesh::sphere(1.0, 32, 16, PrimitiveType::TriangleList);
-    /// ```
     pub fn sphere(radius: f32, segments: u32, rings: u32, primitive_type: PrimitiveType) -> Self {
         let segments = segments.max(3);
         let rings = rings.max(2);
@@ -227,19 +198,6 @@ impl Mesh {
     }
 
     /// Creates a cylinder mesh centered at the origin, extending along the Y axis.
-    ///
-    /// # Arguments
-    /// * `radius` - Radius of the cylinder
-    /// * `height` - Height of the cylinder
-    /// * `segments` - Number of segments around the circumference (minimum 3)
-    /// * `capped` - Whether to include top and bottom cap faces
-    /// * `primitive_type` - Kind of primitive to create the mesh from
-    ///
-    /// # Example
-    /// ```
-    /// use duck_engine_scene::{Mesh, PrimitiveType};
-    /// let cylinder = Mesh::cylinder(0.5, 2.0, 32, true, PrimitiveType::TriangleList);
-    /// ```
     pub fn cylinder(
         radius: f32,
         height: f32,
@@ -408,19 +366,6 @@ impl Mesh {
     }
 
     /// Creates a cone mesh centered at the origin, with the apex pointing up (+Y).
-    ///
-    /// # Arguments
-    /// * `radius` - Radius of the base
-    /// * `height` - Height of the cone
-    /// * `segments` - Number of segments around the circumference (minimum 3)
-    /// * `capped` - Whether to include the bottom cap face
-    /// * `primitive_type` - Kind of primitive to create the mesh from
-    ///
-    /// # Example
-    /// ```
-    /// use duck_engine_scene::{Mesh, PrimitiveType};
-    /// let cone = Mesh::cone(0.5, 1.0, 32, true, PrimitiveType::TriangleList);
-    /// ```
     pub fn cone(
         radius: f32,
         height: f32,
@@ -553,15 +498,6 @@ impl Mesh {
     ///
     /// This is a convenience wrapper around [`Mesh::cone`] that orients the cone
     /// so the apex is at `apex` and the base extends `height` units along `direction`.
-    ///
-    /// # Arguments
-    /// * `apex` - Position of the cone tip
-    /// * `direction` - Direction from apex toward the base (will be normalized)
-    /// * `radius` - Radius of the base
-    /// * `height` - Height of the cone (distance from apex to base along direction)
-    /// * `segments` - Number of segments around the circumference (minimum 3)
-    /// * `capped` - Whether to include the base cap face
-    /// * `primitive_type` - Kind of primitive to create the mesh from
     pub fn cone_directed(
         apex: Point3<f32>,
         direction: Vector3<f32>,
@@ -600,19 +536,6 @@ impl Mesh {
     }
 
     /// Creates a torus mesh centered at the origin, lying in the XZ plane.
-    ///
-    /// # Arguments
-    /// * `major_radius` - Distance from the center of the torus to the center of the tube
-    /// * `minor_radius` - Radius of the tube
-    /// * `major_segments` - Number of segments around the main ring (minimum 3)
-    /// * `minor_segments` - Number of segments around the tube cross-section (minimum 3)
-    /// * `primitive_type` - Kind of primitive to create the mesh from
-    ///
-    /// # Example
-    /// ```
-    /// use duck_engine_scene::{Mesh, PrimitiveType};
-    /// let torus = Mesh::torus(1.0, 0.3, 32, 16, PrimitiveType::TriangleList);
-    /// ```
     pub fn torus(
         major_radius: f32,
         minor_radius: f32,
@@ -710,21 +633,8 @@ impl Mesh {
         )
     }
 
-    /// Creates a flat plane mesh in the XZ plane, centered at the origin.
-    ///
-    /// # Arguments
-    /// * `width` - Size along the X axis
-    /// * `depth` - Size along the Z axis
-    /// * `width_segments` - Number of segments along the width (minimum 1)
-    /// * `depth_segments` - Number of segments along the depth (minimum 1)
-    /// * `primitive_type` - Kind of primitive to create the mesh from
-    ///
-    /// # Example
-    /// ```
-    /// use duck_engine_scene::{Mesh, PrimitiveType};
-    /// let plane = Mesh::plane(10.0, 10.0, 1, 1, PrimitiveType::TriangleList);
-    /// let detailed_plane = Mesh::plane(10.0, 10.0, 10, 10, PrimitiveType::TriangleList);
-    /// ```
+    /// Creates a flat plane mesh in the XZ plane, centered at the origin, and
+    /// divided into segments with lines separating each segment
     pub fn plane(
         width: f32,
         depth: f32,
@@ -811,17 +721,6 @@ impl Mesh {
     }
 
     /// Creates a simple quad (two triangles) in the XY plane, facing +Z.
-    ///
-    /// # Arguments
-    /// * `width` - Size along the X axis
-    /// * `height` - Size along the Y axis
-    /// * `primitive_type` - Kind of primitive to create the mesh from
-    ///
-    /// # Example
-    /// ```
-    /// use duck_engine_scene::{Mesh, PrimitiveType};
-    /// let quad = Mesh::quad(2.0, 1.0, PrimitiveType::TriangleList);
-    /// ```
     pub fn quad(width: f32, height: f32, primitive_type: PrimitiveType) -> Self {
         let hw = width / 2.0;
         let hh = height / 2.0;
@@ -862,5 +761,58 @@ impl Mesh {
                 indices,
             }],
         )
+    }
+
+    /// Creates a line segment going from start to end.
+    pub fn line(start: Point3<f32>, end: Point3<f32>) -> Self {
+        let vertices = vec![
+            Vertex {
+                position: start.into(),
+                tex_coords: [0.0; 3],
+                normal: [0.0, 1.0, 0.0],
+            },
+            Vertex {
+                position: end.into(),
+                tex_coords: [0.0; 3],
+                normal: [0.0, 1.0, 0.0],
+            },
+        ];
+
+        let primitives = vec![MeshPrimitive {
+            primitive_type: PrimitiveType::LineList,
+            indices: vec![0, 1],
+        }];
+
+        Self::from_raw(vertices, primitives)
+    }
+
+    /// Creates a polyline linking each point to the next. If closed, links the final
+    /// Point back to the first.
+    pub fn polyline(points: Vec<Point3<f32>>, closed: bool) -> Self {
+        let vertices: Vec<Vertex> = points
+            .iter()
+            .map(|&p| Vertex {
+                position: p.into(),
+                tex_coords: [0.0; 3],
+                normal: [0.0, 1.0, 0.0],
+            })
+            .collect();
+
+        let mut indices = Vec::new();
+        for i in 0..points.len().saturating_sub(1) {
+            indices.push(i as u32);
+            indices.push((i + 1) as u32);
+        }
+        if closed && points.len() > 2 {
+            indices.push((points.len() - 1) as u32);
+            indices.push(0);
+        }
+
+        let primitives = vec![MeshPrimitive {
+            primitive_type: PrimitiveType::LineList,
+            indices,
+        }];
+
+        Mesh::from_raw(vertices, primitives)
     }
 }
