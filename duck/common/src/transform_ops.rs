@@ -232,7 +232,7 @@ pub fn centroid_of_slice(points: &[Point3]) -> Option<Point3> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Deg, Rotation3, EPSILON};
+    use crate::{Deg, Rotation3};
 
     const TEST_EPSILON: f32 = 1e-5;
 

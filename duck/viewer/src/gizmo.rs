@@ -184,7 +184,9 @@ pub fn build_handles(gizmo_type: GizmoType, size: f32) -> Vec<GizmoHandle> {
 
 #[cfg(test)]
 mod tests {
-    use crate::geom_query::RayPickQuery;
+    use duck_engine_scene::NodeFlags;
+
+use crate::geom_query::RayPickQuery;
 
     use super::*;
 
@@ -401,6 +403,7 @@ mod tests {
                 cube_mat_id,
                 Some("Cube".to_string()),
                 crate::common::Transform::IDENTITY,
+                NodeFlags::NONE
             )
             .unwrap();
 
@@ -423,6 +426,7 @@ mod tests {
                     material_id,
                     None,
                     pivot_transform,
+                    NodeFlags::NONE
                 )
                 .expect("Failed to add gizmo node");
             node_ids.push(node_id);
@@ -476,7 +480,7 @@ mod tests {
     fn translate_handles_pickable_after_position_update() {
         use crate::common::Ray;
         use crate::geom_query::pick_all_from_ray;
-        use crate::scene::{Material, Mesh, PrimitiveType, Scene};
+        use crate::scene::Scene;
         use duck_engine_common::{Point3, Vector3};
 
         let initial_pivot = Point3::new(0.0, 0.0, 0.0);
@@ -498,6 +502,7 @@ mod tests {
                     material_id,
                     None,
                     pivot_transform,
+                    NodeFlags::NONE
                 )
                 .expect("Failed to add gizmo node");
             node_ids.push(node_id);

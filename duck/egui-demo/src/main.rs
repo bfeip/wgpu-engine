@@ -13,7 +13,7 @@ use winit::{
 };
 
 use duck_engine_common::Point3;
-use duck_engine_viewer::common::RgbaColor;
+use duck_engine_viewer::{common::RgbaColor, scene::NodeFlags};
 use duck_engine_viewer::input::{ElementState, Key};
 use duck_engine_viewer::operator::NavigationMode;
 use duck_engine_viewer::import_export;
@@ -232,7 +232,7 @@ impl<'a> App<'a> {
         };
 
         let scene = viewer.scene_mut();
-        let node_id = scene.add_node(None, None, transform).expect("add light node");
+        let node_id = scene.add_node(None, None, transform, NodeFlags::NONE).expect("add light node");
         scene.set_node_payload(node_id, NodePayload::Light(light));
         log::info!("Added {:?} light", light_type);
     }

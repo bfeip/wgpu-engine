@@ -455,6 +455,7 @@ impl DrawData {
 mod tests {
     use super::*;
     use duck_engine_common::{Deg, Matrix4, Quaternion, Rotation3, SquareMatrix, Vector3};
+use duck_engine_scene::NodeFlags;
     use crate::scene::common::EPSILON;
 
     fn nid() -> NodeId { NodeId::new() }
@@ -819,9 +820,9 @@ mod tests {
         let mut scene = Scene::new();
         let mesh_id = scene.add_mesh(crate::scene::Mesh::new());
         let material_id = scene.add_material(crate::scene::Material::new());
-        let node_id = scene
-            .add_instance_node(None, mesh_id, material_id, None, common::Transform::IDENTITY)
-            .unwrap();
+        let node_id = scene.add_instance_node(
+            None, mesh_id, material_id, None, common::Transform::IDENTITY, NodeFlags::NONE
+        ).unwrap();
         (scene, node_id)
     }
 

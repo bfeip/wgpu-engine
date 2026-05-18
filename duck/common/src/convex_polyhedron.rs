@@ -350,7 +350,7 @@ fn plane_plane_intersection(p1: &Plane, p2: &Plane) -> Option<(Point3, Vector3)>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Deg, EuclideanSpace, Matrix4, PerspectiveFov, Point3, Rad, SquareMatrix, Vector3, EPSILON};
+    use crate::{Deg, EuclideanSpace, Matrix4, PerspectiveFov, Point3, Rad, SquareMatrix, Vector3};
 
     fn create_unit_cube_polyhedron() -> ConvexPolyhedron {
         // Create a unit cube centered at origin (-0.5 to 0.5 on each axis)

@@ -800,6 +800,7 @@ fn touch_distance(a: (f64, f64), b: (f64, f64)) -> f64 {
 mod tests {
     use super::*;
     use crate::input::{ElementState, MouseButton, MouseScrollDelta};
+    use duck_engine_scene::NodeFlags;
     use std::rc::Rc;
     use std::cell::Cell;
 
@@ -823,7 +824,9 @@ mod tests {
             ortho: false,
         };
         let mut scene = Scene::new();
-        let cam_id = scene.add_node(None, None, camera.to_node_transform()).unwrap();
+        let cam_id = scene.add_node(
+            None, None, camera.to_node_transform(), NodeFlags::NONE
+        ).unwrap();
         scene.set_node_payload(cam_id, NodePayload::Camera(camera.projection()));
         scene.set_active_camera(Some(cam_id));
         (None, scene, SelectionManager::new())
