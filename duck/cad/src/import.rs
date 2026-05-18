@@ -3,8 +3,8 @@ use cgmath::Matrix4;
 use duck_engine_common::decompose_matrix;
 use duck_engine_scene::common::{RgbaColor, Transform};
 use duck_engine_scene::{
-    Instance, Material, Mesh, MeshPrimitive, NodeId, NodePayload, PositionedCamera, PrimitiveType,
-    Scene, Vertex,
+    Instance, Material, Mesh, MeshPrimitive, NodeFlags, NodeId, NodePayload, PositionedCamera,
+    PrimitiveType, Scene, Vertex,
 };
 use opencascade::primitives::{EdgeType, Shape};
 use opencascade::xcaf::{
@@ -23,7 +23,7 @@ pub(crate) fn import_xcaf_document(
     let color_tool = doc.color_tool();
 
     let root = scene
-        .add_node(None, Some("cad_import".to_string()), Transform::IDENTITY)
+        .add_node(None, Some("cad_import".to_string()), Transform::IDENTITY, NodeFlags::NONE)
         .context("Failed to add root CAD node")?;
 
     for label in shape_tool.free_shapes() {
@@ -54,7 +54,7 @@ fn import_xcaf_label(
     let is_assembly = shape_tool.is_assembly(label);
 
     let node_id = scene
-        .add_node(parent, name.clone(), transform)
+        .add_node(parent, name.clone(), transform, NodeFlags::NONE)
         .context("Failed to add XCAF node")?;
     if is_assembly {
         for child in shape_tool.components(label) {
@@ -118,7 +118,7 @@ fn import_pmi(
     let s = options.scale_factor;
 
     let pmi_root = scene
-        .add_node(Some(parent), Some("pmi".to_string()), Transform::IDENTITY)
+        .add_node(Some(parent), Some("pmi".to_string()), Transform::IDENTITY, NodeFlags::NONE)
         .context("Failed to add PMI root node")?;
     let mat = scene.add_material(Material::new().with_line_color(options.pmi_color));
 
@@ -183,7 +183,7 @@ fn import_pmi(
         let primitive = MeshPrimitive { primitive_type: PrimitiveType::LineList, indices };
         let mesh_id = scene.add_mesh(Mesh::from_raw(verts, vec![primitive]));
         scene
-            .add_instance_node(Some(pmi_root), mesh_id, mat, Some(name), Transform::IDENTITY)
+            .add_instance_node(Some(pmi_root), mesh_id, mat, Some(name), Transform::IDENTITY, NodeFlags::NONE)
             .context("Failed to add PMI annotation node")?;
         any_annotation = true;
     }

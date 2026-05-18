@@ -2551,6 +2551,7 @@ name = "modeler"
 version = "0.1.0"
 dependencies = [
  "cgmath",
+ "duck-engine-cad",
  "duck-engine-viewer",
  "egui",
  "egui-wgpu",

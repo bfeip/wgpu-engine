@@ -2,7 +2,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use duck_engine_scene::{
-    common::Transform, Instance, Material, NodeId, NodePayload, Scene,
+    common::Transform, Instance, Material, NodeFlags, NodeId, NodePayload, Scene,
 };
 use glam::DVec3;
 use opencascade::angle::Angle;
@@ -163,7 +163,7 @@ impl CadShape {
 
         let node_name = name.map(|s| s.to_string());
         let root = scene
-            .add_node(parent, node_name, Transform::IDENTITY)
+            .add_node(parent, node_name, Transform::IDENTITY, NodeFlags::NONE)
             .context("Failed to add shape node")?;
         scene.set_node_payload(root, NodePayload::Instance(instance_id));
 
