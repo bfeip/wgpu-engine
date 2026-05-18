@@ -7,9 +7,16 @@ use winit::{
     event_loop::{ActiveEventLoop, EventLoop},
     window::{Window, WindowId},
 };
+use cgmath::InnerSpace;
 
 use duck_engine_viewer::winit_support;
 use duck_engine_viewer::Viewer;
+use duck_engine_viewer::common::{
+    RgbaColor, Transform
+};
+use duck_engine_viewer::scene::{
+    Scene, Material, Mesh, NodeFlags, NodePayload, PositionedCamera, PrimitiveType
+};
 
 /// Owns all rendering state: the 3D viewer plus egui context and GPU renderer.
 ///
@@ -50,6 +57,60 @@ impl ViewerState<'static> {
         );
 
         Self { egui_renderer, egui_winit, egui_ctx, viewer, window }
+    }
+
+    fn set_default_scene(&mut self) {
+        let mut scene = Scene::new();
+
+        // Setup default camera and lighting
+        let eye = [75.0, 50.0, 75.0].into();
+        let target = [0.0, 0.0, 0.0].into();
+        let forward: cgmath::Vector3<f32> = target - eye;
+        let right = forward.cross([0.0, 1.0, 0.0].into()).normalize();
+        let up = right.cross(forward);
+
+        let size = self.viewer.size();
+
+        let camera = PositionedCamera {
+            eye,
+            target,
+            up,
+            aspect: size.0 as f32 / size.1 as f32,
+            fovy: 35.0,
+            znear: 0.01,
+            zfar: 10_000f32,
+            ortho: false
+        };
+        let camera_transform = camera.to_node_transform();
+        let camera_projection = camera.projection();
+        let camera_node_id = scene.add_node(
+            None,
+            Some("Main camera".to_owned()),
+            camera_transform,
+            NodeFlags::NONE
+        ).expect("Failed to add camera on default scene");
+        scene.set_node_payload(camera_node_id, NodePayload::Camera(camera_projection));
+        scene.set_active_camera(Some(camera_node_id));
+        scene.set_default_light_nodes(camera_node_id);
+
+        // Setup XZ grid
+        let grid_mesh = Mesh::plane(100.0, 100.0, 50, 50, PrimitiveType::LineList);
+        let grid_mesh_id = scene.add_mesh(grid_mesh);
+
+        let grid_material = Material::new().with_line_color(RgbaColor {
+            r: 0.3, g: 0.25, b: 0.3, a: 1.0
+        });
+        let grid_material_id = scene.add_material(grid_material);
+
+        let _grid_node = scene.add_instance_node(
+            None,
+            grid_mesh_id,
+            grid_material_id,
+            Some("XZ Grid".to_owned()),
+            Transform::IDENTITY,
+            NodeFlags::inert()
+        );
+        self.viewer.set_scene(scene);
     }
 }
 
@@ -155,7 +216,8 @@ struct App<'a> {
 impl<'a> ApplicationHandler for App<'a> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.state.is_none() {
-            let state = pollster::block_on(ViewerState::new(event_loop));
+            let mut state = pollster::block_on(ViewerState::new(event_loop));
+            state.set_default_scene();
             state.window.request_redraw();
             self.state = Some(state);
         }
