@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 duck-engine-viewer = { path = "../viewer", features = ["winit-support"] }
+duck-engine-cad = { path = "../cad" }
 egui = "0.33"
 egui-wgpu = "0.33"
 env_logger = "0.11"

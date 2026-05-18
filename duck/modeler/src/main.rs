@@ -1,3 +1,5 @@
+mod sphere_op;
+
 use std::sync::Arc;
 
 use egui_wgpu::RendererOptions;
@@ -218,6 +220,9 @@ impl<'a> ApplicationHandler for App<'a> {
         if self.state.is_none() {
             let mut state = pollster::block_on(ViewerState::new(event_loop));
             state.set_default_scene();
+            let sphere_op = sphere_op::SphereOperator::new();
+            let (op_mgr, dispatcher) = state.viewer.operator_manager_and_dispatcher_mut();
+            op_mgr.push_front(Box::new(sphere_op), dispatcher);
             state.window.request_redraw();
             self.state = Some(state);
         }
