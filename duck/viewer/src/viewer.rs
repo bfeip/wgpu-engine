@@ -221,6 +221,7 @@ impl<'a> Viewer<'a> {
             cursor_position: &mut self.cursor_position,
             scene: &mut self.scene,
             selection: &mut self.selection,
+            modifiers: Default::default(), // dispatcher overwrites this in dispatch()
         };
         self.dispatcher.dispatch(event, &mut ctx);
     }

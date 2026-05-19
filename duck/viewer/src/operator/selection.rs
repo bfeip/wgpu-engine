@@ -1,22 +1,40 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use serde::{Deserialize, Serialize};
+
+use crate::bindings::{InputBinding, InputMap};
 use crate::event::{CallbackId, Event, EventContext, EventDispatcher, EventKind};
 use crate::geom_query::{RayHit, RayPickQuery, RayPickResult, pick_all_from_ray};
+use crate::input::{Modifiers, MouseButton};
 use crate::operator::{Operator, OperatorId};
 use crate::selection::SelectionItem;
 use duck_engine_common::InnerSpace;
 
+/// Semantic actions for the selection operator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum SelectionAction {
+    /// Cast a ray and update the selection.
+    Select,
+}
+
 /// Operator for selecting objects in the scene via mouse click.
-///
-/// - Left mouse button click: Cast a ray and print the selected object to console
 pub struct SelectionOperator {
     id: OperatorId,
+    pub bindings: Rc<RefCell<InputMap<SelectionAction>>>,
     callback_ids: Vec<CallbackId>,
 }
 
 impl SelectionOperator {
     /// Creates a new selection operator with the given ID.
     pub fn new(id: OperatorId) -> Self {
+        let bindings = InputMap::new().bind(
+            InputBinding::MouseClick { button: MouseButton::Left, modifiers: Modifiers::default() },
+            SelectionAction::Select,
+        );
         Self {
             id,
+            bindings: Rc::new(RefCell::new(bindings)),
             callback_ids: Vec::new(),
         }
     }
@@ -25,15 +43,8 @@ impl SelectionOperator {
     fn perform_selection(cursor_x: f32, cursor_y: f32, ctx: &mut EventContext) {
         let camera = ctx.camera();
 
-        // Create ray from screen point
-        let ray = camera.ray_from_screen_point(
-            cursor_x,
-            cursor_y,
-            ctx.size.0,
-            ctx.size.1,
-        );
+        let ray = camera.ray_from_screen_point(cursor_x, cursor_y, ctx.size.0, ctx.size.1);
 
-        // Calculate camera distance for miss visualization and line tolerance
         let camera_distance = (camera.eye - camera.target).magnitude();
 
         // Line tolerance: 6 pixels in world space, calibrated to the camera target depth.
@@ -41,10 +52,8 @@ impl SelectionOperator {
         // varies with geometry depth (near objects get more pixels, far objects fewer).
         let line_tolerance = camera.world_size_per_pixel(camera_distance, ctx.size.1) * 6.0;
 
-        // Perform picking
         let results = pick_all_from_ray(&RayPickQuery::all(ray, line_tolerance), ctx.scene);
 
-        // Update selection based on pick results
         if let Some(closest_hit) = results.first() {
             let item = resolve_hit_to_selection(closest_hit, ctx.scene);
             ctx.selection.set(item);
@@ -56,18 +65,15 @@ impl SelectionOperator {
 
 impl Operator for SelectionOperator {
     fn activate(&mut self, dispatcher: &mut EventDispatcher) {
-        // Register MouseClick handler for selection
+        let bindings = self.bindings.clone();
         let mouse_click_callback = dispatcher.register(EventKind::MouseClick, move |event, ctx| {
             let Event::MouseClick { button, position, .. } = event else {
                 return false;
             };
-
-            use crate::input::MouseButton;
-
-            // Only handle left-click events
-            if matches!(button, MouseButton::Left) {
+            let b = bindings.borrow();
+            if b.actions_for_click(*button, ctx.modifiers).contains(&SelectionAction::Select) {
                 SelectionOperator::perform_selection(position.0, position.1, ctx);
-                true // Stop event propagation (we handled the click)
+                true
             } else {
                 false
             }

@@ -1,7 +1,10 @@
 use std::collections::HashMap;
 use web_time::Instant;
 
-use crate::input::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, TouchId, TouchPhase};
+use crate::input::{
+    ElementState, Key, KeyEvent, Modifiers, MouseButton, MouseScrollDelta, NamedKey, TouchId,
+    TouchPhase,
+};
 use crate::scene::{NodePayload, PositionedCamera, Scene};
 use crate::selection::SelectionManager;
 
@@ -21,6 +24,10 @@ pub struct EventContext<'c> {
     pub scene: &'c mut Scene,
     /// Mutable reference to the selection manager
     pub selection: &'c mut SelectionManager,
+    /// Currently held keyboard modifier keys, updated by the dispatcher before each callback.
+    // TODO: In the future we might replace this with an input state struct. Containing
+    // not just modifiers but the full input state.
+    pub modifiers: Modifiers,
 }
 
 impl<'c> EventContext<'c> {
@@ -282,6 +289,8 @@ pub struct EventDispatcher {
     current_cursor_position: Option<(f32, f32)>,
     /// State for synthesizing mouse events from touch input
     touch_state: TouchSynthState,
+    /// Currently held keyboard modifier keys (Shift, Ctrl, Alt, Super)
+    current_modifiers: Modifiers,
 }
 
 impl EventDispatcher {
@@ -293,6 +302,7 @@ impl EventDispatcher {
             button_states: HashMap::new(),
             current_cursor_position: None,
             touch_state: TouchSynthState::new(),
+            current_modifiers: Modifiers::default(),
         }
     }
 
@@ -380,10 +390,14 @@ impl EventDispatcher {
     /// Callbacks are invoked in registration order. If a callback returns `true`,
     /// no further callbacks are invoked (propagation is stopped).
     pub fn dispatch<'c>(&mut self, event: &Event, ctx: &mut EventContext<'c>) -> bool {
-        // First, update state and synthesize high-level events based on the incoming event
+        // Snapshot modifier state before processing so both synthesized events (dispatched
+        // inside process_event) and the original event see the same modifier state.
+        ctx.modifiers = self.current_modifiers;
+
+        // Update state and synthesize high-level events (drag, click, etc.).
         self.process_event(event, ctx);
 
-        // Then dispatch the original event
+        // Dispatch the original event.
         self.dispatch_to_callbacks(event, ctx)
     }
 
@@ -414,9 +428,22 @@ impl EventDispatcher {
             Event::Touch { id, phase, position } => {
                 self.process_touch(*id, *phase, *position, ctx);
             }
-            _ => {
-                // No state processing needed for other events
+            Event::KeyboardInput { event: key_event, .. } => {
+                self.process_modifier_key(key_event);
             }
+            _ => {}
+        }
+    }
+
+    /// Tracks modifier key (Shift, Ctrl, Alt, Super) press/release state.
+    fn process_modifier_key(&mut self, key_event: &KeyEvent) {
+        let pressed = key_event.state == ElementState::Pressed;
+        match &key_event.logical_key {
+            Key::Named(NamedKey::Shift) => self.current_modifiers.shift = pressed,
+            Key::Named(NamedKey::Control) => self.current_modifiers.control = pressed,
+            Key::Named(NamedKey::Alt) => self.current_modifiers.alt = pressed,
+            Key::Named(NamedKey::Super) => self.current_modifiers.super_key = pressed,
+            _ => {}
         }
     }
 
@@ -838,6 +865,7 @@ mod tests {
             cursor_position: &mut parts.0,
             scene: &mut parts.1,
             selection: &mut parts.2,
+            modifiers: Default::default(),
         }
     }
 

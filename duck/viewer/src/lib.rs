@@ -12,6 +12,7 @@ pub use duck_engine_scene::common;
 pub use duck_engine_scene::geom_query;
 
 // Core modules
+pub mod bindings;
 pub mod event;
 pub mod gizmo;
 pub mod input;

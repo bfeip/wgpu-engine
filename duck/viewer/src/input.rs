@@ -1,15 +1,17 @@
 //! Input types that are independent of any specific windowing library.
 //! These types mirror common windowing system input abstractions.
 
+use serde::{Deserialize, Serialize};
+
 /// Element state (pressed or released)
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ElementState {
     Pressed,
     Released,
 }
 
 /// Mouse button identifier
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum MouseButton {
     Left,
     Right,
@@ -38,7 +40,7 @@ pub enum PhysicalKey {
 }
 
 /// Keyboard logical key (with consideration for layout)
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Key {
     /// A named key
     Named(NamedKey),
@@ -49,7 +51,7 @@ pub enum Key {
 }
 
 /// Named keyboard keys
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum NamedKey {
     Escape,
     Enter,
@@ -86,7 +88,7 @@ pub struct KeyEvent {
 }
 
 /// Keyboard modifiers state
-#[derive(Debug, Copy, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Modifiers {
     pub shift: bool,
     pub control: bool,

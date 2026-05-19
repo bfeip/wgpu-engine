@@ -37,6 +37,7 @@ duck-engine-streaming = { path = "../streaming", optional = true }
 duck-engine-scene = { path = "../scene" }
 duck-engine-import-export = { path = "../import-export" }
 anyhow = "1.0"
+serde = { version = "1", features = ["derive"] }
 bitflags = "2.0"
 bytemuck = { version = "1.16", features = ["derive"] }
 cfg-if = "1"

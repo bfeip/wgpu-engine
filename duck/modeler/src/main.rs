@@ -112,6 +112,7 @@ impl ViewerState<'static> {
             Transform::IDENTITY,
             NodeFlags::inert()
         );
+
         self.viewer.set_scene(scene);
     }
 }
