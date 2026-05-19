@@ -1,6 +1,6 @@
 use std::{sync::Arc};
 
-use duck_engine_common::Point3;
+use duck_engine_scene::NodeFlags;
 use winit::{
     application::ApplicationHandler,
     event::{DeviceEvent, DeviceId, WindowEvent},
@@ -8,7 +8,7 @@ use winit::{
     window::{Window, WindowId},
 };
 
-use duck_engine_viewer::common::{RgbaColor, Transform};
+use duck_engine_viewer::common::{RgbaColor, Transform, Point3};
 use duck_engine_viewer::input::{ElementState, Key};
 use duck_engine_viewer::scene::{EnvironmentMapId, Material, MaterialFlags, Mesh, PrimitiveType};
 use duck_engine_viewer::{Viewer, winit_support};
@@ -21,7 +21,7 @@ const ROWS: usize = 7;
 const SPACING: f32 = 1.2;
 
 /// Compute the grid position for a (row, col) cell, centered at the origin.
-fn grid_position(row: usize, col: usize) -> Point3<f32> {
+fn grid_position(row: usize, col: usize) -> Point3 {
     let x = (col as f32 - (COLS as f32 - 1.0) / 2.0) * SPACING;
     let z = (row as f32 - (ROWS as f32 - 1.0) / 2.0) * SPACING;
     Point3::new(x, 0.0, z)
@@ -32,7 +32,9 @@ fn build_material_scene(viewer: &mut Viewer) {
     let scene = viewer.scene_mut();
 
     // Attach default camera-space key + fill lights to a placeholder camera node.
-    let camera_node = scene.add_node(None, Some("Camera".to_string()), Default::default()).unwrap();
+    let camera_node = scene.add_node(
+        None, Some("Camera".to_string()), Default::default(), NodeFlags::NONE
+    ).unwrap();
     scene.set_default_light_nodes(camera_node);
 
     // Shared sphere mesh for all instances
@@ -61,6 +63,7 @@ fn build_material_scene(viewer: &mut Viewer) {
                 mat_id,
                 Some(format!("Roughness {roughness:.2}")),
                 grid_transform(0, col),
+                NodeFlags::NONE
             )
             .unwrap();
     }
@@ -80,6 +83,7 @@ fn build_material_scene(viewer: &mut Viewer) {
                 mat_id,
                 Some(format!("Metallic {metallic:.2}")),
                 grid_transform(1, col),
+                NodeFlags::NONE
             )
             .unwrap();
     }
@@ -105,6 +109,7 @@ fn build_material_scene(viewer: &mut Viewer) {
                 mat_id,
                 Some(name.to_string()),
                 grid_transform(2, col),
+                NodeFlags::NONE
             )
             .unwrap();
     }
@@ -130,6 +135,7 @@ fn build_material_scene(viewer: &mut Viewer) {
                 mat_id,
                 Some(name.to_string()),
                 grid_transform(3, col),
+                NodeFlags::NONE
             )
             .unwrap();
     }
@@ -154,6 +160,7 @@ fn build_material_scene(viewer: &mut Viewer) {
                 mat_id,
                 Some(name.to_string()),
                 grid_transform(4, col),
+                NodeFlags::NONE
             )
             .unwrap();
     }
@@ -184,6 +191,7 @@ fn build_material_scene(viewer: &mut Viewer) {
                 mat_id,
                 Some(name.to_string()),
                 grid_transform(5, col),
+                NodeFlags::NONE
             )
             .unwrap();
     }
@@ -214,6 +222,7 @@ fn build_material_scene(viewer: &mut Viewer) {
                 mat_id,
                 Some(name.to_string()),
                 grid_transform(6, col),
+                NodeFlags::NONE
             )
             .unwrap();
     }
@@ -223,7 +232,7 @@ fn build_material_scene(viewer: &mut Viewer) {
         camera.eye = Point3::new(0.0, 6.0, 8.0);
         camera.target = Point3::new(0.0, 0.0, 0.0);
     });
-    if let Some(bounds) = viewer.scene().bounding() {
+    if let Some(bounds) = viewer.scene().bounding().bounds {
         viewer.with_camera_mut(|camera| camera.fit_to_bounds(&bounds));
     }
 }

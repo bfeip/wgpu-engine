@@ -7,6 +7,7 @@ use duck_engine_renderer::scene::{
 };
 
 use duck_engine_common::{Point3, Vector3};
+use duck_engine_scene::NodeFlags;
 
 const GOOCH_WESL: &str = include_str!("gooch.wesl");
 
@@ -113,10 +114,13 @@ fn main() -> anyhow::Result<()> {
         None, mesh_id, mat_id,
         Some("sphere".to_string()),
         Default::default(),
+        NodeFlags::NONE
     )?;
 
     // A warm directional light; direction is the node's -Z axis (identity = toward viewer).
-    let light_id = scene.add_node(None, Some("DirectionalLight".to_string()), Default::default()).unwrap();
+    let light_id = scene.add_node(
+        None, Some("DirectionalLight".to_string()), Default::default(), NodeFlags::NONE
+    ).unwrap();
     scene.set_node_payload(light_id, NodePayload::Light(Light::directional(
         RgbaColor { r: 1.0, g: 0.95, b: 0.8, a: 1.0 },
         1.0,
