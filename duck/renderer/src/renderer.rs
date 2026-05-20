@@ -17,10 +17,7 @@ pub use workflow::{HiddenLineConfig, HiddenLineWorkflow, RenderWorkflow, ShadedW
 use anyhow::Result;
 
 use crate::{
-    ibl::IblResources,
-    scene::{PositionedCamera, Scene, SceneProperties},
-    highlight_query::HighlightQuery,
-    shaders::ShaderGenerator,
+    highlight_query::HighlightQuery, ibl::IblResources, rgba_to_wgpu_color, scene::{PositionedCamera, Scene, SceneProperties, common::RgbaColor}, shaders::ShaderGenerator
 };
 
 use gpu_resources::{
@@ -34,6 +31,7 @@ pub struct Renderer {
     queue: wgpu::Queue,
     size: (u32, u32),
     surface_format: wgpu::TextureFormat,
+    background_color: wgpu::Color,
 
     // Internal config used by texture helpers (width/height/format)
     config: wgpu::SurfaceConfiguration,
@@ -51,7 +49,7 @@ pub struct Renderer {
     // Scene GPU resource tracking
     gpu_resources: GpuResourceManager,
 
-    /// MSAA sample count (1 = no MSAA, 4 = 4x MSAA).
+    /// MSAA sample count (1 = no MSAA).
     sample_count: u32,
 
     /// Cached GPU resources for headless rendering, reused across frames at the same size.
@@ -133,6 +131,7 @@ impl Renderer {
             sample_count,
             headless_resources: None,
             workflow: Box::new(shaded_workflow),
+            background_color: wgpu::Color { r: 0.02, g: 0.02, b: 0.02, a: 1.0 },
         }
     }
 
@@ -241,6 +240,10 @@ impl Renderer {
     /// building custom pipelines — this method is a lower-level escape hatch.
     pub fn lights_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
         &self.lights.bind_group_layout
+    }
+
+    pub fn set_background_color(&mut self, color: RgbaColor) {
+        self.background_color = rgba_to_wgpu_color(color);
     }
 
     /// Replace the active rendering workflow.
@@ -474,6 +477,7 @@ impl Renderer {
             sample_count: self.sample_count,
             surface_format: self.surface_format,
             size: self.size,
+            background_color: self.background_color,
         };
 
         let workflow = &mut self.workflow;

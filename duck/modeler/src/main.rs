@@ -113,11 +113,11 @@ impl ViewerState<'static> {
         scene.set_default_light_nodes(camera_node_id);
 
         // Setup XZ grid
-        let grid_mesh = Mesh::plane(100.0, 100.0, 50, 50, PrimitiveType::LineList);
+        let grid_mesh = Mesh::plane(100.0, 100.0, 20, 20, PrimitiveType::LineList);
         let grid_mesh_id = scene.add_mesh(grid_mesh);
 
         let grid_material = Material::new().with_line_color(RgbaColor {
-            r: 0.3, g: 0.25, b: 0.3, a: 1.0
+            r: 0.1, g: 0.1, b: 0.1, a: 1.0
         });
         let grid_material_id = scene.add_material(grid_material);
 

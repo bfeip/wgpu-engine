@@ -25,6 +25,7 @@ pub struct FrameContext<'a> {
     pub sample_count: u32,
     pub surface_format: wgpu::TextureFormat,
     pub size: (u32, u32),
+    pub background_color: wgpu::Color,
 }
 
 impl<'a> FrameContext<'a> {

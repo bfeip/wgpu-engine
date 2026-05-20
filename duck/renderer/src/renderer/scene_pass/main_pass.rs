@@ -158,12 +158,7 @@ impl SceneRenderPass for MainPass {
                 view: color_view,
                 resolve_target,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: 0.04,
-                        g: 0.04,
-                        b: 0.04,
-                        a: 1.0,
-                    }),
+                    load: wgpu::LoadOp::Clear(ctx.background_color),
                     store: wgpu::StoreOp::Store,
                 },
                 depth_slice: None,

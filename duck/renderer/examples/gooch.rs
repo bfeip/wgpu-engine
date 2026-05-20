@@ -42,7 +42,7 @@ impl SceneRenderPass for GoochPass {
                 view,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.08, g: 0.08, b: 0.12, a: 1.0 }),
+                    load: wgpu::LoadOp::Clear(ctx.background_color),
                     store: wgpu::StoreOp::Store,
                 },
                 depth_slice: None,

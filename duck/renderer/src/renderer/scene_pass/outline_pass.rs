@@ -251,7 +251,10 @@ impl SceneRenderPass for OutlinePass {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &self.mask_texture.view,
                     resolve_target: None,
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store },
+                    ops: wgpu::Operations { 
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store
+                    },
                     depth_slice: None,
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
@@ -268,12 +271,27 @@ impl SceneRenderPass for OutlinePass {
                 if batch.primitive_type != PrimitiveType::TriangleList { continue; }
                 let mesh = ctx.scene.get_mesh(batch.mesh_id).unwrap();
                 let gpu_mesh = ctx.gpu_resources.get_mesh(batch.mesh_id).expect("Mesh GPU resources not initialized");
-                gpu_resources::draw_mesh_instances(ctx.device, &mut rp, gpu_mesh, batch.primitive_type, &batch.instances, mesh.index_count(batch.primitive_type));
+                gpu_resources::draw_mesh_instances(
+                    ctx.device,
+                    &mut rp,
+                    gpu_mesh,
+                    batch.primitive_type,
+                    &batch.instances,
+                    mesh.index_count(batch.primitive_type)
+                );
             }
             for batch in draw_data.highlight_sub_geom_batches() {
                 if batch.primitive_type != PrimitiveType::TriangleList { continue; }
                 let gpu_mesh = ctx.gpu_resources.get_mesh(batch.mesh_id).expect("Mesh GPU resources not initialized");
-                gpu_resources::draw_mesh_subgeom(ctx.device, &mut rp, gpu_mesh, batch.primitive_type, &batch.instance_transform, batch.first_index, batch.index_count);
+                gpu_resources::draw_mesh_subgeom(
+                    ctx.device,
+                    &mut rp,
+                    gpu_mesh,
+                    batch.primitive_type,
+                    &batch.instance_transform,
+                    batch.first_index,
+                    batch.index_count
+                );
             }
         }
 
