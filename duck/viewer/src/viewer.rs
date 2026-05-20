@@ -11,7 +11,7 @@ use std::rc::Rc;
 use crate::{
     event::{Event, EventContext, EventDispatcher, EventKind},
     operator::{
-        BuiltinOperatorId, NavigationMode, NavigationOperator, OperatorManager,
+        NavigationMode, NavigationOperator, OperatorManager,
         SelectionOperator, TransformOperator,
     },
     scene::{NodePayload, PositionedCamera, Scene},
@@ -134,16 +134,14 @@ impl<'a> Viewer<'a> {
 
         // Add operators in priority order (first added = highest priority)
         // Selection operator handles picking and must be above navigation
-        let transform_operator =
-            Box::new(TransformOperator::new(BuiltinOperatorId::Transform.into()));
+        let transform_operator = Box::new(TransformOperator::new());
         operator_manager.push_back(transform_operator, &mut dispatcher);
 
-        let selection_operator =
-            Box::new(SelectionOperator::new(BuiltinOperatorId::Selection.into()));
+        let selection_operator = Box::new(SelectionOperator::new());
         operator_manager.push_back(selection_operator, &mut dispatcher);
 
         // Navigation operator for orbit/pan/zoom/walk
-        let nav_operator = NavigationOperator::new(BuiltinOperatorId::Navigation.into());
+        let nav_operator = NavigationOperator::new();
         let navigation_mode = nav_operator.mode_handle();
         operator_manager.push_back(Box::new(nav_operator), &mut dispatcher);
 
@@ -467,10 +465,10 @@ impl<'a> Viewer<'a> {
     ///
     /// # Example
     /// ```no_run
-    /// # use duck_engine_viewer::Viewer;
-    /// # fn example(viewer: &mut Viewer, id1: u32, id2: u32) {
+    /// # use duck_engine_viewer::{Viewer, operator::{NavigationOperator, SelectionOperator}};
+    /// # fn example(viewer: &mut Viewer) {
     /// let (op_mgr, dispatcher) = viewer.operator_manager_and_dispatcher_mut();
-    /// op_mgr.swap(id1, id2, dispatcher);
+    /// op_mgr.swap_typed::<NavigationOperator, SelectionOperator>(dispatcher);
     /// # }
     /// ```
     pub fn operator_manager_and_dispatcher_mut(&mut self) -> (&mut OperatorManager, &mut EventDispatcher) {

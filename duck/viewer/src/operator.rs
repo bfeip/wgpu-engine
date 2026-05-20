@@ -6,23 +6,12 @@ pub use navigation::{NavigationMode, NavigationOperator};
 pub use selection::SelectionOperator;
 pub use transform::TransformOperator;
 
+use std::any::TypeId;
+
 use crate::event::{CallbackId, EventDispatcher};
 
-/// Unique identifier for an operator.
-pub type OperatorId = u32;
-
-/// Identifiers for known operators
-pub enum BuiltinOperatorId {
-    Navigation = 0,
-    Selection = 1,
-    Transform = 3,
-}
-
-impl From<BuiltinOperatorId> for OperatorId {
-    fn from(val: BuiltinOperatorId) -> Self {
-        val as OperatorId
-    }
-}
+/// Unique identifier for an operator, derived from its concrete type via [`std::any::TypeId`].
+pub type OperatorId = TypeId;
 
 /// Operators encapsulate interaction logic and manage their own state. They register
 /// callbacks with the EventDispatcher and can be dynamically activated/deactivated.
@@ -30,7 +19,10 @@ impl From<BuiltinOperatorId> for OperatorId {
 /// Each operator is responsible for tracking its own callback IDs and cleaning them up.
 /// Ordering is managed by the OperatorManager - operators earlier in the stack receive
 /// events first.
-pub trait Operator {
+///
+/// The `'static` bound means operators cannot hold borrowed references; use `Rc` or `Arc`
+/// for shared state.
+pub trait Operator: 'static {
     /// Called when the operator is activated.
     ///
     /// The operator should register its callbacks with the dispatcher and store
@@ -42,8 +34,10 @@ pub trait Operator {
     /// The operator should unregister all its callbacks from the dispatcher.
     fn deactivate(&mut self, dispatcher: &mut EventDispatcher);
 
-    /// Get the unique ID for this operator.
-    fn id(&self) -> OperatorId;
+    /// Returns the unique ID for this operator, derived from its concrete type.
+    fn id(&self) -> OperatorId {
+        TypeId::of::<Self>()
+    }
 
     /// Get a human-readable name for this operator.
     fn name(&self) -> &str;
@@ -218,72 +212,107 @@ impl OperatorManager {
     pub fn position(&self, id: OperatorId) -> Option<usize> {
         self.operators.iter().position(|op| op.id() == id)
     }
+
+    /// Removes the operator of type `T` from the stack.
+    pub fn remove_typed<T: Operator + 'static>(&mut self, dispatcher: &mut EventDispatcher) -> bool {
+        self.remove(TypeId::of::<T>(), dispatcher)
+    }
+
+    /// Moves the operator of type `T` to the front of the stack (highest priority).
+    pub fn move_to_front_typed<T: Operator + 'static>(&mut self, dispatcher: &mut EventDispatcher) -> bool {
+        self.move_to_front(TypeId::of::<T>(), dispatcher)
+    }
+
+    /// Moves the operator of type `T` to the back of the stack (lowest priority).
+    pub fn move_to_back_typed<T: Operator + 'static>(&mut self, dispatcher: &mut EventDispatcher) -> bool {
+        self.move_to_back(TypeId::of::<T>(), dispatcher)
+    }
+
+    /// Swaps the positions of two operators by type.
+    pub fn swap_typed<T: Operator + 'static, U: Operator + 'static>(&mut self, dispatcher: &mut EventDispatcher) -> bool {
+        self.swap(TypeId::of::<T>(), TypeId::of::<U>(), dispatcher)
+    }
+
+    /// Returns the position of the operator of type `T` in the stack.
+    pub fn position_typed<T: Operator + 'static>(&self) -> Option<usize> {
+        self.position(TypeId::of::<T>())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::any::TypeId;
     use std::cell::Cell;
     use std::rc::Rc;
 
-    /// Mock operator for testing
-    struct MockOperator {
-        id: OperatorId,
-        name: String,
-        active: bool,
-        callbacks: Vec<CallbackId>,
-        activate_count: Rc<Cell<u32>>,
-        deactivate_count: Rc<Cell<u32>>,
-    }
-
-    impl MockOperator {
-        fn new(
-            id: OperatorId,
-            name: &str,
-            activate_count: Rc<Cell<u32>>,
-            deactivate_count: Rc<Cell<u32>>,
-        ) -> Self {
-            Self {
-                id,
-                name: name.to_string(),
-                active: false,
-                callbacks: Vec::new(),
-                activate_count,
-                deactivate_count,
+    macro_rules! make_mock_op {
+        ($name:ident, $cb1:expr, $cb2:expr) => {
+            struct $name {
+                active: bool,
+                callbacks: Vec<CallbackId>,
+                activate_count: Rc<Cell<u32>>,
+                deactivate_count: Rc<Cell<u32>>,
             }
-        }
+
+            impl $name {
+                fn new(
+                    activate_count: Rc<Cell<u32>>,
+                    deactivate_count: Rc<Cell<u32>>,
+                ) -> Self {
+                    Self {
+                        active: false,
+                        callbacks: Vec::new(),
+                        activate_count,
+                        deactivate_count,
+                    }
+                }
+            }
+
+            impl Operator for $name {
+                fn activate(&mut self, _dispatcher: &mut EventDispatcher) {
+                    self.active = true;
+                    self.callbacks.push($cb1);
+                    self.callbacks.push($cb2);
+                    self.activate_count.set(self.activate_count.get() + 1);
+                }
+
+                fn deactivate(&mut self, _dispatcher: &mut EventDispatcher) {
+                    self.active = false;
+                    self.callbacks.clear();
+                    self.deactivate_count.set(self.deactivate_count.get() + 1);
+                }
+
+                fn name(&self) -> &str {
+                    stringify!($name)
+                }
+
+                fn callback_ids(&self) -> &[CallbackId] {
+                    &self.callbacks
+                }
+
+                fn is_active(&self) -> bool {
+                    self.active
+                }
+            }
+        };
     }
 
-    impl Operator for MockOperator {
-        fn activate(&mut self, _dispatcher: &mut EventDispatcher) {
-            self.active = true;
-            // Simulate registering 2 callbacks with unique IDs based on operator ID
-            self.callbacks.push(100 + self.id);
-            self.callbacks.push(200 + self.id);
-            self.activate_count.set(self.activate_count.get() + 1);
-        }
+    make_mock_op!(MockOp1, 101, 201);
+    make_mock_op!(MockOp2, 102, 202);
+    make_mock_op!(MockOp3, 103, 203);
+    // Used only as a TypeId for "not found" tests — never instantiated.
+    struct MockOpUnused;
+    impl Operator for MockOpUnused {
+        fn activate(&mut self, _: &mut EventDispatcher) {}
+        fn deactivate(&mut self, _: &mut EventDispatcher) {}
+        fn name(&self) -> &str { "MockOpUnused" }
+        fn callback_ids(&self) -> &[CallbackId] { &[] }
+        fn is_active(&self) -> bool { false }
+    }
 
-        fn deactivate(&mut self, _dispatcher: &mut EventDispatcher) {
-            self.active = false;
-            self.callbacks.clear();
-            self.deactivate_count.set(self.deactivate_count.get() + 1);
-        }
-
-        fn id(&self) -> OperatorId {
-            self.id
-        }
-
-        fn name(&self) -> &str {
-            &self.name
-        }
-
-        fn callback_ids(&self) -> &[CallbackId] {
-            &self.callbacks
-        }
-
-        fn is_active(&self) -> bool {
-            self.active
-        }
+    fn counts() -> (Rc<Cell<u32>>, Rc<Cell<u32>>) {
+        (Rc::new(Cell::new(0)), Rc::new(Cell::new(0)))
     }
 
     // ===== OperatorManager Tests =====
@@ -299,61 +328,50 @@ mod tests {
     fn test_push_front() {
         let mut manager = OperatorManager::new();
         let mut dispatcher = EventDispatcher::new();
+        let (ac, dc) = counts();
 
-        let activate_count = Rc::new(Cell::new(0));
-        let deactivate_count = Rc::new(Cell::new(0));
-
-        // Add first operator
-        let op1 = Box::new(MockOperator::new(1, "Op1", Rc::clone(&activate_count), Rc::clone(&deactivate_count)));
+        let op1 = Box::new(MockOp1::new(Rc::clone(&ac), Rc::clone(&dc)));
         manager.push_front(op1, &mut dispatcher);
         assert_eq!(manager.len(), 1);
 
-        // Add second operator to front - should be first
-        let op2 = Box::new(MockOperator::new(2, "Op2", Rc::clone(&activate_count), Rc::clone(&deactivate_count)));
+        // Op2 pushed to front should become first
+        let op2 = Box::new(MockOp2::new(Rc::clone(&ac), Rc::clone(&dc)));
         manager.push_front(op2, &mut dispatcher);
         assert_eq!(manager.len(), 2);
 
-        // Op2 should be first
-        let ids: Vec<OperatorId> = manager.iter().map(|op| op.id()).collect();
-        assert_eq!(ids, vec![2, 1]);
+        let names: Vec<&str> = manager.iter().map(|op| op.name()).collect();
+        assert_eq!(names, vec!["MockOp2", "MockOp1"]);
     }
 
     #[test]
     fn test_push_back() {
         let mut manager = OperatorManager::new();
         let mut dispatcher = EventDispatcher::new();
+        let (ac, dc) = counts();
 
-        let activate_count = Rc::new(Cell::new(0));
-        let deactivate_count = Rc::new(Cell::new(0));
-
-        // Add first operator
-        let op1 = Box::new(MockOperator::new(1, "Op1", Rc::clone(&activate_count), Rc::clone(&deactivate_count)));
+        let op1 = Box::new(MockOp1::new(Rc::clone(&ac), Rc::clone(&dc)));
         manager.push_back(op1, &mut dispatcher);
 
-        // Add second operator to back - should be last
-        let op2 = Box::new(MockOperator::new(2, "Op2", Rc::clone(&activate_count), Rc::clone(&deactivate_count)));
+        let op2 = Box::new(MockOp2::new(Rc::clone(&ac), Rc::clone(&dc)));
         manager.push_back(op2, &mut dispatcher);
 
-        // Op1 should still be first
-        let ids: Vec<OperatorId> = manager.iter().map(|op| op.id()).collect();
-        assert_eq!(ids, vec![1, 2]);
+        let names: Vec<&str> = manager.iter().map(|op| op.name()).collect();
+        assert_eq!(names, vec!["MockOp1", "MockOp2"]);
     }
 
     #[test]
     fn test_push_front_activates() {
         let mut manager = OperatorManager::new();
         let mut dispatcher = EventDispatcher::new();
+        let (ac, dc) = counts();
 
-        let activate_count = Rc::new(Cell::new(0));
-        let deactivate_count = Rc::new(Cell::new(0));
-
-        let op = Box::new(MockOperator::new(1, "TestOp", Rc::clone(&activate_count), Rc::clone(&deactivate_count)));
+        let op = Box::new(MockOp1::new(Rc::clone(&ac), Rc::clone(&dc)));
         assert!(!op.is_active());
 
         manager.push_front(op, &mut dispatcher);
 
-        assert_eq!(activate_count.get(), 1);
-        assert_eq!(deactivate_count.get(), 0);
+        assert_eq!(ac.get(), 1);
+        assert_eq!(dc.get(), 0);
 
         let op_ref = manager.iter().next().unwrap();
         assert!(op_ref.is_active());
@@ -364,21 +382,17 @@ mod tests {
     fn test_remove_deactivates() {
         let mut manager = OperatorManager::new();
         let mut dispatcher = EventDispatcher::new();
+        let (ac, dc) = counts();
 
-        let activate_count = Rc::new(Cell::new(0));
-        let deactivate_count = Rc::new(Cell::new(0));
+        manager.push_front(Box::new(MockOp1::new(Rc::clone(&ac), Rc::clone(&dc))), &mut dispatcher);
+        assert_eq!(ac.get(), 1);
+        assert_eq!(dc.get(), 0);
 
-        let op = Box::new(MockOperator::new(1, "TestOp", Rc::clone(&activate_count), Rc::clone(&deactivate_count)));
-        manager.push_front(op, &mut dispatcher);
-
-        assert_eq!(activate_count.get(), 1);
-        assert_eq!(deactivate_count.get(), 0);
-
-        let removed = manager.remove(1, &mut dispatcher);
+        let removed = manager.remove(TypeId::of::<MockOp1>(), &mut dispatcher);
         assert!(removed);
 
-        assert_eq!(activate_count.get(), 1);
-        assert_eq!(deactivate_count.get(), 1);
+        assert_eq!(ac.get(), 1);
+        assert_eq!(dc.get(), 1);
         assert!(manager.is_empty());
     }
 
@@ -386,188 +400,137 @@ mod tests {
     fn test_remove_nonexistent() {
         let mut manager = OperatorManager::new();
         let mut dispatcher = EventDispatcher::new();
+        let (ac, dc) = counts();
 
-        let activate_count = Rc::new(Cell::new(0));
-        let deactivate_count = Rc::new(Cell::new(0));
+        manager.push_front(Box::new(MockOp1::new(Rc::clone(&ac), Rc::clone(&dc))), &mut dispatcher);
 
-        let op = Box::new(MockOperator::new(1, "Op1", Rc::clone(&activate_count), Rc::clone(&deactivate_count)));
-        manager.push_front(op, &mut dispatcher);
-
-        let removed = manager.remove(999, &mut dispatcher);
+        let removed = manager.remove(TypeId::of::<MockOpUnused>(), &mut dispatcher);
         assert!(!removed);
         assert_eq!(manager.len(), 1);
-        assert_eq!(deactivate_count.get(), 0);
+        assert_eq!(dc.get(), 0);
     }
 
     #[test]
     fn test_move_to_front() {
         let mut manager = OperatorManager::new();
         let mut dispatcher = EventDispatcher::new();
+        let (ac, dc) = counts();
 
-        let activate_count = Rc::new(Cell::new(0));
-        let deactivate_count = Rc::new(Cell::new(0));
+        manager.push_back(Box::new(MockOp1::new(Rc::clone(&ac), Rc::clone(&dc))), &mut dispatcher);
+        manager.push_back(Box::new(MockOp2::new(Rc::clone(&ac), Rc::clone(&dc))), &mut dispatcher);
+        manager.push_back(Box::new(MockOp3::new(Rc::clone(&ac), Rc::clone(&dc))), &mut dispatcher);
 
-        // Add three operators: 1, 2, 3 (in order)
-        let op1 = Box::new(MockOperator::new(1, "Op1", Rc::clone(&activate_count), Rc::clone(&deactivate_count)));
-        manager.push_back(op1, &mut dispatcher);
-        let op2 = Box::new(MockOperator::new(2, "Op2", Rc::clone(&activate_count), Rc::clone(&deactivate_count)));
-        manager.push_back(op2, &mut dispatcher);
-        let op3 = Box::new(MockOperator::new(3, "Op3", Rc::clone(&activate_count), Rc::clone(&deactivate_count)));
-        manager.push_back(op3, &mut dispatcher);
-
-        // Move op3 to front
-        let moved = manager.move_to_front(3, &mut dispatcher);
+        let moved = manager.move_to_front(TypeId::of::<MockOp3>(), &mut dispatcher);
         assert!(moved);
 
-        let ids: Vec<OperatorId> = manager.iter().map(|op| op.id()).collect();
-        assert_eq!(ids, vec![3, 1, 2]);
+        let names: Vec<&str> = manager.iter().map(|op| op.name()).collect();
+        assert_eq!(names, vec!["MockOp3", "MockOp1", "MockOp2"]);
     }
 
     #[test]
     fn test_move_to_back() {
         let mut manager = OperatorManager::new();
         let mut dispatcher = EventDispatcher::new();
+        let (ac, dc) = counts();
 
-        let activate_count = Rc::new(Cell::new(0));
-        let deactivate_count = Rc::new(Cell::new(0));
+        manager.push_back(Box::new(MockOp1::new(Rc::clone(&ac), Rc::clone(&dc))), &mut dispatcher);
+        manager.push_back(Box::new(MockOp2::new(Rc::clone(&ac), Rc::clone(&dc))), &mut dispatcher);
+        manager.push_back(Box::new(MockOp3::new(Rc::clone(&ac), Rc::clone(&dc))), &mut dispatcher);
 
-        // Add three operators: 1, 2, 3 (in order)
-        let op1 = Box::new(MockOperator::new(1, "Op1", Rc::clone(&activate_count), Rc::clone(&deactivate_count)));
-        manager.push_back(op1, &mut dispatcher);
-        let op2 = Box::new(MockOperator::new(2, "Op2", Rc::clone(&activate_count), Rc::clone(&deactivate_count)));
-        manager.push_back(op2, &mut dispatcher);
-        let op3 = Box::new(MockOperator::new(3, "Op3", Rc::clone(&activate_count), Rc::clone(&deactivate_count)));
-        manager.push_back(op3, &mut dispatcher);
-
-        // Move op1 to back
-        let moved = manager.move_to_back(1, &mut dispatcher);
+        let moved = manager.move_to_back(TypeId::of::<MockOp1>(), &mut dispatcher);
         assert!(moved);
 
-        let ids: Vec<OperatorId> = manager.iter().map(|op| op.id()).collect();
-        assert_eq!(ids, vec![2, 3, 1]);
+        let names: Vec<&str> = manager.iter().map(|op| op.name()).collect();
+        assert_eq!(names, vec!["MockOp2", "MockOp3", "MockOp1"]);
     }
 
     #[test]
     fn test_move_nonexistent() {
         let mut manager = OperatorManager::new();
         let mut dispatcher = EventDispatcher::new();
+        let (ac, dc) = counts();
 
-        let activate_count = Rc::new(Cell::new(0));
-        let deactivate_count = Rc::new(Cell::new(0));
+        manager.push_back(Box::new(MockOp1::new(Rc::clone(&ac), Rc::clone(&dc))), &mut dispatcher);
 
-        let op = Box::new(MockOperator::new(1, "Op1", Rc::clone(&activate_count), Rc::clone(&deactivate_count)));
-        manager.push_back(op, &mut dispatcher);
-
-        let moved = manager.move_to_front(999, &mut dispatcher);
-        assert!(!moved);
-
-        let moved = manager.move_to_back(999, &mut dispatcher);
-        assert!(!moved);
+        assert!(!manager.move_to_front(TypeId::of::<MockOpUnused>(), &mut dispatcher));
+        assert!(!manager.move_to_back(TypeId::of::<MockOpUnused>(), &mut dispatcher));
     }
 
     #[test]
     fn test_swap() {
         let mut manager = OperatorManager::new();
         let mut dispatcher = EventDispatcher::new();
+        let (ac, dc) = counts();
 
-        let activate_count = Rc::new(Cell::new(0));
-        let deactivate_count = Rc::new(Cell::new(0));
+        manager.push_back(Box::new(MockOp1::new(Rc::clone(&ac), Rc::clone(&dc))), &mut dispatcher);
+        manager.push_back(Box::new(MockOp2::new(Rc::clone(&ac), Rc::clone(&dc))), &mut dispatcher);
+        manager.push_back(Box::new(MockOp3::new(Rc::clone(&ac), Rc::clone(&dc))), &mut dispatcher);
 
-        // Add three operators: 1, 2, 3 (in order)
-        let op1 = Box::new(MockOperator::new(1, "Op1", Rc::clone(&activate_count), Rc::clone(&deactivate_count)));
-        manager.push_back(op1, &mut dispatcher);
-        let op2 = Box::new(MockOperator::new(2, "Op2", Rc::clone(&activate_count), Rc::clone(&deactivate_count)));
-        manager.push_back(op2, &mut dispatcher);
-        let op3 = Box::new(MockOperator::new(3, "Op3", Rc::clone(&activate_count), Rc::clone(&deactivate_count)));
-        manager.push_back(op3, &mut dispatcher);
-
-        // Swap op1 and op3
-        let swapped = manager.swap(1, 3, &mut dispatcher);
+        let swapped = manager.swap(TypeId::of::<MockOp1>(), TypeId::of::<MockOp3>(), &mut dispatcher);
         assert!(swapped);
+        let names: Vec<&str> = manager.iter().map(|op| op.name()).collect();
+        assert_eq!(names, vec!["MockOp3", "MockOp2", "MockOp1"]);
 
-        let ids: Vec<OperatorId> = manager.iter().map(|op| op.id()).collect();
-        assert_eq!(ids, vec![3, 2, 1]);
-
-        // Swap back
-        let swapped = manager.swap(1, 3, &mut dispatcher);
+        let swapped = manager.swap(TypeId::of::<MockOp1>(), TypeId::of::<MockOp3>(), &mut dispatcher);
         assert!(swapped);
-
-        let ids: Vec<OperatorId> = manager.iter().map(|op| op.id()).collect();
-        assert_eq!(ids, vec![1, 2, 3]);
+        let names: Vec<&str> = manager.iter().map(|op| op.name()).collect();
+        assert_eq!(names, vec!["MockOp1", "MockOp2", "MockOp3"]);
     }
 
     #[test]
     fn test_swap_nonexistent() {
         let mut manager = OperatorManager::new();
         let mut dispatcher = EventDispatcher::new();
+        let (ac, dc) = counts();
 
-        let activate_count = Rc::new(Cell::new(0));
-        let deactivate_count = Rc::new(Cell::new(0));
+        manager.push_back(Box::new(MockOp1::new(Rc::clone(&ac), Rc::clone(&dc))), &mut dispatcher);
+        manager.push_back(Box::new(MockOp2::new(Rc::clone(&ac), Rc::clone(&dc))), &mut dispatcher);
 
-        let op1 = Box::new(MockOperator::new(1, "Op1", Rc::clone(&activate_count), Rc::clone(&deactivate_count)));
-        manager.push_back(op1, &mut dispatcher);
-        let op2 = Box::new(MockOperator::new(2, "Op2", Rc::clone(&activate_count), Rc::clone(&deactivate_count)));
-        manager.push_back(op2, &mut dispatcher);
-
-        // Swap with nonexistent operator
-        let swapped = manager.swap(1, 999, &mut dispatcher);
+        let swapped = manager.swap(TypeId::of::<MockOp1>(), TypeId::of::<MockOpUnused>(), &mut dispatcher);
         assert!(!swapped);
 
-        // Order unchanged
-        let ids: Vec<OperatorId> = manager.iter().map(|op| op.id()).collect();
-        assert_eq!(ids, vec![1, 2]);
+        let names: Vec<&str> = manager.iter().map(|op| op.name()).collect();
+        assert_eq!(names, vec!["MockOp1", "MockOp2"]);
     }
 
     #[test]
     fn test_swap_same_id() {
         let mut manager = OperatorManager::new();
         let mut dispatcher = EventDispatcher::new();
+        let (ac, dc) = counts();
 
-        let activate_count = Rc::new(Cell::new(0));
-        let deactivate_count = Rc::new(Cell::new(0));
+        manager.push_back(Box::new(MockOp1::new(Rc::clone(&ac), Rc::clone(&dc))), &mut dispatcher);
 
-        let op1 = Box::new(MockOperator::new(1, "Op1", Rc::clone(&activate_count), Rc::clone(&deactivate_count)));
-        manager.push_back(op1, &mut dispatcher);
-
-        // Swap with itself - should succeed but be a no-op
-        let swapped = manager.swap(1, 1, &mut dispatcher);
+        let swapped = manager.swap(TypeId::of::<MockOp1>(), TypeId::of::<MockOp1>(), &mut dispatcher);
         assert!(swapped);
 
-        let ids: Vec<OperatorId> = manager.iter().map(|op| op.id()).collect();
-        assert_eq!(ids, vec![1]);
+        let names: Vec<&str> = manager.iter().map(|op| op.name()).collect();
+        assert_eq!(names, vec!["MockOp1"]);
     }
 
     #[test]
     fn test_iter_order() {
         let mut manager = OperatorManager::new();
         let mut dispatcher = EventDispatcher::new();
+        let (ac, dc) = counts();
 
-        let activate_count = Rc::new(Cell::new(0));
-        let deactivate_count = Rc::new(Cell::new(0));
-
-        // Add operators in specific order using push_front
-        let op1 = Box::new(MockOperator::new(1, "First", Rc::clone(&activate_count), Rc::clone(&deactivate_count)));
-        manager.push_back(op1, &mut dispatcher);
-
-        let op2 = Box::new(MockOperator::new(2, "Second", Rc::clone(&activate_count), Rc::clone(&deactivate_count)));
-        manager.push_back(op2, &mut dispatcher);
-
-        let op3 = Box::new(MockOperator::new(3, "Third", Rc::clone(&activate_count), Rc::clone(&deactivate_count)));
-        manager.push_back(op3, &mut dispatcher);
+        manager.push_back(Box::new(MockOp1::new(Rc::clone(&ac), Rc::clone(&dc))), &mut dispatcher);
+        manager.push_back(Box::new(MockOp2::new(Rc::clone(&ac), Rc::clone(&dc))), &mut dispatcher);
+        manager.push_back(Box::new(MockOp3::new(Rc::clone(&ac), Rc::clone(&dc))), &mut dispatcher);
 
         let mut iter = manager.iter();
 
         let first = iter.next().unwrap();
-        assert_eq!(first.id(), 1);
-        assert_eq!(first.name(), "First");
+        assert_eq!(first.id(), TypeId::of::<MockOp1>());
+        assert_eq!(first.name(), "MockOp1");
 
         let second = iter.next().unwrap();
-        assert_eq!(second.id(), 2);
-        assert_eq!(second.name(), "Second");
+        assert_eq!(second.id(), TypeId::of::<MockOp2>());
+        assert_eq!(second.name(), "MockOp2");
 
         let third = iter.next().unwrap();
-        assert_eq!(third.id(), 3);
-        assert_eq!(third.name(), "Third");
+        assert_eq!(third.id(), TypeId::of::<MockOp3>());
+        assert_eq!(third.name(), "MockOp3");
 
         assert!(iter.next().is_none());
     }
@@ -576,25 +539,19 @@ mod tests {
     fn test_position() {
         let mut manager = OperatorManager::new();
         let mut dispatcher = EventDispatcher::new();
+        let (ac, dc) = counts();
 
-        let activate_count = Rc::new(Cell::new(0));
-        let deactivate_count = Rc::new(Cell::new(0));
+        manager.push_back(Box::new(MockOp1::new(Rc::clone(&ac), Rc::clone(&dc))), &mut dispatcher);
+        manager.push_back(Box::new(MockOp2::new(Rc::clone(&ac), Rc::clone(&dc))), &mut dispatcher);
+        manager.push_back(Box::new(MockOp3::new(Rc::clone(&ac), Rc::clone(&dc))), &mut dispatcher);
 
-        let op1 = Box::new(MockOperator::new(1, "Op1", Rc::clone(&activate_count), Rc::clone(&deactivate_count)));
-        manager.push_back(op1, &mut dispatcher);
-        let op2 = Box::new(MockOperator::new(2, "Op2", Rc::clone(&activate_count), Rc::clone(&deactivate_count)));
-        manager.push_back(op2, &mut dispatcher);
-        let op3 = Box::new(MockOperator::new(3, "Op3", Rc::clone(&activate_count), Rc::clone(&deactivate_count)));
-        manager.push_back(op3, &mut dispatcher);
+        assert_eq!(manager.position(TypeId::of::<MockOp1>()), Some(0));
+        assert_eq!(manager.position(TypeId::of::<MockOp2>()), Some(1));
+        assert_eq!(manager.position(TypeId::of::<MockOp3>()), Some(2));
+        assert_eq!(manager.position(TypeId::of::<MockOpUnused>()), None);
 
-        assert_eq!(manager.position(1), Some(0));
-        assert_eq!(manager.position(2), Some(1));
-        assert_eq!(manager.position(3), Some(2));
-        assert_eq!(manager.position(999), None);
-
-        // After swap, positions change
-        manager.swap(1, 3, &mut dispatcher);
-        assert_eq!(manager.position(1), Some(2));
-        assert_eq!(manager.position(3), Some(0));
+        manager.swap(TypeId::of::<MockOp1>(), TypeId::of::<MockOp3>(), &mut dispatcher);
+        assert_eq!(manager.position(TypeId::of::<MockOp1>()), Some(2));
+        assert_eq!(manager.position(TypeId::of::<MockOp3>()), Some(0));
     }
 }

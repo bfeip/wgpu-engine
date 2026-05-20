@@ -36,7 +36,7 @@ use crate::bindings::{InputBinding, InputMap};
 use crate::event::{CallbackId, Event, EventContext, EventDispatcher, EventKind};
 use crate::geom_query::{pick_all_from_ray, RayPickQuery};
 use crate::input::{ElementState, Key, Modifiers, MouseButton, NamedKey};
-use crate::operator::{Operator, OperatorId};
+use crate::operator::Operator;
 use crate::gizmo::{self, GizmoType};
 use crate::scene::{Material, MaterialId, MeshId, NodeId};
 use crate::scene_scale;
@@ -699,7 +699,6 @@ fn world_scale_to_local(scale: Vector3, parent_rotation_inv: Quaternion) -> Vect
 
 /// Operator for Blender-style transform operations (grab/rotate/scale).
 pub struct TransformOperator {
-    id: OperatorId,
     state: Rc<RefCell<TransformState>>,
     pub bindings: Rc<RefCell<InputMap<TransformAction>>>,
     callback_ids: Vec<CallbackId>,
@@ -707,7 +706,7 @@ pub struct TransformOperator {
 
 impl TransformOperator {
     /// Creates a new transform operator with default bindings.
-    pub fn new(id: OperatorId) -> Self {
+    pub fn new() -> Self {
         let bindings = InputMap::new()
             .bind(
                 InputBinding::Key { key: Key::Character('g'), modifiers: Modifiers::default() },
@@ -766,7 +765,6 @@ impl TransformOperator {
                 TransformAction::GizmoDrag,
             );
         Self {
-            id,
             state: Rc::new(RefCell::new(TransformState::new())),
             bindings: Rc::new(RefCell::new(bindings)),
             callback_ids: Vec::new(),
@@ -1108,10 +1106,6 @@ impl Operator for TransformOperator {
             dispatcher.unregister(*id);
         }
         self.callback_ids.clear();
-    }
-
-    fn id(&self) -> OperatorId {
-        self.id
     }
 
     fn name(&self) -> &str {

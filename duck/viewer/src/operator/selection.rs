@@ -7,7 +7,7 @@ use crate::bindings::{InputBinding, InputMap};
 use crate::event::{CallbackId, Event, EventContext, EventDispatcher, EventKind};
 use crate::geom_query::{RayHit, RayPickQuery, RayPickResult, pick_all_from_ray};
 use crate::input::{Modifiers, MouseButton};
-use crate::operator::{Operator, OperatorId};
+use crate::operator::Operator;
 use crate::selection::SelectionItem;
 use duck_engine_common::InnerSpace;
 
@@ -20,20 +20,18 @@ pub enum SelectionAction {
 
 /// Operator for selecting objects in the scene via mouse click.
 pub struct SelectionOperator {
-    id: OperatorId,
     pub bindings: Rc<RefCell<InputMap<SelectionAction>>>,
     callback_ids: Vec<CallbackId>,
 }
 
 impl SelectionOperator {
-    /// Creates a new selection operator with the given ID.
-    pub fn new(id: OperatorId) -> Self {
+    /// Creates a new selection operator.
+    pub fn new() -> Self {
         let bindings = InputMap::new().bind(
             InputBinding::MouseClick { button: MouseButton::Left, modifiers: Modifiers::default() },
             SelectionAction::Select,
         );
         Self {
-            id,
             bindings: Rc::new(RefCell::new(bindings)),
             callback_ids: Vec::new(),
         }
@@ -87,10 +85,6 @@ impl Operator for SelectionOperator {
             dispatcher.unregister(*id);
         }
         self.callback_ids.clear();
-    }
-
-    fn id(&self) -> OperatorId {
-        self.id
     }
 
     fn name(&self) -> &str {

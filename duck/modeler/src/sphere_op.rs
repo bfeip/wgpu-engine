@@ -8,11 +8,9 @@ use duck_engine_viewer::{
     common::{Ray, RgbaColor, Transform},
     event::{CallbackId, Event, EventContext, EventDispatcher, EventKind},
     input::MouseButton,
-    operator::{Operator, OperatorId},
+    operator::Operator,
     scene::NodeId,
 };
-
-pub const SPHERE_OP_ID: OperatorId = 100;
 
 enum Phase {
     Idle,
@@ -141,10 +139,6 @@ impl Operator for SphereOperator {
             dispatcher.unregister(*id);
         }
         self.callback_ids.clear();
-    }
-
-    fn id(&self) -> OperatorId {
-        SPHERE_OP_ID
     }
 
     fn name(&self) -> &str {

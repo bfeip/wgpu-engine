@@ -8,7 +8,7 @@ use crate::common;
 use crate::scene::{PositionedCamera, geom_query::{pick_all_from_ray, RayPickQuery}};
 use crate::event::{CallbackId, Event, EventContext, EventDispatcher, EventKind};
 use crate::input::{Key, Modifiers, MouseButton};
-use crate::operator::{Operator, OperatorId};
+use crate::operator::Operator;
 use crate::scene_scale;
 
 mod turntable;
@@ -279,7 +279,6 @@ impl NavigationState {
 /// reading or changing the active mode. Use [`NavigationOperator::bindings`]
 /// to remap any action.
 pub struct NavigationOperator {
-    id: OperatorId,
     state: Rc<RefCell<NavigationState>>,
     mode: Rc<RefCell<NavigationMode>>,
     /// All navigation bindings: orbit/pan/zoom drags and walk movement keys.
@@ -289,7 +288,7 @@ pub struct NavigationOperator {
 
 impl NavigationOperator {
     /// Creates a new navigation operator with default bindings.
-    pub fn new(id: OperatorId) -> Self {
+    pub fn new() -> Self {
         let mode = Rc::new(RefCell::new(NavigationMode::default()));
         let bindings = InputMap::new()
             // Orbit/pan/pivot drag
@@ -356,7 +355,6 @@ impl NavigationOperator {
             );
 
         Self {
-            id,
             state: Rc::new(RefCell::new(NavigationState::new(mode.clone()))),
             mode,
             bindings: Rc::new(RefCell::new(bindings)),
@@ -464,10 +462,6 @@ impl Operator for NavigationOperator {
             dispatcher.unregister(*id);
         }
         self.callback_ids.clear();
-    }
-
-    fn id(&self) -> OperatorId {
-        self.id
     }
 
     fn name(&self) -> &str {
