@@ -1,5 +1,9 @@
+mod document;
 mod sphere_op;
 
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use egui_wgpu::RendererOptions;
@@ -10,6 +14,7 @@ use winit::{
     window::{Window, WindowId},
 };
 use duck_engine_common::{Vector3, InnerSpace};
+use duck_engine_scene::NodeId;
 
 use duck_engine_viewer::winit_support;
 use duck_engine_viewer::Viewer;
@@ -19,6 +24,8 @@ use duck_engine_viewer::common::{
 use duck_engine_viewer::scene::{
     Scene, Material, Mesh, NodeFlags, NodePayload, PositionedCamera, PrimitiveType
 };
+
+use document::{CadDocument, PartId};
 
 /// Owns all rendering state: the 3D viewer plus egui context and GPU renderer.
 ///
@@ -31,6 +38,8 @@ struct ViewerState<'a> {
     egui_ctx: egui::Context,
     viewer: Viewer<'a>,
     window: Arc<Window>,
+    document: Rc<RefCell<CadDocument>>,
+    node_map: Rc<RefCell<HashMap<PartId, NodeId>>>,
 }
 
 impl ViewerState<'static> {
@@ -58,7 +67,15 @@ impl ViewerState<'static> {
             RendererOptions::default(),
         );
 
-        Self { egui_renderer, egui_winit, egui_ctx, viewer, window }
+        Self {
+            egui_renderer,
+            egui_winit,
+            egui_ctx,
+            viewer,
+            window,
+            document: Rc::new(RefCell::new(CadDocument::new())),
+            node_map: Rc::new(RefCell::new(HashMap::new())),
+        }
     }
 
     fn set_default_scene(&mut self) {
@@ -221,7 +238,10 @@ impl<'a> ApplicationHandler for App<'a> {
         if self.state.is_none() {
             let mut state = pollster::block_on(ViewerState::new(event_loop));
             state.set_default_scene();
-            let sphere_op = sphere_op::SphereOperator::new();
+            let sphere_op = sphere_op::SphereOperator::new(
+                Rc::clone(&state.document),
+                Rc::clone(&state.node_map),
+            );
             let (op_mgr, dispatcher) = state.viewer.operator_manager_and_dispatcher_mut();
             op_mgr.push_front(Box::new(sphere_op), dispatcher);
             state.window.request_redraw();
