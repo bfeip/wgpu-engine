@@ -3,6 +3,8 @@ pub use duck_engine_common as common;
 
 // Scene submodules
 mod id;
+#[cfg(feature = "cad")]
+pub mod cad;
 mod camera;
 mod event;
 mod environment;

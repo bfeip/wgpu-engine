@@ -1053,18 +1053,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 
 [[package]]
-name = "duck-engine-cad"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "cgmath",
- "duck-engine-common",
- "duck-engine-scene",
- "glam",
- "opencascade",
-]
-
-[[package]]
 name = "duck-engine-common"
 version = "0.1.0"
 dependencies = [
@@ -1082,13 +1070,13 @@ dependencies = [
  "bytemuck",
  "cgmath",
  "criterion",
- "duck-engine-cad",
  "duck-engine-common",
  "duck-engine-scene",
  "gltf",
  "image",
  "js-sys",
  "log",
+ "opencascade",
  "openusd",
  "rayon",
  "russimp",
@@ -1129,6 +1117,7 @@ dependencies = [
  "image",
  "log",
  "obj-rs",
+ "opencascade",
  "serde",
  "thiserror 2.0.18",
  "uuid",
@@ -2557,14 +2546,15 @@ name = "modeler"
 version = "0.1.0"
 dependencies = [
  "cgmath",
- "duck-engine-cad",
  "duck-engine-common",
+ "duck-engine-scene",
  "duck-engine-viewer",
  "egui",
  "egui-wgpu",
  "egui-winit",
  "env_logger",
  "log",
+ "opencascade",
  "pollster 0.4.0",
  "wgpu",
  "winit",

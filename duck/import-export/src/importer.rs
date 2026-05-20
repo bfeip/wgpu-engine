@@ -339,21 +339,21 @@ impl Importer for CadImporter {
         });
 
         let mut scene = duck_engine_scene::Scene::new();
-        let options = duck_engine_cad::CadImportOptions::default();
+        let options = crate::cad::CadImportOptions::default();
 
         let result = if let Some(path) = path_hint {
             if is_step {
-                duck_engine_cad::load_step(path, &mut scene, &options)
+                crate::cad::load_step(path, &mut scene, &options)
             } else {
-                duck_engine_cad::load_iges(path, &mut scene, &options)
+                crate::cad::load_iges(path, &mut scene, &options)
             }
         } else {
             let text = std::str::from_utf8(bytes)
                 .map_err(|_| LoadError::Cad("CAD file is not valid UTF-8 text".into()))?;
             if is_step {
-                duck_engine_cad::load_step_from_str(text, &mut scene, &options)
+                crate::cad::load_step_from_str(text, &mut scene, &options)
             } else {
-                duck_engine_cad::load_iges_from_str(text, &mut scene, &options)
+                crate::cad::load_iges_from_str(text, &mut scene, &options)
             }
         };
         result.map_err(|e| LoadError::Cad(e.to_string()))?; // CadImportResult is intentionally discarded here

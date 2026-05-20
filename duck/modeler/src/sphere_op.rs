@@ -2,7 +2,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use duck_engine_common::{MetricSpace, Point3, Quaternion, Vector3};
-use duck_engine_cad::{CadImportOptions, CadShape};
+use duck_engine_scene::cad::{tessellate_into, CadTessellationOptions};
+use opencascade::primitives::Shape;
 use duck_engine_viewer::{
     common::{Ray, RgbaColor, Transform},
     event::{CallbackId, Event, EventContext, EventDispatcher, EventKind},
@@ -47,15 +48,13 @@ fn intersect_xz(ray: &Ray) -> Option<Point3> {
     Some(ray.origin + t * ray.direction)
 }
 
-fn preview_options() -> CadImportOptions {
-    CadImportOptions {
+fn preview_options() -> CadTessellationOptions {
+    CadTessellationOptions {
         tessellation_tolerance: 0.05,
         scale_factor: 1.0,
         face_color: RgbaColor { r: 0.55, g: 0.65, b: 0.9, a: 1.0 },
         edge_color: RgbaColor { r: 0.2, g: 0.2, b: 0.5, a: 1.0 },
         include_edges: true,
-        include_pmi: false,
-        pmi_color: RgbaColor::BLACK,
     }
 }
 
@@ -84,15 +83,15 @@ impl Operator for SphereOperator {
                     );
                     let Some(center) = intersect_xz(&ray) else { return false };
 
-                    let shape = CadShape::sphere(1.0);
-                    let Ok(result) =
-                        shape.tessellate_into(ctx.scene, &preview_options(), None, Some("sphere"))
+                    let shape = Shape::sphere(1.0).build();
+                    let Ok(node) =
+                        tessellate_into(&shape, ctx.scene, &preview_options(), None, Some("sphere"))
                     else {
                         return false;
                     };
 
-                    set_sphere_transform(ctx, result.root, center, 0.01);
-                    state.phase = Phase::Defining { center, preview_node: result.root };
+                    set_sphere_transform(ctx, node, center, 0.01);
+                    state.phase = Phase::Defining { center, preview_node: node };
                     true
                 }
                 (Phase::Defining { center, preview_node }, MouseButton::Left) => {

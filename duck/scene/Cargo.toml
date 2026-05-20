@@ -5,9 +5,11 @@ edition = "2024"
 
 [features]
 serde = ["dep:serde", "duck-engine-common/serde", "cgmath/serde", "bitflags/serde", "uuid/serde"]
+cad = ["dep:opencascade"]
 
 [dependencies]
 duck-engine-common = { path = "../common" }
+opencascade = { path = "../../third-party/opencascade-rs/crates/opencascade", optional = true }
 uuid = { version = "1", features = ["v7"] }
 anyhow = "1.0"
 bitflags = "2.0"

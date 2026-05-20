@@ -10,7 +10,6 @@ members = [
     "modeler",
     "scene-info",
     "scene-converter",
-    "cad",
     "streaming",
     "scene-server",
 ]
