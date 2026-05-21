@@ -13,7 +13,7 @@ pub struct ConstructionOptions {
 impl ConstructionOptions {
     pub fn new() -> Self {
         let geometry_preview_options = CadTessellationOptions {
-            tessellation_tolerance: 0.05,
+            tessellation_tolerance: 0.01,
             scale_factor: 1.0,
             face_color: RgbaColor { r: 0.55, g: 0.65, b: 0.9, a: 1.0 },
             edge_color: RgbaColor { r: 0.2, g: 0.2, b: 0.5, a: 1.0 },
