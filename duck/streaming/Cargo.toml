@@ -13,4 +13,3 @@ serde = { version = "1.0", features = ["derive"] }
 thiserror = "2.0"
 zstd = "0.13"
 log = "0.4"
-cgmath = "0.18"

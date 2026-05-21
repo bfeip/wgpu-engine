@@ -1068,7 +1068,6 @@ dependencies = [
  "anyhow",
  "bincode",
  "bytemuck",
- "cgmath",
  "criterion",
  "duck-engine-common",
  "duck-engine-scene",
@@ -1094,7 +1093,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bytemuck",
- "cgmath",
  "duck-engine-common",
  "duck-engine-scene",
  "half",
@@ -1112,7 +1110,6 @@ dependencies = [
  "anyhow",
  "bitflags 2.11.0",
  "bytemuck",
- "cgmath",
  "duck-engine-common",
  "image",
  "log",
@@ -1129,7 +1126,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bincode",
- "cgmath",
  "duck-engine-common",
  "duck-engine-import-export",
  "duck-engine-scene",
@@ -1147,7 +1143,6 @@ dependencies = [
  "bitflags 2.11.0",
  "bytemuck",
  "cfg-if",
- "cgmath",
  "console_error_panic_hook",
  "console_log",
  "duck-engine-common",
@@ -1202,7 +1197,6 @@ dependencies = [
 name = "egui-demo"
 version = "0.1.0"
 dependencies = [
- "cgmath",
  "duck-engine-common",
  "duck-engine-viewer",
  "egui",
@@ -2545,7 +2539,6 @@ dependencies = [
 name = "modeler"
 version = "0.1.0"
 dependencies = [
- "cgmath",
  "duck-engine-common",
  "duck-engine-scene",
  "duck-engine-viewer",

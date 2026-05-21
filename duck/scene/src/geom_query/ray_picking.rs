@@ -1,5 +1,4 @@
-use duck_engine_common::{InnerSpace, Matrix4, Point3};
-use cgmath::Transform as _;
+use duck_engine_common::{transform_point, InnerSpace, Matrix4, Point3};
 
 use crate::common::{Aabb, Ray};
 use crate::{InstanceId, Mesh, NodeId, Scene};
@@ -155,7 +154,7 @@ impl PickQuery for RayPickQuery {
         if self.pick_faces {
             for mesh_hit in mesh_intersection::intersect_ray(mesh, &self.ray) {
                 let world_hit_point =
-                    world_transform.transform_point(mesh_hit.hit_point);
+                    transform_point(world_transform, mesh_hit.hit_point);
                 let distance = (world_hit_point - self.world_ray.origin).magnitude();
                 results.push(RayPickResult {
                     node_id,
@@ -175,7 +174,7 @@ impl PickQuery for RayPickQuery {
                 mesh_intersection::intersect_ray_with_lines(mesh, &self.ray, self.local_line_tolerance)
             {
                 let world_closest =
-                    world_transform.transform_point(line_hit.closest_point);
+                    transform_point(world_transform, line_hit.closest_point);
                 let distance = (world_closest - self.world_ray.origin).magnitude();
 
                 // Compute world-space perpendicular distance by comparing the closest
@@ -183,7 +182,7 @@ impl PickQuery for RayPickQuery {
                 // then transforming both to world space.
                 let local_ray_point = self.ray.point_at(line_hit.t);
                 let world_ray_point =
-                    world_transform.transform_point(local_ray_point);
+                    transform_point(world_transform, local_ray_point);
                 let distance_to_ray = (world_closest - world_ray_point).magnitude();
 
                 results.push(RayPickResult {

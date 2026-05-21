@@ -5,9 +5,18 @@
 //! These functions are designed to be reusable across operators, animation systems,
 //! gizmos, and other subsystems.
 
-use crate::{EuclideanSpace, InnerSpace, Point3, Quaternion, Rad, Rotation, Rotation3, Vector3};
+use crate::{EuclideanSpace, InnerSpace, Matrix4, Point3, Quaternion, Rad, Rotation, Rotation3, Vector3};
 
 use crate::EPSILON;
+
+// =============================================================================
+// Matrix Operations
+// =============================================================================
+
+/// Transforms a point by a 4x4 matrix (applies translation, rotation, and scale).
+pub fn transform_point(matrix: &Matrix4, point: Point3) -> Point3 {
+    Point3::from_homogeneous(matrix * point.to_homogeneous())
+}
 
 // =============================================================================
 // Pivot-Based Transforms

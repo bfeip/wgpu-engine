@@ -12,7 +12,6 @@ streaming = ["duck-engine-viewer/streaming"]
 [dependencies]
 duck-engine-common = { path = "../common" }
 duck-engine-viewer = { path = "../viewer", features = ["winit-support"] }
-cgmath = "0.18"
 egui = "0.33"
 egui-wgpu = "0.33"
 env_logger = "0.11"

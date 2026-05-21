@@ -1,8 +1,7 @@
 use std::{cell::Cell, collections::HashSet, fs::File, io::BufReader, path::Path};
 
 use anyhow::{Context, Result};
-use duck_engine_common::{InnerSpace, Matrix4, Point3, Vector3};
-use cgmath::Transform as _;
+use duck_engine_common::{transform_point, InnerSpace, Matrix4, Point3, Vector3};
 
 mod primitives;
 
@@ -379,7 +378,7 @@ impl Mesh {
         for v in &mut self.vertices {
             // Transform position as a point
             let pos = Point3::new(v.position[0], v.position[1], v.position[2]);
-            let transformed = matrix.transform_point(pos);
+            let transformed = transform_point(matrix, pos);
             v.position = [transformed.x, transformed.y, transformed.z];
 
             // Transform normal by inverse-transpose
