@@ -1,5 +1,5 @@
-use crate::{InnerSpace, Matrix4, Point3, Vector3};
-
+use crate::{EuclideanSpace, InnerSpace, Matrix4, Point3, Vector3};
+use crate::plane::Plane;
 use crate::EPSILON;
 
 /// The closest approach between a ray and a line segment.
@@ -117,6 +117,26 @@ impl Ray {
         Some(SegmentApproach { t: ray_t, closest_on_segment, distance })
     }
 
+    /// Finds the intersection of the ray with a plane.
+    /// Returns `Some((t, point))` where `t` is the distance along the ray.
+    /// Returns `None` if the ray is parallel to the plane or points away from it.
+    pub fn intersect_plane(&self, plane: &Plane) -> Option<(f32, Point3)> {
+        let denom = plane.normal.dot(self.direction);
+
+        if denom.abs() < EPSILON {
+            return None;
+        }
+
+        let t = -(plane.normal.dot(self.origin.to_vec()) + plane.d) / denom;
+
+        if t < 0.0 {
+            return None;
+        }
+
+        let point = self.origin + self.direction * t;
+        Some((t, point))
+    }
+
     /// Tests if a ray intersects a triangle using the Möller-Trumbore algorithm.
     ///
     /// Returns Some((t, u, v)) if the ray hits the triangle, where:
@@ -186,6 +206,7 @@ impl Ray {
 mod tests {
     use super::*;
     use crate::{Matrix4, Point3, Vector3, Rad, EPSILON};
+    use crate::plane::Plane;
 
     #[test]
     fn test_ray_creation_normalizes_direction() {
@@ -495,6 +516,37 @@ mod tests {
                 "Ray {:?} should miss triangle", ray
             );
         }
+    }
+
+    // ===== Plane Intersection Tests =====
+
+    #[test]
+    fn test_ray_intersect_plane_hit() {
+        let plane = Plane::from_point(Vector3::new(0.0, 1.0, 0.0), Point3::origin());
+        let ray = Ray::new(Point3::new(0.0, -1.0, 0.0), Vector3::new(0.0, 1.0, 0.0));
+
+        let result = ray.intersect_plane(&plane);
+        assert!(result.is_some());
+
+        let (t, point) = result.unwrap();
+        assert!((t - 1.0).abs() < EPSILON);
+        assert!(point.y.abs() < EPSILON);
+    }
+
+    #[test]
+    fn test_ray_intersect_plane_miss_parallel() {
+        let plane = Plane::from_point(Vector3::new(0.0, 1.0, 0.0), Point3::origin());
+        let ray = Ray::new(Point3::new(0.0, 1.0, 0.0), Vector3::new(1.0, 0.0, 0.0));
+
+        assert!(ray.intersect_plane(&plane).is_none());
+    }
+
+    #[test]
+    fn test_ray_intersect_plane_miss_behind() {
+        let plane = Plane::from_point(Vector3::new(0.0, 1.0, 0.0), Point3::origin());
+        let ray = Ray::new(Point3::new(0.0, 1.0, 0.0), Vector3::new(0.0, 1.0, 0.0));
+
+        assert!(ray.intersect_plane(&plane).is_none());
     }
 
     // ===== Segment Closest Approach Tests =====

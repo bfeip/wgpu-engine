@@ -1,6 +1,5 @@
 use crate::{EuclideanSpace, InnerSpace, Matrix, Matrix4, Point3, SquareMatrix, Vector3, Vector4};
 
-use crate::ray::Ray;
 use crate::EPSILON;
 
 /// A plane in 3D space defined by a normal and distance from origin.
@@ -49,6 +48,18 @@ impl Plane {
         }
     }
 
+    pub fn xz() -> Self {
+        Self { normal: Vector3::unit_y(), d: 0.0 }
+    }
+
+    pub fn xy() -> Self {
+        Self { normal: Vector3::unit_z(), d: 0.0 }
+    }
+
+    pub fn yz() -> Self {
+        Self { normal: Vector3::unit_x(), d: 0.0 }
+    }
+
     /// Computes the signed distance from a point to the plane.
     ///
     /// - Positive: point is on the "outside" (same side as normal)
@@ -81,26 +92,6 @@ impl Plane {
 
         // Re-normalize the result
         Self::from_coefficients(transformed.x, transformed.y, transformed.z, transformed.w)
-    }
-
-    /// Finds the intersection of a ray with the plane.
-    /// Returns Some((t, point)) where t is the distance along the ray.
-    /// Returns None if the ray is parallel to the plane or points away from it.
-    pub fn intersect_ray(&self, ray: &Ray) -> Option<(f32, Point3)> {
-        let denom = self.normal.dot(ray.direction);
-
-        if denom.abs() < EPSILON {
-            return None;
-        }
-
-        let t = -(self.normal.dot(ray.origin.to_vec()) + self.d) / denom;
-
-        if t < 0.0 {
-            return None;
-        }
-
-        let point = ray.origin + ray.direction * t;
-        Some((t, point))
     }
 
     /// Finds the intersection point of a line segment with the plane.
@@ -223,36 +214,6 @@ mod tests {
         assert!(transformed.normal.x.abs() < 0.01);
         assert!(transformed.normal.y.abs() < 0.01);
         assert!((transformed.normal.z - 1.0).abs() < 0.01);
-    }
-
-    #[test]
-    fn test_plane_intersect_ray_hit() {
-        let plane = Plane::from_point(Vector3::new(0.0, 1.0, 0.0), Point3::origin());
-        let ray = Ray::new(Point3::new(0.0, -1.0, 0.0), Vector3::new(0.0, 1.0, 0.0));
-
-        let result = plane.intersect_ray(&ray);
-        assert!(result.is_some());
-
-        let (t, point) = result.unwrap();
-        assert!((t - 1.0).abs() < EPSILON);
-        assert!(point.y.abs() < EPSILON);
-    }
-
-    #[test]
-    fn test_plane_intersect_ray_miss_parallel() {
-        let plane = Plane::from_point(Vector3::new(0.0, 1.0, 0.0), Point3::origin());
-        let ray = Ray::new(Point3::new(0.0, 1.0, 0.0), Vector3::new(1.0, 0.0, 0.0));
-
-        assert!(plane.intersect_ray(&ray).is_none());
-    }
-
-    #[test]
-    fn test_plane_intersect_ray_miss_behind() {
-        let plane = Plane::from_point(Vector3::new(0.0, 1.0, 0.0), Point3::origin());
-        // Ray pointing away from plane
-        let ray = Ray::new(Point3::new(0.0, 1.0, 0.0), Vector3::new(0.0, 1.0, 0.0));
-
-        assert!(plane.intersect_ray(&ray).is_none());
     }
 
     #[test]
