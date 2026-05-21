@@ -413,7 +413,7 @@ impl TransformState {
         let movement_plane = common::Plane::from_point(camera.forward(), *pivot);
         let Point3 { x: screen_x, y: screen_y, .. } = camera.project_point_screen(*pivot, width, height);
         let diff_ray = camera.ray_from_screen_point(screen_x + dx, screen_y + dy, width, height);
-        let new_pivot = movement_plane.intersect_ray(&diff_ray)
+        let new_pivot = diff_ray.intersect_plane(&movement_plane)
             .map_or(*pivot, |intersection| intersection.1);
         let move_vector = new_pivot - pivot;
 

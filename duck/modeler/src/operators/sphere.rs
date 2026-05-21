@@ -3,18 +3,18 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use duck_engine_common::{MetricSpace, Point3, Quaternion, Vector3};
-use duck_engine_common::RgbaColor;
 use duck_engine_scene::NodeId;
-use duck_engine_scene::cad::{tessellate_into, CadTessellationOptions};
+use duck_engine_scene::cad::tessellate_into;
 use duck_engine_viewer::{
-    common::{Ray, Transform},
+    common::Transform,
     event::{CallbackId, Event, EventDispatcher, EventKind},
     input::MouseButton,
     operator::Operator,
 };
 use opencascade::primitives::Shape;
 
-use crate::document::{CadDocument, PartId};
+use crate::{document::{CadDocument, PartId}};
+use super::ConstructionOptions;
 
 enum Phase {
     Idle,
@@ -28,42 +28,26 @@ struct Inner {
 pub struct SphereOperator {
     inner: Rc<RefCell<Inner>>,
     callback_ids: Vec<CallbackId>,
+
+    construction_options: Rc<RefCell<ConstructionOptions>>,
+
     document: Rc<RefCell<CadDocument>>,
     node_map: Rc<RefCell<HashMap<PartId, NodeId>>>,
 }
 
 impl SphereOperator {
     pub fn new(
+        construction_options: Rc<RefCell<ConstructionOptions>>,
         document: Rc<RefCell<CadDocument>>,
         node_map: Rc<RefCell<HashMap<PartId, NodeId>>>,
     ) -> Self {
         Self {
             inner: Rc::new(RefCell::new(Inner { phase: Phase::Idle })),
             callback_ids: Vec::new(),
+            construction_options,
             document,
             node_map,
         }
-    }
-}
-
-fn intersect_xz(ray: &Ray) -> Option<Point3> {
-    if ray.direction.y.abs() < 1e-6 {
-        return None;
-    }
-    let t = -ray.origin.y / ray.direction.y;
-    if t < 0.0 {
-        return None;
-    }
-    Some(ray.origin + t * ray.direction)
-}
-
-fn preview_options() -> CadTessellationOptions {
-    CadTessellationOptions {
-        tessellation_tolerance: 0.05,
-        scale_factor: 1.0,
-        face_color: RgbaColor { r: 0.55, g: 0.65, b: 0.9, a: 1.0 },
-        edge_color: RgbaColor { r: 0.2, g: 0.2, b: 0.5, a: 1.0 },
-        include_edges: true,
     }
 }
 
@@ -78,6 +62,7 @@ fn sphere_transform(center: Point3, radius: f32) -> Transform {
 impl Operator for SphereOperator {
     fn activate(&mut self, dispatcher: &mut EventDispatcher) {
         let inner = self.inner.clone();
+        let coptions = self.construction_options.clone();
         let document = self.document.clone();
         let node_map = self.node_map.clone();
 
@@ -87,18 +72,27 @@ impl Operator for SphereOperator {
             };
 
             let mut state = inner.borrow_mut();
+            let coptions = coptions.borrow();
 
             match (&state.phase, button) {
                 (Phase::Idle, MouseButton::Left) => {
                     let ray = ctx.camera().ray_from_screen_point(
                         position.0, position.1, ctx.size.0, ctx.size.1,
                     );
-                    let Some(center) = intersect_xz(&ray) else { return false };
+                    let Some((_, center)) = ray.intersect_plane(
+                        &coptions.construction_plane
+                    ) else {
+                        return false
+                    };
 
                     let shape = Shape::sphere(1.0).build();
-                    let Ok(node) =
-                        tessellate_into(&shape, ctx.scene, &preview_options(), None, Some("sphere"))
-                    else {
+                    let Ok(node) = tessellate_into(
+                        &shape,
+                        ctx.scene,
+                        &coptions.geometry_preview_options,
+                        None,
+                        Some("sphere"),
+                    ) else {
                         return false;
                     };
 
@@ -111,8 +105,9 @@ impl Operator for SphereOperator {
                     let ray = ctx.camera().ray_from_screen_point(
                         position.0, position.1, ctx.size.0, ctx.size.1,
                     );
-                    let radius = intersect_xz(&ray)
-                        .map(|hit| center.distance(hit).max(0.01))
+                    let radius = ray
+                        .intersect_plane(&coptions.construction_plane)
+                        .map(|(_, hit)| center.distance(hit).max(0.01))
                         .unwrap_or(0.01);
 
                     let transform = sphere_transform(center, radius);
@@ -124,7 +119,7 @@ impl Operator for SphereOperator {
                         "Sphere".to_owned(),
                         shape,
                         transform,
-                        RgbaColor { r: 0.55, g: 0.65, b: 0.9, a: 1.0 },
+                        coptions.geometry_preview_options.face_color,
                     );
                     node_map.borrow_mut().insert(part_id, node);
 
@@ -142,16 +137,18 @@ impl Operator for SphereOperator {
         });
 
         let inner = self.inner.clone();
+        let coptions = self.construction_options.clone();
         let move_cb = dispatcher.register(EventKind::CursorMoved, move |event, ctx| {
             let Event::CursorMoved { position } = event else { return false };
 
             let state = inner.borrow();
+            let coptions = coptions.borrow();
             let Phase::Defining { center, preview_node } = state.phase else { return false };
 
             let ray = ctx.camera().ray_from_screen_point(
                 position.0 as f32, position.1 as f32, ctx.size.0, ctx.size.1,
             );
-            if let Some(hit) = intersect_xz(&ray) {
+            if let Some((_, hit)) = ray.intersect_plane(&coptions.construction_plane) {
                 let radius = center.distance(hit).max(0.01);
                 ctx.scene.set_node_transform(preview_node, sphere_transform(center, radius));
             }

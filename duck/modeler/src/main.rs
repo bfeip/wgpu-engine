@@ -1,5 +1,5 @@
 mod document;
-mod sphere_op;
+mod operators;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -13,17 +13,17 @@ use winit::{
     event_loop::{ActiveEventLoop, EventLoop},
     window::{Window, WindowId},
 };
-use duck_engine_common::{Vector3, InnerSpace};
-use duck_engine_scene::NodeId;
 
 use duck_engine_viewer::winit_support;
 use duck_engine_viewer::Viewer;
 use duck_engine_viewer::common::{
-    RgbaColor, Transform
+    RgbaColor, Transform, Vector3, InnerSpace
 };
 use duck_engine_viewer::scene::{
-    Scene, Material, Mesh, NodeFlags, NodePayload, PositionedCamera, PrimitiveType
+    Scene, Material, Mesh, NodeFlags, NodePayload, PositionedCamera, PrimitiveType, NodeId
 };
+
+use crate::operators::{ConstructionOptions, SphereOperator};
 
 use document::{CadDocument, PartId};
 
@@ -38,6 +38,9 @@ struct ViewerState<'a> {
     egui_ctx: egui::Context,
     viewer: Viewer<'a>,
     window: Arc<Window>,
+
+    construction_options: Rc<RefCell<ConstructionOptions>>,
+
     document: Rc<RefCell<CadDocument>>,
     node_map: Rc<RefCell<HashMap<PartId, NodeId>>>,
 }
@@ -73,6 +76,7 @@ impl ViewerState<'static> {
             egui_ctx,
             viewer,
             window,
+            construction_options: Rc::new(RefCell::new(ConstructionOptions::new())),
             document: Rc::new(RefCell::new(CadDocument::new())),
             node_map: Rc::new(RefCell::new(HashMap::new())),
         }
@@ -238,7 +242,8 @@ impl<'a> ApplicationHandler for App<'a> {
         if self.state.is_none() {
             let mut state = pollster::block_on(ViewerState::new(event_loop));
             state.set_default_scene();
-            let sphere_op = sphere_op::SphereOperator::new(
+            let sphere_op = SphereOperator::new(
+                Rc::clone(&state.construction_options),
                 Rc::clone(&state.document),
                 Rc::clone(&state.node_map),
             );
