@@ -7,7 +7,7 @@ use crate::bindings::{InputBinding, InputMap};
 use crate::common;
 use crate::scene::{PositionedCamera, geom_query::{pick_all_from_ray, RayPickQuery}};
 use crate::event::{CallbackId, Event, EventContext, EventDispatcher, EventKind};
-use crate::input::{Key, Modifiers, MouseButton};
+use crate::input::{Key, Modifiers, MouseButton, MouseScrollDelta};
 use crate::operator::Operator;
 use crate::scene_scale;
 
@@ -404,7 +404,6 @@ impl Operator for NavigationOperator {
             if !b.borrow().actions_for_scroll().contains(&NavigationAction::Zoom) {
                 return false;
             }
-            use crate::input::MouseScrollDelta;
             let scroll_amount = match delta {
                 MouseScrollDelta::LineDelta(_, y) => *y,
                 MouseScrollDelta::PixelDelta(_x, y) => *y / 100.0,
