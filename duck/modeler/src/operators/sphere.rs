@@ -19,7 +19,7 @@ use super::ConstructionOptions;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum SphereAction {
-    Confirm,
+    Place,
     Cancel,
 }
 
@@ -52,7 +52,7 @@ impl SphereOperator {
         let bindings = InputMap::new()
             .bind(
                 InputBinding::MouseClick { button: MouseButton::Left, modifiers: Modifiers::default() },
-                SphereAction::Confirm,
+                SphereAction::Place,
             )
             .bind(
                 InputBinding::MouseClick { button: MouseButton::Right, modifiers: Modifiers::default() },
@@ -97,7 +97,8 @@ impl Operator for SphereOperator {
 
             for action in actions {
                 match (&state.phase, action) {
-                    (Phase::Idle, SphereAction::Confirm) => {
+                    // Placing of initial center point.
+                    (Phase::Idle, SphereAction::Place) => {
                         let ray = ctx.camera().ray_from_screen_point(
                             position.0, position.1, ctx.size.0, ctx.size.1,
                         );
@@ -122,7 +123,9 @@ impl Operator for SphereOperator {
                         state.phase = Phase::Defining { center, preview_node: node };
                         handled = true;
                     }
-                    (Phase::Defining { center, preview_node }, SphereAction::Confirm) => {
+
+                    // Placing of outer point.
+                    (Phase::Defining { center, preview_node }, SphereAction::Place) => {
                         let (center, node) = (*center, *preview_node);
                         let ray = ctx.camera().ray_from_screen_point(
                             position.0, position.1, ctx.size.0, ctx.size.1,
@@ -148,6 +151,8 @@ impl Operator for SphereOperator {
                         state.phase = Phase::Idle;
                         handled = true;
                     }
+
+                    // Cancel sphere in progress.
                     (Phase::Defining { preview_node, .. }, SphereAction::Cancel) => {
                         let node = *preview_node;
                         ctx.scene.remove_node(node);
