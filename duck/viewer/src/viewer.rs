@@ -5,13 +5,10 @@ use web_time::Instant;
 #[cfg(feature = "streaming")]
 use crate::streaming::ViewerStreamClient;
 
-use std::cell::RefCell;
-use std::rc::Rc;
-
 use crate::{
-    event::{Event, EventContext, EventDispatcher, EventKind},
+    event::{Event, EventContext, EventDispatcher},
     operator::{
-        NavigationMode, NavigationOperator, OperatorManager,
+        NavigationMode, NavigationOperator,
         SelectionOperator, TransformOperator,
     },
     scene::{NodePayload, PositionedCamera, Scene},
@@ -29,8 +26,6 @@ pub struct Viewer<'a> {
     scene: Scene,
     selection: SelectionManager,
     dispatcher: EventDispatcher,
-    operator_manager: OperatorManager,
-    navigation_mode: Rc<RefCell<NavigationMode>>,
     /// Current cursor position in screen coordinates
     cursor_position: Option<(f32, f32)>,
     /// Last time update() was called, for delta_time calculation
@@ -130,20 +125,11 @@ impl<'a> Viewer<'a> {
         let scene = Scene::new();
 
         let mut dispatcher = EventDispatcher::new();
-        let mut operator_manager = OperatorManager::new();
 
         // Add operators in priority order (first added = highest priority)
-        // Selection operator handles picking and must be above navigation
-        let transform_operator = Box::new(TransformOperator::new());
-        operator_manager.push_back(transform_operator, &mut dispatcher);
-
-        let selection_operator = Box::new(SelectionOperator::new());
-        operator_manager.push_back(selection_operator, &mut dispatcher);
-
-        // Navigation operator for orbit/pan/zoom/walk
-        let nav_operator = NavigationOperator::new();
-        let navigation_mode = nav_operator.mode_handle();
-        operator_manager.push_back(Box::new(nav_operator), &mut dispatcher);
+        dispatcher.push_back(Box::new(TransformOperator::new()));
+        dispatcher.push_back(Box::new(SelectionOperator::new()));
+        dispatcher.push_back(Box::new(NavigationOperator::new()));
 
         // Create viewer
         let mut viewer = Self {
@@ -155,16 +141,12 @@ impl<'a> Viewer<'a> {
             scene,
             selection: SelectionManager::new(),
             dispatcher,
-            operator_manager,
-            navigation_mode,
             cursor_position: None,
             last_update_time: None,
             #[cfg(feature = "streaming")]
             stream_client: None,
         };
 
-        // Register default event handlers
-        viewer.register_default_handlers();
         // Ensure there is always an active camera in the scene
         viewer.ensure_active_camera();
 
@@ -188,20 +170,11 @@ impl<'a> Viewer<'a> {
         Self::new(wgpu::SurfaceTarget::Canvas(canvas), width, height).await
     }
 
-    /// Register default event handlers for common viewer operations
-    fn register_default_handlers(&mut self) {
-        // Register CursorMoved handler to track cursor position
-        self.dispatcher
-            .register(EventKind::CursorMoved, |event, ctx| {
-                if let Event::CursorMoved { position } = event {
-                    *ctx.cursor_position = Some((position.0 as f32, position.1 as f32));
-                }
-                false // Don't stop propagation - other handlers may need cursor position too
-            });
-    }
-
     /// Handle a single event by dispatching it to registered handlers
     pub fn handle_event(&mut self, event: &Event) {
+        if let Event::CursorMoved { position } = event {
+            self.cursor_position = Some((position.0 as f32, position.1 as f32));
+        }
         // Handle resize at the viewer level (needs surface, renderer, and camera)
         if let Event::Resized(physical_size) = event {
             let (w, h) = *physical_size;
@@ -226,12 +199,17 @@ impl<'a> Viewer<'a> {
 
     /// Get the current navigation mode.
     pub fn navigation_mode(&self) -> NavigationMode {
-        *self.navigation_mode.borrow()
+        self.dispatcher
+            .operator::<NavigationOperator>()
+            .map(|op| op.mode())
+            .unwrap_or_default()
     }
 
     /// Set the navigation mode (Orbit or Walk).
     pub fn set_navigation_mode(&mut self, mode: NavigationMode) {
-        *self.navigation_mode.borrow_mut() = mode;
+        if let Some(op) = self.dispatcher.operator_mut::<NavigationOperator>() {
+            op.set_mode(mode);
+        }
     }
 
     /// Dispatch an Update event with delta_time since last update.
@@ -443,36 +421,6 @@ impl<'a> Viewer<'a> {
     /// Get a mutable reference to the event dispatcher
     pub fn dispatcher_mut(&mut self) -> &mut EventDispatcher {
         &mut self.dispatcher
-    }
-
-    /// Get a reference to the operator manager
-    pub fn operator_manager(&self) -> &OperatorManager {
-        &self.operator_manager
-    }
-
-    /// Get a mutable reference to the operator manager
-    pub fn operator_manager_mut(&mut self) -> &mut OperatorManager {
-        &mut self.operator_manager
-    }
-
-    /// Get mutable references to both the operator manager and event dispatcher
-    ///
-    /// This method allows you to access both components simultaneously, which is
-    /// necessary for operations like adding, removing, or reordering operators.
-    /// Many OperatorManager methods (push_front, push_back, remove, move_to_front,
-    /// move_to_back, swap) require both references to maintain synchronization
-    /// between operator priority and callback ordering.
-    ///
-    /// # Example
-    /// ```no_run
-    /// # use duck_engine_viewer::{Viewer, operator::{NavigationOperator, SelectionOperator}};
-    /// # fn example(viewer: &mut Viewer) {
-    /// let (op_mgr, dispatcher) = viewer.operator_manager_and_dispatcher_mut();
-    /// op_mgr.swap_typed::<NavigationOperator, SelectionOperator>(dispatcher);
-    /// # }
-    /// ```
-    pub fn operator_manager_and_dispatcher_mut(&mut self) -> (&mut OperatorManager, &mut EventDispatcher) {
-        (&mut self.operator_manager, &mut self.dispatcher)
     }
 
     /// Render the scene using the default rendering path

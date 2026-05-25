@@ -5,6 +5,7 @@ use crate::input::{
     ElementState, Key, KeyEvent, Modifiers, MouseButton, MouseScrollDelta, NamedKey, TouchId,
     TouchPhase,
 };
+use crate::operator::{Operator, OperatorId};
 use crate::scene::{NodePayload, PositionedCamera, Scene};
 use crate::selection::SelectionManager;
 
@@ -24,7 +25,7 @@ pub struct EventContext<'c> {
     pub scene: &'c mut Scene,
     /// Mutable reference to the selection manager
     pub selection: &'c mut SelectionManager,
-    /// Currently held keyboard modifier keys, updated by the dispatcher before each callback.
+    /// Currently held keyboard modifier keys, updated by the dispatcher before each dispatch.
     // TODO: In the future we might replace this with an input state struct. Containing
     // not just modifiers but the full input state.
     pub modifiers: Modifiers,
@@ -60,17 +61,9 @@ impl<'c> EventContext<'c> {
     }
 }
 
-/// Unique identifier for a registered callback.
-pub type CallbackId = u32;
-
-/// Type alias for event callback functions.
+/// Discriminant enum for [`Event`] variants.
 ///
-/// Callbacks receive a reference to the event and mutable access to the event context.
-/// They return `true` to stop event propagation or `false` to continue processing
-/// additional callbacks for the same event kind.
-type EventCallback = Box<dyn for<'c> Fn(&Event, &mut EventContext<'c>) -> bool>;
-
-/// enum representing event types.
+/// Can be used as a fast pre-filter inside [`Operator::dispatch`] implementations.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub enum EventKind {
     #[cfg(test)]
@@ -218,10 +211,6 @@ impl Event {
             Self::Test => EventKind::Test,
         }
     }
-
-    // NOTE: Winit conversion functions have been removed to make the core library
-    // implementation-agnostic. If you're using winit, you can create a winit_support
-    // module that provides conversion functions from winit types to our input types.
 }
 
 /// Current touch interaction mode for synthesis.
@@ -269,20 +258,20 @@ struct ButtonState {
     distance_dragged: f32,
 }
 
-/// Event dispatcher that manages callbacks for different event types.
+/// Manages operators and synthesizes high-level input events.
 ///
-/// Callbacks are registered by [`EventKind`] and invoked when matching events
-/// are dispatched. Multiple callbacks can be registered for the same event kind,
-/// and they are called until one returns `true`.
+/// The dispatcher holds an ordered list of [`Operator`]s. On each call to
+/// [`dispatch`](EventDispatcher::dispatch) it:
 ///
-/// Each callback is assigned a unique [`CallbackId`] when registered.
+/// 1. Snapshots the current modifier state into [`EventContext::modifiers`].
+/// 2. Updates internal state and synthesizes derived events (drag start/end,
+///    click, touch-to-mouse mapping).
+/// 3. Calls [`Operator::dispatch`] on each operator in priority order until
+///    one returns `true` (consumes the event) or all have been called.
 ///
-/// The dispatcher also tracks mouse button state to synthesize high-level events
-/// like [`EventKind::MouseDragStart`], [`EventKind::MouseDrag`], [`EventKind::MouseDragEnd`],
-/// and [`EventKind::MouseClick`].
+/// Operators at the front of the list have the highest priority.
 pub struct EventDispatcher {
-    callback_map: HashMap<EventKind, Vec<(CallbackId, EventCallback)>>,
-    next_id: u32,
+    operators: Vec<Box<dyn Operator>>,
     /// State for each currently-pressed mouse button
     button_states: HashMap<MouseButton, ButtonState>,
     /// Current cursor position in physical pixels (from CursorMoved events)
@@ -294,11 +283,10 @@ pub struct EventDispatcher {
 }
 
 impl EventDispatcher {
-    /// Creates a new empty event dispatcher.
+    /// Creates a new dispatcher with no operators.
     pub(crate) fn new() -> Self {
         Self {
-            callback_map: HashMap::new(),
-            next_id: 0,
+            operators: Vec::new(),
             button_states: HashMap::new(),
             current_cursor_position: None,
             touch_state: TouchSynthState::new(),
@@ -306,89 +294,127 @@ impl EventDispatcher {
         }
     }
 
-    /// Registers a callback for a specific event kind.
-    ///
-    /// Multiple callbacks can be registered for the same event kind. They will
-    /// be called in order when an event of that kind is dispatched.
-    ///
-    /// Returns a [`CallbackId`] that can be used to unregister or reorder this callback.
-    pub fn register<F>(&mut self, kind: EventKind, callback: F) -> CallbackId
-    where
-        F: for<'c> Fn(&Event, &mut EventContext<'c>) -> bool + 'static
-    {
-        let id = self.next_id;
-        self.next_id += 1;
+    // ── Operator management ──────────────────────────────────────────────────
 
-        self.callback_map
-            .entry(kind)
-            .or_default()
-            .push((id, Box::new(callback)));
-
-        id
+    /// Adds an operator to the front of the stack (highest priority).
+    pub fn push_front(&mut self, operator: Box<dyn Operator>) {
+        self.operators.insert(0, operator);
     }
 
-    /// Unregisters a callback by its ID.
-    ///
-    /// Find and remove the callback with the given ID.
-    /// Returns `true` if the callback was found and removed, `false` otherwise.
-    pub fn unregister(&mut self, id: CallbackId) -> bool {
-        for callbacks in self.callback_map.values_mut() {
-            if let Some(pos) = callbacks.iter().position(|(cid, _)| *cid == id) {
-                let _ = callbacks.remove(pos);
-                return true;
-            }
-        }
-        false
+    /// Adds an operator to the back of the stack (lowest priority).
+    pub fn push_back(&mut self, operator: Box<dyn Operator>) {
+        self.operators.push(operator);
     }
 
-    /// Reorders callbacks for a specific event kind.
+    /// Removes the operator with the given ID.
     ///
-    /// The callbacks will be reordered according to the provided slice of IDs.
-    /// Any callbacks not mentioned in the IDs slice will remain at the end in their current order.
-    /// IDs that don't exist are ignored.
-    ///
-    /// Returns `true` if the event kind exists, `false` otherwise.
-    pub fn reorder_kind(&mut self, kind: EventKind, ids: &[CallbackId]) -> bool {
-        if let Some(callbacks) = self.callback_map.get_mut(&kind) {
-            let mut reordered = Vec::new();
-
-            // Add callbacks in the order specified by ids
-            for &id in ids {
-                if let Some(pos) = callbacks.iter().position(|(cid, _)| *cid == id) {
-                    reordered.push(callbacks.remove(pos));
-                }
-            }
-
-            // Append any remaining callbacks that weren't in the ids list
-            reordered.append(callbacks);
-
-            *callbacks = reordered;
+    /// Returns `true` if an operator with that ID was found and removed.
+    pub fn remove(&mut self, id: OperatorId) -> bool {
+        if let Some(pos) = self.operators.iter().position(|op| op.id() == id) {
+            self.operators.remove(pos);
             true
         } else {
             false
         }
     }
 
-    /// Reorders callbacks for all registered event kinds.
+    /// Removes the operator of type `T`.
+    pub fn remove_typed<T: Operator>(&mut self) -> bool {
+        self.remove(std::any::TypeId::of::<T>())
+    }
+
+    /// Moves the operator with the given ID to the front (highest priority).
     ///
-    /// This applies the same reordering to all event kinds that have callbacks registered.
-    /// Any callbacks not mentioned in the IDs slice will remain at the end in their current order.
-    pub fn reorder(&mut self, ids: &[CallbackId]) {
-        // Collect event kinds first to avoid borrowing issues
-        let kinds: Vec<EventKind> = self.callback_map.keys().copied().collect();
-        for kind in kinds {
-            self.reorder_kind(kind, ids);
+    /// Returns `true` if the operator was found.
+    pub fn move_to_front(&mut self, id: OperatorId) -> bool {
+        if let Some(pos) = self.operators.iter().position(|op| op.id() == id) {
+            if pos > 0 {
+                let op = self.operators.remove(pos);
+                self.operators.insert(0, op);
+            }
+            true
+        } else {
+            false
         }
     }
 
-    /// Dispatches an event to all registered callbacks for its kind.
+    /// Moves the operator with the given ID to the back (lowest priority).
     ///
-    /// This method also handles stateful tracking of mouse interactions to synthesize
-    /// high-level events like MouseDragStart, MouseDrag, MouseDragEnd, and MouseClick.
-    /// These synthesized events are dispatched before the original event.
+    /// Returns `true` if the operator was found.
+    pub fn move_to_back(&mut self, id: OperatorId) -> bool {
+        if let Some(pos) = self.operators.iter().position(|op| op.id() == id) {
+            if pos < self.operators.len() - 1 {
+                let op = self.operators.remove(pos);
+                self.operators.push(op);
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Swaps the positions of two operators by ID.
     ///
-    /// Callbacks are invoked in registration order. If a callback returns `true`,
-    /// no further callbacks are invoked (propagation is stopped).
+    /// Returns `true` if both operators were found. Returns `true` without
+    /// changing anything if both IDs refer to the same operator.
+    pub fn swap(&mut self, id1: OperatorId, id2: OperatorId) -> bool {
+        let pos1 = self.operators.iter().position(|op| op.id() == id1);
+        let pos2 = self.operators.iter().position(|op| op.id() == id2);
+        match (pos1, pos2) {
+            (Some(p1), Some(p2)) if p1 != p2 => {
+                self.operators.swap(p1, p2);
+                true
+            }
+            (Some(_), Some(_)) => true,
+            _ => false,
+        }
+    }
+
+    /// Returns the number of operators.
+    pub fn len(&self) -> usize {
+        self.operators.len()
+    }
+
+    /// Returns `true` if there are no operators.
+    pub fn is_empty(&self) -> bool {
+        self.operators.is_empty()
+    }
+
+    /// Iterates over operators in priority order (front to back).
+    pub fn iter(&self) -> impl Iterator<Item = &dyn Operator> {
+        self.operators.iter().map(|op| op.as_ref())
+    }
+
+    /// Returns the position of an operator by ID. Position 0 is highest priority.
+    pub fn position(&self, id: OperatorId) -> Option<usize> {
+        self.operators.iter().position(|op| op.id() == id)
+    }
+
+    /// Returns a shared reference to the operator of type `T`, if present.
+    pub fn operator<T: Operator>(&self) -> Option<&T> {
+        self.operators
+            .iter()
+            .find(|op| op.id() == std::any::TypeId::of::<T>())
+            .and_then(|op| op.downcast_ref::<T>())
+    }
+
+    /// Returns a mutable reference to the operator of type `T`, if present.
+    pub fn operator_mut<T: Operator>(&mut self) -> Option<&mut T> {
+        self.operators
+            .iter_mut()
+            .find(|op| op.id() == std::any::TypeId::of::<T>())
+            .and_then(|op| op.downcast_mut::<T>())
+    }
+
+    // ── Dispatch ─────────────────────────────────────────────────────────────
+
+    /// Dispatches an event to all operators in priority order.
+    ///
+    /// Before dispatching, modifier state is snapshotted into `ctx.modifiers` and
+    /// internal synthesis state is updated (drag, click, touch-to-mouse mapping).
+    /// Synthesized events are dispatched to operators before the original event.
+    ///
+    /// Returns `true` if any operator consumed the event.
     pub fn dispatch<'c>(&mut self, event: &Event, ctx: &mut EventContext<'c>) -> bool {
         // Snapshot modifier state before processing so both synthesized events (dispatched
         // inside process_event) and the original event see the same modifier state.
@@ -398,20 +424,20 @@ impl EventDispatcher {
         self.process_event(event, ctx);
 
         // Dispatch the original event.
-        self.dispatch_to_callbacks(event, ctx)
+        self.dispatch_to_operators(event, ctx)
     }
 
-    /// Internal method to dispatch an event to callbacks without state processing.
-    fn dispatch_to_callbacks<'c>(&self, event: &Event, ctx: &mut EventContext<'c>) -> bool {
-        if let Some(callbacks) = self.callback_map.get(&event.kind()) {
-            for (_id, callback) in callbacks {
-                if callback(event, ctx) {
-                    return true;
-                }
+    /// Dispatches an event to all operators without updating synthesis state.
+    fn dispatch_to_operators<'c>(&mut self, event: &Event, ctx: &mut EventContext<'c>) -> bool {
+        for op in &mut self.operators {
+            if op.dispatch(event, ctx) {
+                return true;
             }
         }
         false
     }
+
+    // ── Synthesis ────────────────────────────────────────────────────────────
 
     /// Processes an event to update internal state and synthesize high-level events.
     fn process_event<'c>(&mut self, event: &Event, ctx: &mut EventContext<'c>) {
@@ -489,7 +515,7 @@ impl EventDispatcher {
 
     /// Synthesizes a MouseDragEnd event when a dragged button is released.
     fn synthesize_drag_end<'c>(
-        &self,
+        &mut self,
         button: MouseButton,
         button_state: ButtonState,
         ctx: &mut EventContext<'c>,
@@ -500,13 +526,13 @@ impl EventDispatcher {
                 start_pos: button_state.down_position,
                 end_pos,
             };
-            self.dispatch_to_callbacks(&drag_end, ctx);
+            self.dispatch_to_operators(&drag_end, ctx);
         }
     }
 
     /// Synthesizes a MouseClick event if the button was released quickly.
     fn synthesize_click_if_quick<'c>(
-        &self,
+        &mut self,
         button: MouseButton,
         button_state: ButtonState,
         ctx: &mut EventContext<'c>,
@@ -518,7 +544,7 @@ impl EventDispatcher {
                 position: button_state.down_position,
                 duration_ms: duration.as_millis() as u64,
             };
-            self.dispatch_to_callbacks(&click, ctx);
+            self.dispatch_to_operators(&click, ctx);
         }
     }
 
@@ -764,7 +790,7 @@ impl EventDispatcher {
         ctx: &mut EventContext<'c>,
     ) {
         self.process_event(event, ctx);
-        self.dispatch_to_callbacks(event, ctx);
+        self.dispatch_to_operators(event, ctx);
     }
 
     /// Processes MouseMotion events to track drag distance and synthesize drag events.
@@ -806,7 +832,7 @@ impl EventDispatcher {
 
         // Dispatch all queued drag events
         for drag_event in drag_events {
-            self.dispatch_to_callbacks(&drag_event, ctx);
+            self.dispatch_to_operators(&drag_event, ctx);
         }
     }
 }
@@ -826,17 +852,13 @@ fn touch_distance(a: (f64, f64), b: (f64, f64)) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::input::{ElementState, MouseButton, MouseScrollDelta};
+    use crate::input::{ElementState, MouseButton};
     use duck_engine_scene::NodeFlags;
-    use std::rc::Rc;
     use std::cell::Cell;
+    use std::rc::Rc;
 
-    // ===== Helper Functions =====
+    // ── Helpers ──────────────────────────────────────────────────────────────
 
-    /// Creates a mock EventContext for testing.
-    ///
-    /// Uses real stack-allocated values so the context fields are valid.
-    /// Test callbacks that don't access context fields can safely ignore them.
     fn create_mock_context_parts() -> (Option<(f32, f32)>, Scene, SelectionManager) {
         use crate::scene::PositionedCamera;
         use duck_engine_common::Vector3;
@@ -869,305 +891,251 @@ mod tests {
         }
     }
 
-    // ===== EventDispatcher Tests =====
+    // Simple counter operator: increments counter on every event, optionally consumes.
+    struct CounterOp {
+        counter: Rc<Cell<u32>>,
+        consumes: bool,
+    }
+    impl CounterOp {
+        fn new(counter: Rc<Cell<u32>>, consumes: bool) -> Box<Self> {
+            Box::new(Self { counter, consumes })
+        }
+    }
+    impl Operator for CounterOp {
+        fn dispatch(&mut self, _: &Event, _: &mut EventContext) -> bool {
+            self.counter.set(self.counter.get() + 1);
+            self.consumes
+        }
+        fn name(&self) -> &str { "CounterOp" }
+    }
+
+    // Typed operator for downcast tests.
+    struct NamedOp(&'static str);
+    impl Operator for NamedOp {
+        fn dispatch(&mut self, _: &Event, _: &mut EventContext) -> bool { false }
+        fn name(&self) -> &str { self.0 }
+    }
+
+    struct OtherOp;
+    impl Operator for OtherOp {
+        fn dispatch(&mut self, _: &Event, _: &mut EventContext) -> bool { false }
+        fn name(&self) -> &str { "OtherOp" }
+    }
+
+    // ── Operator management ──────────────────────────────────────────────────
 
     #[test]
-    fn test_dispatcher_new() {
-        let dispatcher = EventDispatcher::new();
-        assert_eq!(dispatcher.callback_map.len(), 0);
-        assert_eq!(dispatcher.next_id, 0);
+    fn new_has_no_operators() {
+        assert!(EventDispatcher::new().is_empty());
     }
 
     #[test]
-    fn test_dispatcher_register() {
-        let mut dispatcher = EventDispatcher::new();
-
-        let id = dispatcher.register(EventKind::Test, |_event, _ctx| false);
-
-        assert_eq!(id, 0);
-        assert!(dispatcher.callback_map.contains_key(&EventKind::Test));
-        assert_eq!(dispatcher.callback_map[&EventKind::Test].len(), 1);
+    fn push_back_ordering() {
+        let mut d = EventDispatcher::new();
+        d.push_back(Box::new(NamedOp("A")));
+        d.push_back(Box::new(OtherOp));
+        let names: Vec<&str> = d.iter().map(|op| op.name()).collect();
+        assert_eq!(names, ["A", "OtherOp"]);
     }
 
     #[test]
-    fn test_dispatcher_register_multiple_same_kind() {
-        let mut dispatcher = EventDispatcher::new();
-
-        let id1 = dispatcher.register(EventKind::KeyboardInput, |_event, _ctx| false);
-        let id2 = dispatcher.register(EventKind::KeyboardInput, |_event, _ctx| false);
-        let id3 = dispatcher.register(EventKind::KeyboardInput, |_event, _ctx| false);
-
-        // All IDs should be unique
-        assert_eq!(id1, 0);
-        assert_eq!(id2, 1);
-        assert_eq!(id3, 2);
-
-        // All callbacks should be registered for the same event kind
-        assert_eq!(dispatcher.callback_map[&EventKind::KeyboardInput].len(), 3);
+    fn push_front_ordering() {
+        let mut d = EventDispatcher::new();
+        d.push_back(Box::new(NamedOp("A")));
+        d.push_front(Box::new(OtherOp));
+        let names: Vec<&str> = d.iter().map(|op| op.name()).collect();
+        assert_eq!(names, ["OtherOp", "A"]);
     }
 
     #[test]
-    fn test_dispatcher_register_different_kinds() {
-        let mut dispatcher = EventDispatcher::new();
-
-        let id1 = dispatcher.register(EventKind::KeyboardInput, |_event, _ctx| false);
-        let id2 = dispatcher.register(EventKind::MouseInput, |_event, _ctx| false);
-        let id3 = dispatcher.register(EventKind::Test, |_event, _ctx| false);
-
-        // All IDs should be unique
-        assert_eq!(id1, 0);
-        assert_eq!(id2, 1);
-        assert_eq!(id3, 2);
-
-        // Each event kind should have one callback
-        assert_eq!(dispatcher.callback_map.len(), 3);
-        assert_eq!(dispatcher.callback_map[&EventKind::KeyboardInput].len(), 1);
-        assert_eq!(dispatcher.callback_map[&EventKind::MouseInput].len(), 1);
-        assert_eq!(dispatcher.callback_map[&EventKind::Test].len(), 1);
+    fn remove_by_id() {
+        let mut d = EventDispatcher::new();
+        d.push_back(Box::new(NamedOp("A")));
+        d.push_back(Box::new(OtherOp));
+        assert!(d.remove(std::any::TypeId::of::<NamedOp>()));
+        assert_eq!(d.len(), 1);
+        assert_eq!(d.iter().next().unwrap().name(), "OtherOp");
     }
 
     #[test]
-    fn test_dispatcher_unregister() {
-        let mut dispatcher = EventDispatcher::new();
-
-        let id = dispatcher.register(EventKind::MouseMotion, |_event, _ctx| false);
-
-        // Callback should be registered
-        assert_eq!(dispatcher.callback_map[&EventKind::MouseMotion].len(), 1);
-
-        // Unregister should succeed
-        let result = dispatcher.unregister(id);
-        assert!(result);
-
-        // Callback should be removed
-        assert_eq!(dispatcher.callback_map[&EventKind::MouseMotion].len(), 0);
+    fn remove_typed() {
+        let mut d = EventDispatcher::new();
+        d.push_back(Box::new(NamedOp("A")));
+        assert!(d.remove_typed::<NamedOp>());
+        assert!(d.is_empty());
     }
 
     #[test]
-    fn test_dispatcher_unregister_nonexistent() {
-        let mut dispatcher = EventDispatcher::new();
-
-        // Try to unregister an ID that was never registered
-        let result = dispatcher.unregister(999);
-        assert!(!result);
+    fn remove_nonexistent_returns_false() {
+        let mut d = EventDispatcher::new();
+        d.push_back(Box::new(NamedOp("A")));
+        assert!(!d.remove_typed::<OtherOp>());
+        assert_eq!(d.len(), 1);
     }
 
     #[test]
-    fn test_dispatcher_dispatch_no_callbacks() {
-        let mut dispatcher = EventDispatcher::new();
-        let event = Event::Test;
+    fn move_to_front() {
+        let mut d = EventDispatcher::new();
+        d.push_back(Box::new(NamedOp("A")));
+        d.push_back(Box::new(OtherOp));
+        assert!(d.move_to_back(std::any::TypeId::of::<NamedOp>()));
+        let names: Vec<&str> = d.iter().map(|op| op.name()).collect();
+        assert_eq!(names, ["OtherOp", "A"]);
+    }
+
+    #[test]
+    fn move_to_back() {
+        let mut d = EventDispatcher::new();
+        d.push_back(Box::new(NamedOp("A")));
+        d.push_back(Box::new(OtherOp));
+        assert!(d.move_to_front(std::any::TypeId::of::<OtherOp>()));
+        let names: Vec<&str> = d.iter().map(|op| op.name()).collect();
+        assert_eq!(names, ["OtherOp", "A"]);
+    }
+
+    #[test]
+    fn swap_operators() {
+        let mut d = EventDispatcher::new();
+        d.push_back(Box::new(NamedOp("A")));
+        d.push_back(Box::new(OtherOp));
+        assert!(d.swap(
+            std::any::TypeId::of::<NamedOp>(),
+            std::any::TypeId::of::<OtherOp>(),
+        ));
+        let names: Vec<&str> = d.iter().map(|op| op.name()).collect();
+        assert_eq!(names, ["OtherOp", "A"]);
+    }
+
+    #[test]
+    fn operator_accessor() {
+        let mut d = EventDispatcher::new();
+        d.push_back(Box::new(NamedOp("hello")));
+        assert_eq!(d.operator::<NamedOp>().map(|op| op.0), Some("hello"));
+        assert!(d.operator::<OtherOp>().is_none());
+    }
+
+    #[test]
+    fn operator_mut_accessor() {
+        let mut d = EventDispatcher::new();
+        d.push_back(Box::new(NamedOp("hello")));
+        if let Some(op) = d.operator_mut::<NamedOp>() {
+            op.0 = "world";
+        }
+        assert_eq!(d.operator::<NamedOp>().map(|op| op.0), Some("world"));
+    }
+
+    // ── Dispatch propagation ─────────────────────────────────────────────────
+
+    #[test]
+    fn dispatch_calls_all_non_consuming_operators() {
+        let mut d = EventDispatcher::new();
+        let c1 = Rc::new(Cell::new(0u32));
+        let c2 = Rc::new(Cell::new(0u32));
+        d.push_back(CounterOp::new(c1.clone(), false));
+        d.push_back(CounterOp::new(c2.clone(), false));
 
         let mut parts = create_mock_context_parts();
         let mut ctx = make_context(&mut parts);
+        let consumed = d.dispatch(&Event::Test, &mut ctx);
 
-        // Should not panic and should return false
-        let result = dispatcher.dispatch(&event, &mut ctx);
-        assert!(!result);
+        assert_eq!(c1.get(), 1);
+        assert_eq!(c2.get(), 1);
+        assert!(!consumed);
     }
 
     #[test]
-    fn test_dispatcher_dispatch_single_callback() {
-        let mut dispatcher = EventDispatcher::new();
-        let counter = Rc::new(Cell::new(0));
-        let counter_clone = Rc::clone(&counter);
+    fn dispatch_stops_at_consuming_operator() {
+        let mut d = EventDispatcher::new();
+        let c1 = Rc::new(Cell::new(0u32));
+        let c2 = Rc::new(Cell::new(0u32));
+        d.push_back(CounterOp::new(c1.clone(), true));  // consumes
+        d.push_back(CounterOp::new(c2.clone(), false));
 
-        dispatcher.register(EventKind::Test, move |_event, _ctx| {
-            counter_clone.set(counter_clone.get() + 1);
-            false
-        });
-
-        let event = Event::Test;
         let mut parts = create_mock_context_parts();
         let mut ctx = make_context(&mut parts);
+        let consumed = d.dispatch(&Event::Test, &mut ctx);
 
-        dispatcher.dispatch(&event, &mut ctx);
-
-        // Callback should have been invoked once
-        assert_eq!(counter.get(), 1);
+        assert_eq!(c1.get(), 1);
+        assert_eq!(c2.get(), 0); // never reached
+        assert!(consumed);
     }
 
     #[test]
-    fn test_dispatcher_dispatch_multiple_callbacks() {
-        let mut dispatcher = EventDispatcher::new();
-        let counter = Rc::new(Cell::new(0));
+    fn dispatch_priority_order_front_to_back() {
+        let mut d = EventDispatcher::new();
+        let order = Rc::new(Cell::new(0u32));
 
-        let c1 = Rc::clone(&counter);
-        dispatcher.register(EventKind::MouseInput, move |_event, _ctx| {
-            c1.set(c1.get() + 1);
-            false
-        });
+        let o1 = order.clone();
+        struct RecordOp(Rc<Cell<u32>>, u32);
+        impl Operator for RecordOp {
+            fn dispatch(&mut self, _: &Event, _: &mut EventContext) -> bool {
+                // Record which operator fired (by storing its id in the cell)
+                // We use the existing value + our id to show ordering
+                self.0.set(self.0.get() * 10 + self.1);
+                false
+            }
+            fn name(&self) -> &str { "RecordOp" }
+            // Override id to allow two instances
+            fn id(&self) -> crate::operator::OperatorId {
+                match self.1 {
+                    1 => std::any::TypeId::of::<u8>(),
+                    _ => std::any::TypeId::of::<u16>(),
+                }
+            }
+        }
 
-        let c2 = Rc::clone(&counter);
-        dispatcher.register(EventKind::MouseInput, move |_event, _ctx| {
-            c2.set(c2.get() + 10);
-            false
-        });
+        d.push_back(Box::new(RecordOp(order.clone(), 1)));
+        d.push_back(Box::new(RecordOp(order.clone(), 2)));
 
-        let c3 = Rc::clone(&counter);
-        dispatcher.register(EventKind::MouseInput, move |_event, _ctx| {
-            c3.set(c3.get() + 100);
-            false
-        });
-
-        let event = Event::MouseInput {
-            state: ElementState::Pressed,
-            button: MouseButton::Left,
-        };
         let mut parts = create_mock_context_parts();
         let mut ctx = make_context(&mut parts);
+        d.dispatch(&Event::Test, &mut ctx);
 
-        dispatcher.dispatch(&event, &mut ctx);
-
-        // All three callbacks should have been invoked
-        assert_eq!(counter.get(), 111);
+        assert_eq!(order.get(), 12); // 1 fired first, then 2
     }
 
     #[test]
-    fn test_dispatcher_dispatch_stop_propagation() {
-        let mut dispatcher = EventDispatcher::new();
-        let counter = Rc::new(Cell::new(0));
-
-        let c1 = Rc::clone(&counter);
-        dispatcher.register(EventKind::CursorMoved, move |_event, _ctx| {
-            c1.set(c1.get() + 1);
-            false // Continue
-        });
-
-        let c2 = Rc::clone(&counter);
-        dispatcher.register(EventKind::CursorMoved, move |_event, _ctx| {
-            c2.set(c2.get() + 10);
-            true // Stop propagation
-        });
-
-        let c3 = Rc::clone(&counter);
-        dispatcher.register(EventKind::CursorMoved, move |_event, _ctx| {
-            c3.set(c3.get() + 100);
-            false // This should never run
-        });
-
-        let event = Event::CursorMoved {
-            position: (100.0, 200.0),
-        };
+    fn dispatch_no_operators_returns_false() {
+        let mut d = EventDispatcher::new();
         let mut parts = create_mock_context_parts();
         let mut ctx = make_context(&mut parts);
-
-        let result = dispatcher.dispatch(&event, &mut ctx);
-
-        // First two callbacks ran, third did not
-        assert_eq!(counter.get(), 11);
-        assert!(result); // dispatch should return true when propagation stopped
+        assert!(!d.dispatch(&Event::Test, &mut ctx));
     }
 
+    // ── Click synthesis ──────────────────────────────────────────────────────
+
     #[test]
-    fn test_dispatcher_dispatch_continue_propagation() {
-        let mut dispatcher = EventDispatcher::new();
-        let counter = Rc::new(Cell::new(0));
+    fn quick_press_release_synthesizes_click() {
+        let mut d = EventDispatcher::new();
+        let click_count = Rc::new(Cell::new(0u32));
 
-        let c1 = Rc::clone(&counter);
-        dispatcher.register(EventKind::MouseWheel, move |_event, _ctx| {
-            c1.set(c1.get() + 1);
-            false // Continue
-        });
+        struct ClickCounter(Rc<Cell<u32>>);
+        impl Operator for ClickCounter {
+            fn dispatch(&mut self, event: &Event, _: &mut EventContext) -> bool {
+                if matches!(event, Event::MouseClick { .. }) {
+                    self.0.set(self.0.get() + 1);
+                }
+                false
+            }
+            fn name(&self) -> &str { "ClickCounter" }
+        }
 
-        let c2 = Rc::clone(&counter);
-        dispatcher.register(EventKind::MouseWheel, move |_event, _ctx| {
-            c2.set(c2.get() + 10);
-            false // Continue
-        });
+        d.push_back(Box::new(ClickCounter(click_count.clone())));
 
-        let event = Event::MouseWheel {
-            delta: MouseScrollDelta::LineDelta(0.0, 1.0),
-        };
         let mut parts = create_mock_context_parts();
-        let mut ctx = make_context(&mut parts);
 
-        let result = dispatcher.dispatch(&event, &mut ctx);
+        // Move cursor so position is known
+        let cursor = Event::CursorMoved { position: (100.0, 100.0) };
+        d.dispatch(&cursor, &mut make_context(&mut parts));
 
-        // Both callbacks should have run
-        assert_eq!(counter.get(), 11);
-        assert!(!result); // dispatch should return false when no callback stopped propagation
-    }
+        // Press
+        let press = Event::MouseInput { state: ElementState::Pressed, button: MouseButton::Left };
+        d.dispatch(&press, &mut make_context(&mut parts));
 
-    #[test]
-    fn test_dispatcher_reorder_kind() {
-        let mut dispatcher = EventDispatcher::new();
+        // Release immediately (no motion → click)
+        let release = Event::MouseInput { state: ElementState::Released, button: MouseButton::Left };
+        d.dispatch(&release, &mut make_context(&mut parts));
 
-        let id1 = dispatcher.register(EventKind::Resized, |_event, _ctx| false);
-        let id2 = dispatcher.register(EventKind::Resized, |_event, _ctx| false);
-        let id3 = dispatcher.register(EventKind::Resized, |_event, _ctx| false);
-
-        // Original order: id1, id2, id3
-        let callbacks = &dispatcher.callback_map[&EventKind::Resized];
-        assert_eq!(callbacks[0].0, id1);
-        assert_eq!(callbacks[1].0, id2);
-        assert_eq!(callbacks[2].0, id3);
-
-        // Reorder to: id3, id1, id2
-        let result = dispatcher.reorder_kind(EventKind::Resized, &[id3, id1, id2]);
-        assert!(result);
-
-        let callbacks = &dispatcher.callback_map[&EventKind::Resized];
-        assert_eq!(callbacks[0].0, id3);
-        assert_eq!(callbacks[1].0, id1);
-        assert_eq!(callbacks[2].0, id2);
-    }
-
-    #[test]
-    fn test_dispatcher_reorder_all() {
-        let mut dispatcher = EventDispatcher::new();
-
-        // Register callbacks for multiple event kinds
-        let id1 = dispatcher.register(EventKind::MouseInput, |_event, _ctx| false);
-        let id2 = dispatcher.register(EventKind::MouseInput, |_event, _ctx| false);
-        let id3 = dispatcher.register(EventKind::KeyboardInput, |_event, _ctx| false);
-        let id4 = dispatcher.register(EventKind::KeyboardInput, |_event, _ctx| false);
-
-        // Reorder all to: id2, id4, id1, id3
-        dispatcher.reorder(&[id2, id4, id1, id3]);
-
-        // Check MouseInput order
-        let mouse_callbacks = &dispatcher.callback_map[&EventKind::MouseInput];
-        assert_eq!(mouse_callbacks[0].0, id2);
-        assert_eq!(mouse_callbacks[1].0, id1);
-
-        // Check KeyboardInput order
-        let key_callbacks = &dispatcher.callback_map[&EventKind::KeyboardInput];
-        assert_eq!(key_callbacks[0].0, id4);
-        assert_eq!(key_callbacks[1].0, id3);
-    }
-
-    #[test]
-    fn test_dispatcher_reorder_partial_ids() {
-        let mut dispatcher = EventDispatcher::new();
-
-        let id1 = dispatcher.register(EventKind::CursorMoved, |_event, _ctx| false);
-        let id2 = dispatcher.register(EventKind::CursorMoved, |_event, _ctx| false);
-        let id3 = dispatcher.register(EventKind::CursorMoved, |_event, _ctx| false);
-
-        // Only reorder id2 - id1 and id3 should remain at end in original order
-        let result = dispatcher.reorder_kind(EventKind::CursorMoved, &[id2]);
-        assert!(result);
-
-        let callbacks = &dispatcher.callback_map[&EventKind::CursorMoved];
-        assert_eq!(callbacks[0].0, id2); // Specified first
-        assert_eq!(callbacks[1].0, id1); // Remaining in original order
-        assert_eq!(callbacks[2].0, id3); // Remaining in original order
-    }
-
-    #[test]
-    fn test_dispatcher_reorder_nonexistent_ids() {
-        let mut dispatcher = EventDispatcher::new();
-
-        let id1 = dispatcher.register(EventKind::Test, |_event, _ctx| false);
-        let id2 = dispatcher.register(EventKind::Test, |_event, _ctx| false);
-
-        // Try to reorder with some nonexistent IDs
-        let result = dispatcher.reorder_kind(EventKind::Test, &[999, id2, 888, id1, 777]);
-        assert!(result);
-
-        // Only the valid IDs should be reordered
-        let callbacks = &dispatcher.callback_map[&EventKind::Test];
-        assert_eq!(callbacks[0].0, id2);
-        assert_eq!(callbacks[1].0, id1);
+        assert_eq!(click_count.get(), 1);
     }
 }

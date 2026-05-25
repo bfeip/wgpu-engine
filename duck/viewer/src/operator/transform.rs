@@ -15,9 +15,7 @@
 //! 2. **Gizmo drag**: H shows persistent handles; drag a handle for an
 //!    axis-constrained transform that confirms on mouse release.
 
-use std::cell::RefCell;
 use std::collections::HashMap;
-use std::rc::Rc;
 
 use duck_engine_common::{
     EuclideanSpace, InnerSpace, Matrix4, Point3, Quaternion, Rotation, SquareMatrix, Vector3,
@@ -33,7 +31,7 @@ use crate::common::Axis;
 use serde::{Deserialize, Serialize};
 
 use crate::bindings::{InputBinding, InputMap};
-use crate::event::{CallbackId, Event, EventContext, EventDispatcher, EventKind};
+use crate::event::{Event, EventContext};
 use crate::geom_query::{pick_all_from_ray, RayPickQuery};
 use crate::input::{ElementState, Key, Modifiers, MouseButton, NamedKey};
 use crate::operator::Operator;
@@ -699,9 +697,8 @@ fn world_scale_to_local(scale: Vector3, parent_rotation_inv: Quaternion) -> Vect
 
 /// Operator for Blender-style transform operations (grab/rotate/scale).
 pub struct TransformOperator {
-    state: Rc<RefCell<TransformState>>,
-    pub bindings: Rc<RefCell<InputMap<TransformAction>>>,
-    callback_ids: Vec<CallbackId>,
+    state: TransformState,
+    pub bindings: InputMap<TransformAction>,
 }
 
 impl TransformOperator {
@@ -765,9 +762,8 @@ impl TransformOperator {
                 TransformAction::GizmoDrag,
             );
         Self {
-            state: Rc::new(RefCell::new(TransformState::new())),
-            bindings: Rc::new(RefCell::new(bindings)),
-            callback_ids: Vec::new(),
+            state: TransformState::new(),
+            bindings,
         }
     }
 
@@ -854,269 +850,193 @@ impl TransformOperator {
 }
 
 impl Operator for TransformOperator {
-    fn activate(&mut self, dispatcher: &mut EventDispatcher) {
-        let operator_state = self.state.clone();
-        let bindings = self.bindings.clone();
-        let keyboard_callback =
-            dispatcher.register(EventKind::KeyboardInput, move |event, ctx| {
-                let Event::KeyboardInput { event: key_event, .. } = event else { return false };
+    fn dispatch(&mut self, event: &Event, ctx: &mut EventContext) -> bool {
+        match event {
+            Event::KeyboardInput { event: key_event, .. } => {
                 if key_event.state != ElementState::Pressed || key_event.repeat {
                     return false;
                 }
-                let actions = bindings
-                    .borrow()
+                let actions = self.bindings
                     .actions_for_key(&key_event.logical_key, ctx.modifiers)
                     .to_vec();
-                let mut state = operator_state.borrow_mut();
                 for action in actions {
                     match action {
-                        TransformAction::StartTranslate if !state.is_active() => {
-                            TransformOperator::start_transform(
-                                &mut state, TransformMode::Translate, ctx,
-                            );
-                            return state.is_active();
+                        TransformAction::StartTranslate if !self.state.is_active() => {
+                            Self::start_transform(&mut self.state, TransformMode::Translate, ctx);
+                            return self.state.is_active();
                         }
-                        TransformAction::StartRotate if !state.is_active() => {
-                            TransformOperator::start_transform(
-                                &mut state, TransformMode::Rotate, ctx,
-                            );
-                            return state.is_active();
+                        TransformAction::StartRotate if !self.state.is_active() => {
+                            Self::start_transform(&mut self.state, TransformMode::Rotate, ctx);
+                            return self.state.is_active();
                         }
-                        TransformAction::StartScale if !state.is_active() => {
-                            TransformOperator::start_transform(
-                                &mut state, TransformMode::Scale, ctx,
-                            );
-                            return state.is_active();
+                        TransformAction::StartScale if !self.state.is_active() => {
+                            Self::start_transform(&mut self.state, TransformMode::Scale, ctx);
+                            return self.state.is_active();
                         }
-                        TransformAction::CycleGizmo if !state.is_active() => {
-                            state.gizmo_mode = match state.gizmo_mode {
+                        TransformAction::CycleGizmo if !self.state.is_active() => {
+                            self.state.gizmo_mode = match self.state.gizmo_mode {
                                 None => Some(GizmoType::Translate),
                                 Some(GizmoType::Translate) => Some(GizmoType::Rotate),
                                 Some(GizmoType::Rotate) => Some(GizmoType::Scale),
                                 Some(GizmoType::Scale) => None,
                             };
-                            state.sync_gizmo(ctx);
+                            self.state.sync_gizmo(ctx);
                             return true;
                         }
-                        TransformAction::ConstrainX if state.is_active() => {
-                            state.cycle_axis_constraint('x');
-                            state.apply_preview_transform(ctx);
-                            state.update_visual_feedback(ctx);
-                            let highlight = axis_from_constraint(&state.axis_constraint);
-                            state.gizmo.set_highlight(highlight, ctx);
+                        TransformAction::ConstrainX if self.state.is_active() => {
+                            self.state.cycle_axis_constraint('x');
+                            self.state.apply_preview_transform(ctx);
+                            self.state.update_visual_feedback(ctx);
+                            let highlight = axis_from_constraint(&self.state.axis_constraint);
+                            self.state.gizmo.set_highlight(highlight, ctx);
                             return true;
                         }
-                        TransformAction::ConstrainY if state.is_active() => {
-                            state.cycle_axis_constraint('y');
-                            state.apply_preview_transform(ctx);
-                            state.update_visual_feedback(ctx);
-                            let highlight = axis_from_constraint(&state.axis_constraint);
-                            state.gizmo.set_highlight(highlight, ctx);
+                        TransformAction::ConstrainY if self.state.is_active() => {
+                            self.state.cycle_axis_constraint('y');
+                            self.state.apply_preview_transform(ctx);
+                            self.state.update_visual_feedback(ctx);
+                            let highlight = axis_from_constraint(&self.state.axis_constraint);
+                            self.state.gizmo.set_highlight(highlight, ctx);
                             return true;
                         }
-                        TransformAction::ConstrainZ if state.is_active() => {
-                            state.cycle_axis_constraint('z');
-                            state.apply_preview_transform(ctx);
-                            state.update_visual_feedback(ctx);
-                            let highlight = axis_from_constraint(&state.axis_constraint);
-                            state.gizmo.set_highlight(highlight, ctx);
+                        TransformAction::ConstrainZ if self.state.is_active() => {
+                            self.state.cycle_axis_constraint('z');
+                            self.state.apply_preview_transform(ctx);
+                            self.state.update_visual_feedback(ctx);
+                            let highlight = axis_from_constraint(&self.state.axis_constraint);
+                            self.state.gizmo.set_highlight(highlight, ctx);
                             return true;
                         }
-                        TransformAction::KeyConfirm if state.is_active() => {
-                            TransformOperator::confirm_transform(&mut state, ctx);
+                        TransformAction::KeyConfirm if self.state.is_active() => {
+                            Self::confirm_transform(&mut self.state, ctx);
                             return true;
                         }
-                        TransformAction::KeyCancel if state.is_active() => {
-                            TransformOperator::cancel_transform(&mut state, ctx);
+                        TransformAction::KeyCancel if self.state.is_active() => {
+                            Self::cancel_transform(&mut self.state, ctx);
                             return true;
                         }
                         _ => {}
                     }
                 }
                 false
-            });
+            }
 
-        // Mouse motion handler for transform preview
-        let operator_state = self.state.clone();
-        let motion_callback = dispatcher.register(EventKind::MouseMotion, move |event, ctx| {
-            if let Event::MouseMotion { delta } = event {
-                let mut state = operator_state.borrow_mut();
-
-                if state.is_active() {
-                    // Accumulate mouse delta
-                    state.accumulated_delta.0 += delta.0 as f32;
-                    state.accumulated_delta.1 += delta.1 as f32;
-
-                    // Apply preview transform
-                    state.apply_preview_transform(ctx);
+            Event::MouseMotion { delta } => {
+                if self.state.is_active() {
+                    self.state.accumulated_delta.0 += delta.0 as f32;
+                    self.state.accumulated_delta.1 += delta.1 as f32;
+                    self.state.apply_preview_transform(ctx);
                     true
                 } else {
                     false
                 }
-            } else {
+            }
+
+            Event::MouseClick { button, .. } => {
+                if !self.state.is_active() {
+                    return false;
+                }
+                let actions = self.bindings.actions_for_click(*button, ctx.modifiers).to_vec();
+                for action in actions {
+                    match action {
+                        TransformAction::MouseConfirm => {
+                            Self::confirm_transform(&mut self.state, ctx);
+                            return true;
+                        }
+                        TransformAction::MouseCancel => {
+                            Self::cancel_transform(&mut self.state, ctx);
+                            return true;
+                        }
+                        _ => {}
+                    }
+                }
                 false
             }
-        });
 
-        let operator_state = self.state.clone();
-        let bindings = self.bindings.clone();
-        let click_callback = dispatcher.register(EventKind::MouseClick, move |event, ctx| {
-            let Event::MouseClick { button, .. } = event else { return false };
-            let mut state = operator_state.borrow_mut();
-            if !state.is_active() {
-                return false;
-            }
-            let actions = bindings.borrow().actions_for_click(*button, ctx.modifiers).to_vec();
-            for action in actions {
-                match action {
-                    TransformAction::MouseConfirm => {
-                        TransformOperator::confirm_transform(&mut state, ctx);
-                        return true;
-                    }
-                    TransformAction::MouseCancel => {
-                        TransformOperator::cancel_transform(&mut state, ctx);
-                        return true;
-                    }
-                    _ => {}
-                }
-            }
-            false
-        });
-
-        let operator_state = self.state.clone();
-        let bindings = self.bindings.clone();
-        let drag_start_callback =
-            dispatcher.register(EventKind::MouseDragStart, move |event, ctx| {
-                let Event::MouseDragStart { button, start_pos, .. } = event else { return false };
-                if !bindings
-                    .borrow()
+            Event::MouseDragStart { button, start_pos, .. } => {
+                if !self.bindings
                     .actions_for_drag_start(*button, ctx.modifiers)
                     .contains(&TransformAction::GizmoDrag)
                 {
                     return false;
                 }
-                let mut state = operator_state.borrow_mut();
-                if state.is_active() || !state.gizmo.has_gizmo() {
+                if self.state.is_active() || !self.state.gizmo.has_gizmo() {
                     return false;
                 }
-                if let Some(axis) = state.gizmo.pick_handle(start_pos.0, start_pos.1, ctx) {
-                    let mode = match state.gizmo.current_type {
+                if let Some(axis) = self.state.gizmo.pick_handle(start_pos.0, start_pos.1, ctx) {
+                    let mode = match self.state.gizmo.current_type {
                         Some(GizmoType::Translate) => TransformMode::Translate,
                         Some(GizmoType::Rotate) => TransformMode::Rotate,
                         Some(GizmoType::Scale) => TransformMode::Scale,
                         None => return false,
                     };
-                    TransformOperator::start_transform(&mut state, mode, ctx);
-                    if !state.is_active() {
+                    Self::start_transform(&mut self.state, mode, ctx);
+                    if !self.state.is_active() {
                         return false;
                     }
-                    state.axis_constraint = match axis {
+                    self.state.axis_constraint = match axis {
                         Axis::X => AxisConstraint::WorldX,
                         Axis::Y => AxisConstraint::WorldY,
                         Axis::Z => AxisConstraint::WorldZ,
                     };
-                    state.gizmo.set_highlight(Some(axis), ctx);
-                    state.update_visual_feedback(ctx);
+                    self.state.gizmo.set_highlight(Some(axis), ctx);
+                    self.state.update_visual_feedback(ctx);
                     return true;
                 }
                 false
-            });
-
-        let operator_state = self.state.clone();
-        let bindings = self.bindings.clone();
-        let drag_callback = dispatcher.register(EventKind::MouseDrag, move |event, ctx| {
-            let Event::MouseDrag { button, delta, .. } = event else { return false };
-            if !bindings
-                .borrow()
-                .actions_for_drag(*button, ctx.modifiers)
-                .contains(&TransformAction::GizmoDrag)
-            {
-                return false;
             }
-            let mut state = operator_state.borrow_mut();
-            if state.is_active() {
-                state.accumulated_delta.0 += delta.0;
-                state.accumulated_delta.1 += delta.1;
-                state.apply_preview_transform(ctx);
-                return true;
-            }
-            false
-        });
 
-        let operator_state = self.state.clone();
-        let bindings = self.bindings.clone();
-        let drag_end_callback =
-            dispatcher.register(EventKind::MouseDragEnd, move |event, ctx| {
-                let Event::MouseDragEnd { button, .. } = event else { return false };
-                if !bindings
-                    .borrow()
+            Event::MouseDrag { button, delta, .. } => {
+                if !self.bindings
+                    .actions_for_drag(*button, ctx.modifiers)
+                    .contains(&TransformAction::GizmoDrag)
+                {
+                    return false;
+                }
+                if self.state.is_active() {
+                    self.state.accumulated_delta.0 += delta.0;
+                    self.state.accumulated_delta.1 += delta.1;
+                    self.state.apply_preview_transform(ctx);
+                    return true;
+                }
+                false
+            }
+
+            Event::MouseDragEnd { button, .. } => {
+                if !self.bindings
                     .actions_for_drag_end(*button, Modifiers::default())
                     .contains(&TransformAction::GizmoDrag)
                 {
                     return false;
                 }
-                let mut state = operator_state.borrow_mut();
-                if state.is_active() {
-                    TransformOperator::confirm_transform(&mut state, ctx);
+                if self.state.is_active() {
+                    Self::confirm_transform(&mut self.state, ctx);
                     return true;
                 }
                 false
-            });
-
-        // Cursor move handler: hover highlight on gizmo handles
-        let operator_state = self.state.clone();
-        let cursor_callback =
-            dispatcher.register(EventKind::CursorMoved, move |event, ctx| {
-                if let Event::CursorMoved { position } = event {
-                    let mut state = operator_state.borrow_mut();
-
-                    // Only do hover highlighting when gizmo is visible but no transform active
-                    if state.gizmo.has_gizmo() && !state.is_active() {
-                        let axis = state.gizmo.pick_handle(position.0 as f32, position.1 as f32, ctx);
-                        state.gizmo.set_highlight(axis, ctx);
-                    }
-                }
-                false // Never consume cursor move events
-            });
-
-        // Update handler: keep gizmo in sync with selection changes
-        let operator_state = self.state.clone();
-        let update_callback = dispatcher.register(EventKind::Update, move |_event, ctx| {
-            let mut state = operator_state.borrow_mut();
-            if state.gizmo_mode.is_some() && !state.is_active() {
-                state.sync_gizmo(ctx);
             }
-            false // Never consume update events
-        });
 
-        self.callback_ids = vec![
-            keyboard_callback,
-            motion_callback,
-            click_callback,
-            drag_start_callback,
-            drag_callback,
-            drag_end_callback,
-            cursor_callback,
-            update_callback,
-        ];
-    }
+            Event::CursorMoved { position } => {
+                // Hover highlight on gizmo handles when gizmo is visible but no transform active
+                if self.state.gizmo.has_gizmo() && !self.state.is_active() {
+                    let axis = self.state.gizmo.pick_handle(position.0 as f32, position.1 as f32, ctx);
+                    self.state.gizmo.set_highlight(axis, ctx);
+                }
+                false
+            }
 
-    fn deactivate(&mut self, dispatcher: &mut EventDispatcher) {
-        for id in &self.callback_ids {
-            dispatcher.unregister(*id);
+            Event::Update { .. } => {
+                if self.state.gizmo_mode.is_some() && !self.state.is_active() {
+                    self.state.sync_gizmo(ctx);
+                }
+                false
+            }
+
+            _ => false,
         }
-        self.callback_ids.clear();
     }
 
     fn name(&self) -> &str {
         "Transform"
-    }
-
-    fn callback_ids(&self) -> &[CallbackId] {
-        &self.callback_ids
-    }
-
-    fn is_active(&self) -> bool {
-        !self.callback_ids.is_empty()
     }
 }

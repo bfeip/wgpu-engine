@@ -1,10 +1,7 @@
-use std::cell::RefCell;
-use std::rc::Rc;
-
 use serde::{Deserialize, Serialize};
 
 use crate::bindings::{InputBinding, InputMap};
-use crate::event::{CallbackId, Event, EventContext, EventDispatcher, EventKind};
+use crate::event::{Event, EventContext};
 use crate::geom_query::{RayHit, RayPickQuery, RayPickResult, pick_all_from_ray};
 use crate::input::{Modifiers, MouseButton};
 use crate::operator::Operator;
@@ -20,8 +17,7 @@ pub enum SelectionAction {
 
 /// Operator for selecting objects in the scene via mouse click.
 pub struct SelectionOperator {
-    pub bindings: Rc<RefCell<InputMap<SelectionAction>>>,
-    callback_ids: Vec<CallbackId>,
+    pub bindings: InputMap<SelectionAction>,
 }
 
 impl SelectionOperator {
@@ -31,10 +27,7 @@ impl SelectionOperator {
             InputBinding::MouseClick { button: MouseButton::Left, modifiers: Modifiers::default() },
             SelectionAction::Select,
         );
-        Self {
-            bindings: Rc::new(RefCell::new(bindings)),
-            callback_ids: Vec::new(),
-        }
+        Self { bindings }
     }
 
     /// Performs selection at the given position and prints results to console.
@@ -62,41 +55,18 @@ impl SelectionOperator {
 }
 
 impl Operator for SelectionOperator {
-    fn activate(&mut self, dispatcher: &mut EventDispatcher) {
-        let bindings = self.bindings.clone();
-        let mouse_click_callback = dispatcher.register(EventKind::MouseClick, move |event, ctx| {
-            let Event::MouseClick { button, position, .. } = event else {
-                return false;
-            };
-            let b = bindings.borrow();
-            if b.actions_for_click(*button, ctx.modifiers).contains(&SelectionAction::Select) {
-                SelectionOperator::perform_selection(position.0, position.1, ctx);
-                true
-            } else {
-                false
-            }
-        });
-
-        self.callback_ids = vec![mouse_click_callback];
-    }
-
-    fn deactivate(&mut self, dispatcher: &mut EventDispatcher) {
-        for id in &self.callback_ids {
-            dispatcher.unregister(*id);
+    fn dispatch(&mut self, event: &Event, ctx: &mut EventContext) -> bool {
+        let Event::MouseClick { button, position, .. } = event else { return false };
+        if self.bindings.actions_for_click(*button, ctx.modifiers).contains(&SelectionAction::Select) {
+            Self::perform_selection(position.0, position.1, ctx);
+            true
+        } else {
+            false
         }
-        self.callback_ids.clear();
     }
 
     fn name(&self) -> &str {
         "Selection"
-    }
-
-    fn callback_ids(&self) -> &[CallbackId] {
-        &self.callback_ids
-    }
-
-    fn is_active(&self) -> bool {
-        !self.callback_ids.is_empty()
     }
 }
 

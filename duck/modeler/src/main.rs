@@ -247,8 +247,7 @@ impl<'a> ApplicationHandler for App<'a> {
                 Rc::clone(&state.document),
                 Rc::clone(&state.node_map),
             );
-            let (op_mgr, dispatcher) = state.viewer.operator_manager_and_dispatcher_mut();
-            op_mgr.push_front(Box::new(sphere_op), dispatcher);
+            state.viewer.dispatcher_mut().push_front(Box::new(sphere_op));
             state.window.request_redraw();
             self.state = Some(state);
         }

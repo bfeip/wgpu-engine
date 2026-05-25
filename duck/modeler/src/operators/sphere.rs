@@ -8,7 +8,7 @@ use duck_engine_scene::cad::tessellate_into;
 use duck_engine_viewer::{
     bindings::{InputBinding, InputMap},
     common::Transform,
-    event::{CallbackId, Event, EventContext, EventDispatcher, EventKind},
+    event::{Event, EventContext},
     input::{Modifiers, MouseButton},
     operator::Operator,
 };
@@ -28,14 +28,38 @@ enum Phase {
     Defining { center: Point3, preview_node: NodeId },
 }
 
-struct Inner {
+pub struct SphereOperator {
     phase: Phase,
     construction_options: Rc<RefCell<ConstructionOptions>>,
     document: Rc<RefCell<CadDocument>>,
     node_map: Rc<RefCell<HashMap<PartId, NodeId>>>,
+    bindings: InputMap<SphereAction>,
 }
 
-impl Inner {
+impl SphereOperator {
+    pub fn new(
+        construction_options: Rc<RefCell<ConstructionOptions>>,
+        document: Rc<RefCell<CadDocument>>,
+        node_map: Rc<RefCell<HashMap<PartId, NodeId>>>,
+    ) -> Self {
+        let bindings = InputMap::new()
+            .bind(
+                InputBinding::MouseClick { button: MouseButton::Left, modifiers: Modifiers::default() },
+                SphereAction::Place,
+            )
+            .bind(
+                InputBinding::MouseClick { button: MouseButton::Right, modifiers: Modifiers::default() },
+                SphereAction::Cancel,
+            );
+        Self {
+            phase: Phase::Idle,
+            construction_options,
+            document,
+            node_map,
+            bindings,
+        }
+    }
+
     fn sphere_transform(center: Point3, radius: f32) -> Transform {
         Transform {
             position: center,
@@ -116,105 +140,42 @@ impl Inner {
     }
 }
 
-pub struct SphereOperator {
-    inner: Rc<RefCell<Inner>>,
-    callback_ids: Vec<CallbackId>,
-    bindings: Rc<InputMap<SphereAction>>,
-}
-
-impl SphereOperator {
-    pub fn new(
-        construction_options: Rc<RefCell<ConstructionOptions>>,
-        document: Rc<RefCell<CadDocument>>,
-        node_map: Rc<RefCell<HashMap<PartId, NodeId>>>,
-    ) -> Self {
-        let bindings = InputMap::new()
-            .bind(
-                InputBinding::MouseClick { button: MouseButton::Left, modifiers: Modifiers::default() },
-                SphereAction::Place,
-            )
-            .bind(
-                InputBinding::MouseClick { button: MouseButton::Right, modifiers: Modifiers::default() },
-                SphereAction::Cancel,
-            );
-        Self {
-            inner: Rc::new(RefCell::new(Inner {
-                phase: Phase::Idle,
-                construction_options,
-                document,
-                node_map,
-            })),
-            callback_ids: Vec::new(),
-            bindings: Rc::new(bindings),
-        }
-    }
-}
-
-impl SphereOperator {
-    fn register_click_handler(&self, dispatcher: &mut EventDispatcher) -> CallbackId {
-        let inner = self.inner.clone();
-        let bindings = self.bindings.clone();
-
-        dispatcher.register(EventKind::MouseClick, move |event, ctx| {
-            let Event::MouseClick { button, position, .. } = event else { return false };
-            let actions = bindings.actions_for_click(*button, ctx.modifiers).to_vec();
-            let mut state = inner.borrow_mut();
-            let mut handled = false;
-
-            for action in actions {
-                match (&state.phase, action) {
-                    (Phase::Idle, SphereAction::Place) => {
-                        handled |= state.on_place_center(*position, ctx);
-                    }
-                    (Phase::Defining { center, preview_node }, SphereAction::Place) => {
-                        let (c, n) = (*center, *preview_node);
-                        handled |= state.on_place_outer(c, n, *position, ctx);
-                    }
-                    (Phase::Defining { preview_node, .. }, SphereAction::Cancel) => {
-                        let n = *preview_node;
-                        handled |= state.on_cancel(n, ctx);
-                    }
-                    _ => {}
-                }
-            }
-            handled
-        })
-    }
-
-    fn register_move_handler(&self, dispatcher: &mut EventDispatcher) -> CallbackId {
-        let inner = self.inner.clone();
-
-        dispatcher.register(EventKind::CursorMoved, move |event, ctx| {
-            let Event::CursorMoved { position } = event else { return false };
-            inner.borrow().on_cursor_moved(*position, ctx);
-            false
-        })
-    }
-}
-
 impl Operator for SphereOperator {
-    fn activate(&mut self, dispatcher: &mut EventDispatcher) {
-        let click_cb = self.register_click_handler(dispatcher);
-        let move_cb = self.register_move_handler(dispatcher);
-        self.callback_ids = vec![click_cb, move_cb];
-    }
-
-    fn deactivate(&mut self, dispatcher: &mut EventDispatcher) {
-        for id in &self.callback_ids {
-            dispatcher.unregister(*id);
+    fn dispatch(&mut self, event: &Event, ctx: &mut EventContext) -> bool {
+        match event {
+            Event::MouseClick { button, position, .. } => {
+                let actions = self.bindings.actions_for_click(*button, ctx.modifiers).to_vec();
+                // Snapshot phase data before the mutable method calls below.
+                let phase_data = match &self.phase {
+                    Phase::Idle => None,
+                    Phase::Defining { center, preview_node } => Some((*center, *preview_node)),
+                };
+                let mut handled = false;
+                for action in actions {
+                    match (phase_data, action) {
+                        (None, SphereAction::Place) => {
+                            handled |= self.on_place_center(*position, ctx);
+                        }
+                        (Some((center, preview_node)), SphereAction::Place) => {
+                            handled |= self.on_place_outer(center, preview_node, *position, ctx);
+                        }
+                        (Some((_, preview_node)), SphereAction::Cancel) => {
+                            handled |= self.on_cancel(preview_node, ctx);
+                        }
+                        _ => {}
+                    }
+                }
+                handled
+            }
+            Event::CursorMoved { position } => {
+                self.on_cursor_moved(*position, ctx);
+                false
+            }
+            _ => false,
         }
-        self.callback_ids.clear();
     }
 
     fn name(&self) -> &str {
         "Sphere"
-    }
-
-    fn callback_ids(&self) -> &[CallbackId] {
-        &self.callback_ids
-    }
-
-    fn is_active(&self) -> bool {
-        !self.callback_ids.is_empty()
     }
 }

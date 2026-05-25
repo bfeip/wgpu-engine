@@ -1,12 +1,9 @@
-use std::cell::RefCell;
-use std::rc::Rc;
-
 use serde::{Deserialize, Serialize};
 
 use crate::bindings::{InputBinding, InputMap};
 use crate::common;
 use crate::scene::{PositionedCamera, geom_query::{pick_all_from_ray, RayPickQuery}};
-use crate::event::{CallbackId, Event, EventContext, EventDispatcher, EventKind};
+use crate::event::{Event, EventContext};
 use crate::input::{Key, Modifiers, MouseButton, MouseScrollDelta};
 use crate::operator::Operator;
 use crate::scene_scale;
@@ -94,16 +91,16 @@ pub enum NavigationAction {
 
 /// Combined internal state for the navigation operator.
 struct NavigationState {
-    mode: Rc<RefCell<NavigationMode>>,
+    mode: NavigationMode,
     turntable: TurntableState,
     trackball: TrackballState,
     walk: WalkState,
 }
 
 impl NavigationState {
-    fn new(mode: Rc<RefCell<NavigationMode>>) -> Self {
+    fn new() -> Self {
         Self {
-            mode,
+            mode: NavigationMode::default(),
             turntable: TurntableState::new(),
             trackball: TrackballState::new(),
             walk: WalkState::new(),
@@ -111,7 +108,7 @@ impl NavigationState {
     }
 
     fn mode(&self) -> NavigationMode {
-        *self.mode.borrow()
+        self.mode
     }
 
     fn handle_drag_start(
@@ -275,21 +272,17 @@ impl NavigationState {
 /// - Movement key bindings: Move forward/backward/strafe
 /// - Orbit drag: Look around
 ///
-/// Use [`NavigationOperator::mode_handle`] to get a shared handle for
-/// reading or changing the active mode. Use [`NavigationOperator::bindings`]
-/// to remap any action.
+/// Use [`NavigationOperator::mode`] / [`NavigationOperator::set_mode`] to change the active
+/// mode. Use [`NavigationOperator::bindings`] to remap any action.
 pub struct NavigationOperator {
-    state: Rc<RefCell<NavigationState>>,
-    mode: Rc<RefCell<NavigationMode>>,
+    state: NavigationState,
     /// All navigation bindings: orbit/pan/zoom drags and walk movement keys.
-    pub bindings: Rc<RefCell<InputMap<NavigationAction>>>,
-    callback_ids: Vec<CallbackId>,
+    pub bindings: InputMap<NavigationAction>,
 }
 
 impl NavigationOperator {
     /// Creates a new navigation operator with default bindings.
     pub fn new() -> Self {
-        let mode = Rc::new(RefCell::new(NavigationMode::default()));
         let bindings = InputMap::new()
             // Orbit/pan/pivot drag
             .bind(
@@ -355,123 +348,91 @@ impl NavigationOperator {
             );
 
         Self {
-            state: Rc::new(RefCell::new(NavigationState::new(mode.clone()))),
-            mode,
-            bindings: Rc::new(RefCell::new(bindings)),
-            callback_ids: Vec::new(),
+            state: NavigationState::new(),
+            bindings,
         }
     }
 
-    /// Returns a shared handle to the navigation mode.
-    pub fn mode_handle(&self) -> Rc<RefCell<NavigationMode>> {
-        self.mode.clone()
+    /// Returns the current navigation mode.
+    pub fn mode(&self) -> NavigationMode {
+        self.state.mode()
+    }
+
+    /// Sets the navigation mode.
+    pub fn set_mode(&mut self, mode: NavigationMode) {
+        self.state.mode = mode;
     }
 }
 
 impl Operator for NavigationOperator {
-    fn activate(&mut self, dispatcher: &mut EventDispatcher) {
-        let s = self.state.clone();
-        let b = self.bindings.clone();
-        let drag_start_cb = dispatcher.register(EventKind::MouseDragStart, move |event, ctx| {
-            let Event::MouseDragStart { button, start_pos, .. } = event else { return false };
-            let actions = b.borrow().actions_for_drag_start(*button, ctx.modifiers).to_vec();
-            let mut handled = false;
-            for action in actions {
-                handled |= s.borrow_mut().handle_drag_start(action, *start_pos, ctx);
-            }
-            handled
-        });
-
-        let s = self.state.clone();
-        let b = self.bindings.clone();
-        let drag_cb = dispatcher.register(EventKind::MouseDrag, move |event, ctx| {
-            let Event::MouseDrag { button, delta, .. } = event else { return false };
-            let actions = b.borrow().actions_for_drag(*button, ctx.modifiers).to_vec();
-            let size = ctx.size;
-            let mut handled = false;
-            ctx.with_camera_mut(|cam| {
-                for action in &actions {
-                    handled |= s.borrow_mut().handle_drag(*action, delta, cam, size);
+    fn dispatch(&mut self, event: &Event, ctx: &mut EventContext) -> bool {
+        match event {
+            Event::MouseDragStart { button, start_pos, .. } => {
+                let actions = self.bindings.actions_for_drag_start(*button, ctx.modifiers).to_vec();
+                let mut handled = false;
+                for action in actions {
+                    handled |= self.state.handle_drag_start(action, *start_pos, ctx);
                 }
-            });
-            handled
-        });
-
-        let s = self.state.clone();
-        let b = self.bindings.clone();
-        let wheel_cb = dispatcher.register(EventKind::MouseWheel, move |event, ctx| {
-            let Event::MouseWheel { delta } = event else { return false };
-            if !b.borrow().actions_for_scroll().contains(&NavigationAction::Zoom) {
-                return false;
+                handled
             }
-            let scroll_amount = match delta {
-                MouseScrollDelta::LineDelta(_, y) => *y,
-                MouseScrollDelta::PixelDelta(_x, y) => *y / 100.0,
-            };
-            let model_radius =
-                scene_scale::model_radius_from_bounds(ctx.scene.bounding().bounds.as_ref());
-            ctx.with_camera_mut(|cam| {
-                s.borrow_mut().handle_wheel(scroll_amount, cam, model_radius);
-            });
-            true
-        });
-
-        let s = self.state.clone();
-        let b = self.bindings.clone();
-        let keyboard_cb = dispatcher.register(EventKind::KeyboardInput, move |event, ctx| {
-            let Event::KeyboardInput { event: key_event, .. } = event else { return false };
-            let mut handled = false;
-            let b_guard = b.borrow();
-            ctx.with_camera_mut(|cam| {
-                handled = s.borrow_mut().handle_keyboard(key_event, cam, &b_guard);
-            });
-            handled
-        });
-
-        let s = self.state.clone();
-        let update_cb = dispatcher.register(EventKind::Update, move |event, ctx| {
-            let Event::Update { delta_time } = event else { return false };
-            let model_radius =
-                scene_scale::model_radius_from_bounds(ctx.scene.bounding().bounds.as_ref());
-            ctx.with_camera_mut(|cam| {
-                s.borrow_mut().handle_update(*delta_time, cam, model_radius);
-            });
-            false
-        });
-
-        let s = self.state.clone();
-        let b = self.bindings.clone();
-        let drag_end_cb = dispatcher.register(EventKind::MouseDragEnd, move |event, _ctx| {
-            let Event::MouseDragEnd { button, .. } = event else { return false };
-            // Modifiers may not be held on release; match with no modifiers.
-            let actions =
-                b.borrow().actions_for_drag_end(*button, Modifiers::default()).to_vec();
-            for action in actions {
-                s.borrow_mut().handle_drag_end(action);
+            Event::MouseDrag { button, delta, .. } => {
+                let actions = self.bindings.actions_for_drag(*button, ctx.modifiers).to_vec();
+                let size = ctx.size;
+                let mut handled = false;
+                ctx.with_camera_mut(|cam| {
+                    for action in &actions {
+                        handled |= self.state.handle_drag(*action, delta, cam, size);
+                    }
+                });
+                handled
             }
-            false
-        });
-
-        self.callback_ids =
-            vec![drag_start_cb, drag_cb, drag_end_cb, wheel_cb, keyboard_cb, update_cb];
-    }
-
-    fn deactivate(&mut self, dispatcher: &mut EventDispatcher) {
-        for id in &self.callback_ids {
-            dispatcher.unregister(*id);
+            Event::MouseDragEnd { button, .. } => {
+                // Modifiers may not be held on release; match with no modifiers.
+                let actions =
+                    self.bindings.actions_for_drag_end(*button, Modifiers::default()).to_vec();
+                for action in actions {
+                    self.state.handle_drag_end(action);
+                }
+                false
+            }
+            Event::MouseWheel { delta } => {
+                if !self.bindings.actions_for_scroll().contains(&NavigationAction::Zoom) {
+                    return false;
+                }
+                let scroll_amount = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => *y,
+                    MouseScrollDelta::PixelDelta(_x, y) => *y / 100.0,
+                };
+                let model_radius =
+                    scene_scale::model_radius_from_bounds(ctx.scene.bounding().bounds.as_ref());
+                ctx.with_camera_mut(|cam| {
+                    self.state.handle_wheel(scroll_amount, cam, model_radius);
+                });
+                true
+            }
+            Event::KeyboardInput { event: key_event, .. } => {
+                // Split borrow: state (mut) and bindings (shared) are separate fields.
+                let state = &mut self.state;
+                let bindings = &self.bindings;
+                let mut handled = false;
+                ctx.with_camera_mut(|cam| {
+                    handled = state.handle_keyboard(key_event, cam, bindings);
+                });
+                handled
+            }
+            Event::Update { delta_time } => {
+                let model_radius =
+                    scene_scale::model_radius_from_bounds(ctx.scene.bounding().bounds.as_ref());
+                ctx.with_camera_mut(|cam| {
+                    self.state.handle_update(*delta_time, cam, model_radius);
+                });
+                false
+            }
+            _ => false,
         }
-        self.callback_ids.clear();
     }
 
     fn name(&self) -> &str {
         "Navigation"
-    }
-
-    fn callback_ids(&self) -> &[CallbackId] {
-        &self.callback_ids
-    }
-
-    fn is_active(&self) -> bool {
-        !self.callback_ids.is_empty()
     }
 }
