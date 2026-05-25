@@ -298,8 +298,8 @@ struct OriginalTransform {
     parent_world_transform: Transform,
 }
 
-/// Internal state for the transform operator.
-struct TransformState {
+/// Operator for Blender-style transform operations (grab/rotate/scale).
+pub struct TransformOperator {
     /// Current transform mode (None when inactive).
     mode: Option<TransformMode>,
 
@@ -336,11 +336,71 @@ struct TransformState {
     annotations: Vec<NodeId>,
 
     /// Materials for the colored annotations (So we're not making dozens of copies)
-    annotation_axis_materials: HashMap<Axis, MaterialId>
+    annotation_axis_materials: HashMap<Axis, MaterialId>,
+
+    pub bindings: InputMap<TransformAction>,
 }
 
-impl TransformState {
-    fn new() -> Self {
+impl TransformOperator {
+    /// Creates a new transform operator with default bindings.
+    pub fn new() -> Self {
+        let bindings = InputMap::new()
+            .bind(
+                InputBinding::Key { key: Key::Character('g'), modifiers: Modifiers::default() },
+                TransformAction::StartTranslate,
+            )
+            .bind(
+                InputBinding::Key { key: Key::Character('r'), modifiers: Modifiers::default() },
+                TransformAction::StartRotate,
+            )
+            .bind(
+                InputBinding::Key { key: Key::Character('s'), modifiers: Modifiers::default() },
+                TransformAction::StartScale,
+            )
+            .bind(
+                InputBinding::Key { key: Key::Character('h'), modifiers: Modifiers::default() },
+                TransformAction::CycleGizmo,
+            )
+            .bind(
+                InputBinding::Key { key: Key::Character('x'), modifiers: Modifiers::default() },
+                TransformAction::ConstrainX,
+            )
+            .bind(
+                InputBinding::Key { key: Key::Character('y'), modifiers: Modifiers::default() },
+                TransformAction::ConstrainY,
+            )
+            .bind(
+                InputBinding::Key { key: Key::Character('z'), modifiers: Modifiers::default() },
+                TransformAction::ConstrainZ,
+            )
+            .bind(
+                InputBinding::Key { key: Key::Named(NamedKey::Enter), modifiers: Modifiers::default() },
+                TransformAction::KeyConfirm,
+            )
+            .bind(
+                InputBinding::Key { key: Key::Named(NamedKey::Escape), modifiers: Modifiers::default() },
+                TransformAction::KeyCancel,
+            )
+            .bind(
+                InputBinding::MouseClick { button: MouseButton::Left, modifiers: Modifiers::default() },
+                TransformAction::MouseConfirm,
+            )
+            .bind(
+                InputBinding::MouseClick { button: MouseButton::Right, modifiers: Modifiers::default() },
+                TransformAction::MouseCancel,
+            )
+            .bind(
+                InputBinding::MouseDragStart { button: MouseButton::Left, modifiers: Modifiers::default() },
+                TransformAction::GizmoDrag,
+            )
+            .bind(
+                InputBinding::MouseDrag { button: MouseButton::Left, modifiers: Modifiers::default() },
+                TransformAction::GizmoDrag,
+            )
+            .bind(
+                InputBinding::MouseDragEnd { button: MouseButton::Left, modifiers: Modifiers::default() },
+                TransformAction::GizmoDrag,
+            );
         Self {
             mode: None,
             axis_constraint: AxisConstraint::None,
@@ -353,7 +413,8 @@ impl TransformState {
             gizmo_mode: None,
             annotation_root: None,
             annotations: Vec::new(),
-            annotation_axis_materials: HashMap::new()
+            annotation_axis_materials: HashMap::new(),
+            bindings,
         }
     }
 
@@ -664,6 +725,87 @@ impl TransformState {
         self.original_transforms.clear();
         self.accumulated_delta = (0.0, 0.0);
     }
+
+    /// Start a transform operation with the given mode.
+    fn start_transform(&mut self, mode: TransformMode, ctx: &mut EventContext) {
+        // Get selected nodes
+        let selected_nodes = ctx.selection.selected_nodes();
+        if selected_nodes.is_empty() {
+            return;
+        }
+
+        // Store original transforms with world-space info
+        let mut world_positions: Vec<Point3> = Vec::new();
+        for node_id in &selected_nodes {
+            if let Some(node) = ctx.scene.get_node(*node_id) {
+                let Some(world_matrix) = ctx.scene.nodes_transform(*node_id) else { continue };
+                let world_transform = decompose_matrix(&world_matrix);
+
+                let parent_world_transform = if let Some(parent_id) = node.parent() {
+                    ctx.scene.nodes_transform(parent_id)
+                        .map(|m| decompose_matrix(&m))
+                        .unwrap_or(Transform::IDENTITY)
+                } else {
+                    Transform::IDENTITY
+                };
+
+                let world_pos = ctx.scene.nodes_bounding(*node_id).bounds
+                    .map(|aabb| aabb.center())
+                    .unwrap_or(world_transform.position);
+                world_positions.push(world_pos);
+                self.original_transforms.push(OriginalTransform {
+                    node_id: *node_id,
+                    local_transform: node.transform(),
+                    world_transform,
+                    parent_world_transform,
+                });
+            }
+        }
+
+        if world_positions.is_empty() {
+            return;
+        }
+
+        // Compute pivot as centroid of world-space positions
+        self.pivot_world = centroid_of_slice(&world_positions).unwrap_or(Point3::origin());
+
+        // Store primary selection's rotation for local axis transforms
+        if let Some(primary) = ctx.selection.primary()
+            && let Some(node) = ctx.scene.get_node(primary.node_id()) {
+                self.primary_rotation = node.rotation();
+            }
+
+        // Get model radius for sensitivity scaling
+        self.model_radius =
+            scene_scale::model_radius_from_bounds(ctx.scene.bounding().bounds.as_ref());
+
+        // Activate the transform
+        self.mode = Some(mode);
+        self.axis_constraint = AxisConstraint::None;
+        self.accumulated_delta = (0.0, 0.0);
+    }
+
+    /// Confirm the transform (keep current state).
+    ///
+    /// The gizmo remains visible at the new position so the user can
+    /// start another drag-based transform immediately.
+    fn confirm_transform(&mut self, ctx: &mut EventContext) {
+        self.cleanup_annotations(ctx);
+        self.gizmo.set_highlight(None, ctx);
+        self.reset();
+        self.sync_gizmo(ctx);
+    }
+
+    /// Cancel the transform (restore original state).
+    ///
+    /// The gizmo remains visible at the original position.
+    fn cancel_transform(&mut self, ctx: &mut EventContext) {
+        self.restore_original_transforms(ctx);
+        self.cleanup_annotations(ctx);
+        self.gizmo.set_highlight(None, ctx);
+        self.reset();
+        self.sync_gizmo(ctx);
+    }
 }
 
 /// Converts a world-axis-constrained scale into the parent's local space.
@@ -695,160 +837,6 @@ fn world_scale_to_local(scale: Vector3, parent_rotation_inv: Quaternion) -> Vect
     )
 }
 
-/// Operator for Blender-style transform operations (grab/rotate/scale).
-pub struct TransformOperator {
-    state: TransformState,
-    pub bindings: InputMap<TransformAction>,
-}
-
-impl TransformOperator {
-    /// Creates a new transform operator with default bindings.
-    pub fn new() -> Self {
-        let bindings = InputMap::new()
-            .bind(
-                InputBinding::Key { key: Key::Character('g'), modifiers: Modifiers::default() },
-                TransformAction::StartTranslate,
-            )
-            .bind(
-                InputBinding::Key { key: Key::Character('r'), modifiers: Modifiers::default() },
-                TransformAction::StartRotate,
-            )
-            .bind(
-                InputBinding::Key { key: Key::Character('s'), modifiers: Modifiers::default() },
-                TransformAction::StartScale,
-            )
-            .bind(
-                InputBinding::Key { key: Key::Character('h'), modifiers: Modifiers::default() },
-                TransformAction::CycleGizmo,
-            )
-            .bind(
-                InputBinding::Key { key: Key::Character('x'), modifiers: Modifiers::default() },
-                TransformAction::ConstrainX,
-            )
-            .bind(
-                InputBinding::Key { key: Key::Character('y'), modifiers: Modifiers::default() },
-                TransformAction::ConstrainY,
-            )
-            .bind(
-                InputBinding::Key { key: Key::Character('z'), modifiers: Modifiers::default() },
-                TransformAction::ConstrainZ,
-            )
-            .bind(
-                InputBinding::Key { key: Key::Named(NamedKey::Enter), modifiers: Modifiers::default() },
-                TransformAction::KeyConfirm,
-            )
-            .bind(
-                InputBinding::Key { key: Key::Named(NamedKey::Escape), modifiers: Modifiers::default() },
-                TransformAction::KeyCancel,
-            )
-            .bind(
-                InputBinding::MouseClick { button: MouseButton::Left, modifiers: Modifiers::default() },
-                TransformAction::MouseConfirm,
-            )
-            .bind(
-                InputBinding::MouseClick { button: MouseButton::Right, modifiers: Modifiers::default() },
-                TransformAction::MouseCancel,
-            )
-            .bind(
-                InputBinding::MouseDragStart { button: MouseButton::Left, modifiers: Modifiers::default() },
-                TransformAction::GizmoDrag,
-            )
-            .bind(
-                InputBinding::MouseDrag { button: MouseButton::Left, modifiers: Modifiers::default() },
-                TransformAction::GizmoDrag,
-            )
-            .bind(
-                InputBinding::MouseDragEnd { button: MouseButton::Left, modifiers: Modifiers::default() },
-                TransformAction::GizmoDrag,
-            );
-        Self {
-            state: TransformState::new(),
-            bindings,
-        }
-    }
-
-    /// Start a transform operation with the given mode.
-    fn start_transform(state: &mut TransformState, mode: TransformMode, ctx: &mut EventContext) {
-        // Get selected nodes
-        let selected_nodes = ctx.selection.selected_nodes();
-        if selected_nodes.is_empty() {
-            return;
-        }
-
-        // Store original transforms with world-space info
-        let mut world_positions: Vec<Point3> = Vec::new();
-        for node_id in &selected_nodes {
-            if let Some(node) = ctx.scene.get_node(*node_id) {
-                let Some(world_matrix) = ctx.scene.nodes_transform(*node_id) else { continue };
-                let world_transform = decompose_matrix(&world_matrix);
-
-                let parent_world_transform = if let Some(parent_id) = node.parent() {
-                    ctx.scene.nodes_transform(parent_id)
-                        .map(|m| decompose_matrix(&m))
-                        .unwrap_or(Transform::IDENTITY)
-                } else {
-                    Transform::IDENTITY
-                };
-
-                let world_pos = ctx.scene.nodes_bounding(*node_id).bounds
-                    .map(|aabb| aabb.center())
-                    .unwrap_or(world_transform.position);
-                world_positions.push(world_pos);
-                state.original_transforms.push(OriginalTransform {
-                    node_id: *node_id,
-                    local_transform: node.transform(),
-                    world_transform,
-                    parent_world_transform,
-                });
-            }
-        }
-
-        if world_positions.is_empty() {
-            return;
-        }
-
-        // Compute pivot as centroid of world-space positions
-        state.pivot_world = centroid_of_slice(&world_positions).unwrap_or(Point3::origin());
-
-        // Store primary selection's rotation for local axis transforms
-        if let Some(primary) = ctx.selection.primary()
-            && let Some(node) = ctx.scene.get_node(primary.node_id()) {
-                state.primary_rotation = node.rotation();
-            }
-
-        // Get model radius for sensitivity scaling
-        state.model_radius =
-            scene_scale::model_radius_from_bounds(ctx.scene.bounding().bounds.as_ref());
-
-        // Activate the transform
-        state.mode = Some(mode);
-        state.axis_constraint = AxisConstraint::None;
-        state.accumulated_delta = (0.0, 0.0);
-    }
-
-    /// Confirm the transform (keep current state).
-    ///
-    /// The gizmo remains visible at the new position so the user can
-    /// start another drag-based transform immediately.
-    fn confirm_transform(state: &mut TransformState, ctx: &mut EventContext) {
-        state.cleanup_annotations(ctx);
-        state.gizmo.set_highlight(None, ctx);
-        state.reset();
-        state.sync_gizmo(ctx);
-    }
-
-    /// Cancel the transform (restore original state).
-    ///
-    /// The gizmo remains visible at the original position.
-    fn cancel_transform(state: &mut TransformState, ctx: &mut EventContext) {
-        state.restore_original_transforms(ctx);
-        state.cleanup_annotations(ctx);
-        state.gizmo.set_highlight(None, ctx);
-        state.reset();
-        state.sync_gizmo(ctx);
-    }
-}
-
 impl Operator for TransformOperator {
     fn dispatch(&mut self, event: &Event, ctx: &mut EventContext) -> bool {
         match event {
@@ -861,58 +849,58 @@ impl Operator for TransformOperator {
                     .to_vec();
                 for action in actions {
                     match action {
-                        TransformAction::StartTranslate if !self.state.is_active() => {
-                            Self::start_transform(&mut self.state, TransformMode::Translate, ctx);
-                            return self.state.is_active();
+                        TransformAction::StartTranslate if !self.is_active() => {
+                            self.start_transform(TransformMode::Translate, ctx);
+                            return self.is_active();
                         }
-                        TransformAction::StartRotate if !self.state.is_active() => {
-                            Self::start_transform(&mut self.state, TransformMode::Rotate, ctx);
-                            return self.state.is_active();
+                        TransformAction::StartRotate if !self.is_active() => {
+                            self.start_transform(TransformMode::Rotate, ctx);
+                            return self.is_active();
                         }
-                        TransformAction::StartScale if !self.state.is_active() => {
-                            Self::start_transform(&mut self.state, TransformMode::Scale, ctx);
-                            return self.state.is_active();
+                        TransformAction::StartScale if !self.is_active() => {
+                            self.start_transform(TransformMode::Scale, ctx);
+                            return self.is_active();
                         }
-                        TransformAction::CycleGizmo if !self.state.is_active() => {
-                            self.state.gizmo_mode = match self.state.gizmo_mode {
+                        TransformAction::CycleGizmo if !self.is_active() => {
+                            self.gizmo_mode = match self.gizmo_mode {
                                 None => Some(GizmoType::Translate),
                                 Some(GizmoType::Translate) => Some(GizmoType::Rotate),
                                 Some(GizmoType::Rotate) => Some(GizmoType::Scale),
                                 Some(GizmoType::Scale) => None,
                             };
-                            self.state.sync_gizmo(ctx);
+                            self.sync_gizmo(ctx);
                             return true;
                         }
-                        TransformAction::ConstrainX if self.state.is_active() => {
-                            self.state.cycle_axis_constraint('x');
-                            self.state.apply_preview_transform(ctx);
-                            self.state.update_visual_feedback(ctx);
-                            let highlight = axis_from_constraint(&self.state.axis_constraint);
-                            self.state.gizmo.set_highlight(highlight, ctx);
+                        TransformAction::ConstrainX if self.is_active() => {
+                            self.cycle_axis_constraint('x');
+                            self.apply_preview_transform(ctx);
+                            self.update_visual_feedback(ctx);
+                            let highlight = axis_from_constraint(&self.axis_constraint);
+                            self.gizmo.set_highlight(highlight, ctx);
                             return true;
                         }
-                        TransformAction::ConstrainY if self.state.is_active() => {
-                            self.state.cycle_axis_constraint('y');
-                            self.state.apply_preview_transform(ctx);
-                            self.state.update_visual_feedback(ctx);
-                            let highlight = axis_from_constraint(&self.state.axis_constraint);
-                            self.state.gizmo.set_highlight(highlight, ctx);
+                        TransformAction::ConstrainY if self.is_active() => {
+                            self.cycle_axis_constraint('y');
+                            self.apply_preview_transform(ctx);
+                            self.update_visual_feedback(ctx);
+                            let highlight = axis_from_constraint(&self.axis_constraint);
+                            self.gizmo.set_highlight(highlight, ctx);
                             return true;
                         }
-                        TransformAction::ConstrainZ if self.state.is_active() => {
-                            self.state.cycle_axis_constraint('z');
-                            self.state.apply_preview_transform(ctx);
-                            self.state.update_visual_feedback(ctx);
-                            let highlight = axis_from_constraint(&self.state.axis_constraint);
-                            self.state.gizmo.set_highlight(highlight, ctx);
+                        TransformAction::ConstrainZ if self.is_active() => {
+                            self.cycle_axis_constraint('z');
+                            self.apply_preview_transform(ctx);
+                            self.update_visual_feedback(ctx);
+                            let highlight = axis_from_constraint(&self.axis_constraint);
+                            self.gizmo.set_highlight(highlight, ctx);
                             return true;
                         }
-                        TransformAction::KeyConfirm if self.state.is_active() => {
-                            Self::confirm_transform(&mut self.state, ctx);
+                        TransformAction::KeyConfirm if self.is_active() => {
+                            self.confirm_transform(ctx);
                             return true;
                         }
-                        TransformAction::KeyCancel if self.state.is_active() => {
-                            Self::cancel_transform(&mut self.state, ctx);
+                        TransformAction::KeyCancel if self.is_active() => {
+                            self.cancel_transform(ctx);
                             return true;
                         }
                         _ => {}
@@ -922,10 +910,10 @@ impl Operator for TransformOperator {
             }
 
             Event::MouseMotion { delta } => {
-                if self.state.is_active() {
-                    self.state.accumulated_delta.0 += delta.0 as f32;
-                    self.state.accumulated_delta.1 += delta.1 as f32;
-                    self.state.apply_preview_transform(ctx);
+                if self.is_active() {
+                    self.accumulated_delta.0 += delta.0 as f32;
+                    self.accumulated_delta.1 += delta.1 as f32;
+                    self.apply_preview_transform(ctx);
                     true
                 } else {
                     false
@@ -933,18 +921,18 @@ impl Operator for TransformOperator {
             }
 
             Event::MouseClick { button, .. } => {
-                if !self.state.is_active() {
+                if !self.is_active() {
                     return false;
                 }
                 let actions = self.bindings.actions_for_click(*button, ctx.modifiers).to_vec();
                 for action in actions {
                     match action {
                         TransformAction::MouseConfirm => {
-                            Self::confirm_transform(&mut self.state, ctx);
+                            self.confirm_transform(ctx);
                             return true;
                         }
                         TransformAction::MouseCancel => {
-                            Self::cancel_transform(&mut self.state, ctx);
+                            self.cancel_transform(ctx);
                             return true;
                         }
                         _ => {}
@@ -960,27 +948,27 @@ impl Operator for TransformOperator {
                 {
                     return false;
                 }
-                if self.state.is_active() || !self.state.gizmo.has_gizmo() {
+                if self.is_active() || !self.gizmo.has_gizmo() {
                     return false;
                 }
-                if let Some(axis) = self.state.gizmo.pick_handle(start_pos.0, start_pos.1, ctx) {
-                    let mode = match self.state.gizmo.current_type {
+                if let Some(axis) = self.gizmo.pick_handle(start_pos.0, start_pos.1, ctx) {
+                    let mode = match self.gizmo.current_type {
                         Some(GizmoType::Translate) => TransformMode::Translate,
                         Some(GizmoType::Rotate) => TransformMode::Rotate,
                         Some(GizmoType::Scale) => TransformMode::Scale,
                         None => return false,
                     };
-                    Self::start_transform(&mut self.state, mode, ctx);
-                    if !self.state.is_active() {
+                    self.start_transform(mode, ctx);
+                    if !self.is_active() {
                         return false;
                     }
-                    self.state.axis_constraint = match axis {
+                    self.axis_constraint = match axis {
                         Axis::X => AxisConstraint::WorldX,
                         Axis::Y => AxisConstraint::WorldY,
                         Axis::Z => AxisConstraint::WorldZ,
                     };
-                    self.state.gizmo.set_highlight(Some(axis), ctx);
-                    self.state.update_visual_feedback(ctx);
+                    self.gizmo.set_highlight(Some(axis), ctx);
+                    self.update_visual_feedback(ctx);
                     return true;
                 }
                 false
@@ -993,10 +981,10 @@ impl Operator for TransformOperator {
                 {
                     return false;
                 }
-                if self.state.is_active() {
-                    self.state.accumulated_delta.0 += delta.0;
-                    self.state.accumulated_delta.1 += delta.1;
-                    self.state.apply_preview_transform(ctx);
+                if self.is_active() {
+                    self.accumulated_delta.0 += delta.0;
+                    self.accumulated_delta.1 += delta.1;
+                    self.apply_preview_transform(ctx);
                     return true;
                 }
                 false
@@ -1009,8 +997,8 @@ impl Operator for TransformOperator {
                 {
                     return false;
                 }
-                if self.state.is_active() {
-                    Self::confirm_transform(&mut self.state, ctx);
+                if self.is_active() {
+                    self.confirm_transform(ctx);
                     return true;
                 }
                 false
@@ -1018,16 +1006,16 @@ impl Operator for TransformOperator {
 
             Event::CursorMoved { position } => {
                 // Hover highlight on gizmo handles when gizmo is visible but no transform active
-                if self.state.gizmo.has_gizmo() && !self.state.is_active() {
-                    let axis = self.state.gizmo.pick_handle(position.0 as f32, position.1 as f32, ctx);
-                    self.state.gizmo.set_highlight(axis, ctx);
+                if self.gizmo.has_gizmo() && !self.is_active() {
+                    let axis = self.gizmo.pick_handle(position.0 as f32, position.1 as f32, ctx);
+                    self.gizmo.set_highlight(axis, ctx);
                 }
                 false
             }
 
             Event::Update { .. } => {
-                if self.state.gizmo_mode.is_some() && !self.state.is_active() {
-                    self.state.sync_gizmo(ctx);
+                if self.gizmo_mode.is_some() && !self.is_active() {
+                    self.sync_gizmo(ctx);
                 }
                 false
             }
