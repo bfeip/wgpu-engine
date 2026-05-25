@@ -40,8 +40,6 @@ pub(super) fn zoom_radius(radius: f32, delta: f32, model_radius: f32) -> f32 {
     )
 }
 
-// ── Navigation mode ─────────────────────────────────────────────────────────
-
 /// The navigation interaction mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum NavigationMode {
@@ -54,8 +52,6 @@ pub enum NavigationMode {
     /// First-person walk with movement keys and mouse look.
     Walk,
 }
-
-// ── Navigation actions ───────────────────────────────────────────────────────
 
 /// Semantic actions for the navigation operator across all modes.
 ///
@@ -87,179 +83,6 @@ pub enum NavigationAction {
     MoveRight,
 }
 
-// ── Combined state ──────────────────────────────────────────────────────────
-
-/// Combined internal state for the navigation operator.
-struct NavigationState {
-    mode: NavigationMode,
-    turntable: TurntableState,
-    trackball: TrackballState,
-    walk: WalkState,
-}
-
-impl NavigationState {
-    fn new() -> Self {
-        Self {
-            mode: NavigationMode::default(),
-            turntable: TurntableState::new(),
-            trackball: TrackballState::new(),
-            walk: WalkState::new(),
-        }
-    }
-
-    fn mode(&self) -> NavigationMode {
-        self.mode
-    }
-
-    fn handle_drag_start(
-        &mut self,
-        action: NavigationAction,
-        start_pos: (f32, f32),
-        ctx: &mut EventContext,
-    ) -> bool {
-        let camera = ctx.camera();
-        let scene_center =
-            ctx.scene.bounding().bounds.map(|b| b.center()).unwrap_or(camera.target);
-
-        match (self.mode(), action) {
-            (NavigationMode::Turntable, NavigationAction::Orbit | NavigationAction::Pan) => {
-                self.turntable.init_with_pivot(&camera, scene_center);
-                true
-            }
-            (NavigationMode::Trackball, NavigationAction::Orbit | NavigationAction::Pan) => {
-                self.trackball.init(&camera, scene_center);
-                true
-            }
-            (_, NavigationAction::PivotOrbit) => {
-                let ray = camera.ray_from_screen_point(
-                    start_pos.0, start_pos.1, ctx.size.0, ctx.size.1,
-                );
-                let hits = pick_all_from_ray(&RayPickQuery::faces(ray), ctx.scene);
-                let pivot = hits.first().map(|h| h.hit_point).unwrap_or(scene_center);
-                match self.mode() {
-                    NavigationMode::Turntable => self.turntable.init_with_pivot(&camera, pivot),
-                    NavigationMode::Trackball => self.trackball.init(&camera, pivot),
-                    NavigationMode::Walk => {}
-                }
-                true
-            }
-            (NavigationMode::Walk, NavigationAction::Orbit) => {
-                self.walk.init_from_camera(&camera);
-                true
-            }
-            _ => false,
-        }
-    }
-
-    fn handle_drag(
-        &mut self,
-        action: NavigationAction,
-        delta: &(f32, f32),
-        camera: &mut PositionedCamera,
-        viewport: (u32, u32),
-    ) -> bool {
-        match (self.mode(), action) {
-            (NavigationMode::Turntable, NavigationAction::Orbit) => {
-                self.turntable.handle_orbit(delta.0 as f64, delta.1 as f64, camera);
-                true
-            }
-            (NavigationMode::Turntable, NavigationAction::Pan) => {
-                self.turntable.handle_pan(delta.0, delta.1, camera, viewport);
-                true
-            }
-            (NavigationMode::Trackball, NavigationAction::Orbit) => {
-                self.trackball.handle_orbit(delta.0 as f64, delta.1 as f64, camera);
-                true
-            }
-            (NavigationMode::Trackball, NavigationAction::Pan) => {
-                self.trackball.handle_pan(delta.0, delta.1, camera, viewport);
-                true
-            }
-            (NavigationMode::Turntable | NavigationMode::Trackball, NavigationAction::PivotOrbit) => {
-                match self.mode() {
-                    NavigationMode::Turntable => {
-                        self.turntable.handle_orbit(delta.0 as f64, delta.1 as f64, camera)
-                    }
-                    NavigationMode::Trackball => {
-                        self.trackball.handle_orbit(delta.0 as f64, delta.1 as f64, camera)
-                    }
-                    NavigationMode::Walk => {}
-                }
-                true
-            }
-            (NavigationMode::Walk, NavigationAction::Orbit) => {
-                self.walk.handle_look(delta.0, delta.1, camera);
-                true
-            }
-            _ => false,
-        }
-    }
-
-    fn handle_drag_end(&mut self, action: NavigationAction) {
-        if action == NavigationAction::PivotOrbit {
-            self.turntable.pivot = None;
-            self.trackball.pivot = None;
-        }
-    }
-
-    fn handle_wheel(
-        &mut self,
-        scroll_amount: f32,
-        camera: &mut PositionedCamera,
-        model_radius: f32,
-    ) -> bool {
-        match self.mode() {
-            NavigationMode::Turntable => {
-                self.turntable.init(camera);
-                self.turntable.handle_zoom(scroll_amount, camera, model_radius);
-                true
-            }
-            NavigationMode::Trackball => {
-                self.trackball.handle_zoom(scroll_amount, camera, model_radius);
-                true
-            }
-            NavigationMode::Walk => false,
-        }
-    }
-
-    fn handle_keyboard(
-        &mut self,
-        key_event: &crate::input::KeyEvent,
-        camera: &PositionedCamera,
-        bindings: &InputMap<NavigationAction>,
-    ) -> bool {
-        if self.mode() != NavigationMode::Walk {
-            return false;
-        }
-        if key_event.state == crate::input::ElementState::Pressed && !key_event.repeat {
-            self.walk.init_from_camera(camera);
-        }
-        self.walk.handle_key(&key_event.logical_key, key_event.state, bindings)
-    }
-
-    fn handle_update(
-        &mut self,
-        delta_time: f32,
-        camera: &mut PositionedCamera,
-        model_radius: f32,
-    ) -> bool {
-        if self.mode() != NavigationMode::Walk {
-            self.walk.reset_keys();
-            return false;
-        }
-        if delta_time > 1.0 {
-            return false;
-        }
-        if self.walk.is_moving() {
-            self.walk.apply_movement(camera, delta_time, model_radius);
-            return true;
-        }
-        false
-    }
-}
-
-// ── Operator ────────────────────────────────────────────────────────────────
-
 /// Operator for camera navigation. See [`NavigationMode`] for available modes.
 ///
 /// **Turntable / Trackball mode** (default: Turntable):
@@ -275,7 +98,10 @@ impl NavigationState {
 /// Use [`NavigationOperator::mode`] / [`NavigationOperator::set_mode`] to change the active
 /// mode. Use [`NavigationOperator::bindings`] to remap any action.
 pub struct NavigationOperator {
-    state: NavigationState,
+    mode: NavigationMode,
+    turntable: TurntableState,
+    trackball: TrackballState,
+    walk: WalkState,
     /// All navigation bindings: orbit/pan/zoom drags and walk movement keys.
     pub bindings: InputMap<NavigationAction>,
 }
@@ -348,19 +174,153 @@ impl NavigationOperator {
             );
 
         Self {
-            state: NavigationState::new(),
+            mode: NavigationMode::default(),
+            turntable: TurntableState::new(),
+            trackball: TrackballState::new(),
+            walk: WalkState::new(),
             bindings,
         }
     }
 
     /// Returns the current navigation mode.
     pub fn mode(&self) -> NavigationMode {
-        self.state.mode()
+        self.mode
     }
 
     /// Sets the navigation mode.
     pub fn set_mode(&mut self, mode: NavigationMode) {
-        self.state.mode = mode;
+        self.mode = mode;
+    }
+
+    fn handle_drag_start(
+        &mut self,
+        action: NavigationAction,
+        start_pos: (f32, f32),
+        ctx: &mut EventContext,
+    ) -> bool {
+        let camera = ctx.camera();
+        let scene_center =
+            ctx.scene.bounding().bounds.map(|b| b.center()).unwrap_or(camera.target);
+
+        match (self.mode, action) {
+            (NavigationMode::Turntable, NavigationAction::Orbit | NavigationAction::Pan) => {
+                self.turntable.init_with_pivot(&camera, scene_center);
+                true
+            }
+            (NavigationMode::Trackball, NavigationAction::Orbit | NavigationAction::Pan) => {
+                self.trackball.init(&camera, scene_center);
+                true
+            }
+            (_, NavigationAction::PivotOrbit) => {
+                let ray = camera.ray_from_screen_point(
+                    start_pos.0, start_pos.1, ctx.size.0, ctx.size.1,
+                );
+                let hits = pick_all_from_ray(&RayPickQuery::faces(ray), ctx.scene);
+                let pivot = hits.first().map(|h| h.hit_point).unwrap_or(scene_center);
+                match self.mode {
+                    NavigationMode::Turntable => self.turntable.init_with_pivot(&camera, pivot),
+                    NavigationMode::Trackball => self.trackball.init(&camera, pivot),
+                    NavigationMode::Walk => {}
+                }
+                true
+            }
+            (NavigationMode::Walk, NavigationAction::Orbit) => {
+                self.walk.init_from_camera(&camera);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn handle_drag(
+        &mut self,
+        action: NavigationAction,
+        delta: &(f32, f32),
+        camera: &mut PositionedCamera,
+        viewport: (u32, u32),
+    ) -> bool {
+        match (self.mode, action) {
+            (NavigationMode::Turntable, NavigationAction::Orbit) => {
+                self.turntable.handle_orbit(delta.0 as f64, delta.1 as f64, camera);
+                true
+            }
+            (NavigationMode::Turntable, NavigationAction::Pan) => {
+                self.turntable.handle_pan(delta.0, delta.1, camera, viewport);
+                true
+            }
+            (NavigationMode::Trackball, NavigationAction::Orbit) => {
+                self.trackball.handle_orbit(delta.0 as f64, delta.1 as f64, camera);
+                true
+            }
+            (NavigationMode::Trackball, NavigationAction::Pan) => {
+                self.trackball.handle_pan(delta.0, delta.1, camera, viewport);
+                true
+            }
+            (NavigationMode::Turntable | NavigationMode::Trackball, NavigationAction::PivotOrbit) => {
+                match self.mode {
+                    NavigationMode::Turntable => {
+                        self.turntable.handle_orbit(delta.0 as f64, delta.1 as f64, camera)
+                    }
+                    NavigationMode::Trackball => {
+                        self.trackball.handle_orbit(delta.0 as f64, delta.1 as f64, camera)
+                    }
+                    NavigationMode::Walk => {}
+                }
+                true
+            }
+            (NavigationMode::Walk, NavigationAction::Orbit) => {
+                self.walk.handle_look(delta.0, delta.1, camera);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn handle_drag_end(&mut self, action: NavigationAction) {
+        if action == NavigationAction::PivotOrbit {
+            self.turntable.pivot = None;
+            self.trackball.pivot = None;
+        }
+    }
+
+    fn handle_wheel(
+        &mut self,
+        scroll_amount: f32,
+        camera: &mut PositionedCamera,
+        model_radius: f32,
+    ) -> bool {
+        match self.mode {
+            NavigationMode::Turntable => {
+                self.turntable.init(camera);
+                self.turntable.handle_zoom(scroll_amount, camera, model_radius);
+                true
+            }
+            NavigationMode::Trackball => {
+                self.trackball.handle_zoom(scroll_amount, camera, model_radius);
+                true
+            }
+            NavigationMode::Walk => false,
+        }
+    }
+
+    fn handle_update(
+        &mut self,
+        delta_time: f32,
+        camera: &mut PositionedCamera,
+        model_radius: f32,
+    ) -> bool {
+        if self.mode != NavigationMode::Walk {
+            self.walk.reset_keys();
+            return false;
+        }
+        if delta_time > 1.0 {
+            return false;
+        }
+        if self.walk.is_moving() {
+            self.walk.apply_movement(camera, delta_time, model_radius);
+            return true;
+        }
+        false
     }
 }
 
@@ -371,7 +331,7 @@ impl Operator for NavigationOperator {
                 let actions = self.bindings.actions_for_drag_start(*button, ctx.modifiers).to_vec();
                 let mut handled = false;
                 for action in actions {
-                    handled |= self.state.handle_drag_start(action, *start_pos, ctx);
+                    handled |= self.handle_drag_start(action, *start_pos, ctx);
                 }
                 handled
             }
@@ -381,7 +341,7 @@ impl Operator for NavigationOperator {
                 let mut handled = false;
                 ctx.with_camera_mut(|cam| {
                     for action in &actions {
-                        handled |= self.state.handle_drag(*action, delta, cam, size);
+                        handled |= self.handle_drag(*action, delta, cam, size);
                     }
                 });
                 handled
@@ -391,7 +351,7 @@ impl Operator for NavigationOperator {
                 let actions =
                     self.bindings.actions_for_drag_end(*button, Modifiers::default()).to_vec();
                 for action in actions {
-                    self.state.handle_drag_end(action);
+                    self.handle_drag_end(action);
                 }
                 false
             }
@@ -406,17 +366,20 @@ impl Operator for NavigationOperator {
                 let model_radius =
                     scene_scale::model_radius_from_bounds(ctx.scene.bounding().bounds.as_ref());
                 ctx.with_camera_mut(|cam| {
-                    self.state.handle_wheel(scroll_amount, cam, model_radius);
+                    self.handle_wheel(scroll_amount, cam, model_radius);
                 });
                 true
             }
             Event::KeyboardInput { event: key_event, .. } => {
-                // Split borrow: state (mut) and bindings (shared) are separate fields.
-                let state = &mut self.state;
-                let bindings = &self.bindings;
+                if self.mode != NavigationMode::Walk {
+                    return false;
+                }
                 let mut handled = false;
                 ctx.with_camera_mut(|cam| {
-                    handled = state.handle_keyboard(key_event, cam, bindings);
+                    if key_event.state == crate::input::ElementState::Pressed && !key_event.repeat {
+                        self.walk.init_from_camera(cam);
+                    }
+                    handled = self.walk.handle_key(&key_event.logical_key, key_event.state, &self.bindings);
                 });
                 handled
             }
@@ -424,7 +387,7 @@ impl Operator for NavigationOperator {
                 let model_radius =
                     scene_scale::model_radius_from_bounds(ctx.scene.bounding().bounds.as_ref());
                 ctx.with_camera_mut(|cam| {
-                    self.state.handle_update(*delta_time, cam, model_radius);
+                    self.handle_update(*delta_time, cam, model_radius);
                 });
                 false
             }
