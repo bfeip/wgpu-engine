@@ -1,13 +1,37 @@
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use web_time::Instant;
 
 use crate::input::{
     ElementState, Key, KeyEvent, Modifiers, MouseButton, MouseScrollDelta, NamedKey, TouchId,
     TouchPhase,
 };
-use crate::operator::{Operator, OperatorId};
+use crate::operator::Operator;
 use crate::scene::{NodePayload, PositionedCamera, Scene};
 use crate::selection::SelectionManager;
+
+/// Bridges `Arc<Mutex<T>>` into the dispatcher's type-erased storage.
+///
+/// Implemented blanket-wise for `Mutex<T: Operator>`, allowing `Arc<Mutex<T>>` to coerce
+/// to `Arc<dyn ArcOperator>`. The `as_ptr` method returns the allocation address of the
+/// `Mutex<T>` for pointer-equality identity checks.
+pub(crate) trait ArcOperator {
+    fn dispatch(&self, event: &Event, ctx: &mut EventContext) -> bool;
+    fn name(&self) -> String;
+    fn as_ptr(&self) -> *const ();
+}
+
+impl<T: Operator> ArcOperator for Mutex<T> {
+    fn dispatch(&self, event: &Event, ctx: &mut EventContext) -> bool {
+        self.lock().unwrap().dispatch(event, ctx)
+    }
+    fn name(&self) -> String {
+        self.lock().unwrap().name().to_string()
+    }
+    fn as_ptr(&self) -> *const () {
+        self as *const Mutex<T> as *const ()
+    }
+}
 
 /// Movement threshold in pixels before a mouse button hold becomes a drag.
 const DRAG_THRESHOLD_PIXELS: f32 = 4.0;
@@ -260,18 +284,22 @@ struct ButtonState {
 
 /// Manages operators and synthesizes high-level input events.
 ///
-/// The dispatcher holds an ordered list of [`Operator`]s. On each call to
-/// [`dispatch`](EventDispatcher::dispatch) it:
+/// The dispatcher holds an ordered list of operators as [`Arc<Mutex<T>>`] values, type-erased
+/// via the internal [`ArcOperator`] trait. On each call to [`dispatch`](EventDispatcher::dispatch) it:
 ///
 /// 1. Snapshots the current modifier state into [`EventContext::modifiers`].
 /// 2. Updates internal state and synthesizes derived events (drag start/end,
 ///    click, touch-to-mouse mapping).
-/// 3. Calls [`Operator::dispatch`] on each operator in priority order until
-///    one returns `true` (consumes the event) or all have been called.
+/// 3. Calls each operator's dispatch method in priority order until one returns
+///    `true` (consumes the event) or all have been called.
 ///
 /// Operators at the front of the list have the highest priority.
+///
+/// Register operators with [`push_front`](Self::push_front) or [`push_back`](Self::push_back),
+/// which accept `Arc<Mutex<T>>` for any `T: Operator`. The caller retains a clone of the `Arc`
+/// for direct typed access (locking) without involving the dispatcher.
 pub struct EventDispatcher {
-    operators: Vec<Box<dyn Operator>>,
+    operators: Vec<Arc<dyn ArcOperator>>,
     /// State for each currently-pressed mouse button
     button_states: HashMap<MouseButton, ButtonState>,
     /// Current cursor position in physical pixels (from CursorMoved events)
@@ -297,20 +325,25 @@ impl EventDispatcher {
     // ── Operator management ──────────────────────────────────────────────────
 
     /// Adds an operator to the front of the stack (highest priority).
-    pub fn push_front(&mut self, operator: Box<dyn Operator>) {
-        self.operators.insert(0, operator);
+    ///
+    /// The caller should retain a clone of `op` for direct typed access after registration.
+    pub fn push_front<T: Operator>(&mut self, op: Arc<Mutex<T>>) {
+        self.operators.insert(0, op);
     }
 
     /// Adds an operator to the back of the stack (lowest priority).
-    pub fn push_back(&mut self, operator: Box<dyn Operator>) {
-        self.operators.push(operator);
+    ///
+    /// The caller should retain a clone of `op` for direct typed access after registration.
+    pub fn push_back<T: Operator>(&mut self, op: Arc<Mutex<T>>) {
+        self.operators.push(op);
     }
 
-    /// Removes the operator with the given ID.
+    /// Removes the operator identified by `op`.
     ///
-    /// Returns `true` if an operator with that ID was found and removed.
-    pub fn remove(&mut self, id: OperatorId) -> bool {
-        if let Some(pos) = self.operators.iter().position(|op| op.id() == id) {
+    /// Uses pointer equality: `op` must be a clone of the `Arc` passed to [`push_front`](Self::push_front)
+    /// or [`push_back`](Self::push_back). Returns `true` if found and removed.
+    pub fn remove<T: Operator>(&mut self, op: &Arc<Mutex<T>>) -> bool {
+        if let Some(pos) = self.find_pos(op) {
             self.operators.remove(pos);
             true
         } else {
@@ -318,19 +351,14 @@ impl EventDispatcher {
         }
     }
 
-    /// Removes the operator of type `T`.
-    pub fn remove_typed<T: Operator>(&mut self) -> bool {
-        self.remove(std::any::TypeId::of::<T>())
-    }
-
-    /// Moves the operator with the given ID to the front (highest priority).
+    /// Moves the operator identified by `op` to the front (highest priority).
     ///
     /// Returns `true` if the operator was found.
-    pub fn move_to_front(&mut self, id: OperatorId) -> bool {
-        if let Some(pos) = self.operators.iter().position(|op| op.id() == id) {
+    pub fn move_to_front<T: Operator>(&mut self, op: &Arc<Mutex<T>>) -> bool {
+        if let Some(pos) = self.find_pos(op) {
             if pos > 0 {
-                let op = self.operators.remove(pos);
-                self.operators.insert(0, op);
+                let entry = self.operators.remove(pos);
+                self.operators.insert(0, entry);
             }
             true
         } else {
@@ -338,14 +366,14 @@ impl EventDispatcher {
         }
     }
 
-    /// Moves the operator with the given ID to the back (lowest priority).
+    /// Moves the operator identified by `op` to the back (lowest priority).
     ///
     /// Returns `true` if the operator was found.
-    pub fn move_to_back(&mut self, id: OperatorId) -> bool {
-        if let Some(pos) = self.operators.iter().position(|op| op.id() == id) {
+    pub fn move_to_back<T: Operator>(&mut self, op: &Arc<Mutex<T>>) -> bool {
+        if let Some(pos) = self.find_pos(op) {
             if pos < self.operators.len() - 1 {
-                let op = self.operators.remove(pos);
-                self.operators.push(op);
+                let entry = self.operators.remove(pos);
+                self.operators.push(entry);
             }
             true
         } else {
@@ -353,14 +381,14 @@ impl EventDispatcher {
         }
     }
 
-    /// Swaps the positions of two operators by ID.
+    /// Swaps the positions of two operators.
     ///
     /// Returns `true` if both operators were found. Returns `true` without
-    /// changing anything if both IDs refer to the same operator.
-    pub fn swap(&mut self, id1: OperatorId, id2: OperatorId) -> bool {
-        let pos1 = self.operators.iter().position(|op| op.id() == id1);
-        let pos2 = self.operators.iter().position(|op| op.id() == id2);
-        match (pos1, pos2) {
+    /// changing anything if both arcs point to the same operator.
+    pub fn swap<A: Operator, B: Operator>(&mut self, a: &Arc<Mutex<A>>, b: &Arc<Mutex<B>>) -> bool {
+        let pos_a = self.find_pos(a);
+        let pos_b = self.find_pos(b);
+        match (pos_a, pos_b) {
             (Some(p1), Some(p2)) if p1 != p2 => {
                 self.operators.swap(p1, p2);
                 true
@@ -380,30 +408,19 @@ impl EventDispatcher {
         self.operators.is_empty()
     }
 
-    /// Iterates over operators in priority order (front to back).
-    pub fn iter(&self) -> impl Iterator<Item = &dyn Operator> {
-        self.operators.iter().map(|op| op.as_ref())
+    /// Returns the names of all operators in priority order (front to back).
+    pub fn iter_names(&self) -> impl Iterator<Item = String> + '_ {
+        self.operators.iter().map(|op| op.name())
     }
 
-    /// Returns the position of an operator by ID. Position 0 is highest priority.
-    pub fn position(&self, id: OperatorId) -> Option<usize> {
-        self.operators.iter().position(|op| op.id() == id)
+    /// Returns the position of an operator. Position 0 is highest priority.
+    pub fn position<T: Operator>(&self, op: &Arc<Mutex<T>>) -> Option<usize> {
+        self.find_pos(op)
     }
 
-    /// Returns a shared reference to the operator of type `T`, if present.
-    pub fn operator<T: Operator>(&self) -> Option<&T> {
-        self.operators
-            .iter()
-            .find(|op| op.id() == std::any::TypeId::of::<T>())
-            .and_then(|op| op.downcast_ref::<T>())
-    }
-
-    /// Returns a mutable reference to the operator of type `T`, if present.
-    pub fn operator_mut<T: Operator>(&mut self) -> Option<&mut T> {
-        self.operators
-            .iter_mut()
-            .find(|op| op.id() == std::any::TypeId::of::<T>())
-            .and_then(|op| op.downcast_mut::<T>())
+    fn find_pos<T: Operator>(&self, op: &Arc<Mutex<T>>) -> Option<usize> {
+        let target = Arc::as_ptr(op) as *const ();
+        self.operators.iter().position(|stored| stored.as_ptr() == target)
     }
 
     // ── Dispatch ─────────────────────────────────────────────────────────────
@@ -429,7 +446,7 @@ impl EventDispatcher {
 
     /// Dispatches an event to all operators without updating synthesis state.
     fn dispatch_to_operators<'c>(&mut self, event: &Event, ctx: &mut EventContext<'c>) -> bool {
-        for op in &mut self.operators {
+        for op in &self.operators {
             if op.dispatch(event, ctx) {
                 return true;
             }
@@ -891,15 +908,14 @@ mod tests {
         }
     }
 
+    fn arc_op<T: Operator>(op: T) -> Arc<Mutex<T>> {
+        Arc::new(Mutex::new(op))
+    }
+
     // Simple counter operator: increments counter on every event, optionally consumes.
     struct CounterOp {
         counter: Rc<Cell<u32>>,
         consumes: bool,
-    }
-    impl CounterOp {
-        fn new(counter: Rc<Cell<u32>>, consumes: bool) -> Box<Self> {
-            Box::new(Self { counter, consumes })
-        }
     }
     impl Operator for CounterOp {
         fn dispatch(&mut self, _: &Event, _: &mut EventContext) -> bool {
@@ -909,7 +925,6 @@ mod tests {
         fn name(&self) -> &str { "CounterOp" }
     }
 
-    // Typed operator for downcast tests.
     struct NamedOp(&'static str);
     impl Operator for NamedOp {
         fn dispatch(&mut self, _: &Event, _: &mut EventContext) -> bool { false }
@@ -932,96 +947,92 @@ mod tests {
     #[test]
     fn push_back_ordering() {
         let mut d = EventDispatcher::new();
-        d.push_back(Box::new(NamedOp("A")));
-        d.push_back(Box::new(OtherOp));
-        let names: Vec<&str> = d.iter().map(|op| op.name()).collect();
+        d.push_back(arc_op(NamedOp("A")));
+        d.push_back(arc_op(OtherOp));
+        let names: Vec<String> = d.iter_names().collect();
         assert_eq!(names, ["A", "OtherOp"]);
     }
 
     #[test]
     fn push_front_ordering() {
         let mut d = EventDispatcher::new();
-        d.push_back(Box::new(NamedOp("A")));
-        d.push_front(Box::new(OtherOp));
-        let names: Vec<&str> = d.iter().map(|op| op.name()).collect();
+        d.push_back(arc_op(NamedOp("A")));
+        d.push_front(arc_op(OtherOp));
+        let names: Vec<String> = d.iter_names().collect();
         assert_eq!(names, ["OtherOp", "A"]);
     }
 
     #[test]
-    fn remove_by_id() {
+    fn remove_by_arc() {
         let mut d = EventDispatcher::new();
-        d.push_back(Box::new(NamedOp("A")));
-        d.push_back(Box::new(OtherOp));
-        assert!(d.remove(std::any::TypeId::of::<NamedOp>()));
+        let a = arc_op(NamedOp("A"));
+        d.push_back(a.clone());
+        d.push_back(arc_op(OtherOp));
+        assert!(d.remove(&a));
         assert_eq!(d.len(), 1);
-        assert_eq!(d.iter().next().unwrap().name(), "OtherOp");
-    }
-
-    #[test]
-    fn remove_typed() {
-        let mut d = EventDispatcher::new();
-        d.push_back(Box::new(NamedOp("A")));
-        assert!(d.remove_typed::<NamedOp>());
-        assert!(d.is_empty());
+        assert_eq!(d.iter_names().next().unwrap(), "OtherOp");
     }
 
     #[test]
     fn remove_nonexistent_returns_false() {
         let mut d = EventDispatcher::new();
-        d.push_back(Box::new(NamedOp("A")));
-        assert!(!d.remove_typed::<OtherOp>());
+        d.push_back(arc_op(NamedOp("A")));
+        let unregistered = arc_op(OtherOp);
+        assert!(!d.remove(&unregistered));
         assert_eq!(d.len(), 1);
     }
 
     #[test]
     fn move_to_front() {
         let mut d = EventDispatcher::new();
-        d.push_back(Box::new(NamedOp("A")));
-        d.push_back(Box::new(OtherOp));
-        assert!(d.move_to_back(std::any::TypeId::of::<NamedOp>()));
-        let names: Vec<&str> = d.iter().map(|op| op.name()).collect();
+        let a = arc_op(NamedOp("A"));
+        d.push_back(a.clone());
+        d.push_back(arc_op(OtherOp));
+        assert!(d.move_to_back(&a));
+        let names: Vec<String> = d.iter_names().collect();
         assert_eq!(names, ["OtherOp", "A"]);
     }
 
     #[test]
     fn move_to_back() {
         let mut d = EventDispatcher::new();
-        d.push_back(Box::new(NamedOp("A")));
-        d.push_back(Box::new(OtherOp));
-        assert!(d.move_to_front(std::any::TypeId::of::<OtherOp>()));
-        let names: Vec<&str> = d.iter().map(|op| op.name()).collect();
+        let other = arc_op(OtherOp);
+        d.push_back(arc_op(NamedOp("A")));
+        d.push_back(other.clone());
+        assert!(d.move_to_front(&other));
+        let names: Vec<String> = d.iter_names().collect();
         assert_eq!(names, ["OtherOp", "A"]);
     }
 
     #[test]
     fn swap_operators() {
         let mut d = EventDispatcher::new();
-        d.push_back(Box::new(NamedOp("A")));
-        d.push_back(Box::new(OtherOp));
-        assert!(d.swap(
-            std::any::TypeId::of::<NamedOp>(),
-            std::any::TypeId::of::<OtherOp>(),
-        ));
-        let names: Vec<&str> = d.iter().map(|op| op.name()).collect();
+        let a = arc_op(NamedOp("A"));
+        let other = arc_op(OtherOp);
+        d.push_back(a.clone());
+        d.push_back(other.clone());
+        assert!(d.swap(&a, &other));
+        let names: Vec<String> = d.iter_names().collect();
         assert_eq!(names, ["OtherOp", "A"]);
     }
 
     #[test]
-    fn operator_accessor() {
+    fn multiple_instances_of_same_type() {
         let mut d = EventDispatcher::new();
-        d.push_back(Box::new(NamedOp("hello")));
-        assert_eq!(d.operator::<NamedOp>().map(|op| op.0), Some("hello"));
-        assert!(d.operator::<OtherOp>().is_none());
+        d.push_back(arc_op(NamedOp("first")));
+        d.push_back(arc_op(NamedOp("second")));
+        assert_eq!(d.len(), 2);
+        let names: Vec<String> = d.iter_names().collect();
+        assert_eq!(names, ["first", "second"]);
     }
 
     #[test]
-    fn operator_mut_accessor() {
+    fn mutation_via_retained_arc() {
         let mut d = EventDispatcher::new();
-        d.push_back(Box::new(NamedOp("hello")));
-        if let Some(op) = d.operator_mut::<NamedOp>() {
-            op.0 = "world";
-        }
-        assert_eq!(d.operator::<NamedOp>().map(|op| op.0), Some("world"));
+        let op = arc_op(NamedOp("hello"));
+        d.push_back(op.clone());
+        op.lock().unwrap().0 = "world";
+        assert_eq!(d.iter_names().next().unwrap(), "world");
     }
 
     // ── Dispatch propagation ─────────────────────────────────────────────────
@@ -1031,8 +1042,8 @@ mod tests {
         let mut d = EventDispatcher::new();
         let c1 = Rc::new(Cell::new(0u32));
         let c2 = Rc::new(Cell::new(0u32));
-        d.push_back(CounterOp::new(c1.clone(), false));
-        d.push_back(CounterOp::new(c2.clone(), false));
+        d.push_back(arc_op(CounterOp { counter: c1.clone(), consumes: false }));
+        d.push_back(arc_op(CounterOp { counter: c2.clone(), consumes: false }));
 
         let mut parts = create_mock_context_parts();
         let mut ctx = make_context(&mut parts);
@@ -1048,8 +1059,8 @@ mod tests {
         let mut d = EventDispatcher::new();
         let c1 = Rc::new(Cell::new(0u32));
         let c2 = Rc::new(Cell::new(0u32));
-        d.push_back(CounterOp::new(c1.clone(), true));  // consumes
-        d.push_back(CounterOp::new(c2.clone(), false));
+        d.push_back(arc_op(CounterOp { counter: c1.clone(), consumes: true }));
+        d.push_back(arc_op(CounterOp { counter: c2.clone(), consumes: false }));
 
         let mut parts = create_mock_context_parts();
         let mut ctx = make_context(&mut parts);
@@ -1062,30 +1073,20 @@ mod tests {
 
     #[test]
     fn dispatch_priority_order_front_to_back() {
-        let mut d = EventDispatcher::new();
         let order = Rc::new(Cell::new(0u32));
 
-        let o1 = order.clone();
         struct RecordOp(Rc<Cell<u32>>, u32);
         impl Operator for RecordOp {
             fn dispatch(&mut self, _: &Event, _: &mut EventContext) -> bool {
-                // Record which operator fired (by storing its id in the cell)
-                // We use the existing value + our id to show ordering
                 self.0.set(self.0.get() * 10 + self.1);
                 false
             }
             fn name(&self) -> &str { "RecordOp" }
-            // Override id to allow two instances
-            fn id(&self) -> crate::operator::OperatorId {
-                match self.1 {
-                    1 => std::any::TypeId::of::<u8>(),
-                    _ => std::any::TypeId::of::<u16>(),
-                }
-            }
         }
 
-        d.push_back(Box::new(RecordOp(order.clone(), 1)));
-        d.push_back(Box::new(RecordOp(order.clone(), 2)));
+        let mut d = EventDispatcher::new();
+        d.push_back(arc_op(RecordOp(order.clone(), 1)));
+        d.push_back(arc_op(RecordOp(order.clone(), 2)));
 
         let mut parts = create_mock_context_parts();
         let mut ctx = make_context(&mut parts);
@@ -1120,7 +1121,7 @@ mod tests {
             fn name(&self) -> &str { "ClickCounter" }
         }
 
-        d.push_back(Box::new(ClickCounter(click_count.clone())));
+        d.push_back(arc_op(ClickCounter(click_count.clone())));
 
         let mut parts = create_mock_context_parts();
 

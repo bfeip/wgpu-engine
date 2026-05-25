@@ -4,7 +4,7 @@ mod operators;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use egui_wgpu::RendererOptions;
 use winit::{
@@ -242,12 +242,12 @@ impl<'a> ApplicationHandler for App<'a> {
         if self.state.is_none() {
             let mut state = pollster::block_on(ViewerState::new(event_loop));
             state.set_default_scene();
-            let sphere_op = SphereOperator::new(
+            let sphere_op = Arc::new(Mutex::new(SphereOperator::new(
                 Rc::clone(&state.construction_options),
                 Rc::clone(&state.document),
                 Rc::clone(&state.node_map),
-            );
-            state.viewer.dispatcher_mut().push_front(Box::new(sphere_op));
+            )));
+            state.viewer.dispatcher_mut().push_front(sphere_op);
             state.window.request_redraw();
             self.state = Some(state);
         }

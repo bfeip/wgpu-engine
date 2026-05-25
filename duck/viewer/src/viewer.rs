@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex};
+
 use duck_engine_common::Vector3;
 use duck_engine_scene::{NodeFlags, NodeId};
 use web_time::Instant;
@@ -26,6 +28,7 @@ pub struct Viewer<'a> {
     scene: Scene,
     selection: SelectionManager,
     dispatcher: EventDispatcher,
+    nav_op: Arc<Mutex<NavigationOperator>>,
     /// Current cursor position in screen coordinates
     cursor_position: Option<(f32, f32)>,
     /// Last time update() was called, for delta_time calculation
@@ -126,10 +129,12 @@ impl<'a> Viewer<'a> {
 
         let mut dispatcher = EventDispatcher::new();
 
-        // Add operators in priority order (first added = highest priority)
-        dispatcher.push_back(Box::new(TransformOperator::new()));
-        dispatcher.push_back(Box::new(SelectionOperator::new()));
-        dispatcher.push_back(Box::new(NavigationOperator::new()));
+        // Add operators in priority order (first added = highest priority).
+        // nav_op is retained for typed access via navigation_mode / set_navigation_mode.
+        dispatcher.push_back(Arc::new(Mutex::new(TransformOperator::new())));
+        dispatcher.push_back(Arc::new(Mutex::new(SelectionOperator::new())));
+        let nav_op = Arc::new(Mutex::new(NavigationOperator::new()));
+        dispatcher.push_back(nav_op.clone());
 
         // Create viewer
         let mut viewer = Self {
@@ -141,6 +146,7 @@ impl<'a> Viewer<'a> {
             scene,
             selection: SelectionManager::new(),
             dispatcher,
+            nav_op,
             cursor_position: None,
             last_update_time: None,
             #[cfg(feature = "streaming")]
@@ -199,17 +205,12 @@ impl<'a> Viewer<'a> {
 
     /// Get the current navigation mode.
     pub fn navigation_mode(&self) -> NavigationMode {
-        self.dispatcher
-            .operator::<NavigationOperator>()
-            .map(|op| op.mode())
-            .unwrap_or_default()
+        self.nav_op.lock().unwrap().mode()
     }
 
     /// Set the navigation mode (Orbit or Walk).
     pub fn set_navigation_mode(&mut self, mode: NavigationMode) {
-        if let Some(op) = self.dispatcher.operator_mut::<NavigationOperator>() {
-            op.set_mode(mode);
-        }
+        self.nav_op.lock().unwrap().set_mode(mode);
     }
 
     /// Dispatch an Update event with delta_time since last update.
