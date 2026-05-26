@@ -27,6 +27,13 @@ use crate::operators::{ConstructionOptions, SphereOperator};
 
 use document::{CadDocument, PartId};
 
+#[derive(Default, PartialEq, Eq)]
+enum OperatorKind {
+    #[default]
+    Selection,
+    Sphere,
+}
+
 /// Owns all rendering state: the 3D viewer plus egui context and GPU renderer.
 ///
 /// Field order matters: Rust drops fields in declaration order, so egui
@@ -43,6 +50,9 @@ struct ViewerState<'a> {
 
     document: Rc<RefCell<CadDocument>>,
     node_map: Rc<RefCell<HashMap<PartId, NodeId>>>,
+
+    sphere_op: Arc<Mutex<SphereOperator>>,
+    active_operator: OperatorKind,
 }
 
 impl ViewerState<'static> {
@@ -53,9 +63,11 @@ impl ViewerState<'static> {
                 .expect("Failed to create window"),
         );
 
-        let viewer = Viewer::from_window(Arc::clone(&window)).await;
+        let mut viewer = Viewer::from_window(Arc::clone(&window)).await;
 
         let egui_ctx = egui::Context::default();
+        egui_extras::install_image_loaders(&egui_ctx);
+
         let egui_winit = egui_winit::State::new(
             egui_ctx.clone(),
             egui::ViewportId::ROOT,
@@ -70,15 +82,28 @@ impl ViewerState<'static> {
             RendererOptions::default(),
         );
 
+        let construction_options = Rc::new(RefCell::new(ConstructionOptions::new()));
+        let document = Rc::new(RefCell::new(CadDocument::new()));
+        let node_map = Rc::new(RefCell::new(HashMap::new()));
+
+        let sphere_op = Arc::new(Mutex::new(SphereOperator::new(
+            Rc::clone(&construction_options),
+            Rc::clone(&document),
+            Rc::clone(&node_map),
+        )));
+        viewer.dispatcher_mut().push_back(sphere_op.clone());
+
         Self {
             egui_renderer,
             egui_winit,
             egui_ctx,
             viewer,
             window,
-            construction_options: Rc::new(RefCell::new(ConstructionOptions::new())),
-            document: Rc::new(RefCell::new(CadDocument::new())),
-            node_map: Rc::new(RefCell::new(HashMap::new())),
+            construction_options,
+            document,
+            node_map,
+            sphere_op,
+            active_operator: OperatorKind::Selection,
         }
     }
 
@@ -117,11 +142,11 @@ impl ViewerState<'static> {
         scene.set_default_light_nodes(camera_node_id);
 
         // Setup XZ grid
-        let grid_mesh = Mesh::plane(100.0, 100.0, 20, 20, PrimitiveType::LineList);
+        let grid_mesh = Mesh::plane(1000.0, 1000.0, 200, 200, PrimitiveType::LineList);
         let grid_mesh_id = scene.add_mesh(grid_mesh);
 
         let grid_material = Material::new().with_line_color(RgbaColor {
-            r: 0.1, g: 0.1, b: 0.1, a: 1.0
+            r: 0.05, g: 0.05, b: 0.05, a: 1.0
         });
         let grid_material_id = scene.add_material(grid_material);
 
@@ -158,7 +183,10 @@ impl<'a> ViewerState<'a> {
         self.viewer.update();
 
         let raw_input = self.egui_winit.take_egui_input(&self.window);
-        let full_output = self.egui_ctx.run(raw_input, |_ctx| {});
+        let egui_ctx = self.egui_ctx.clone();
+        let full_output = egui_ctx.run(raw_input, |ctx| {
+            self.render_operator_palette(ctx);
+        });
         self.egui_winit.handle_platform_output(&self.window, full_output.platform_output.clone());
 
         match self.viewer.render_scene() {
@@ -170,6 +198,46 @@ impl<'a> ViewerState<'a> {
         }
 
         self.window.request_redraw();
+    }
+
+    fn render_operator_palette(&mut self, ctx: &egui::Context) {
+        const CURSOR_SVG: &[u8] =
+            include_bytes!("../../../assets/svg/cursor-svgrepo-com.svg");
+        const SPHERE_SVG: &[u8] =
+            include_bytes!("../../../assets/svg/sphere-svgrepo-com.svg");
+
+        egui::SidePanel::left("operator_palette")
+            .resizable(false)
+            .exact_width(56.0)
+            .show(ctx, |ui| {
+                ui.add_space(8.0);
+
+                let sel_btn = ui.add(
+                    egui::Button::image(
+                        egui::Image::from_bytes("bytes://cursor.svg", CURSOR_SVG)
+                            .fit_to_exact_size(egui::vec2(32.0, 32.0)),
+                    )
+                    .selected(self.active_operator == OperatorKind::Selection),
+                );
+                if sel_btn.clicked() {
+                    self.viewer.dispatcher_mut().move_to_back(&self.sphere_op);
+                    self.active_operator = OperatorKind::Selection;
+                }
+
+                ui.add_space(4.0);
+
+                let sphere_btn = ui.add(
+                    egui::Button::image(
+                        egui::Image::from_bytes("bytes://sphere.svg", SPHERE_SVG)
+                            .fit_to_exact_size(egui::vec2(32.0, 32.0)),
+                    )
+                    .selected(self.active_operator == OperatorKind::Sphere),
+                );
+                if sphere_btn.clicked() {
+                    self.viewer.dispatcher_mut().move_to_front(&self.sphere_op);
+                    self.active_operator = OperatorKind::Sphere;
+                }
+            });
     }
 
     fn render_egui_overlay(
@@ -242,12 +310,6 @@ impl<'a> ApplicationHandler for App<'a> {
         if self.state.is_none() {
             let mut state = pollster::block_on(ViewerState::new(event_loop));
             state.set_default_scene();
-            let sphere_op = Arc::new(Mutex::new(SphereOperator::new(
-                Rc::clone(&state.construction_options),
-                Rc::clone(&state.document),
-                Rc::clone(&state.node_map),
-            )));
-            state.viewer.dispatcher_mut().push_front(sphere_op);
             state.window.request_redraw();
             self.state = Some(state);
         }

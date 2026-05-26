@@ -145,25 +145,24 @@ impl Operator for SphereOperator {
         match event {
             Event::MouseClick { button, position, .. } => {
                 let actions = self.bindings.actions_for_click(*button, ctx.modifiers).to_vec();
-                // Snapshot phase data before the mutable method calls below.
-                let phase_data = match &self.phase {
-                    Phase::Idle => None,
-                    Phase::Defining { center, preview_node } => Some((*center, *preview_node)),
-                };
                 let mut handled = false;
                 for action in actions {
-                    match (phase_data, action) {
-                        (None, SphereAction::Place) => {
-                            handled |= self.on_place_center(*position, ctx);
+                    handled |= match action {
+                        SphereAction::Place => {
+                            if let Phase::Defining { center, preview_node } = self.phase {
+                                self.on_place_outer(center, preview_node, *position, ctx)
+                            } else {
+                                self.on_place_center(*position, ctx)
+                            }
                         }
-                        (Some((center, preview_node)), SphereAction::Place) => {
-                            handled |= self.on_place_outer(center, preview_node, *position, ctx);
+                        SphereAction::Cancel => {
+                            if let Phase::Defining { preview_node, .. } = self.phase {
+                                self.on_cancel(preview_node, ctx)
+                            } else {
+                                false
+                            }
                         }
-                        (Some((_, preview_node)), SphereAction::Cancel) => {
-                            handled |= self.on_cancel(preview_node, ctx);
-                        }
-                        _ => {}
-                    }
+                    };
                 }
                 handled
             }

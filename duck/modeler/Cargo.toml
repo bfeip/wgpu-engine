@@ -10,6 +10,7 @@ duck-engine-viewer = { path = "../viewer", features = ["winit-support"] }
 opencascade = { path = "../../third-party/opencascade-rs/crates/opencascade" }
 egui = "0.33"
 egui-wgpu = "0.33"
+egui_extras = { version = "0.33", features = ["svg"] }
 env_logger = "0.11"
 log = "0.4"
 pollster = "0.4"
