@@ -34,8 +34,8 @@ fn build_camera_section(ui: &mut egui::Ui, viewer: &Viewer) {
 fn build_operators_section(ui: &mut egui::Ui, viewer: &Viewer) {
     ui.heading("Operators");
 
-    for op in viewer.operator_manager().iter() {
-        ui.label(format!("  {}", op.name()));
+    for name in viewer.dispatcher().iter_names() {
+        ui.label(format!("  {}", name));
     }
 }
 

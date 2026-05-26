@@ -10,7 +10,8 @@ pub mod network_tab;
 pub use left_panel::LeftPanel;
 pub use right_panel::RightPanel;
 
-use duck_engine_viewer::operator::NavigationMode;
+use std::sync::{Arc, Mutex};
+use duck_engine_viewer::operator::{NavigationMode, NavigationOperator};
 use duck_engine_viewer::scene::{LightType, NodeId, PositionedCamera, Visibility};
 use duck_engine_viewer::Viewer;
 
@@ -53,9 +54,14 @@ pub struct UiState {
 }
 
 impl UiState {
-    pub fn build(&mut self, ctx: &egui::Context, viewer: &mut Viewer) -> UiActions {
+    pub fn build(
+        &mut self,
+        ctx: &egui::Context,
+        viewer: &mut Viewer,
+        nav_op: &Arc<Mutex<NavigationOperator>>,
+    ) -> UiActions {
         let mut actions = UiActions::default();
-        let mode_info = ModeInfo { mode: viewer.navigation_mode() };
+        let mode_info = ModeInfo { mode: nav_op.lock().unwrap().mode() };
 
         build_performance_panel(ctx, &mode_info);
         self.left.show(ctx, viewer, &mut actions);

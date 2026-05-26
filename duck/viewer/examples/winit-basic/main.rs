@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use winit::{
     application::ApplicationHandler,
     event::{DeviceEvent, DeviceId, WindowEvent},
@@ -7,6 +7,7 @@ use winit::{
 };
 
 use duck_engine_viewer::{Viewer, winit_support};
+use duck_engine_viewer::operator::{NavigationOperator, SelectionOperator, TransformOperator};
 
 /// Application state for the winit event loop
 struct App<'a> {
@@ -24,11 +25,15 @@ impl<'a> App<'a> {
 
         // Create viewer with the window
         let size = window.inner_size();
-        let viewer = pollster::block_on(Viewer::new(
+        let mut viewer = pollster::block_on(Viewer::new(
             Arc::clone(&window),
             size.width,
             size.height,
         ));
+
+        viewer.dispatcher_mut().push_back(Arc::new(Mutex::new(TransformOperator::new())));
+        viewer.dispatcher_mut().push_back(Arc::new(Mutex::new(SelectionOperator::new())));
+        viewer.dispatcher_mut().push_back(Arc::new(Mutex::new(NavigationOperator::new())));
 
         window.request_redraw();
 

@@ -1,5 +1,3 @@
-use std::sync::{Arc, Mutex};
-
 use duck_engine_common::Vector3;
 use duck_engine_scene::{NodeFlags, NodeId};
 use web_time::Instant;
@@ -9,10 +7,6 @@ use crate::streaming::ViewerStreamClient;
 
 use crate::{
     event::{Event, EventContext, EventDispatcher},
-    operator::{
-        NavigationMode, NavigationOperator,
-        SelectionOperator, TransformOperator,
-    },
     scene::{NodePayload, PositionedCamera, Scene},
     selection::SelectionManager,
     renderer::{Renderer, HighlightQuery},
@@ -28,7 +22,6 @@ pub struct Viewer<'a> {
     scene: Scene,
     selection: SelectionManager,
     dispatcher: EventDispatcher,
-    nav_op: Arc<Mutex<NavigationOperator>>,
     /// Current cursor position in screen coordinates
     cursor_position: Option<(f32, f32)>,
     /// Last time update() was called, for delta_time calculation
@@ -127,14 +120,7 @@ impl<'a> Viewer<'a> {
         let renderer = Renderer::new(device.clone(), queue.clone(), surface_format, width, height, sample_count, has_compute);
         let scene = Scene::new();
 
-        let mut dispatcher = EventDispatcher::new();
-
-        // Add operators in priority order (first added = highest priority).
-        // nav_op is retained for typed access via navigation_mode / set_navigation_mode.
-        dispatcher.push_back(Arc::new(Mutex::new(TransformOperator::new())));
-        dispatcher.push_back(Arc::new(Mutex::new(SelectionOperator::new())));
-        let nav_op = Arc::new(Mutex::new(NavigationOperator::new()));
-        dispatcher.push_back(nav_op.clone());
+        let dispatcher = EventDispatcher::new();
 
         // Create viewer
         let mut viewer = Self {
@@ -146,7 +132,6 @@ impl<'a> Viewer<'a> {
             scene,
             selection: SelectionManager::new(),
             dispatcher,
-            nav_op,
             cursor_position: None,
             last_update_time: None,
             #[cfg(feature = "streaming")]
@@ -201,16 +186,6 @@ impl<'a> Viewer<'a> {
             modifiers: Default::default(), // dispatcher overwrites this in dispatch()
         };
         self.dispatcher.dispatch(event, &mut ctx);
-    }
-
-    /// Get the current navigation mode.
-    pub fn navigation_mode(&self) -> NavigationMode {
-        self.nav_op.lock().unwrap().mode()
-    }
-
-    /// Set the navigation mode (Orbit or Walk).
-    pub fn set_navigation_mode(&mut self, mode: NavigationMode) {
-        self.nav_op.lock().unwrap().set_mode(mode);
     }
 
     /// Dispatch an Update event with delta_time since last update.

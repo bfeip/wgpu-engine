@@ -1,4 +1,4 @@
-use std::{sync::Arc};
+use std::sync::{Arc, Mutex};
 
 use duck_engine_scene::NodeFlags;
 use winit::{
@@ -12,6 +12,7 @@ use duck_engine_viewer::common::{RgbaColor, Transform, Point3};
 use duck_engine_viewer::input::{ElementState, Key};
 use duck_engine_viewer::scene::{EnvironmentMapId, Material, MaterialFlags, Mesh, PrimitiveType};
 use duck_engine_viewer::{Viewer, winit_support};
+use duck_engine_viewer::operator::{NavigationOperator, SelectionOperator, TransformOperator};
 
 const SPHERE_RADIUS: f32 = 0.4;
 const SPHERE_SEGMENTS: u32 = 32;
@@ -256,6 +257,10 @@ impl<'a> App<'a> {
             size.width,
             size.height,
         ));
+
+        viewer.dispatcher_mut().push_back(Arc::new(Mutex::new(TransformOperator::new())));
+        viewer.dispatcher_mut().push_back(Arc::new(Mutex::new(SelectionOperator::new())));
+        viewer.dispatcher_mut().push_back(Arc::new(Mutex::new(NavigationOperator::new())));
 
         build_material_scene(&mut viewer);
 

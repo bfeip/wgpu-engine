@@ -16,6 +16,7 @@ use winit::{
 
 use duck_engine_viewer::winit_support;
 use duck_engine_viewer::Viewer;
+use duck_engine_viewer::operator::{NavigationOperator, SelectionOperator, TransformOperator};
 use duck_engine_viewer::common::{
     RgbaColor, Transform, Vector3, InnerSpace
 };
@@ -85,6 +86,10 @@ impl ViewerState<'static> {
         let construction_options = Rc::new(RefCell::new(ConstructionOptions::new()));
         let document = Rc::new(RefCell::new(CadDocument::new()));
         let node_map = Rc::new(RefCell::new(HashMap::new()));
+
+        viewer.dispatcher_mut().push_back(Arc::new(Mutex::new(TransformOperator::new())));
+        viewer.dispatcher_mut().push_back(Arc::new(Mutex::new(SelectionOperator::new())));
+        viewer.dispatcher_mut().push_back(Arc::new(Mutex::new(NavigationOperator::new())));
 
         let sphere_op = Arc::new(Mutex::new(SphereOperator::new(
             Rc::clone(&construction_options),

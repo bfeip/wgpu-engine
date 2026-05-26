@@ -1,7 +1,7 @@
 mod ui;
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use egui_wgpu::RendererOptions;
 use winit::{
@@ -15,7 +15,7 @@ use winit::{
 use duck_engine_common::Point3;
 use duck_engine_viewer::{common::RgbaColor, scene::NodeFlags};
 use duck_engine_viewer::input::{ElementState, Key};
-use duck_engine_viewer::operator::NavigationMode;
+use duck_engine_viewer::operator::{NavigationMode, NavigationOperator, SelectionOperator, TransformOperator};
 use duck_engine_viewer::import_export;
 use duck_engine_viewer::import_export::format::{SaveOptions, save_to_file};
 use duck_engine_viewer::common::Transform;
@@ -41,6 +41,7 @@ struct ViewerState<'a> {
     egui_ctx: egui::Context,
     viewer: Viewer<'a>,
     window: Arc<Window>,
+    nav_op: Arc<Mutex<NavigationOperator>>,
 }
 
 impl ViewerState<'static> {
@@ -55,7 +56,12 @@ impl ViewerState<'static> {
 
     async fn from_window(window: Arc<Window>, size: Option<PhysicalSize<u32>>) -> Self {
         let size = size.unwrap_or(window.inner_size());
-        let viewer = Viewer::new(Arc::clone(&window), size.width, size.height).await;
+        let mut viewer = Viewer::new(Arc::clone(&window), size.width, size.height).await;
+
+        viewer.dispatcher_mut().push_back(Arc::new(Mutex::new(TransformOperator::new())));
+        viewer.dispatcher_mut().push_back(Arc::new(Mutex::new(SelectionOperator::new())));
+        let nav_op = Arc::new(Mutex::new(NavigationOperator::new()));
+        viewer.dispatcher_mut().push_back(nav_op.clone());
 
         let egui_ctx = egui::Context::default();
         let egui_winit = egui_winit::State::new(
@@ -72,7 +78,7 @@ impl ViewerState<'static> {
             RendererOptions::default(),
         );
 
-        Self { egui_renderer, egui_winit, egui_ctx, viewer, window }
+        Self { egui_renderer, egui_winit, egui_ctx, viewer, window, nav_op }
     }
 }
 
@@ -128,7 +134,7 @@ impl<'a> App<'a> {
             let raw_input = state.egui_winit.take_egui_input(&state.window);
             let ui = &mut self.ui;
             let full_output = state.egui_ctx.run(raw_input, |ctx| {
-                ui_actions = ui.build(ctx, &mut state.viewer);
+                ui_actions = ui.build(ctx, &mut state.viewer, &state.nav_op);
             });
 
             state.egui_winit.handle_platform_output(
@@ -345,12 +351,12 @@ impl<'a> App<'a> {
 
     fn cycle_operator_mode(&mut self) {
         let Some(state) = self.state.as_mut() else { return };
-        let new_mode = match state.viewer.navigation_mode() {
+        let new_mode = match state.nav_op.lock().unwrap().mode() {
             NavigationMode::Turntable => NavigationMode::Walk,
             NavigationMode::Walk => NavigationMode::Trackball,
             NavigationMode::Trackball => NavigationMode::Turntable,
         };
-        state.viewer.set_navigation_mode(new_mode);
+        state.nav_op.lock().unwrap().set_mode(new_mode);
     }
 
     fn toggle_ortho(&mut self) {
