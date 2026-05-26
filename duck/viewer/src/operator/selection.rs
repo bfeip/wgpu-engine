@@ -11,8 +11,10 @@ use duck_engine_common::InnerSpace;
 /// Semantic actions for the selection operator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SelectionAction {
-    /// Cast a ray and update the selection.
+    /// Cast a ray and replace the selection with the hit item (or clear if nothing hit).
     Select,
+    /// Cast a ray and toggle the hit item in/out of the current selection.
+    AddToSelection,
 }
 
 /// Operator for selecting objects in the scene via mouse click.
@@ -23,33 +25,43 @@ pub struct SelectionOperator {
 impl SelectionOperator {
     /// Creates a new selection operator.
     pub fn new() -> Self {
-        let bindings = InputMap::new().bind(
-            InputBinding::MouseClick { button: MouseButton::Left, modifiers: Modifiers::default() },
-            SelectionAction::Select,
-        );
+        let bindings = InputMap::new()
+            .bind(
+                InputBinding::MouseClick { button: MouseButton::Left, modifiers: Modifiers::default() },
+                SelectionAction::Select,
+            )
+            .bind(
+                InputBinding::MouseClick {
+                    button: MouseButton::Left,
+                    modifiers: Modifiers { shift: true, ..Default::default() },
+                },
+                SelectionAction::AddToSelection,
+            );
         Self { bindings }
     }
 
-    /// Performs selection at the given position and prints results to console.
-    fn perform_selection(cursor_x: f32, cursor_y: f32, ctx: &mut EventContext) {
+    fn pick_closest(cursor_x: f32, cursor_y: f32, ctx: &mut EventContext) -> Option<SelectionItem> {
         let camera = ctx.camera();
-
         let ray = camera.ray_from_screen_point(cursor_x, cursor_y, ctx.size.0, ctx.size.1);
-
         let camera_distance = (camera.eye - camera.target).magnitude();
-
         // Line tolerance: 6 pixels in world space, calibrated to the camera target depth.
         // Approximation: uses a single depth reference, so the effective pixel budget
         // varies with geometry depth (near objects get more pixels, far objects fewer).
         let line_tolerance = camera.world_size_per_pixel(camera_distance, ctx.size.1) * 6.0;
-
         let results = pick_all_from_ray(&RayPickQuery::all(ray, line_tolerance), ctx.scene);
+        results.first().map(|hit| resolve_hit_to_selection(hit, ctx.scene))
+    }
 
-        if let Some(closest_hit) = results.first() {
-            let item = resolve_hit_to_selection(closest_hit, ctx.scene);
-            ctx.selection.set(item);
-        } else {
-            ctx.selection.clear();
+    fn perform_selection(cursor_x: f32, cursor_y: f32, ctx: &mut EventContext) {
+        match Self::pick_closest(cursor_x, cursor_y, ctx) {
+            Some(item) => ctx.selection.set(item),
+            None => ctx.selection.clear(),
+        }
+    }
+
+    fn perform_add_to_selection(cursor_x: f32, cursor_y: f32, ctx: &mut EventContext) {
+        if let Some(item) = Self::pick_closest(cursor_x, cursor_y, ctx) {
+            ctx.selection.toggle(item);
         }
     }
 }
@@ -57,8 +69,12 @@ impl SelectionOperator {
 impl Operator for SelectionOperator {
     fn dispatch(&mut self, event: &Event, ctx: &mut EventContext) -> bool {
         let Event::MouseClick { button, position, .. } = event else { return false };
-        if self.bindings.actions_for_click(*button, ctx.modifiers).contains(&SelectionAction::Select) {
+        let actions = self.bindings.actions_for_click(*button, ctx.modifiers);
+        if actions.contains(&SelectionAction::Select) {
             Self::perform_selection(position.0, position.1, ctx);
+            true
+        } else if actions.contains(&SelectionAction::AddToSelection) {
+            Self::perform_add_to_selection(position.0, position.1, ctx);
             true
         } else {
             false

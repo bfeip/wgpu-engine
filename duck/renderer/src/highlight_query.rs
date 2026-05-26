@@ -32,7 +32,7 @@ pub trait HighlightQuery {
     /// Returns true if there are no highlights.
     fn is_empty(&self) -> bool;
 
-    /// Returns true if the given node is highlighted.
+    /// Returns true if the given node is highlighted (primary or secondary).
     fn is_node_highlighted(&self, node_id: NodeId) -> bool;
 
     /// Returns the face indices highlighted on `node_id`, if any.
@@ -47,6 +47,14 @@ pub trait HighlightQuery {
     /// Returns all nodes that have at least one edge highlighted.
     fn nodes_with_highlighted_edges(&self) -> Vec<NodeId>;
 
-    /// Returns the outline rendering configuration.
+    /// Returns the outline rendering configuration for the primary selection.
     fn outline_config(&self) -> OutlineConfig;
+
+    /// Returns the NodeId of the primary highlighted node, if any.
+    /// Used by the renderer to partition primary vs secondary highlight batches.
+    fn primary_node(&self) -> Option<NodeId>;
+
+    /// Returns the outline config for secondary (non-primary) highlights,
+    /// or `None` if there are no secondary highlights.
+    fn secondary_outline_config(&self) -> Option<OutlineConfig>;
 }

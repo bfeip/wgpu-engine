@@ -352,18 +352,25 @@ pub struct DrawData {
     /// All batches, sorted: opaque first (by material/primitive/mesh),
     /// then transparent back-to-front.
     batches: Vec<DrawBatch>,
-    /// Subset of batches containing only highlighted instances.
+    /// Subset of batches containing only the primary highlighted instance.
     /// Empty if no highlight is active.
     highlighted_batches: Vec<DrawBatch>,
+    /// Subset of batches containing secondary (non-primary) highlighted instances.
+    /// Empty if there is only one selection or no highlight is active.
+    secondary_highlighted_batches: Vec<DrawBatch>,
     /// Batches with ALWAYS_ON_TOP materials, rendered in a separate overlay pass.
     overlay_batches: Vec<DrawBatch>,
-    /// Sub-geometry draw calls for highlighted faces/edges.
+    /// Sub-geometry draw calls for highlighted faces/edges belonging to the primary selection.
     /// Each entry targets a specific index range within a mesh's index buffer.
     highlight_sub_geom_batches: Vec<SubGeomBatch>,
-    /// Resolved outline configuration for the current frame. `Some` when a
-    /// non-empty highlight is active; `None` otherwise. Passes use this to
-    /// update per-frame outline uniforms without holding a `HighlightQuery` ref.
+    /// Sub-geometry draw calls for highlighted faces/edges belonging to secondary selections.
+    secondary_highlight_sub_geom_batches: Vec<SubGeomBatch>,
+    /// Resolved outline configuration for the primary selection. `Some` when a
+    /// non-empty highlight is active; `None` otherwise.
     outline_config: Option<crate::highlight_query::OutlineConfig>,
+    /// Resolved outline configuration for secondary selections. `Some` when secondary
+    /// highlights exist; `None` otherwise.
+    secondary_outline_config: Option<crate::highlight_query::OutlineConfig>,
 }
 
 impl DrawData {
@@ -394,23 +401,47 @@ impl DrawData {
         batches = normal_batches;
 
         let active_highlight = highlight.filter(|h| !h.is_empty());
+        let primary_node = active_highlight.and_then(|h| h.primary_node());
 
         let highlighted_batches = active_highlight
-            .map(|h| partition_batches(&batches, |inst| h.is_node_highlighted(inst.node_id)).0)
+            .map(|_| partition_batches(&batches, |inst| Some(inst.node_id) == primary_node).0)
             .unwrap_or_default();
 
-        let highlight_sub_geom_batches = active_highlight
+        let secondary_highlighted_batches = active_highlight
+            .map(|h| {
+                partition_batches(&batches, |inst| {
+                    h.is_node_highlighted(inst.node_id) && Some(inst.node_id) != primary_node
+                })
+                .0
+            })
+            .unwrap_or_default();
+
+        let all_sub_geom = active_highlight
             .map(|h| collect_highlight_sub_geom_batches(&batches, scene, h))
             .unwrap_or_default();
 
+        let mut highlight_sub_geom_batches = Vec::new();
+        let mut secondary_highlight_sub_geom_batches = Vec::new();
+        for batch in all_sub_geom {
+            if Some(batch.instance_transform.node_id) == primary_node {
+                highlight_sub_geom_batches.push(batch);
+            } else {
+                secondary_highlight_sub_geom_batches.push(batch);
+            }
+        }
+
         let outline_config = active_highlight.map(|h| h.outline_config());
+        let secondary_outline_config = active_highlight.and_then(|h| h.secondary_outline_config());
 
         Self {
             batches,
             highlighted_batches,
+            secondary_highlighted_batches,
             overlay_batches,
             highlight_sub_geom_batches,
+            secondary_highlight_sub_geom_batches,
             outline_config,
+            secondary_outline_config,
         }
     }
 
@@ -419,20 +450,34 @@ impl DrawData {
         &self.batches
     }
 
-    /// Batches containing only highlighted instances, for outline/mask rendering.
+    /// Batches containing only the primary highlighted instance, for outline/mask rendering.
     /// Empty if no highlight is active.
     pub fn highlighted_batches(&self) -> &[DrawBatch] {
         &self.highlighted_batches
     }
 
-    /// Whether any instances or sub-geometry are highlighted.
-    pub fn has_highlights(&self) -> bool {
-        !self.highlighted_batches.is_empty() || !self.highlight_sub_geom_batches.is_empty()
+    /// Batches containing secondary (non-primary) highlighted instances.
+    /// Empty if there is only one selection or no highlight is active.
+    pub fn secondary_highlighted_batches(&self) -> &[DrawBatch] {
+        &self.secondary_highlighted_batches
     }
 
-    /// Sub-geometry draw calls for highlighted faces/edges.
+    /// Whether any instances or sub-geometry are highlighted (primary or secondary).
+    pub fn has_highlights(&self) -> bool {
+        !self.highlighted_batches.is_empty()
+            || !self.highlight_sub_geom_batches.is_empty()
+            || !self.secondary_highlighted_batches.is_empty()
+            || !self.secondary_highlight_sub_geom_batches.is_empty()
+    }
+
+    /// Sub-geometry draw calls for primary highlighted faces/edges.
     pub fn highlight_sub_geom_batches(&self) -> &[SubGeomBatch] {
         &self.highlight_sub_geom_batches
+    }
+
+    /// Sub-geometry draw calls for secondary highlighted faces/edges.
+    pub fn secondary_highlight_sub_geom_batches(&self) -> &[SubGeomBatch] {
+        &self.secondary_highlight_sub_geom_batches
     }
 
     /// Batches with ALWAYS_ON_TOP materials, rendered in a separate overlay pass.
@@ -445,9 +490,14 @@ impl DrawData {
         !self.overlay_batches.is_empty()
     }
 
-    /// Outline configuration for the current frame, or `None` if nothing is highlighted.
+    /// Outline configuration for the primary selection, or `None` if nothing is highlighted.
     pub fn outline_config(&self) -> Option<&crate::highlight_query::OutlineConfig> {
         self.outline_config.as_ref()
+    }
+
+    /// Outline configuration for secondary selections, or `None` if there are none.
+    pub fn secondary_outline_config(&self) -> Option<&crate::highlight_query::OutlineConfig> {
+        self.secondary_outline_config.as_ref()
     }
 }
 
@@ -812,6 +862,18 @@ use duck_engine_scene::NodeFlags;
 
         fn outline_config(&self) -> OutlineConfig {
             OutlineConfig::default()
+        }
+
+        fn primary_node(&self) -> Option<NodeId> {
+            self.highlighted_nodes.first().copied()
+        }
+
+        fn secondary_outline_config(&self) -> Option<OutlineConfig> {
+            if self.highlighted_nodes.len() > 1 {
+                Some(OutlineConfig::default())
+            } else {
+                None
+            }
         }
     }
 

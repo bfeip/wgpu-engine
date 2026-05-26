@@ -11,8 +11,10 @@ use crate::renderer::{HighlightQuery, OutlineConfig};
 /// Configuration for selection visual feedback.
 #[derive(Debug, Clone)]
 pub struct SelectionConfig {
-    /// Color of the selection outline (RGBA, 0.0-1.0).
+    /// Color of the primary selection outline (RGBA, 0.0-1.0).
     pub outline_color: [f32; 4],
+    /// Color of secondary (non-primary) selection outlines (RGBA, 0.0-1.0).
+    pub secondary_outline_color: [f32; 4],
     /// Width of the outline in pixels (screen-space).
     pub outline_width: f32,
     /// Whether outline rendering is enabled.
@@ -24,8 +26,9 @@ pub struct SelectionConfig {
 impl Default for SelectionConfig {
     fn default() -> Self {
         Self {
-            outline_color: [1.0, 0.6, 0.0, 1.0], // Orange
-            outline_width: 3.0,                   // 3 pixels
+            outline_color: [1.0, 0.6, 0.0, 1.0],           // Orange
+            secondary_outline_color: [0.7, 0.35, 0.0, 1.0], // Darker orange
+            outline_width: 3.0,                              // 3 pixels
             outline_enabled: true,
             debug_annotations: false,
         }
@@ -189,11 +192,14 @@ impl SelectionManager {
     }
 
     /// Adds an item to the selection (does nothing if already selected).
+    /// The first item added becomes the primary and remains so until cleared.
     pub fn add(&mut self, item: SelectionItem) {
         if self.selected.insert(item) {
             self.selection_order.push(item);
         }
-        self.primary = Some(item);
+        if self.primary.is_none() {
+            self.primary = Some(item);
+        }
     }
 
     /// Removes an item from the selection.
@@ -201,7 +207,7 @@ impl SelectionManager {
         if self.selected.remove(item) {
             self.selection_order.retain(|i| i != item);
             if self.primary == Some(*item) {
-                self.primary = self.selection_order.last().copied();
+                self.primary = self.selection_order.first().copied();
             }
             true
         } else {
@@ -293,6 +299,18 @@ impl HighlightQuery for SelectionManager {
             color: self.config.outline_color,
             width_pixels: self.config.outline_width,
         }
+    }
+
+    fn primary_node(&self) -> Option<NodeId> {
+        self.primary.map(|p| p.node_id())
+    }
+
+    fn secondary_outline_config(&self) -> Option<OutlineConfig> {
+        let has_secondary = self.selected.iter().any(|item| Some(*item) != self.primary);
+        has_secondary.then(|| OutlineConfig {
+            color: self.config.secondary_outline_color,
+            width_pixels: self.config.outline_width,
+        })
     }
 }
 
@@ -407,7 +425,7 @@ mod tests {
     }
 
     #[test]
-    fn test_primary_updates_on_remove() {
+    fn test_primary_is_first_selected() {
         let mut manager = SelectionManager::new();
         let id_a = nid();
         let id_b = nid();
@@ -415,12 +433,14 @@ mod tests {
         manager.add(SelectionItem::Node(id_a));
         manager.add(SelectionItem::Node(id_b));
 
+        // First selection remains primary regardless of subsequent adds.
+        assert_eq!(manager.primary(), Some(SelectionItem::Node(id_a)));
+
+        // Removing the primary falls back to the next oldest item.
+        manager.remove(&SelectionItem::Node(id_a));
         assert_eq!(manager.primary(), Some(SelectionItem::Node(id_b)));
 
         manager.remove(&SelectionItem::Node(id_b));
-        assert_eq!(manager.primary(), Some(SelectionItem::Node(id_a)));
-
-        manager.remove(&SelectionItem::Node(id_a));
         assert_eq!(manager.primary(), None);
     }
 
