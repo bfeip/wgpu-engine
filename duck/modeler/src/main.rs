@@ -24,9 +24,10 @@ use duck_engine_viewer::common::{
 use duck_engine_viewer::scene::{
     Scene, Material, Mesh, NodeFlags, NodePayload, PositionedCamera, PrimitiveType,
 };
+use duck_engine_viewer::selection::SelectionItem;
 
 use crate::boolean::BooleanKind;
-use crate::operators::{ConstructionOptions, SphereOperator};
+use crate::operators::{BooleanOperator, BooleanPhase, ConstructionOptions, SphereOperator};
 use crate::part_map::PartNodeMap;
 
 use document::CadDocument;
@@ -36,6 +37,7 @@ enum OperatorKind {
     #[default]
     Selection,
     Sphere,
+    Boolean,
 }
 
 /// Owns all rendering state: the 3D viewer plus egui context and GPU renderer.
@@ -56,6 +58,7 @@ struct ViewerState<'a> {
     part_map: Rc<RefCell<PartNodeMap>>,
 
     sphere_op: Arc<Mutex<SphereOperator>>,
+    boolean_op: Arc<Mutex<BooleanOperator>>,
     active_operator: OperatorKind,
 }
 
@@ -101,6 +104,13 @@ impl ViewerState<'static> {
         )));
         viewer.dispatcher_mut().push_back(sphere_op.clone());
 
+        let boolean_op = Arc::new(Mutex::new(BooleanOperator::new(
+            Rc::clone(&construction_options),
+            Rc::clone(&document),
+            Rc::clone(&part_map),
+        )));
+        viewer.dispatcher_mut().push_back(boolean_op.clone());
+
         Self {
             egui_renderer,
             egui_winit,
@@ -111,6 +121,7 @@ impl ViewerState<'static> {
             document,
             part_map,
             sphere_op,
+            boolean_op,
             active_operator: OperatorKind::Selection,
         }
     }
@@ -194,8 +205,19 @@ impl<'a> ViewerState<'a> {
         let egui_ctx = self.egui_ctx.clone();
         let full_output = egui_ctx.run(raw_input, |ctx| {
             self.render_operator_palette(ctx);
+            if self.active_operator == OperatorKind::Boolean {
+                self.render_boolean_panel(ctx);
+            }
         });
         self.egui_winit.handle_platform_output(&self.window, full_output.platform_output.clone());
+
+        // Exit boolean mode if the operator has finished (via keyboard or panel buttons).
+        if self.active_operator == OperatorKind::Boolean {
+            let phase = self.boolean_op.lock().unwrap().phase;
+            if phase != BooleanPhase::Configuring {
+                self.exit_boolean_mode();
+            }
+        }
 
         match self.viewer.render_scene() {
             Ok((output, view, mut encoder)) => {
@@ -206,6 +228,12 @@ impl<'a> ViewerState<'a> {
         }
 
         self.window.request_redraw();
+    }
+
+    fn exit_boolean_mode(&mut self) {
+        self.viewer.dispatcher_mut().move_to_back(&self.boolean_op);
+        self.boolean_op.lock().unwrap().phase = BooleanPhase::Configuring;
+        self.active_operator = OperatorKind::Selection;
     }
 
     fn render_operator_palette(&mut self, ctx: &egui::Context) {
@@ -254,40 +282,114 @@ impl<'a> ViewerState<'a> {
                     egui::Button::image(
                         egui::Image::from_bytes("bytes://boolean-and.svg", BOOLEAN_SVG)
                             .fit_to_exact_size(egui::vec2(32.0, 32.0)),
-                    ),
+                    )
+                    .selected(self.active_operator == OperatorKind::Boolean),
                 );
-                if boolean_btn.clicked() {
-                    // Snapshot node IDs from the selection before taking a mutable
-                    // borrow of the viewer for scene_mut().
-                    use duck_engine_viewer::selection::SelectionItem;
-                    let primary_node = self.viewer.selection().primary()
-                        .and_then(|item| match item { SelectionItem::Node(id) => Some(id), _ => None });
-                    let primary = self.viewer.selection().primary();
-                    let tool_nodes: Vec<_> = self.viewer.selection().iter()
-                        .filter(|&&item| Some(item) != primary)
-                        .filter_map(|item| match item { SelectionItem::Node(id) => Some(*id), _ => None })
-                        .collect();
-                    let options = self.construction_options.borrow().geometry_preview_options.clone();
-
-                    if let Some(target) = primary_node {
-                        let result = crate::boolean::execute_boolean(
-                            BooleanKind::Subtract,
-                            target,
-                            &tool_nodes,
-                            self.viewer.scene_mut(),
-                            &mut self.document.borrow_mut(),
-                            &mut self.part_map.borrow_mut(),
-                            &options,
-                        );
-                        match result {
-                            Ok(()) => self.viewer.selection_mut().clear(),
-                            Err(e) => log::error!("Boolean failed: {e}"),
-                        }
-                    } else {
-                        log::warn!("Boolean: no primary selection");
-                    }
+                if boolean_btn.clicked() && self.active_operator != OperatorKind::Boolean {
+                    self.viewer.dispatcher_mut().move_to_front(&self.boolean_op);
+                    self.active_operator = OperatorKind::Boolean;
                 }
             });
+    }
+
+    fn render_boolean_panel(&mut self, ctx: &egui::Context) {
+        // Collect deselections and phase requests; apply them after the egui closure
+        // to avoid holding borrows across mutable viewer calls.
+        let mut deselect: Vec<SelectionItem> = Vec::new();
+        let mut phase_request: Option<BooleanPhase> = None;
+
+        egui::Window::new("Boolean Operation")
+            .anchor(egui::Align2::RIGHT_TOP, [-8.0, 8.0])
+            .resizable(false)
+            .collapsible(false)
+            .show(ctx, |ui| {
+                // --- Operation type ---
+                ui.label("Operation");
+                ui.horizontal(|ui| {
+                    let mut op = self.boolean_op.lock().unwrap();
+                    ui.selectable_value(&mut op.kind, BooleanKind::Subtract, "Subtract");
+                    ui.selectable_value(&mut op.kind, BooleanKind::Union, "Union");
+                    ui.selectable_value(&mut op.kind, BooleanKind::Intersect, "Intersect");
+                });
+
+                ui.separator();
+
+                // --- Target (primary selection) ---
+                ui.label("Target");
+                let primary = self.viewer.selection().primary();
+                let target_node = primary.and_then(|item| match item {
+                    SelectionItem::Node(id) => Some(id),
+                    _ => None,
+                });
+                let target_name = target_node
+                    .and_then(|n| self.part_map.borrow().part_for_node(n))
+                    .and_then(|p| self.document.borrow().get_part(p).map(|part| part.name.clone()))
+                    .unwrap_or_else(|| "(none — click a part)".to_owned());
+                ui.label(&target_name);
+
+                ui.separator();
+
+                // --- Tool parts (all non-primary selections) ---
+                ui.label("Tools");
+                let tool_items: Vec<SelectionItem> = self.viewer.selection().iter()
+                    .filter(|&&item| Some(item) != primary)
+                    .copied()
+                    .collect();
+                if tool_items.is_empty() {
+                    ui.label("(shift-click parts to add tools)");
+                } else {
+                    for &item in &tool_items {
+                        let node_id = match item { SelectionItem::Node(id) => Some(id), _ => None };
+                        let name = node_id
+                            .and_then(|n| self.part_map.borrow().part_for_node(n))
+                            .and_then(|p| self.document.borrow().get_part(p).map(|part| part.name.clone()))
+                            .unwrap_or_else(|| "Unknown".to_owned());
+                        ui.horizontal(|ui| {
+                            ui.label(&name);
+                            if ui.small_button("×").clicked() {
+                                deselect.push(item);
+                            }
+                        });
+                    }
+                }
+
+                ui.separator();
+
+                // --- Action buttons ---
+                ui.horizontal(|ui| {
+                    if ui.button("Cancel").clicked() {
+                        phase_request = Some(BooleanPhase::Cancelled);
+                    }
+                    if ui.button("Apply  ⏎").clicked() {
+                        phase_request = Some(BooleanPhase::Done);
+                    }
+                });
+            });
+
+        // Apply × deselections outside the closure.
+        for item in deselect {
+            self.viewer.selection_mut().remove(&item);
+        }
+
+        // Dispatch panel Apply / Cancel through the operator so all cleanup is co-located.
+        if let Some(phase) = phase_request {
+            let scene = self.viewer.scene_mut();
+            match phase {
+                BooleanPhase::Done => {
+                    let mut op = self.boolean_op.lock().unwrap();
+                    if let Err(e) = op.apply(scene) {
+                        log::error!("Boolean failed: {e}");
+                    } else {
+                        drop(op);
+                        self.viewer.selection_mut().clear();
+                    }
+                }
+                BooleanPhase::Cancelled => {
+                    self.boolean_op.lock().unwrap().cancel(scene);
+                }
+                BooleanPhase::Configuring => {}
+            }
+        }
     }
 
     fn render_egui_overlay(
