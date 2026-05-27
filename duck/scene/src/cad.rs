@@ -10,6 +10,7 @@ use crate::{
 /// Options controlling tessellation and presentation when producing scene geometry from CAD data.
 ///
 /// Used for both file import and programmatic authoring via [`tessellate_into`].
+#[derive(Clone)]
 pub struct CadTessellationOptions {
     /// Tolerance used for OCCT incremental mesh tessellation. Lower values
     /// produce finer meshes. Units match the file's unit system (typically mm).

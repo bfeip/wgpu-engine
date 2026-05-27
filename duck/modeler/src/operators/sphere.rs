@@ -1,5 +1,4 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use duck_engine_common::{MetricSpace, Point3, Quaternion, Vector3};
@@ -12,9 +11,11 @@ use duck_engine_viewer::{
     input::{Modifiers, MouseButton},
     operator::Operator,
 };
+use glam::dvec3;
 use opencascade::primitives::Shape;
 
-use crate::{document::{CadDocument, PartId}};
+use crate::document::CadDocument;
+use crate::part_map::PartNodeMap;
 use super::ConstructionOptions;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -32,7 +33,7 @@ pub struct SphereOperator {
     phase: Phase,
     construction_options: Rc<RefCell<ConstructionOptions>>,
     document: Rc<RefCell<CadDocument>>,
-    node_map: Rc<RefCell<HashMap<PartId, NodeId>>>,
+    part_map: Rc<RefCell<PartNodeMap>>,
     bindings: InputMap<SphereAction>,
 }
 
@@ -40,7 +41,7 @@ impl SphereOperator {
     pub fn new(
         construction_options: Rc<RefCell<ConstructionOptions>>,
         document: Rc<RefCell<CadDocument>>,
-        node_map: Rc<RefCell<HashMap<PartId, NodeId>>>,
+        part_map: Rc<RefCell<PartNodeMap>>,
     ) -> Self {
         let bindings = InputMap::new()
             .bind(
@@ -55,12 +56,12 @@ impl SphereOperator {
             phase: Phase::Idle,
             construction_options,
             document,
-            node_map,
+            part_map,
             bindings,
         }
     }
 
-    fn sphere_transform(center: Point3, radius: f32) -> Transform {
+    fn preview_transform(center: Point3, radius: f32) -> Transform {
         Transform {
             position: center,
             rotation: Quaternion::new(1.0, 0.0, 0.0, 0.0),
@@ -76,9 +77,9 @@ impl SphereOperator {
         let Some((_, center)) = ray.intersect_plane(&coptions.construction_plane) else {
             return false;
         };
-        let shape = Shape::sphere(1.0).build();
+        let preview_shape = Shape::sphere(1.0).build();
         let Ok(preview_node) = tessellate_into(
-            &shape,
+            &preview_shape,
             ctx.scene,
             &coptions.geometry_preview_options,
             None,
@@ -86,7 +87,7 @@ impl SphereOperator {
         ) else {
             return false;
         };
-        ctx.scene.set_node_transform(preview_node, Self::sphere_transform(center, 0.01));
+        ctx.scene.set_node_transform(preview_node, Self::preview_transform(center, 0.01));
         self.phase = Phase::Defining { center, preview_node };
         true
     }
@@ -106,17 +107,30 @@ impl SphereOperator {
             .intersect_plane(&coptions.construction_plane)
             .map(|(_, hit)| center.distance(hit).max(0.01))
             .unwrap_or(0.01);
-        let transform = Self::sphere_transform(center, radius);
-        ctx.scene.set_node_transform(preview_node, transform);
-        // Commit to the CAD document; reuse the preview scene node.
-        let shape = Shape::sphere(1.0).build();
+
+        // Discard the unit-sphere preview and tessellate the committed world-space shape.
+        ctx.scene.remove_node(preview_node);
+        let world_shape = Shape::sphere(radius as f64)
+            .at(dvec3(center.x as f64, center.y as f64, center.z as f64))
+            .build();
+        let Ok(committed_node) = tessellate_into(
+            &world_shape,
+            ctx.scene,
+            &coptions.geometry_preview_options,
+            None,
+            Some("Sphere"),
+        ) else {
+            self.phase = Phase::Idle;
+            return false;
+        };
+
         let part_id = self.document.borrow_mut().add_part(
             "Sphere".to_owned(),
-            shape,
-            transform,
+            world_shape,
+            Transform::IDENTITY,
             coptions.geometry_preview_options.face_color,
         );
-        self.node_map.borrow_mut().insert(part_id, preview_node);
+        self.part_map.borrow_mut().insert(part_id, committed_node);
         self.phase = Phase::Idle;
         true
     }
@@ -135,7 +149,7 @@ impl SphereOperator {
         );
         if let Some((_, hit)) = ray.intersect_plane(&coptions.construction_plane) {
             let radius = center.distance(hit).max(0.01);
-            ctx.scene.set_node_transform(preview_node, Self::sphere_transform(center, radius));
+            ctx.scene.set_node_transform(preview_node, Self::preview_transform(center, radius));
         }
     }
 }

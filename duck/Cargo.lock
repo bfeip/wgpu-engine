@@ -2630,6 +2630,7 @@ dependencies = [
 name = "modeler"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "duck-engine-common",
  "duck-engine-scene",
  "duck-engine-viewer",
@@ -2638,6 +2639,7 @@ dependencies = [
  "egui-winit",
  "egui_extras",
  "env_logger",
+ "glam",
  "log",
  "opencascade",
  "pollster 0.4.0",

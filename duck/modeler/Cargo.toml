@@ -8,6 +8,8 @@ duck-engine-common = { path = "../common" }
 duck-engine-scene = { path = "../scene", features = ["cad"] }
 duck-engine-viewer = { path = "../viewer", features = ["winit-support"] }
 opencascade = { path = "../../third-party/opencascade-rs/crates/opencascade" }
+glam = "0.24"
+anyhow = "1"
 egui = "0.33"
 egui-wgpu = "0.33"
 egui_extras = { version = "0.33", features = ["svg"] }

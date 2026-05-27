@@ -1,8 +1,9 @@
+mod boolean;
 mod document;
 mod operators;
+mod part_map;
 
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
@@ -16,17 +17,19 @@ use winit::{
 
 use duck_engine_viewer::winit_support;
 use duck_engine_viewer::Viewer;
-use duck_engine_viewer::operator::{NavigationOperator, SelectionOperator, TransformOperator};
+use duck_engine_viewer::operator::{NavigationOperator, SelectionOperator, SelectionMode, TransformOperator};
 use duck_engine_viewer::common::{
     RgbaColor, Transform, Vector3, InnerSpace
 };
 use duck_engine_viewer::scene::{
-    Scene, Material, Mesh, NodeFlags, NodePayload, PositionedCamera, PrimitiveType, NodeId
+    Scene, Material, Mesh, NodeFlags, NodePayload, PositionedCamera, PrimitiveType,
 };
 
+use crate::boolean::BooleanKind;
 use crate::operators::{ConstructionOptions, SphereOperator};
+use crate::part_map::PartNodeMap;
 
-use document::{CadDocument, PartId};
+use document::CadDocument;
 
 #[derive(Default, PartialEq, Eq)]
 enum OperatorKind {
@@ -50,7 +53,7 @@ struct ViewerState<'a> {
     construction_options: Rc<RefCell<ConstructionOptions>>,
 
     document: Rc<RefCell<CadDocument>>,
-    node_map: Rc<RefCell<HashMap<PartId, NodeId>>>,
+    part_map: Rc<RefCell<PartNodeMap>>,
 
     sphere_op: Arc<Mutex<SphereOperator>>,
     active_operator: OperatorKind,
@@ -85,16 +88,16 @@ impl ViewerState<'static> {
 
         let construction_options = Rc::new(RefCell::new(ConstructionOptions::new()));
         let document = Rc::new(RefCell::new(CadDocument::new()));
-        let node_map = Rc::new(RefCell::new(HashMap::new()));
+        let part_map = Rc::new(RefCell::new(PartNodeMap::new()));
 
         viewer.dispatcher_mut().push_back(Arc::new(Mutex::new(TransformOperator::new())));
-        viewer.dispatcher_mut().push_back(Arc::new(Mutex::new(SelectionOperator::new())));
+        viewer.dispatcher_mut().push_back(Arc::new(Mutex::new(SelectionOperator::with_mode(SelectionMode::Node))));
         viewer.dispatcher_mut().push_back(Arc::new(Mutex::new(NavigationOperator::new())));
 
         let sphere_op = Arc::new(Mutex::new(SphereOperator::new(
             Rc::clone(&construction_options),
             Rc::clone(&document),
-            Rc::clone(&node_map),
+            Rc::clone(&part_map),
         )));
         viewer.dispatcher_mut().push_back(sphere_op.clone());
 
@@ -106,7 +109,7 @@ impl ViewerState<'static> {
             window,
             construction_options,
             document,
-            node_map,
+            part_map,
             sphere_op,
             active_operator: OperatorKind::Selection,
         }
@@ -210,6 +213,8 @@ impl<'a> ViewerState<'a> {
             include_bytes!("../../../assets/svg/cursor-svgrepo-com.svg");
         const SPHERE_SVG: &[u8] =
             include_bytes!("../../../assets/svg/sphere-svgrepo-com.svg");
+        const BOOLEAN_SVG: &[u8] =
+            include_bytes!("../../../assets/svg/boolean-and.svg");
 
         egui::SidePanel::left("operator_palette")
             .resizable(false)
@@ -241,6 +246,46 @@ impl<'a> ViewerState<'a> {
                 if sphere_btn.clicked() {
                     self.viewer.dispatcher_mut().move_to_front(&self.sphere_op);
                     self.active_operator = OperatorKind::Sphere;
+                }
+
+                ui.add_space(4.0);
+
+                let boolean_btn = ui.add(
+                    egui::Button::image(
+                        egui::Image::from_bytes("bytes://boolean-and.svg", BOOLEAN_SVG)
+                            .fit_to_exact_size(egui::vec2(32.0, 32.0)),
+                    ),
+                );
+                if boolean_btn.clicked() {
+                    // Snapshot node IDs from the selection before taking a mutable
+                    // borrow of the viewer for scene_mut().
+                    use duck_engine_viewer::selection::SelectionItem;
+                    let primary_node = self.viewer.selection().primary()
+                        .and_then(|item| match item { SelectionItem::Node(id) => Some(id), _ => None });
+                    let primary = self.viewer.selection().primary();
+                    let tool_nodes: Vec<_> = self.viewer.selection().iter()
+                        .filter(|&&item| Some(item) != primary)
+                        .filter_map(|item| match item { SelectionItem::Node(id) => Some(*id), _ => None })
+                        .collect();
+                    let options = self.construction_options.borrow().geometry_preview_options.clone();
+
+                    if let Some(target) = primary_node {
+                        let result = crate::boolean::execute_boolean(
+                            BooleanKind::Subtract,
+                            target,
+                            &tool_nodes,
+                            self.viewer.scene_mut(),
+                            &mut self.document.borrow_mut(),
+                            &mut self.part_map.borrow_mut(),
+                            &options,
+                        );
+                        match result {
+                            Ok(()) => self.viewer.selection_mut().clear(),
+                            Err(e) => log::error!("Boolean failed: {e}"),
+                        }
+                    } else {
+                        log::warn!("Boolean: no primary selection");
+                    }
                 }
             });
     }
