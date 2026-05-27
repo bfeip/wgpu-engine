@@ -17,14 +17,30 @@ pub enum SelectionAction {
     AddToSelection,
 }
 
+/// Controls what granularity a click resolves to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum SelectionMode {
+    /// Select the most specific sub-geometry available (face → edge → node).
+    #[default]
+    SubGeometry,
+    /// Always select at the node level, ignoring face/edge topology.
+    Node,
+}
+
 /// Operator for selecting objects in the scene via mouse click.
 pub struct SelectionOperator {
     pub bindings: InputMap<SelectionAction>,
+    pub mode: SelectionMode,
 }
 
 impl SelectionOperator {
-    /// Creates a new selection operator.
+    /// Creates a new selection operator in `SubGeometry` mode.
     pub fn new() -> Self {
+        Self::with_mode(SelectionMode::default())
+    }
+
+    /// Creates a new selection operator with the given [`SelectionMode`].
+    pub fn with_mode(mode: SelectionMode) -> Self {
         let bindings = InputMap::new()
             .bind(
                 InputBinding::MouseClick { button: MouseButton::Left, modifiers: Modifiers::default() },
@@ -37,10 +53,10 @@ impl SelectionOperator {
                 },
                 SelectionAction::AddToSelection,
             );
-        Self { bindings }
+        Self { bindings, mode }
     }
 
-    fn pick_closest(cursor_x: f32, cursor_y: f32, ctx: &mut EventContext) -> Option<SelectionItem> {
+    fn pick_closest(&self, cursor_x: f32, cursor_y: f32, ctx: &mut EventContext) -> Option<SelectionItem> {
         let camera = ctx.camera();
         let ray = camera.ray_from_screen_point(cursor_x, cursor_y, ctx.size.0, ctx.size.1);
         let camera_distance = (camera.eye - camera.target).magnitude();
@@ -49,18 +65,18 @@ impl SelectionOperator {
         // varies with geometry depth (near objects get more pixels, far objects fewer).
         let line_tolerance = camera.world_size_per_pixel(camera_distance, ctx.size.1) * 6.0;
         let results = pick_all_from_ray(&RayPickQuery::all(ray, line_tolerance), ctx.scene);
-        results.first().map(|hit| resolve_hit_to_selection(hit, ctx.scene))
+        results.first().map(|hit| resolve_hit_to_selection(hit, ctx.scene, self.mode))
     }
 
-    fn perform_selection(cursor_x: f32, cursor_y: f32, ctx: &mut EventContext) {
-        match Self::pick_closest(cursor_x, cursor_y, ctx) {
+    fn perform_selection(&self, cursor_x: f32, cursor_y: f32, ctx: &mut EventContext) {
+        match self.pick_closest(cursor_x, cursor_y, ctx) {
             Some(item) => ctx.selection.set(item),
             None => ctx.selection.clear(),
         }
     }
 
-    fn perform_add_to_selection(cursor_x: f32, cursor_y: f32, ctx: &mut EventContext) {
-        if let Some(item) = Self::pick_closest(cursor_x, cursor_y, ctx) {
+    fn perform_add_to_selection(&self, cursor_x: f32, cursor_y: f32, ctx: &mut EventContext) {
+        if let Some(item) = self.pick_closest(cursor_x, cursor_y, ctx) {
             ctx.selection.toggle(item);
         }
     }
@@ -71,10 +87,10 @@ impl Operator for SelectionOperator {
         let Event::MouseClick { button, position, .. } = event else { return false };
         let actions = self.bindings.actions_for_click(*button, ctx.modifiers);
         if actions.contains(&SelectionAction::Select) {
-            Self::perform_selection(position.0, position.1, ctx);
+            self.perform_selection(position.0, position.1, ctx);
             true
         } else if actions.contains(&SelectionAction::AddToSelection) {
-            Self::perform_add_to_selection(position.0, position.1, ctx);
+            self.perform_add_to_selection(position.0, position.1, ctx);
             true
         } else {
             false
@@ -91,7 +107,11 @@ impl Operator for SelectionOperator {
 /// - Triangle hit with topology → `SelectionItem::Face`
 /// - Segment hit with topology  → `SelectionItem::Edge`
 /// - Anything else              → `SelectionItem::Node`
-fn resolve_hit_to_selection(hit: &RayPickResult, scene: &crate::scene::Scene) -> SelectionItem {
+fn resolve_hit_to_selection(hit: &RayPickResult, scene: &crate::scene::Scene, mode: SelectionMode) -> SelectionItem {
+    if mode == SelectionMode::Node {
+        return SelectionItem::Node(hit.node_id);
+    }
+
     let mesh = scene
         .get_instance(hit.instance_id)
         .and_then(|inst| scene.get_mesh(inst.mesh()));

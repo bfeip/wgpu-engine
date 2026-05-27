@@ -3,7 +3,7 @@ mod selection;
 mod transform;
 
 pub use navigation::{NavigationMode, NavigationOperator};
-pub use selection::SelectionOperator;
+pub use selection::{SelectionMode, SelectionOperator};
 pub use transform::TransformOperator;
 
 use crate::event::{Event, EventContext};
