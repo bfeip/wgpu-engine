@@ -1,7 +1,6 @@
 mod boolean;
 mod document;
 mod operators;
-mod part_map;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -173,7 +172,7 @@ impl ViewerState<'static> {
 
         let scene_arc = Arc::new(Mutex::new(scene));
         self.viewer.set_scene(Arc::clone(&scene_arc));
-        self.document.lock().unwrap().scene = scene_arc;
+        self.document.lock().unwrap().set_scene(scene_arc);
     }
 }
 
@@ -318,7 +317,7 @@ impl<'a> ViewerState<'a> {
                 });
                 let doc = self.document.lock().unwrap();
                 let target_name = target_node
-                    .and_then(|n| doc.part_map.part_for_node(n))
+                    .and_then(|n| doc.part_for_node(n))
                     .and_then(|p| doc.get_part(p).map(|part| part.name.clone()))
                     .unwrap_or_else(|| "(none — click a part)".to_owned());
                 drop(doc);
@@ -339,7 +338,7 @@ impl<'a> ViewerState<'a> {
                     for &item in &tool_items {
                         let node_id = match item { SelectionItem::Node(id) => Some(id), _ => None };
                         let name = node_id
-                            .and_then(|n| doc.part_map.part_for_node(n))
+                            .and_then(|n| doc.part_for_node(n))
                             .and_then(|p| doc.get_part(p).map(|part| part.name.clone()))
                             .unwrap_or_else(|| "Unknown".to_owned());
                         ui.horizontal(|ui| {

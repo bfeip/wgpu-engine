@@ -70,7 +70,7 @@ impl BooleanOperator {
 
         // Remove preview node; originals stay hidden — execute_boolean will delete them.
         if let Some(node) = self.preview_node.take() {
-            doc.scene.lock().unwrap().remove_node(node);
+            doc.scene().lock().unwrap().remove_node(node);
         }
         self.hidden_nodes.clear();
 
@@ -85,7 +85,7 @@ impl BooleanOperator {
     /// Abort the operation, restoring the visibility of all hidden original parts.
     pub fn cancel(&mut self) {
         let doc = self.document.lock().unwrap();
-        let mut scene = doc.scene.lock().unwrap();
+        let mut scene = doc.scene().lock().unwrap();
         if let Some(node) = self.preview_node.take() {
             scene.remove_node(node);
         }
@@ -121,7 +121,7 @@ impl BooleanOperator {
 
         // Tear down old preview.
         {
-            let mut scene = doc.scene.lock().unwrap();
+            let mut scene = doc.scene().lock().unwrap();
             if let Some(node) = self.preview_node.take() {
                 scene.remove_node(node);
             }
@@ -143,7 +143,7 @@ impl BooleanOperator {
         match preview_boolean(self.kind, target_node, &tools, &*doc, &options) {
             Ok(preview) => {
                 self.preview_node = Some(preview);
-                let mut scene = doc.scene.lock().unwrap();
+                let mut scene = doc.scene().lock().unwrap();
                 scene.set_node_visibility(target_node, Visibility::Invisible);
                 for &tool in &tools {
                     scene.set_node_visibility(tool, Visibility::Invisible);

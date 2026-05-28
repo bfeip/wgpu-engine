@@ -113,31 +113,19 @@ impl SphereOperator {
             .at(dvec3(center.x as f64, center.y as f64, center.z as f64))
             .build();
 
-        // Discard the unit-sphere preview and tessellate the committed world-space shape.
-        let committed_node = {
-            let mut scene = ctx.scene.lock().unwrap();
-            scene.remove_node(preview_node);
-            let Ok(node) = tessellate_into(
-                &world_shape,
-                &mut *scene,
-                &coptions.geometry_preview_options,
-                None,
-                Some("Sphere"),
-            ) else {
-                self.phase = Phase::Idle;
-                return false;
-            };
-            node
-        };
+        // Discard the preview node, then commit the world-space shape as a registered part.
+        ctx.scene.lock().unwrap().remove_node(preview_node);
 
         let mut doc = self.document.lock().unwrap();
-        let part_id = doc.add_part(
+        if doc.add_part(
             "Sphere".to_owned(),
             world_shape,
-            Transform::IDENTITY,
             coptions.geometry_preview_options.face_color,
-        );
-        doc.part_map.insert(part_id, committed_node);
+            &coptions.geometry_preview_options,
+        ).is_err() {
+            self.phase = Phase::Idle;
+            return false;
+        }
         self.phase = Phase::Idle;
         true
     }
