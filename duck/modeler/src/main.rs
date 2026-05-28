@@ -1,6 +1,7 @@
 mod boolean;
 mod document;
 mod operators;
+mod tool;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -16,7 +17,7 @@ use winit::{
 
 use duck_engine_viewer::winit_support;
 use duck_engine_viewer::Viewer;
-use duck_engine_viewer::operator::{NavigationOperator, SelectionOperator, SelectionMode, TransformOperator};
+use duck_engine_viewer::operator::{NavigationOperator, SelectionOperator, SelectionMode};
 use duck_engine_viewer::common::{
     RgbaColor, Transform, Vector3, InnerSpace
 };
@@ -26,7 +27,8 @@ use duck_engine_viewer::scene::{
 use duck_engine_viewer::selection::SelectionItem;
 
 use crate::boolean::BooleanKind;
-use crate::operators::{BooleanOperator, BooleanPhase, ConstructionOptions, SphereOperator};
+use crate::operators::{BooleanOperator, ConstructionOptions, SphereOperator};
+use crate::tool::ModelingTool;
 
 use document::Document;
 
@@ -53,6 +55,7 @@ struct ViewerState<'a> {
     construction_options: Rc<RefCell<ConstructionOptions>>,
     document: Arc<Mutex<Document>>,
 
+    sel_op: Arc<Mutex<SelectionOperator>>,
     sphere_op: Arc<Mutex<SphereOperator>>,
     boolean_op: Arc<Mutex<BooleanOperator>>,
     active_operator: OperatorKind,
@@ -88,21 +91,19 @@ impl ViewerState<'static> {
         let construction_options = Rc::new(RefCell::new(ConstructionOptions::new()));
         let document = Arc::new(Mutex::new(Document::new(viewer.scene())));
 
-        viewer.dispatcher_mut().push_back(Arc::new(Mutex::new(TransformOperator::new())));
-        viewer.dispatcher_mut().push_back(Arc::new(Mutex::new(SelectionOperator::with_mode(SelectionMode::Node))));
+        let sel_op = Arc::new(Mutex::new(SelectionOperator::with_mode(SelectionMode::Node)));
+        viewer.dispatcher_mut().push_back(sel_op.clone());
         viewer.dispatcher_mut().push_back(Arc::new(Mutex::new(NavigationOperator::new())));
 
         let sphere_op = Arc::new(Mutex::new(SphereOperator::new(
             Rc::clone(&construction_options),
             Arc::clone(&document),
         )));
-        viewer.dispatcher_mut().push_back(sphere_op.clone());
 
         let boolean_op = Arc::new(Mutex::new(BooleanOperator::new(
             Rc::clone(&construction_options),
             Arc::clone(&document),
         )));
-        viewer.dispatcher_mut().push_back(boolean_op.clone());
 
         Self {
             egui_renderer,
@@ -112,6 +113,7 @@ impl ViewerState<'static> {
             window,
             construction_options,
             document,
+            sel_op,
             sphere_op,
             boolean_op,
             active_operator: OperatorKind::Selection,
@@ -206,11 +208,10 @@ impl<'a> ViewerState<'a> {
         self.egui_winit.handle_platform_output(&self.window, full_output.platform_output.clone());
 
         // Exit boolean mode if the operator has finished (via keyboard or panel buttons).
-        if self.active_operator == OperatorKind::Boolean {
-            let phase = self.boolean_op.lock().unwrap().phase;
-            if phase != BooleanPhase::Configuring {
-                self.exit_boolean_mode();
-            }
+        if self.active_operator == OperatorKind::Boolean
+            && self.boolean_op.lock().unwrap().is_finished()
+        {
+            self.switch_tool(OperatorKind::Selection);
         }
 
         match self.viewer.render_scene() {
@@ -224,10 +225,17 @@ impl<'a> ViewerState<'a> {
         self.window.request_redraw();
     }
 
-    fn exit_boolean_mode(&mut self) {
-        self.viewer.dispatcher_mut().move_to_back(&self.boolean_op);
-        self.boolean_op.lock().unwrap().phase = BooleanPhase::Configuring;
-        self.active_operator = OperatorKind::Selection;
+    fn switch_tool(&mut self, kind: OperatorKind) {
+        self.sphere_op.lock().unwrap().deactivate();
+        self.boolean_op.lock().unwrap().deactivate();
+        self.viewer.dispatcher_mut().remove(&self.sphere_op);
+        self.viewer.dispatcher_mut().remove(&self.boolean_op);
+        match kind {
+            OperatorKind::Selection => { self.viewer.dispatcher_mut().move_to_front(&self.sel_op); }
+            OperatorKind::Sphere    => { self.viewer.dispatcher_mut().push_front(self.sphere_op.clone()); }
+            OperatorKind::Boolean   => { self.viewer.dispatcher_mut().push_front(self.boolean_op.clone()); }
+        }
+        self.active_operator = kind;
     }
 
     fn render_operator_palette(&mut self, ctx: &egui::Context) {
@@ -252,8 +260,7 @@ impl<'a> ViewerState<'a> {
                     .selected(self.active_operator == OperatorKind::Selection),
                 );
                 if sel_btn.clicked() {
-                    self.viewer.dispatcher_mut().move_to_back(&self.sphere_op);
-                    self.active_operator = OperatorKind::Selection;
+                    self.switch_tool(OperatorKind::Selection);
                 }
 
                 ui.add_space(4.0);
@@ -266,8 +273,7 @@ impl<'a> ViewerState<'a> {
                     .selected(self.active_operator == OperatorKind::Sphere),
                 );
                 if sphere_btn.clicked() {
-                    self.viewer.dispatcher_mut().move_to_front(&self.sphere_op);
-                    self.active_operator = OperatorKind::Sphere;
+                    self.switch_tool(OperatorKind::Sphere);
                 }
 
                 ui.add_space(4.0);
@@ -280,17 +286,17 @@ impl<'a> ViewerState<'a> {
                     .selected(self.active_operator == OperatorKind::Boolean),
                 );
                 if boolean_btn.clicked() && self.active_operator != OperatorKind::Boolean {
-                    self.viewer.dispatcher_mut().move_to_front(&self.boolean_op);
-                    self.active_operator = OperatorKind::Boolean;
+                    self.switch_tool(OperatorKind::Boolean);
                 }
             });
     }
 
     fn render_boolean_panel(&mut self, ctx: &egui::Context) {
-        // Collect deselections and phase requests; apply them after the egui closure
+        // Collect deselections and action requests; apply them after the egui closure
         // to avoid holding borrows across mutable viewer calls.
         let mut deselect: Vec<SelectionItem> = Vec::new();
-        let mut phase_request: Option<BooleanPhase> = None;
+        let mut apply_clicked = false;
+        let mut cancel_clicked = false;
 
         egui::Window::new("Boolean Operation")
             .anchor(egui::Align2::RIGHT_TOP, [-8.0, 8.0])
@@ -355,10 +361,10 @@ impl<'a> ViewerState<'a> {
                 // --- Action buttons ---
                 ui.horizontal(|ui| {
                     if ui.button("Cancel").clicked() {
-                        phase_request = Some(BooleanPhase::Cancelled);
+                        cancel_clicked = true;
                     }
                     if ui.button("Apply  ⏎").clicked() {
-                        phase_request = Some(BooleanPhase::Done);
+                        apply_clicked = true;
                     }
                 });
             });
@@ -369,22 +375,16 @@ impl<'a> ViewerState<'a> {
         }
 
         // Dispatch panel Apply / Cancel through the operator so all cleanup is co-located.
-        if let Some(phase) = phase_request {
-            match phase {
-                BooleanPhase::Done => {
-                    let mut op = self.boolean_op.lock().unwrap();
-                    if let Err(e) = op.apply() {
-                        log::error!("Boolean failed: {e}");
-                    } else {
-                        drop(op);
-                        self.viewer.selection_mut().clear();
-                    }
-                }
-                BooleanPhase::Cancelled => {
-                    self.boolean_op.lock().unwrap().cancel();
-                }
-                BooleanPhase::Configuring => {}
+        if apply_clicked {
+            let mut op = self.boolean_op.lock().unwrap();
+            if let Err(e) = op.apply() {
+                log::error!("Boolean failed: {e}");
+            } else {
+                drop(op);
+                self.viewer.selection_mut().clear();
             }
+        } else if cancel_clicked {
+            self.boolean_op.lock().unwrap().cancel();
         }
     }
 

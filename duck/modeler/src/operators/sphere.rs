@@ -16,6 +16,7 @@ use glam::dvec3;
 use opencascade::primitives::Shape;
 
 use crate::document::Document;
+use crate::tool::ModelingTool;
 use super::ConstructionOptions;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -130,10 +131,11 @@ impl SphereOperator {
         true
     }
 
-    fn on_cancel(&mut self, preview_node: NodeId, ctx: &mut EventContext) -> bool {
-        ctx.scene.lock().unwrap().remove_node(preview_node);
-        self.phase = Phase::Idle;
-        true
+    pub fn cancel(&mut self) {
+        if let Phase::Defining { preview_node, .. } = self.phase {
+            self.document.lock().unwrap().scene().lock().unwrap().remove_node(preview_node);
+            self.phase = Phase::Idle;
+        }
     }
 
     fn on_cursor_moved(&self, position: (f64, f64), ctx: &mut EventContext) {
@@ -146,6 +148,12 @@ impl SphereOperator {
             let radius = center.distance(hit).max(0.01);
             ctx.scene.lock().unwrap().set_node_transform(preview_node, Self::preview_transform(center, radius));
         }
+    }
+}
+
+impl ModelingTool for SphereOperator {
+    fn deactivate(&mut self) {
+        self.cancel();
     }
 }
 
@@ -165,11 +173,11 @@ impl Operator for SphereOperator {
                             }
                         }
                         SphereAction::Cancel => {
-                            if let Phase::Defining { preview_node, .. } = self.phase {
-                                self.on_cancel(preview_node, ctx)
-                            } else {
-                                false
+                            let was_defining = matches!(self.phase, Phase::Defining { .. });
+                            if was_defining {
+                                self.cancel();
                             }
+                            was_defining
                         }
                     };
                 }

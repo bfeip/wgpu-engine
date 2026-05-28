@@ -13,10 +13,11 @@ use duck_engine_viewer::{
 
 use crate::boolean::{execute_boolean, preview_boolean, BooleanKind};
 use crate::document::Document;
+use crate::tool::ModelingTool;
 use super::ConstructionOptions;
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub enum BooleanPhase {
+enum BooleanPhase {
     #[default]
     Configuring,
     Done,
@@ -25,7 +26,7 @@ pub enum BooleanPhase {
 
 pub struct BooleanOperator {
     pub kind: BooleanKind,
-    pub phase: BooleanPhase,
+    phase: BooleanPhase,
 
     preview_node: Option<NodeId>,
     hidden_nodes: Vec<NodeId>,
@@ -152,6 +153,17 @@ impl BooleanOperator {
             }
             Err(e) => log::warn!("Boolean preview failed: {e}"),
         }
+    }
+}
+
+impl ModelingTool for BooleanOperator {
+    fn deactivate(&mut self) {
+        self.cancel();
+        self.phase = BooleanPhase::Configuring;
+    }
+
+    fn is_finished(&self) -> bool {
+        matches!(self.phase, BooleanPhase::Done | BooleanPhase::Cancelled)
     }
 }
 
