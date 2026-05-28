@@ -7,9 +7,12 @@ pub use sphere::SphereOperator;
 use duck_engine_common::{Plane, RgbaColor};
 use duck_engine_scene::cad::CadTessellationOptions;
 
+use crate::grid::GridConfig;
+
 pub struct ConstructionOptions {
     pub geometry_preview_options: CadTessellationOptions,
-    pub construction_plane: Plane
+    pub construction_plane: Plane,
+    pub grid: GridConfig,
 }
 
 impl ConstructionOptions {
@@ -22,6 +25,7 @@ impl ConstructionOptions {
             include_edges: true,
         };
         let construction_plane = Plane::xz();
-        Self {geometry_preview_options, construction_plane}
+        let grid = GridConfig::default();
+        Self { geometry_preview_options, construction_plane, grid }
     }
 }

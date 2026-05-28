@@ -1,5 +1,6 @@
 mod boolean;
 mod document;
+mod grid;
 mod operators;
 mod tool;
 
@@ -19,10 +20,10 @@ use duck_engine_viewer::winit_support;
 use duck_engine_viewer::Viewer;
 use duck_engine_viewer::operator::{NavigationOperator, SelectionOperator, SelectionMode};
 use duck_engine_viewer::common::{
-    RgbaColor, Transform, Vector3, InnerSpace
+    Vector3, InnerSpace
 };
 use duck_engine_viewer::scene::{
-    Scene, Material, Mesh, NodeFlags, NodePayload, PositionedCamera, PrimitiveType,
+    Scene, NodeFlags, NodePayload, PositionedCamera,
 };
 use duck_engine_viewer::selection::SelectionItem;
 
@@ -154,23 +155,9 @@ impl ViewerState<'static> {
         scene.set_active_camera(Some(camera_node_id));
         scene.set_default_light_nodes(camera_node_id);
 
-        // Setup XZ grid
-        let grid_mesh = Mesh::plane(1000.0, 1000.0, 200, 200, PrimitiveType::LineList);
-        let grid_mesh_id = scene.add_mesh(grid_mesh);
-
-        let grid_material = Material::new().with_line_color(RgbaColor {
-            r: 0.05, g: 0.05, b: 0.05, a: 1.0
-        });
-        let grid_material_id = scene.add_material(grid_material);
-
-        let _grid_node = scene.add_instance_node(
-            None,
-            grid_mesh_id,
-            grid_material_id,
-            Some("XZ Grid".to_owned()),
-            Transform::IDENTITY,
-            NodeFlags::inert()
-        );
+        let coptions = self.construction_options.borrow();
+        let _grid = grid::Grid::add_to_scene(&mut scene, &coptions.grid, &coptions.construction_plane);
+        drop(coptions);
 
         let scene_arc = Arc::new(Mutex::new(scene));
         self.viewer.set_scene(Arc::clone(&scene_arc));
