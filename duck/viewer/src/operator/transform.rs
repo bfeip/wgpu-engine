@@ -161,8 +161,9 @@ impl GizmoState {
     fn show(&mut self, gizmo_type: GizmoType, pivot: Point3, size: f32, ctx: &mut EventContext) {
         self.hide(ctx);
 
+        let mut scene = ctx.scene.lock().unwrap();
         self.root_node.get_or_insert(
-            ctx.scene.add_node(
+            scene.add_node(
                 None, Some("Gizmo root".to_owned()), Transform::IDENTITY, NodeFlags::DO_NOT_EXPORT
             ).expect("Failed to create Gizmo root node")
         );
@@ -171,10 +172,9 @@ impl GizmoState {
         let pivot_transform = common::Transform::from_position(pivot);
 
         for handle in handles {
-            let mesh_id = ctx.scene.add_mesh(handle.mesh);
-            let material_id = ctx.scene.add_material(handle.material);
-            let node_id = ctx
-                .scene
+            let mesh_id = scene.add_mesh(handle.mesh);
+            let material_id = scene.add_material(handle.material);
+            let node_id = scene
                 .add_instance_node(
                     self.root_node,
                     mesh_id,
@@ -195,14 +195,15 @@ impl GizmoState {
 
     /// Remove all gizmo geometry from the scene.
     fn hide(&mut self, ctx: &mut EventContext) {
+        let mut scene = ctx.scene.lock().unwrap();
         for &node_id in &self.node_ids {
-            ctx.scene.remove_node(node_id);
+            scene.remove_node(node_id);
         }
         for &mesh_id in &self.mesh_ids {
-            ctx.scene.remove_mesh(mesh_id);
+            scene.remove_mesh(mesh_id);
         }
         for &material_id in &self.material_ids {
-            ctx.scene.remove_material(material_id);
+            scene.remove_material(material_id);
         }
 
         self.node_ids.clear();
@@ -214,9 +215,10 @@ impl GizmoState {
 
     /// Update the gizmo position (e.g. when pivot changes).
     fn update_position(&self, pivot: Point3, ctx: &mut EventContext) {
+        let mut scene = ctx.scene.lock().unwrap();
         for &node_id in &self.node_ids {
-            if ctx.scene.has_node(node_id) {
-                ctx.scene.set_node_position(node_id, pivot);
+            if scene.has_node(node_id) {
+                scene.set_node_position(node_id, pivot);
             }
         }
     }
@@ -228,7 +230,8 @@ impl GizmoState {
         }
 
         let ray = ctx.camera().ray_from_screen_point(cursor_x, cursor_y, ctx.size.0, ctx.size.1);
-        let results = pick_all_from_ray(&RayPickQuery::faces(ray), ctx.scene);
+        let scene = ctx.scene.lock().unwrap();
+        let results = pick_all_from_ray(&RayPickQuery::faces(ray), &*scene);
 
         // Find the first hit that matches a gizmo node
         for result in &results {
@@ -248,11 +251,13 @@ impl GizmoState {
             return;
         }
 
+        let mut scene = ctx.scene.lock().unwrap();
+
         // Restore previous highlight to normal color
         if let Some(prev_axis) = self.highlighted_axis {
             let idx = axis_index(prev_axis);
             if let Some(&mat_id) = self.material_ids.get(idx)
-                && let Some(mat) = ctx.scene.get_material_mut(mat_id) {
+                && let Some(mat) = scene.get_material_mut(mat_id) {
                     mat.set_base_color_factor(prev_axis.color());
                 }
         }
@@ -261,7 +266,7 @@ impl GizmoState {
         if let Some(new_axis) = axis {
             let idx = axis_index(new_axis);
             if let Some(&mat_id) = self.material_ids.get(idx)
-                && let Some(mat) = ctx.scene.get_material_mut(mat_id) {
+                && let Some(mat) = scene.get_material_mut(mat_id) {
                     mat.set_base_color_factor(gizmo::highlight_color(new_axis));
                 }
         }
@@ -526,8 +531,8 @@ impl TransformOperator {
             None => return,
         };
 
-        // Pre-compute transforms that need ctx (camera access)
-        // This avoids borrow conflicts when we later mutate nodes
+        // Pre-compute camera-dependent values before locking the scene.
+        // ctx.camera() acquires and releases the scene lock internally.
         let translation_delta = if mode == TransformMode::Translate {
             Some(self.compute_translation(ctx))
         } else {
@@ -546,7 +551,8 @@ impl TransformOperator {
             None
         };
 
-        // Now apply transforms to nodes
+        // Now apply transforms to nodes under a single scene lock.
+        let mut scene = ctx.scene.lock().unwrap();
         for orig in &self.original_transforms {
             let inv_parent = orig
                 .parent_world_transform
@@ -554,7 +560,7 @@ impl TransformOperator {
                 .invert()
                 .unwrap_or(Matrix4::identity());
 
-            if !ctx.scene.has_node(orig.node_id) {
+            if !scene.has_node(orig.node_id) {
                 continue;
             }
 
@@ -564,7 +570,7 @@ impl TransformOperator {
                     let new_world_pos = orig.world_transform.position + delta;
                     let new_local_pos =
                         Point3::from_homogeneous(inv_parent * new_world_pos.to_homogeneous());
-                    ctx.scene.set_node_position(orig.node_id, new_local_pos);
+                    scene.set_node_position(orig.node_id, new_local_pos);
                 }
                 TransformMode::Rotate => {
                     let rotation = rotation_quat.unwrap();
@@ -577,7 +583,7 @@ impl TransformOperator {
                     );
                     let new_local_pos =
                         Point3::from_homogeneous(inv_parent * new_world_pos.to_homogeneous());
-                    ctx.scene.set_node_position(orig.node_id, new_local_pos);
+                    scene.set_node_position(orig.node_id, new_local_pos);
 
                     // Convert world rotation to local space
                     let pr = orig.parent_world_transform.rotation;
@@ -585,7 +591,7 @@ impl TransformOperator {
                     let local_rotation = pr_inv * rotation * pr;
                     let new_rotation =
                         compose_rotation(orig.local_transform.rotation, local_rotation);
-                    ctx.scene.set_node_rotation(orig.node_id, new_rotation);
+                    scene.set_node_rotation(orig.node_id, new_rotation);
                 }
                 TransformMode::Scale => {
                     let scale = scale_factor.unwrap();
@@ -600,9 +606,9 @@ impl TransformOperator {
                         );
                         let new_local_pos =
                             Point3::from_homogeneous(inv_parent * new_world_pos.to_homogeneous());
-                        ctx.scene.set_node_position(orig.node_id, new_local_pos);
+                        scene.set_node_position(orig.node_id, new_local_pos);
                         let new_scale = apply_scale(orig.local_transform.scale, scale);
-                        ctx.scene.set_node_scale(orig.node_id, new_scale);
+                        scene.set_node_scale(orig.node_id, new_scale);
                     } else {
                         // World axis: scale world position around pivot, convert to local
                         let new_world_pos = scale_position_about_pivot_world(
@@ -612,13 +618,13 @@ impl TransformOperator {
                         );
                         let new_local_pos =
                             Point3::from_homogeneous(inv_parent * new_world_pos.to_homogeneous());
-                        ctx.scene.set_node_position(orig.node_id, new_local_pos);
+                        scene.set_node_position(orig.node_id, new_local_pos);
 
                         // Convert world-axis scale to local space
                         let pr_inv = orig.parent_world_transform.rotation.conjugate();
                         let local_scale = world_scale_to_local(scale, pr_inv);
                         let new_scale = apply_scale(orig.local_transform.scale, local_scale);
-                        ctx.scene.set_node_scale(orig.node_id, new_scale);
+                        scene.set_node_scale(orig.node_id, new_scale);
                     }
                 }
             }
@@ -627,25 +633,28 @@ impl TransformOperator {
 
     /// Restore all nodes to their original transforms.
     fn restore_original_transforms(&self, ctx: &mut EventContext) {
+        let mut scene = ctx.scene.lock().unwrap();
         for orig in &self.original_transforms {
-            if ctx.scene.has_node(orig.node_id) {
-                ctx.scene.set_node_transform(orig.node_id, orig.local_transform);
+            if scene.has_node(orig.node_id) {
+                scene.set_node_transform(orig.node_id, orig.local_transform);
             }
         }
     }
 
     /// Update visual feedback annotations.
     fn update_visual_feedback(&mut self, ctx: &mut EventContext) {
+        let mut scene = ctx.scene.lock().unwrap();
+
         // Create annotation root node if it does not exist
         self.annotation_root.get_or_insert(
-            ctx.scene.add_node(
+            scene.add_node(
                 None, Some("Transform annotations".to_owned()), Transform::IDENTITY, NodeFlags::inert()
             ).expect("Failed to create transform annotation root node")
         );
 
         // Clear previous annotations
         for id in self.annotations.drain(..) {
-            ctx.scene.remove_node(id);
+            scene.remove_node(id);
         }
 
         // Add axis constraint line if constrained
@@ -655,7 +664,7 @@ impl TransformOperator {
                 let start = self.pivot_world - axis * half_length;
                 let end = self.pivot_world + axis * half_length;
                 let mesh = Mesh::line(start, end);
-                let mesh_id = ctx.scene.add_mesh(mesh);
+                let mesh_id = scene.add_mesh(mesh);
 
                 // Get or insert the material for this axis annotation
                 let create_color_material = |scene: &mut Scene| {
@@ -664,15 +673,15 @@ impl TransformOperator {
                 };
                 let mut material = self.annotation_axis_materials.entry(
                     axis_from_constraint(&self.axis_constraint).unwrap()
-                ).or_insert(create_color_material(ctx.scene)).to_owned();
-                if ctx.scene.get_material(material).is_none() {
+                ).or_insert(create_color_material(&mut *scene)).to_owned();
+                if scene.get_material(material).is_none() {
                     // Our material was removed from the scene since we last used it.
                     // This can happen if, while unused, the scene removed all unreferenced
                     // resources. We'll have to reinsert the material.
-                    material = create_color_material(ctx.scene);
+                    material = create_color_material(&mut *scene);
                 }
 
-                let id = ctx.scene.add_instance_node(
+                let id = scene.add_instance_node(
                     self.annotation_root,
                     mesh_id,
                     material,
@@ -686,8 +695,9 @@ impl TransformOperator {
 
     /// Clean up annotations.
     fn cleanup_annotations(&mut self, ctx: &mut EventContext) {
+        let mut scene = ctx.scene.lock().unwrap();
         for id in self.annotations.drain(..) {
-            ctx.scene.remove_node(id);
+            scene.remove_node(id);
         }
     }
 
@@ -696,15 +706,19 @@ impl TransformOperator {
         let selected = ctx.selection.selected_nodes();
         match (self.gizmo_mode, selected.is_empty()) {
             (Some(gizmo_type), false) => {
-                let positions: Vec<Point3> = selected
-                    .iter()
-                    .filter_map(|&nid| {
-                        ctx.scene.nodes_bounding(nid).bounds.map(|aabb| aabb.center())
-                    })
-                    .collect();
+                let (positions, model_radius) = {
+                    let scene = ctx.scene.lock().unwrap();
+                    let positions: Vec<Point3> = selected
+                        .iter()
+                        .filter_map(|&nid| {
+                            scene.nodes_bounding(nid).bounds.map(|aabb| aabb.center())
+                        })
+                        .collect();
+                    let model_radius =
+                        scene_scale::model_radius_from_bounds(scene.bounding().bounds.as_ref());
+                    (positions, model_radius)
+                };
                 let pivot = centroid_of_slice(&positions).unwrap_or(Point3::origin());
-                let model_radius =
-                    scene_scale::model_radius_from_bounds(ctx.scene.bounding().bounds.as_ref());
 
                 if self.gizmo.current_type == Some(gizmo_type) {
                     self.gizmo.update_position(pivot, ctx);
@@ -736,48 +750,51 @@ impl TransformOperator {
 
         // Store original transforms with world-space info
         let mut world_positions: Vec<Point3> = Vec::new();
-        for node_id in &selected_nodes {
-            if let Some(node) = ctx.scene.get_node(*node_id) {
-                let Some(world_matrix) = ctx.scene.nodes_transform(*node_id) else { continue };
-                let world_transform = decompose_matrix(&world_matrix);
+        {
+            let scene = ctx.scene.lock().unwrap();
+            for node_id in &selected_nodes {
+                if let Some(node) = scene.get_node(*node_id) {
+                    let Some(world_matrix) = scene.nodes_transform(*node_id) else { continue };
+                    let world_transform = decompose_matrix(&world_matrix);
 
-                let parent_world_transform = if let Some(parent_id) = node.parent() {
-                    ctx.scene.nodes_transform(parent_id)
-                        .map(|m| decompose_matrix(&m))
-                        .unwrap_or(Transform::IDENTITY)
-                } else {
-                    Transform::IDENTITY
-                };
+                    let parent_world_transform = if let Some(parent_id) = node.parent() {
+                        scene.nodes_transform(parent_id)
+                            .map(|m| decompose_matrix(&m))
+                            .unwrap_or(Transform::IDENTITY)
+                    } else {
+                        Transform::IDENTITY
+                    };
 
-                let world_pos = ctx.scene.nodes_bounding(*node_id).bounds
-                    .map(|aabb| aabb.center())
-                    .unwrap_or(world_transform.position);
-                world_positions.push(world_pos);
-                self.original_transforms.push(OriginalTransform {
-                    node_id: *node_id,
-                    local_transform: node.transform(),
-                    world_transform,
-                    parent_world_transform,
-                });
+                    let world_pos = scene.nodes_bounding(*node_id).bounds
+                        .map(|aabb| aabb.center())
+                        .unwrap_or(world_transform.position);
+                    world_positions.push(world_pos);
+                    self.original_transforms.push(OriginalTransform {
+                        node_id: *node_id,
+                        local_transform: node.transform(),
+                        world_transform,
+                        parent_world_transform,
+                    });
+                }
             }
-        }
 
-        if world_positions.is_empty() {
-            return;
+            if world_positions.is_empty() {
+                return;
+            }
+
+            // Store primary selection's rotation for local axis transforms
+            if let Some(primary) = ctx.selection.primary()
+                && let Some(node) = scene.get_node(primary.node_id()) {
+                    self.primary_rotation = node.rotation();
+                }
+
+            // Get model radius for sensitivity scaling
+            self.model_radius =
+                scene_scale::model_radius_from_bounds(scene.bounding().bounds.as_ref());
         }
 
         // Compute pivot as centroid of world-space positions
         self.pivot_world = centroid_of_slice(&world_positions).unwrap_or(Point3::origin());
-
-        // Store primary selection's rotation for local axis transforms
-        if let Some(primary) = ctx.selection.primary()
-            && let Some(node) = ctx.scene.get_node(primary.node_id()) {
-                self.primary_rotation = node.rotation();
-            }
-
-        // Get model radius for sensitivity scaling
-        self.model_radius =
-            scene_scale::model_radius_from_bounds(ctx.scene.bounding().bounds.as_ref());
 
         // Activate the transform
         self.mode = Some(mode);

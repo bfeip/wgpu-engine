@@ -1,3 +1,4 @@
+use std::sync::{Arc, Mutex};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -14,8 +15,7 @@ use duck_engine_viewer::{
 use glam::dvec3;
 use opencascade::primitives::Shape;
 
-use crate::document::CadDocument;
-use crate::part_map::PartNodeMap;
+use crate::document::Document;
 use super::ConstructionOptions;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -32,16 +32,14 @@ enum Phase {
 pub struct SphereOperator {
     phase: Phase,
     construction_options: Rc<RefCell<ConstructionOptions>>,
-    document: Rc<RefCell<CadDocument>>,
-    part_map: Rc<RefCell<PartNodeMap>>,
+    document: Arc<Mutex<Document>>,
     bindings: InputMap<SphereAction>,
 }
 
 impl SphereOperator {
     pub fn new(
         construction_options: Rc<RefCell<ConstructionOptions>>,
-        document: Rc<RefCell<CadDocument>>,
-        part_map: Rc<RefCell<PartNodeMap>>,
+        document: Arc<Mutex<Document>>,
     ) -> Self {
         let bindings = InputMap::new()
             .bind(
@@ -56,7 +54,6 @@ impl SphereOperator {
             phase: Phase::Idle,
             construction_options,
             document,
-            part_map,
             bindings,
         }
     }
@@ -78,16 +75,20 @@ impl SphereOperator {
             return false;
         };
         let preview_shape = Shape::sphere(1.0).build();
-        let Ok(preview_node) = tessellate_into(
-            &preview_shape,
-            ctx.scene,
-            &coptions.geometry_preview_options,
-            None,
-            Some("sphere"),
-        ) else {
-            return false;
+        let preview_node = {
+            let mut scene = ctx.scene.lock().unwrap();
+            let Ok(node) = tessellate_into(
+                &preview_shape,
+                &mut *scene,
+                &coptions.geometry_preview_options,
+                None,
+                Some("sphere"),
+            ) else {
+                return false;
+            };
+            scene.set_node_transform(node, Self::preview_transform(center, 0.01));
+            node
         };
-        ctx.scene.set_node_transform(preview_node, Self::preview_transform(center, 0.01));
         self.phase = Phase::Defining { center, preview_node };
         true
     }
@@ -108,35 +109,41 @@ impl SphereOperator {
             .map(|(_, hit)| center.distance(hit).max(0.01))
             .unwrap_or(0.01);
 
-        // Discard the unit-sphere preview and tessellate the committed world-space shape.
-        ctx.scene.remove_node(preview_node);
         let world_shape = Shape::sphere(radius as f64)
             .at(dvec3(center.x as f64, center.y as f64, center.z as f64))
             .build();
-        let Ok(committed_node) = tessellate_into(
-            &world_shape,
-            ctx.scene,
-            &coptions.geometry_preview_options,
-            None,
-            Some("Sphere"),
-        ) else {
-            self.phase = Phase::Idle;
-            return false;
+
+        // Discard the unit-sphere preview and tessellate the committed world-space shape.
+        let committed_node = {
+            let mut scene = ctx.scene.lock().unwrap();
+            scene.remove_node(preview_node);
+            let Ok(node) = tessellate_into(
+                &world_shape,
+                &mut *scene,
+                &coptions.geometry_preview_options,
+                None,
+                Some("Sphere"),
+            ) else {
+                self.phase = Phase::Idle;
+                return false;
+            };
+            node
         };
 
-        let part_id = self.document.borrow_mut().add_part(
+        let mut doc = self.document.lock().unwrap();
+        let part_id = doc.add_part(
             "Sphere".to_owned(),
             world_shape,
             Transform::IDENTITY,
             coptions.geometry_preview_options.face_color,
         );
-        self.part_map.borrow_mut().insert(part_id, committed_node);
+        doc.part_map.insert(part_id, committed_node);
         self.phase = Phase::Idle;
         true
     }
 
     fn on_cancel(&mut self, preview_node: NodeId, ctx: &mut EventContext) -> bool {
-        ctx.scene.remove_node(preview_node);
+        ctx.scene.lock().unwrap().remove_node(preview_node);
         self.phase = Phase::Idle;
         true
     }
@@ -149,7 +156,7 @@ impl SphereOperator {
         );
         if let Some((_, hit)) = ray.intersect_plane(&coptions.construction_plane) {
             let radius = center.distance(hit).max(0.01);
-            ctx.scene.set_node_transform(preview_node, Self::preview_transform(center, radius));
+            ctx.scene.lock().unwrap().set_node_transform(preview_node, Self::preview_transform(center, radius));
         }
     }
 }

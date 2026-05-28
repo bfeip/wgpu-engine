@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use duck_engine_scene::NodeId;
 use duck_engine_scene::Visibility;
@@ -7,13 +8,11 @@ use duck_engine_viewer::{
     event::{Event, EventContext},
     input::{ElementState, Key, NamedKey},
     operator::Operator,
-    scene::Scene,
     selection::{SelectionItem, SelectionManager},
 };
 
 use crate::boolean::{execute_boolean, preview_boolean, BooleanKind};
-use crate::document::CadDocument;
-use crate::part_map::PartNodeMap;
+use crate::document::Document;
 use super::ConstructionOptions;
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -35,16 +34,14 @@ pub struct BooleanOperator {
     preview_tools: Vec<NodeId>,
     last_kind: BooleanKind,
 
-    document: Rc<RefCell<CadDocument>>,
-    part_map: Rc<RefCell<PartNodeMap>>,
+    document: Arc<Mutex<Document>>,
     construction_options: Rc<RefCell<ConstructionOptions>>,
 }
 
 impl BooleanOperator {
     pub fn new(
         construction_options: Rc<RefCell<ConstructionOptions>>,
-        document: Rc<RefCell<CadDocument>>,
-        part_map: Rc<RefCell<PartNodeMap>>,
+        document: Arc<Mutex<Document>>,
     ) -> Self {
         Self {
             kind: BooleanKind::default(),
@@ -55,7 +52,6 @@ impl BooleanOperator {
             preview_tools: Vec::new(),
             last_kind: BooleanKind::default(),
             document,
-            part_map,
             construction_options,
         }
     }
@@ -63,28 +59,22 @@ impl BooleanOperator {
     /// Execute the boolean operation and clean up preview state.
     /// On success sets phase = Done; on failure stays in Configuring so the user can retry.
     /// Call `selection.clear()` yourself on success.
-    pub fn apply(&mut self, scene: &mut Scene) -> anyhow::Result<()> {
+    pub fn apply(&mut self) -> anyhow::Result<()> {
         let Some(target) = self.preview_target else {
             return Ok(());
         };
         let tools = self.preview_tools.clone();
 
+        let options = self.construction_options.borrow().geometry_preview_options.clone();
+        let mut doc = self.document.lock().unwrap();
+
         // Remove preview node; originals stay hidden — execute_boolean will delete them.
         if let Some(node) = self.preview_node.take() {
-            scene.remove_node(node);
+            doc.scene.lock().unwrap().remove_node(node);
         }
         self.hidden_nodes.clear();
 
-        let options = self.construction_options.borrow().geometry_preview_options.clone();
-        execute_boolean(
-            self.kind,
-            target,
-            &tools,
-            scene,
-            &mut *self.document.borrow_mut(),
-            &mut *self.part_map.borrow_mut(),
-            &options,
-        )?;
+        execute_boolean(self.kind, target, &tools, &mut *doc, &options)?;
 
         self.preview_target = None;
         self.preview_tools.clear();
@@ -93,13 +83,17 @@ impl BooleanOperator {
     }
 
     /// Abort the operation, restoring the visibility of all hidden original parts.
-    pub fn cancel(&mut self, scene: &mut Scene) {
+    pub fn cancel(&mut self) {
+        let doc = self.document.lock().unwrap();
+        let mut scene = doc.scene.lock().unwrap();
         if let Some(node) = self.preview_node.take() {
             scene.remove_node(node);
         }
         for &node in &self.hidden_nodes {
             scene.set_node_visibility(node, Visibility::Visible);
         }
+        drop(scene);
+        drop(doc);
         self.hidden_nodes.clear();
         self.preview_target = None;
         self.preview_tools.clear();
@@ -122,13 +116,18 @@ impl BooleanOperator {
         (target, tools)
     }
 
-    fn refresh_preview(&mut self, scene: &mut Scene, selection: &SelectionManager) {
+    fn refresh_preview(&mut self, selection: &SelectionManager) {
+        let doc = self.document.lock().unwrap();
+
         // Tear down old preview.
-        if let Some(node) = self.preview_node.take() {
-            scene.remove_node(node);
-        }
-        for &node in &self.hidden_nodes {
-            scene.set_node_visibility(node, Visibility::Visible);
+        {
+            let mut scene = doc.scene.lock().unwrap();
+            if let Some(node) = self.preview_node.take() {
+                scene.remove_node(node);
+            }
+            for &node in &self.hidden_nodes {
+                scene.set_node_visibility(node, Visibility::Visible);
+            }
         }
         self.hidden_nodes.clear();
 
@@ -140,12 +139,11 @@ impl BooleanOperator {
         let Some(target_node) = target else { return };
 
         let options = self.construction_options.borrow().geometry_preview_options.clone();
-        let doc = self.document.borrow();
-        let pm = self.part_map.borrow();
 
-        match preview_boolean(self.kind, target_node, &tools, scene, &*doc, &*pm, &options) {
+        match preview_boolean(self.kind, target_node, &tools, &*doc, &options) {
             Ok(preview) => {
                 self.preview_node = Some(preview);
+                let mut scene = doc.scene.lock().unwrap();
                 scene.set_node_visibility(target_node, Visibility::Invisible);
                 for &tool in &tools {
                     scene.set_node_visibility(tool, Visibility::Invisible);
@@ -166,7 +164,7 @@ impl Operator for BooleanOperator {
                     || current_tools != self.preview_tools;
                 let kind_changed = self.kind != self.last_kind;
                 if selection_changed || kind_changed {
-                    self.refresh_preview(ctx.scene, ctx.selection);
+                    self.refresh_preview(ctx.selection);
                 }
                 false
             }
@@ -176,7 +174,7 @@ impl Operator for BooleanOperator {
                 }
                 match key_event.logical_key {
                     Key::Named(NamedKey::Enter) => {
-                        if let Err(e) = self.apply(ctx.scene) {
+                        if let Err(e) = self.apply() {
                             log::error!("Boolean failed: {e}");
                         } else {
                             ctx.selection.clear();
@@ -184,7 +182,7 @@ impl Operator for BooleanOperator {
                         true
                     }
                     Key::Named(NamedKey::Escape) => {
-                        self.cancel(ctx.scene);
+                        self.cancel();
                         true
                     }
                     _ => false,

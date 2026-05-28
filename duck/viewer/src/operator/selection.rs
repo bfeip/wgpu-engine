@@ -64,8 +64,9 @@ impl SelectionOperator {
         // Approximation: uses a single depth reference, so the effective pixel budget
         // varies with geometry depth (near objects get more pixels, far objects fewer).
         let line_tolerance = camera.world_size_per_pixel(camera_distance, ctx.size.1) * 6.0;
-        let results = pick_all_from_ray(&RayPickQuery::all(ray, line_tolerance), ctx.scene);
-        results.first().map(|hit| resolve_hit_to_selection(hit, ctx.scene, self.mode))
+        let scene = ctx.scene.lock().unwrap();
+        let results = pick_all_from_ray(&RayPickQuery::all(ray, line_tolerance), &*scene);
+        results.first().map(|hit| resolve_hit_to_selection(hit, &*scene, self.mode))
     }
 
     fn perform_selection(&self, cursor_x: f32, cursor_y: f32, ctx: &mut EventContext) {

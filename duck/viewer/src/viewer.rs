@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex};
+
 use duck_engine_common::Vector3;
 use duck_engine_scene::{NodeFlags, NodeId};
 use web_time::Instant;
@@ -19,7 +21,7 @@ pub struct Viewer<'a> {
     device: wgpu::Device,
     queue: wgpu::Queue,
     renderer: Renderer,
-    scene: Scene,
+    scene: Arc<Mutex<Scene>>,
     selection: SelectionManager,
     dispatcher: EventDispatcher,
     /// Current cursor position in screen coordinates
@@ -118,7 +120,7 @@ impl<'a> Viewer<'a> {
         let sample_count = if is_gl_backend { 1 } else { 4 };
 
         let renderer = Renderer::new(device.clone(), queue.clone(), surface_format, width, height, sample_count, has_compute);
-        let scene = Scene::new();
+        let scene = Arc::new(Mutex::new(Scene::new()));
 
         let dispatcher = EventDispatcher::new();
 
@@ -181,7 +183,7 @@ impl<'a> Viewer<'a> {
         let mut ctx = EventContext {
             size: self.renderer.size(),
             cursor_position: &mut self.cursor_position,
-            scene: &mut self.scene,
+            scene: Arc::clone(&self.scene),
             selection: &mut self.selection,
             modifiers: Default::default(), // dispatcher overwrites this in dispatch()
         };
@@ -214,7 +216,7 @@ impl<'a> Viewer<'a> {
     #[cfg(feature = "streaming")]
     pub fn connect_stream(&mut self, addr: &str) -> anyhow::Result<()> {
         use duck_engine_streaming::SubscribeOptions;
-        let camera = self.scene.active_camera_positioned(1.0).map(|cam| {
+        let camera = self.scene.lock().unwrap().active_camera_positioned(1.0).map(|cam| {
             let fwd = cam.forward();
             duck_engine_streaming::CameraHint {
                 position: cam.eye.into(),
@@ -243,7 +245,8 @@ impl<'a> Viewer<'a> {
     #[cfg(feature = "streaming")]
     fn poll_stream(&mut self) {
         use crate::streaming::PollResult;
-        let result = self.stream_client.as_mut().map(|c| c.poll(&mut self.scene));
+        let mut scene = self.scene.lock().unwrap();
+        let result = self.stream_client.as_mut().map(|c| c.poll(&mut *scene));
         match result {
             Some(PollResult::Disconnected) => { self.stream_client = None; }
             _ => {}
@@ -256,7 +259,7 @@ impl<'a> Viewer<'a> {
     pub fn camera(&self) -> PositionedCamera {
         let (w, h) = self.renderer.size();
         let aspect = if h > 0 { w as f32 / h as f32 } else { 16.0 / 9.0 };
-        self.scene.active_camera_positioned(aspect).expect("no active camera in scene")
+        self.scene.lock().unwrap().active_camera_positioned(aspect).expect("no active camera in scene")
     }
 
     /// Clones the active camera, passes it to `f` for mutation, then writes it back.
@@ -268,9 +271,10 @@ impl<'a> Viewer<'a> {
 
     /// Replace the active camera.
     pub fn set_camera(&mut self, camera: PositionedCamera) {
-        let id = self.scene.active_camera().expect("no active camera in scene");
-        self.scene.set_node_transform(id, camera.to_node_transform());
-        self.scene.set_node_payload(id, NodePayload::Camera(camera.projection()));
+        let mut scene = self.scene.lock().unwrap();
+        let id = scene.active_camera().expect("no active camera in scene");
+        scene.set_node_transform(id, camera.to_node_transform());
+        scene.set_node_payload(id, NodePayload::Camera(camera.projection()));
     }
 
     /// Get the current viewport size as (width, height)
@@ -309,22 +313,17 @@ impl<'a> Viewer<'a> {
         &self.queue
     }
 
-    /// Get a reference to the scene
-    pub fn scene(&self) -> &Scene {
-        &self.scene
+    /// Returns a clone of the scene Arc, for sharing with other owners (e.g. Document).
+    pub fn scene(&self) -> Arc<Mutex<Scene>> {
+        Arc::clone(&self.scene)
     }
 
-    /// Get a mutable reference to the scene
-    pub fn scene_mut(&mut self) -> &mut Scene {
-        &mut self.scene
-    }
-
-    /// Set the scene to a new value.
+    /// Replace the viewer's scene Arc.
     ///
     /// This clears all scene-specific GPU resources and selection state
     /// to prevent stale data from persisting across scene changes.
     /// If the incoming scene has no active camera a default one is added.
-    pub fn set_scene(&mut self, scene: Scene) {
+    pub fn set_scene(&mut self, scene: Arc<Mutex<Scene>>) {
         self.scene = scene;
         self.selection.clear();
         self.renderer.clear_gpu_resources();
@@ -341,7 +340,7 @@ impl<'a> Viewer<'a> {
     /// - All cached GPU resources (vertex buffers, texture views, material bind groups)
     /// - The current selection
     pub fn clear_scene(&mut self) {
-        self.scene.clear();
+        self.scene.lock().unwrap().clear();
         self.selection.clear();
         self.renderer.clear_gpu_resources();
         self.ensure_active_camera();
@@ -349,7 +348,8 @@ impl<'a> Viewer<'a> {
 
     /// Adds a default camera node to the scene if no active camera is set.
     fn ensure_active_camera(&mut self) -> NodeId {
-        if let Some(camera_id) = self.scene.active_camera() {
+        let mut scene = self.scene.lock().unwrap();
+        if let Some(camera_id) = scene.active_camera() {
             return camera_id;
         }
         let cam = PositionedCamera {
@@ -362,21 +362,24 @@ impl<'a> Viewer<'a> {
             zfar: 100.0,
             ortho: false,
         };
-        let id = self.scene.add_node(None, Some("Camera".to_string()), cam.to_node_transform(), NodeFlags::NONE)
+        let id = scene.add_node(None, Some("Camera".to_string()), cam.to_node_transform(), NodeFlags::NONE)
             .expect("Failed to add default camera node");
-        self.scene.set_node_payload(id, NodePayload::Camera(cam.projection()));
-        self.scene.set_active_camera(Some(id));
+        scene.set_node_payload(id, NodePayload::Camera(cam.projection()));
+        scene.set_active_camera(Some(id));
         return id;
     }
 
     /// Adds default lights as children of the camera if the scene is otherwise unlit.
     fn ensure_default_lights(&mut self) {
-        if self.scene.has_light_nodes() || self.scene.active_environment_map().is_some() {
-            // If the scene has any lights or an environment map we don't add defaults
+        let has_lights = {
+            let scene = self.scene.lock().unwrap();
+            scene.has_light_nodes() || scene.active_environment_map().is_some()
+        };
+        if has_lights {
             return;
         }
         let camera = self.ensure_active_camera();
-        self.scene.set_default_light_nodes(camera);
+        self.scene.lock().unwrap().set_default_light_nodes(camera);
     }
 
     /// Get a reference to the selection manager
@@ -411,7 +414,8 @@ impl<'a> Viewer<'a> {
     ///
     /// Call [`present()`](Self::present) when done to submit commands and display the frame.
     pub fn render_scene(&mut self) -> Result<(wgpu::SurfaceTexture, wgpu::TextureView, wgpu::CommandEncoder), anyhow::Error> {
-        self.renderer.prepare_scene(&mut self.scene)?;
+        let mut scene = self.scene.lock().unwrap();
+        self.renderer.prepare_scene(&mut *scene)?;
 
         let output = self.surface.get_current_texture()?;
         let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -420,7 +424,7 @@ impl<'a> Viewer<'a> {
         );
 
         let highlight = Self::selection_for_render(&self.selection);
-        self.renderer.render_scene_to_view(&view, &mut encoder, None, &self.scene, highlight)?;
+        self.renderer.render_scene_to_view(&view, &mut encoder, None, &*scene, highlight)?;
 
         Ok((output, view, encoder))
     }
@@ -453,7 +457,8 @@ impl<'a> Viewer<'a> {
         view: &wgpu::TextureView,
         encoder: &mut wgpu::CommandEncoder,
     ) -> Result<(), anyhow::Error> {
+        let scene = self.scene.lock().unwrap();
         let highlight = Self::selection_for_render(&self.selection);
-        self.renderer.render_scene_to_view(view, encoder, None, &self.scene, highlight)
+        self.renderer.render_scene_to_view(view, encoder, None, &*scene, highlight)
     }
 }

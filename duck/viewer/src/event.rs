@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use web_time::Instant;
 
 use crate::input::{
@@ -45,8 +45,8 @@ pub struct EventContext<'c> {
     pub size: (u32, u32),
     /// Current cursor position in screen coordinates (x, y), or None if cursor is not over the window
     pub cursor_position: &'c mut Option<(f32, f32)>,
-    /// Mutable reference to the scene
-    pub scene: &'c mut Scene,
+    /// Shared scene reference. Lock with `scene.lock().unwrap()` to access.
+    pub scene: Arc<Mutex<Scene>>,
     /// Mutable reference to the selection manager
     pub selection: &'c mut SelectionManager,
     /// Currently held keyboard modifier keys, updated by the dispatcher before each dispatch.
@@ -56,6 +56,11 @@ pub struct EventContext<'c> {
 }
 
 impl<'c> EventContext<'c> {
+    /// Acquire the scene mutex.
+    pub fn lock_scene(&self) -> MutexGuard<'_, Scene> {
+        self.scene.lock().unwrap()
+    }
+
     /// Returns a [`PositionedCamera`] for the active camera node.
     ///
     /// Combines the node's world transform with its [`CameraProjection`] payload and
@@ -63,6 +68,7 @@ impl<'c> EventContext<'c> {
     pub fn camera(&self) -> PositionedCamera {
         let aspect = self.size.0 as f32 / self.size.1 as f32;
         self.scene
+            .lock().unwrap()
             .active_camera_positioned(aspect)
             .expect("no active camera in scene")
     }
@@ -72,9 +78,10 @@ impl<'c> EventContext<'c> {
     /// Updates both the node transform (pose) and the Camera payload (projection
     /// intrinsics + focus distance).
     pub fn set_camera(&mut self, cam: PositionedCamera) {
-        let id = self.scene.active_camera().expect("no active camera in scene");
-        self.scene.set_node_transform(id, cam.to_node_transform());
-        self.scene.set_node_payload(id, NodePayload::Camera(cam.projection()));
+        let mut scene = self.scene.lock().unwrap();
+        let id = scene.active_camera().expect("no active camera in scene");
+        scene.set_node_transform(id, cam.to_node_transform());
+        scene.set_node_payload(id, NodePayload::Camera(cam.projection()));
     }
 
     /// Clones the active camera, passes it to `f` for mutation, then writes it back.
@@ -876,7 +883,7 @@ mod tests {
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
-    fn create_mock_context_parts() -> (Option<(f32, f32)>, Scene, SelectionManager) {
+    fn create_mock_context_parts() -> (Option<(f32, f32)>, Arc<Mutex<Scene>>, SelectionManager) {
         use crate::scene::PositionedCamera;
         use duck_engine_common::Vector3;
         let camera = PositionedCamera {
@@ -895,14 +902,14 @@ mod tests {
         ).unwrap();
         scene.set_node_payload(cam_id, NodePayload::Camera(camera.projection()));
         scene.set_active_camera(Some(cam_id));
-        (None, scene, SelectionManager::new())
+        (None, Arc::new(Mutex::new(scene)), SelectionManager::new())
     }
 
-    fn make_context(parts: &mut (Option<(f32, f32)>, Scene, SelectionManager)) -> EventContext<'_> {
+    fn make_context(parts: &mut (Option<(f32, f32)>, Arc<Mutex<Scene>>, SelectionManager)) -> EventContext<'_> {
         EventContext {
             size: (800, 600),
             cursor_position: &mut parts.0,
-            scene: &mut parts.1,
+            scene: Arc::clone(&parts.1),
             selection: &mut parts.2,
             modifiers: Default::default(),
         }

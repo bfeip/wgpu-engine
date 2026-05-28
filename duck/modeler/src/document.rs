@@ -1,7 +1,11 @@
+use std::sync::{Arc, Mutex};
+
 use duck_engine_common::RgbaColor;
-use duck_engine_scene::Id;
+use duck_engine_scene::{Id, Scene};
 use duck_engine_viewer::common::Transform;
 use opencascade::primitives::Shape;
+
+use crate::part_map::PartNodeMap;
 
 pub type PartId = Id;
 
@@ -14,13 +18,19 @@ pub struct CadPart {
     pub visible: bool,
 }
 
-pub struct CadDocument {
+pub struct Document {
     parts: Vec<CadPart>,
+    pub part_map: PartNodeMap,
+    pub scene: Arc<Mutex<Scene>>,
 }
 
-impl CadDocument {
-    pub fn new() -> Self {
-        Self { parts: Vec::new() }
+impl Document {
+    pub fn new(scene: Arc<Mutex<Scene>>) -> Self {
+        Self {
+            parts: Vec::new(),
+            part_map: PartNodeMap::new(),
+            scene,
+        }
     }
 
     pub fn add_part(

@@ -28,9 +28,8 @@ use duck_engine_viewer::selection::SelectionItem;
 
 use crate::boolean::BooleanKind;
 use crate::operators::{BooleanOperator, BooleanPhase, ConstructionOptions, SphereOperator};
-use crate::part_map::PartNodeMap;
 
-use document::CadDocument;
+use document::Document;
 
 #[derive(Default, PartialEq, Eq)]
 enum OperatorKind {
@@ -53,9 +52,7 @@ struct ViewerState<'a> {
     window: Arc<Window>,
 
     construction_options: Rc<RefCell<ConstructionOptions>>,
-
-    document: Rc<RefCell<CadDocument>>,
-    part_map: Rc<RefCell<PartNodeMap>>,
+    document: Arc<Mutex<Document>>,
 
     sphere_op: Arc<Mutex<SphereOperator>>,
     boolean_op: Arc<Mutex<BooleanOperator>>,
@@ -90,8 +87,7 @@ impl ViewerState<'static> {
         );
 
         let construction_options = Rc::new(RefCell::new(ConstructionOptions::new()));
-        let document = Rc::new(RefCell::new(CadDocument::new()));
-        let part_map = Rc::new(RefCell::new(PartNodeMap::new()));
+        let document = Arc::new(Mutex::new(Document::new(viewer.scene())));
 
         viewer.dispatcher_mut().push_back(Arc::new(Mutex::new(TransformOperator::new())));
         viewer.dispatcher_mut().push_back(Arc::new(Mutex::new(SelectionOperator::with_mode(SelectionMode::Node))));
@@ -99,15 +95,13 @@ impl ViewerState<'static> {
 
         let sphere_op = Arc::new(Mutex::new(SphereOperator::new(
             Rc::clone(&construction_options),
-            Rc::clone(&document),
-            Rc::clone(&part_map),
+            Arc::clone(&document),
         )));
         viewer.dispatcher_mut().push_back(sphere_op.clone());
 
         let boolean_op = Arc::new(Mutex::new(BooleanOperator::new(
             Rc::clone(&construction_options),
-            Rc::clone(&document),
-            Rc::clone(&part_map),
+            Arc::clone(&document),
         )));
         viewer.dispatcher_mut().push_back(boolean_op.clone());
 
@@ -119,7 +113,6 @@ impl ViewerState<'static> {
             window,
             construction_options,
             document,
-            part_map,
             sphere_op,
             boolean_op,
             active_operator: OperatorKind::Selection,
@@ -178,7 +171,9 @@ impl ViewerState<'static> {
             NodeFlags::inert()
         );
 
-        self.viewer.set_scene(scene);
+        let scene_arc = Arc::new(Mutex::new(scene));
+        self.viewer.set_scene(Arc::clone(&scene_arc));
+        self.document.lock().unwrap().scene = scene_arc;
     }
 }
 
@@ -321,10 +316,12 @@ impl<'a> ViewerState<'a> {
                     SelectionItem::Node(id) => Some(id),
                     _ => None,
                 });
+                let doc = self.document.lock().unwrap();
                 let target_name = target_node
-                    .and_then(|n| self.part_map.borrow().part_for_node(n))
-                    .and_then(|p| self.document.borrow().get_part(p).map(|part| part.name.clone()))
+                    .and_then(|n| doc.part_map.part_for_node(n))
+                    .and_then(|p| doc.get_part(p).map(|part| part.name.clone()))
                     .unwrap_or_else(|| "(none — click a part)".to_owned());
+                drop(doc);
                 ui.label(&target_name);
 
                 ui.separator();
@@ -338,11 +335,12 @@ impl<'a> ViewerState<'a> {
                 if tool_items.is_empty() {
                     ui.label("(shift-click parts to add tools)");
                 } else {
+                    let doc = self.document.lock().unwrap();
                     for &item in &tool_items {
                         let node_id = match item { SelectionItem::Node(id) => Some(id), _ => None };
                         let name = node_id
-                            .and_then(|n| self.part_map.borrow().part_for_node(n))
-                            .and_then(|p| self.document.borrow().get_part(p).map(|part| part.name.clone()))
+                            .and_then(|n| doc.part_map.part_for_node(n))
+                            .and_then(|p| doc.get_part(p).map(|part| part.name.clone()))
                             .unwrap_or_else(|| "Unknown".to_owned());
                         ui.horizontal(|ui| {
                             ui.label(&name);
@@ -373,11 +371,10 @@ impl<'a> ViewerState<'a> {
 
         // Dispatch panel Apply / Cancel through the operator so all cleanup is co-located.
         if let Some(phase) = phase_request {
-            let scene = self.viewer.scene_mut();
             match phase {
                 BooleanPhase::Done => {
                     let mut op = self.boolean_op.lock().unwrap();
-                    if let Err(e) = op.apply(scene) {
+                    if let Err(e) = op.apply() {
                         log::error!("Boolean failed: {e}");
                     } else {
                         drop(op);
@@ -385,7 +382,7 @@ impl<'a> ViewerState<'a> {
                     }
                 }
                 BooleanPhase::Cancelled => {
-                    self.boolean_op.lock().unwrap().cancel(scene);
+                    self.boolean_op.lock().unwrap().cancel();
                 }
                 BooleanPhase::Configuring => {}
             }
