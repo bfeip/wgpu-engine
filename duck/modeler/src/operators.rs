@@ -8,11 +8,14 @@ use duck_engine_common::{Plane, RgbaColor};
 use duck_engine_scene::cad::CadTessellationOptions;
 
 use crate::grid::GridConfig;
+use crate::snap::SnapEngine;
 
 pub struct ConstructionOptions {
     pub geometry_preview_options: CadTessellationOptions,
     pub construction_plane: Plane,
     pub grid: GridConfig,
+    /// Shared snap engine (providers + user settings) consulted by every operator.
+    pub snap: SnapEngine,
 }
 
 impl ConstructionOptions {
@@ -26,6 +29,12 @@ impl ConstructionOptions {
         };
         let construction_plane = Plane::xz();
         let grid = GridConfig::default();
-        Self { geometry_preview_options, construction_plane, grid }
+        let snap = SnapEngine::with_defaults();
+        Self {
+            geometry_preview_options,
+            construction_plane,
+            grid,
+            snap
+        }
     }
 }

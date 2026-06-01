@@ -2631,6 +2631,7 @@ name = "modeler"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bitflags 2.11.0",
  "duck-engine-common",
  "duck-engine-scene",
  "duck-engine-viewer",

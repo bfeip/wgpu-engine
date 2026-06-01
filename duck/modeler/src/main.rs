@@ -1,7 +1,9 @@
 mod boolean;
+mod cursor;
 mod document;
 mod grid;
 mod operators;
+mod snap;
 mod tool;
 
 use std::cell::RefCell;
@@ -28,6 +30,7 @@ use duck_engine_viewer::scene::{
 use duck_engine_viewer::selection::SelectionItem;
 
 use crate::boolean::BooleanKind;
+use crate::cursor::Cursor3d;
 use crate::operators::{BooleanOperator, ConstructionOptions, SphereOperator};
 use crate::tool::ModelingTool;
 
@@ -55,6 +58,8 @@ struct ViewerState<'a> {
 
     construction_options: Rc<RefCell<ConstructionOptions>>,
     document: Arc<Mutex<Document>>,
+    /// The modeler-owned 3D cursor, driven each frame from the active tool.
+    cursor: Cursor3d,
 
     sel_op: Arc<Mutex<SelectionOperator>>,
     sphere_op: Arc<Mutex<SphereOperator>>,
@@ -114,6 +119,7 @@ impl ViewerState<'static> {
             window,
             construction_options,
             document,
+            cursor: Cursor3d::default(),
             sel_op,
             sphere_op,
             boolean_op,
@@ -183,6 +189,7 @@ impl<'a> ViewerState<'a> {
 
     fn handle_redraw(&mut self) {
         self.viewer.update();
+        self.update_cursor();
 
         let raw_input = self.egui_winit.take_egui_input(&self.window);
         let egui_ctx = self.egui_ctx.clone();
@@ -210,6 +217,22 @@ impl<'a> ViewerState<'a> {
         }
 
         self.window.request_redraw();
+    }
+
+    /// Updates the modeler's 3D cursor from the active tool's reported target.
+    /// Runs every frame so the marker also rescales as the camera moves.
+    fn update_cursor(&mut self) {
+        let target = match self.active_operator {
+            OperatorKind::Sphere => self.sphere_op.lock().unwrap().cursor_target(),
+            _ => None,
+        };
+        let (w, h) = self.viewer.size();
+        let aspect = w as f32 / h.max(1) as f32;
+        let scene_arc = self.viewer.scene();
+        let mut scene = scene_arc.lock().unwrap();
+        if let Some(camera) = scene.active_camera_positioned(aspect) {
+            self.cursor.update(target, &camera, (w, h), &mut scene);
+        }
     }
 
     fn switch_tool(&mut self, kind: OperatorKind) {

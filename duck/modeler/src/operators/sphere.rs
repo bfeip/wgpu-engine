@@ -11,11 +11,13 @@ use duck_engine_viewer::{
     event::{Event, EventContext},
     input::{Modifiers, MouseButton},
     operator::Operator,
+    scene::PositionedCamera,
 };
 use glam::dvec3;
 use opencascade::primitives::Shape;
 
 use crate::document::Document;
+use crate::snap::{Snap, SnapInput, SnapKind, SnapFlags};
 use crate::tool::ModelingTool;
 use super::ConstructionOptions;
 
@@ -35,6 +37,9 @@ pub struct SphereOperator {
     construction_options: Rc<RefCell<ConstructionOptions>>,
     document: Arc<Mutex<Document>>,
     bindings: InputMap<SphereAction>,
+    /// Where the modeler's 3D cursor should sit (the latest snap point), or
+    /// `None` to hide it. Read by the modeler via [`ModelingTool::cursor_target`].
+    cursor_target: Option<Point3>,
 }
 
 impl SphereOperator {
@@ -56,6 +61,7 @@ impl SphereOperator {
             construction_options,
             document,
             bindings,
+            cursor_target: None,
         }
     }
 
@@ -67,16 +73,43 @@ impl SphereOperator {
         }
     }
 
-    fn on_place_center(&mut self, position: (f32, f32), ctx: &mut EventContext) -> bool {
+    /// Resolves a cursor position to a snapped world location via the shared snap
+    /// engine. The caller supplies `camera` so we never rebuild it while holding a
+    /// scene lock. `exclude` lists nodes to ignore — e.g. our own in-progress
+    /// preview.
+    fn resolve_snap(
+        &self,
+        cursor: (f32, f32),
+        exclude: &[NodeId],
+        camera: &PositionedCamera,
+        ctx: &EventContext,
+    ) -> Option<Snap> {
         let coptions = self.construction_options.borrow();
-        let ray = ctx.camera().ray_from_screen_point(
-            position.0, position.1, ctx.size.0, ctx.size.1,
-        );
-        let Some((_, center)) = ray.intersect_plane(&coptions.construction_plane) else {
+        let input = SnapInput {
+            ray: camera.ray_from_screen_point(cursor.0, cursor.1, ctx.size.0, ctx.size.1),
+            cursor,
+            viewport: ctx.size,
+            camera,
+            plane: &coptions.construction_plane,
+            grid: &coptions.grid,
+            requested: SnapFlags::all(),
+            exclude_nodes: exclude,
+        };
+        let scene = ctx.scene.lock().unwrap();
+        coptions.snap.snap(&input, &scene)
+    }
+
+    fn on_place_center(&mut self, position: (f32, f32), ctx: &mut EventContext) -> bool {
+        let camera = ctx.camera();
+        let Some(center) = self
+            .resolve_snap(position, &[], &camera, ctx)
+            .map(|s| s.position)
+        else {
             return false;
         };
         let preview_shape = Shape::sphere(1.0).build();
         let preview_node = {
+            let coptions = self.construction_options.borrow();
             let mut scene = ctx.scene.lock().unwrap();
             let Ok(node) = tessellate_into(
                 &preview_shape,
@@ -101,13 +134,12 @@ impl SphereOperator {
         position: (f32, f32),
         ctx: &mut EventContext,
     ) -> bool {
-        let coptions = self.construction_options.borrow();
-        let ray = ctx.camera().ray_from_screen_point(
-            position.0, position.1, ctx.size.0, ctx.size.1,
-        );
-        let radius = ray
-            .intersect_plane(&coptions.construction_plane)
-            .map(|(_, hit)| center.distance(hit).max(0.01))
+        let camera = ctx.camera();
+        // Exclude the preview so the radius can snap through a corner, not to the
+        // preview's own geometry.
+        let radius = self
+            .resolve_snap(position, &[preview_node], &camera, ctx)
+            .map(|s| center.distance(s.position).max(0.01))
             .unwrap_or(0.01);
 
         let world_shape = Shape::sphere(radius as f64)
@@ -117,36 +149,56 @@ impl SphereOperator {
         // Discard the preview node, then commit the world-space shape as a registered part.
         ctx.scene.lock().unwrap().remove_node(preview_node);
 
-        let mut doc = self.document.lock().unwrap();
-        if doc.add_part(
-            "Sphere".to_owned(),
-            world_shape,
-            coptions.geometry_preview_options.face_color,
-            &coptions.geometry_preview_options,
-        ).is_err() {
-            self.phase = Phase::Idle;
-            return false;
-        }
+        let committed = {
+            let coptions = self.construction_options.borrow();
+            let mut doc = self.document.lock().unwrap();
+            doc.add_part(
+                "Sphere".to_owned(),
+                world_shape,
+                coptions.geometry_preview_options.face_color,
+                &coptions.geometry_preview_options,
+            )
+            .is_ok()
+        };
+
         self.phase = Phase::Idle;
-        true
+        committed
     }
 
     pub fn cancel(&mut self) {
         if let Phase::Defining { preview_node, .. } = self.phase {
-            self.document.lock().unwrap().scene().lock().unwrap().remove_node(preview_node);
+            let scene_arc = self.document.lock().unwrap().scene().clone();
+            scene_arc.lock().unwrap().remove_node(preview_node);
             self.phase = Phase::Idle;
         }
     }
 
-    fn on_cursor_moved(&self, position: (f64, f64), ctx: &mut EventContext) {
-        let Phase::Defining { center, preview_node } = self.phase else { return };
-        let coptions = self.construction_options.borrow();
-        let ray = ctx.camera().ray_from_screen_point(
-            position.0 as f32, position.1 as f32, ctx.size.0, ctx.size.1,
-        );
-        if let Some((_, hit)) = ray.intersect_plane(&coptions.construction_plane) {
-            let radius = center.distance(hit).max(0.01);
-            ctx.scene.lock().unwrap().set_node_transform(preview_node, Self::preview_transform(center, radius));
+    fn on_cursor_moved(&mut self, position: (f64, f64), ctx: &mut EventContext) {
+        let cursor = (position.0 as f32, position.1 as f32);
+        // While defining, exclude our own preview so the radius doesn't snap to it.
+        let exclude: Vec<NodeId> = match self.phase {
+            Phase::Defining { preview_node, .. } => vec![preview_node],
+            Phase::Idle => Vec::new(),
+        };
+
+        let camera = ctx.camera();
+        let snap = self.resolve_snap(cursor, &exclude, &camera, ctx);
+
+        // Record where the modeler should draw the 3D cursor: a real snap, not
+        // the free construction-plane fallback (which sits under the cursor).
+        self.cursor_target = snap
+            .filter(|s| s.kind != SnapKind::ConstructionPlane)
+            .map(|s| s.position);
+
+        // Drive the preview radius from the snapped point while defining.
+        if let Phase::Defining { center, preview_node } = self.phase {
+            if let Some(snap) = snap {
+                let radius = center.distance(snap.position).max(0.01);
+                ctx.scene
+                    .lock()
+                    .unwrap()
+                    .set_node_transform(preview_node, Self::preview_transform(center, radius));
+            }
         }
     }
 }
@@ -154,6 +206,13 @@ impl SphereOperator {
 impl ModelingTool for SphereOperator {
     fn deactivate(&mut self) {
         self.cancel();
+        // The modeler hides the cursor for the (now inactive) tool, but clear our
+        // target so a stale point can't flash if we're reactivated before a move.
+        self.cursor_target = None;
+    }
+
+    fn cursor_target(&self) -> Option<Point3> {
+        self.cursor_target
     }
 }
 

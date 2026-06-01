@@ -120,6 +120,32 @@ impl Plane {
         let point = start + direction * t;
         Some((t, point))
     }
+
+    /// Projects `point` onto the plane, returning the closest point on it.
+    ///
+    /// Assumes a unit normal (the invariant maintained by every constructor).
+    pub fn project_point(&self, point: Point3) -> Point3 {
+        point - self.normal * self.signed_distance(point)
+    }
+
+    /// Returns two orthonormal vectors `(u, v)` that span the plane.
+    ///
+    /// The choice is deterministic but otherwise arbitrary: `u` is the world axis
+    /// least aligned with the normal, projected into the plane (so it stays
+    /// well-defined even when the plane is axis-aligned). `(u, normal, v)` form a
+    /// right-handed frame, i.e. `v × u == normal` and `Matrix3::from_cols(u,
+    /// normal, v)` is a proper rotation. Handy for laying out 2D content on an
+    /// arbitrary plane.
+    pub fn basis(&self) -> (Vector3, Vector3) {
+        let n = self.normal.normalize();
+        let candidate = [Vector3::unit_x(), Vector3::unit_y(), Vector3::unit_z()]
+            .into_iter()
+            .min_by(|a, b| a.dot(n).abs().partial_cmp(&b.dot(n).abs()).unwrap())
+            .unwrap();
+        let u = (candidate - n * candidate.dot(n)).normalize();
+        let v = u.cross(n);
+        (u, v)
+    }
 }
 
 #[cfg(test)]
@@ -251,5 +277,49 @@ mod tests {
         let end = Point3::new(0.0, 2.0, 0.0);
 
         assert!(plane.intersect_segment(start, end).is_none());
+    }
+
+    #[test]
+    fn test_plane_project_point() {
+        // y = 5
+        let plane = Plane::from_coefficients(0.0, 1.0, 0.0, -5.0);
+
+        // An off-plane point keeps its in-plane coords, snaps onto the plane.
+        let p = plane.project_point(Point3::new(3.0, 10.0, 4.0));
+        assert!((p.x - 3.0).abs() < EPSILON);
+        assert!((p.y - 5.0).abs() < EPSILON);
+        assert!((p.z - 4.0).abs() < EPSILON);
+
+        // A point already on the plane is unchanged.
+        let on = plane.project_point(Point3::new(-2.0, 5.0, 7.0));
+        assert!((on - Point3::new(-2.0, 5.0, 7.0)).magnitude() < EPSILON);
+
+        // The world origin projects to the plane's nearest point.
+        let o = plane.project_point(Point3::origin());
+        assert!((o - Point3::new(0.0, 5.0, 0.0)).magnitude() < EPSILON);
+    }
+
+    #[test]
+    fn test_plane_basis_is_orthonormal_right_handed() {
+        let planes = [
+            Plane::xz(),
+            Plane::xy(),
+            Plane::yz(),
+            Plane::from_point(Vector3::new(1.0, 2.0, 3.0), Point3::new(1.0, 0.0, 0.0)),
+        ];
+        for plane in planes {
+            let n = plane.normal.normalize();
+            let (u, v) = plane.basis();
+
+            // Unit length.
+            assert!((u.magnitude() - 1.0).abs() < EPSILON);
+            assert!((v.magnitude() - 1.0).abs() < EPSILON);
+            // Mutually orthogonal and both in-plane.
+            assert!(u.dot(v).abs() < EPSILON);
+            assert!(u.dot(n).abs() < EPSILON);
+            assert!(v.dot(n).abs() < EPSILON);
+            // Right-handed: v × u == normal.
+            assert!((v.cross(u) - n).magnitude() < EPSILON);
+        }
     }
 }

@@ -50,7 +50,7 @@ impl Default for GridConfig {
 /// A grid installed in a scene: handles to the nodes that comprise it, so it
 /// can be removed (e.g., when the construction plane changes).
 pub struct Grid {
-    nodes: Vec<NodeId>,
+    _nodes: Vec<NodeId>,
 }
 
 impl Grid {
@@ -89,14 +89,7 @@ impl Grid {
         })
         .collect();
 
-        Self { nodes }
-    }
-
-    /// Removes all nodes that this grid added to the scene.
-    pub fn remove_from_scene(self, scene: &mut Scene) {
-        for node in self.nodes {
-            scene.remove_node(node);
-        }
+        Self { _nodes: nodes }
     }
 }
 
@@ -164,25 +157,23 @@ fn build_axis_mesh(direction: [f32; 3], length: f32) -> Mesh {
     )
 }
 
-/// Builds an orthonormal basis on `plane` and packages it as a rigid transform
-/// that maps the canonical XZ-grid layout (Y-up) onto the plane.
+/// Rigid transform that places the canonical grid geometry onto `plane`.
+///
+/// The grid meshes (`build_grid_mesh`, `build_axis_mesh`) are authored once in a
+/// fixed local space — the XZ plane with +Y as the normal (`GRID_NORMAL`). This
+/// returns the transform that rotates and translates that local space onto the
+/// construction plane, so the very same meshes can be reused for any plane
+/// orientation instead of rebuilding them per plane.
+///
+/// The rotation's columns are the plane's frame `(u, normal, v)`: `normal` is the
+/// middle column because the grid's local up axis is +Y, and `u`/`v` are the
+/// in-plane axes that the grid's local X and Z map onto (see [`Plane::basis`]).
+/// The translation is the plane point nearest the world origin, keeping the grid
+/// centred near the origin.
 fn plane_to_transform(plane: &Plane) -> Transform {
+    let (u, v) = plane.basis();
     let n = plane.normal.normalize();
-
-    // Pick the world axis least aligned with the normal so the in-plane U
-    // direction is well-defined even when the plane is axis-aligned.
-    let world_axes = [Vector3::unit_x(), Vector3::unit_y(), Vector3::unit_z()];
-    let candidate = world_axes
-        .iter()
-        .copied()
-        .min_by(|a, b| a.dot(n).abs().partial_cmp(&b.dot(n).abs()).unwrap())
-        .unwrap();
-    let u = (candidate - n * candidate.dot(n)).normalize();
-    let v = u.cross(n);
-
-    let rotation_matrix = Matrix3::from_cols(u, n, v);
-    let rotation: Quaternion = rotation_matrix.into();
-    let position = Point3::from_vec(-n * plane.d);
-
+    let rotation: Quaternion = Matrix3::from_cols(u, n, v).into();
+    let position = plane.project_point(Point3::origin());
     Transform { position, rotation, scale: Vector3::new(1.0, 1.0, 1.0) }
 }
