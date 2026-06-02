@@ -23,11 +23,13 @@ pub fn show(ui: &mut egui::Ui, viewer: &Viewer, actions: &mut UiActions) {
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            if viewer.scene().root_nodes().is_empty() {
+            let scene_arc = viewer.scene();
+            let scene = scene_arc.lock().unwrap();
+            if scene.root_nodes().is_empty() {
                 ui.label("(empty)");
             } else {
-                for &root_id in viewer.scene().root_nodes() {
-                    render_node_tree(ui, viewer.scene(), root_id, 0, actions);
+                for &root_id in scene.root_nodes() {
+                    render_node_tree(ui, &scene, root_id, 0, actions);
                 }
             }
         });

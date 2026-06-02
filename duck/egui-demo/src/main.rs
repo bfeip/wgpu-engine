@@ -182,14 +182,15 @@ impl<'a> App<'a> {
         if ui_actions.clear_environment {
             self.clear_environment();
         }
-        for change in ui_actions.visibility_changes {
-            self.state
-                .as_mut()
-                .unwrap()
-                .viewer
-                .scene_mut()
-                .set_node_visibility(change.node_id, change.new_visibility);
+
+        {
+            let scene_arc = self.state.as_mut().unwrap().viewer.scene();
+            let mut scene = scene_arc.lock().unwrap();
+            for change in ui_actions.visibility_changes {
+                scene.set_node_visibility(change.node_id, change.new_visibility);
+            }
         }
+        
         if let Some(camera) = ui_actions.set_camera {
             self.state.as_mut().unwrap().viewer.set_camera(camera);
         }
@@ -215,7 +216,7 @@ impl<'a> App<'a> {
 
     fn clear_scene(&mut self) {
         if let Some(state) = self.state.as_mut() {
-            state.viewer.set_scene(Scene::new());
+            state.viewer.set_scene(Arc::new(Mutex::new(Scene::new())));
             log::info!("Scene cleared");
         }
     }
@@ -237,7 +238,8 @@ impl<'a> App<'a> {
             ),
         };
 
-        let scene = viewer.scene_mut();
+        let scene_arc = viewer.scene();
+        let mut scene = scene_arc.lock().unwrap();
         let node_id = scene.add_node(None, None, transform, NodeFlags::NONE).expect("add light node");
         scene.set_node_payload(node_id, NodePayload::Light(light));
         log::info!("Added {:?} light", light_type);
@@ -253,7 +255,8 @@ impl<'a> App<'a> {
         let Some(path) = self.pending_hdr_path.take() else { return };
         let Some(state) = self.state.as_mut() else { return };
         let path_str = path.display().to_string();
-        let scene = state.viewer.scene_mut();
+        let scene_arc = state.viewer.scene();
+        let mut scene = scene_arc.lock().unwrap();
         let env_id = scene.add_environment_map_from_hdr_path(&path);
         scene.set_active_environment_map(Some(env_id));
         log::info!("Loaded HDR environment: {}", path_str);
@@ -261,7 +264,9 @@ impl<'a> App<'a> {
 
     fn clear_environment(&mut self) {
         if let Some(state) = self.state.as_mut() {
-            state.viewer.scene_mut().set_active_environment_map(None);
+            let scene_arc = state.viewer.scene();
+            let mut scene = scene_arc.lock().unwrap();
+            scene.set_active_environment_map(None);
             log::info!("Environment cleared");
         }
     }
@@ -294,10 +299,11 @@ impl<'a> App<'a> {
         let path_str = path.display().to_string();
         match load_sync(SceneSource::Path(path), LoadOptions::default()) {
             Ok(result) => {
-                state.viewer.set_scene(result.scene);
+                let bounds = result.scene.bounding().bounds;
+                state.viewer.set_scene(Arc::new(Mutex::new(result.scene)));
                 if let Some(camera) = result.camera {
                     state.viewer.set_camera(camera);
-                } else if let Some(bounds) = state.viewer.scene().bounding().bounds {
+                } else if let Some(bounds) = bounds {
                     state.viewer.with_camera_mut(|c| c.fit_to_bounds(&bounds));
                 }
                 log::info!("Loaded scene: {}", path_str);
@@ -320,7 +326,9 @@ impl<'a> App<'a> {
         let Some(path) = self.pending_scene_save_path.take() else { return };
         let Some(state) = self.state.as_mut() else { return };
         let path_str = path.display().to_string();
-        match save_to_file(state.viewer.scene(), &path, &SaveOptions::default()) {
+        let scene_arc = state.viewer.scene();
+        let scene = scene_arc.lock().unwrap();
+        match save_to_file(&scene, &path, &SaveOptions::default()) {
             Ok(()) => log::info!("Saved scene: {}", path_str),
             Err(e) => log::error!("Failed to save scene {}: {}", path_str, e),
         }

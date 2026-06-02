@@ -665,7 +665,7 @@ impl DrawData {
 mod tests {
     use super::*;
     use duck_engine_common::{Deg, Matrix4, Quaternion, Rotation3, SquareMatrix, Vector3};
-use duck_engine_scene::NodeFlags;
+    use duck_engine_scene::NodeFlags;
     use crate::scene::common::EPSILON;
 
     fn nid() -> NodeId { NodeId::new() }

@@ -14,22 +14,25 @@ pub fn show(ui: &mut egui::Ui, viewer: &mut Viewer, actions: &mut UiActions) {
 
     ui.separator();
 
-    let env_id = viewer.scene().active_environment_map();
+    let scene_arc = viewer.scene();
+    let env_id = scene_arc.lock().unwrap().active_environment_map();
     if let Some(env_id) = env_id {
-        let mut intensity = viewer
-            .scene()
-            .get_environment_map(env_id)
-            .map_or(1.0, |e| e.intensity());
-        let rotation_deg = viewer
-            .scene()
-            .get_environment_map(env_id)
-            .map_or(0.0, |e| e.rotation().to_degrees());
+        let (mut intensity, rotation_deg) = {
+            let scene = scene_arc.lock().unwrap();
+            let intensity = scene
+                .get_environment_map(env_id)
+                .map_or(1.0, |e| e.intensity());
+            let rotation_deg = scene
+                .get_environment_map(env_id)
+                .map_or(0.0, |e| e.rotation().to_degrees());
+            (intensity, rotation_deg)
+        };
 
         ui.label(format!("Active: Environment #{}", env_id));
         if ui
             .add(egui::Slider::new(&mut intensity, 0.0..=5.0).text("Intensity"))
             .changed()
-            && let Some(env_map) = viewer.scene_mut().get_environment_map_mut(env_id) {
+            && let Some(env_map) = scene_arc.lock().unwrap().get_environment_map_mut(env_id) {
                 env_map.set_intensity(intensity);
             }
         ui.label(format!("Rotation: {:.1}°", rotation_deg));
