@@ -448,27 +448,15 @@ fn screen_space_matrix(
 
 /// Uniform world-space scale that makes a unit-extent geometry span `target_px`
 /// pixels on screen, regardless of camera distance.
-///
-/// STUB — left as an exercise. Implement per the "Screen-sized" section of
-/// `duck/docs/screen-space-presentation.md`:
-///
-/// ```text
-/// depth = dot(p - eye, forward)   // view-space distance; ortho ignores it
-/// depth = depth.max(camera.znear) // clamp to avoid zero/negative scale
-/// s     = camera.world_size_per_pixel(depth, viewport.1) * target_px
-/// ```
-///
-/// `PositionedCamera::world_size_per_pixel` (duck/scene/src/camera.rs) is the
-/// building block; it already substitutes the eye-to-target distance for `depth`
-/// under orthographic projection, so the same path works for both.
 fn screen_size_scale(
     p: Point3,
     target_px: f32,
     camera: &PositionedCamera,
     viewport: (u32, u32),
 ) -> f32 {
-    let _ = (p, target_px, camera, viewport);
-    todo!()
+    let depth = (p - camera.eye).dot(camera.forward()).max(camera.znear);
+    let depth_size = camera.world_size_per_pixel(depth, viewport.1);
+    depth_size * target_px
 }
 
 /// Builds sub-geometry draw calls for all highlighted faces in the current frame.

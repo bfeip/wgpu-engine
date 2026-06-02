@@ -231,10 +231,10 @@ fn build_material_scene(viewer: &mut Viewer) {
             .unwrap();
     }
 
-    // Billboard demo: a flat quad placed above the grid that always faces the
-    // camera (screen_facing). Orbiting the view should keep it edge-on to the
-    // viewer while the spheres rotate normally. (Screen-sizing is intentionally
-    // left unset — its scale math is still a `todo!()` stub.)
+    // Screen-space demo: a flat quad above the grid that always faces the camera
+    // (screen_facing) and holds a constant on-screen size (screen_size).
+    // Orbiting/zooming should keep it the same pixel size and edge-on to the
+    // viewer while the spheres rotate and shrink with distance.
     let quad_mesh = scene.add_mesh(Mesh::quad(1.0, 1.6, PrimitiveType::TriangleList));
     let quad_mat = scene.add_material(
         Material::new()
@@ -251,7 +251,14 @@ fn build_material_scene(viewer: &mut Viewer) {
             NodeFlags::NONE,
         )
         .unwrap();
-    scene.set_node_display(billboard, DisplayBehavior { screen_facing: true, ..Default::default() });
+    scene.set_node_display(
+        billboard,
+        DisplayBehavior {
+            screen_facing: true,
+            screen_size: Some(120.0),
+            ..Default::default()
+        },
+    );
 
     // Release the scene lock before re-borrowing the viewer for the camera.
     drop(scene);
