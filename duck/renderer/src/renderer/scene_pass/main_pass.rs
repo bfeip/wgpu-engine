@@ -62,7 +62,6 @@ pub(crate) fn draw_batches(
                     alpha_mode: AlphaMode::Mask,
                     has_lighting: material_props.has_lighting,
                     double_sided: material_props.double_sided,
-                    always_on_top: material_props.always_on_top,
                 },
                 scene_props: SceneProperties { has_ibl: false },
                 primitive_type: batch.primitive_type,

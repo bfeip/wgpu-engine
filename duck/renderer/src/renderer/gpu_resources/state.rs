@@ -456,8 +456,10 @@ pub(crate) fn draw_mesh_instances(
     let instance_raws: Vec<GpuInstance> = instance_transforms
         .iter()
         .map(|inst_transform| GpuInstance {
-            transform: inst_transform.world_transform.into(),
-            normal_mat: inst_transform.normal_matrix.into(),
+            // Upload the effective (screen-space-adjusted) transform. For
+            // ordinary geometry this equals the world transform.
+            transform: inst_transform.effective_transform.into(),
+            normal_mat: inst_transform.effective_normal_matrix.into(),
         })
         .collect();
 

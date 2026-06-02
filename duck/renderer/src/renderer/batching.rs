@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use duck_engine_common::{Matrix3, Matrix4, Point3, SquareMatrix};
 
 use crate::scene::{
-    AlphaMode, InstanceId, Light, MaterialId, MeshId, NodeId, NodePayload, PrimitiveType, Scene,
-    Visibility,
+    AlphaMode, DisplayBehavior, InstanceId, Light, MaterialId, MeshId, NodeId, NodePayload,
+    PositionedCamera, PrimitiveType, RenderLayer, Scene, Visibility,
 };
 use crate::scene::common;
 use crate::highlight_query::HighlightQuery;
@@ -33,13 +33,26 @@ pub type BatchKey = (MeshId, MaterialId, PrimitiveType);
 pub struct InstanceTransform {
     pub node_id: NodeId,
     pub instance_id: InstanceId,
+    /// Camera-independent world transform from the scene graph. Reused for
+    /// centroid sorting and highlight sub-geometry; never camera-adjusted.
     pub world_transform: Matrix4,
     pub normal_matrix: Matrix3,
+    /// Effective (inherited) render-presentation behavior for this instance.
+    pub display: DisplayBehavior,
+    /// Transform actually uploaded to the GPU. Equal to `world_transform` for
+    /// ordinary geometry; the camera-dependent screen-space adjustments
+    /// (screen-sizing, billboarding) replace it at render time. Kept separate
+    /// so the camera-independent `world_transform` stays usable for sorting.
+    pub effective_transform: Matrix4,
+    /// Normal matrix matching `effective_transform`.
+    pub effective_normal_matrix: Matrix3,
 }
 
 impl InstanceTransform {
     /// Creates a new InstanceTransform with the given world transform.
-    /// The normal matrix is computed from the world transform.
+    /// The normal matrix is computed from the world transform. The effective
+    /// transform starts equal to the world transform (no screen-space
+    /// adjustment) and display defaults to ordinary scene geometry.
     pub fn new(node_id: NodeId, instance_id: InstanceId, world_transform: Matrix4) -> Self {
         let normal_matrix = common::compute_normal_matrix(&world_transform);
         Self {
@@ -47,7 +60,16 @@ impl InstanceTransform {
             instance_id,
             world_transform,
             normal_matrix,
+            display: DisplayBehavior::default(),
+            effective_transform: world_transform,
+            effective_normal_matrix: normal_matrix,
         }
+    }
+
+    /// Sets the effective render-presentation behavior for this instance.
+    pub fn with_display(mut self, display: DisplayBehavior) -> Self {
+        self.display = display;
+        self
     }
 }
 
@@ -107,10 +129,26 @@ pub(crate) struct SceneFrameData {
     pub lights: Vec<ResolvedLight>,
 }
 
+/// Resolves a node's own display behavior against the inherited (parent)
+/// behavior: a non-`Scene` layer or a set screen-space flag overrides downward,
+/// otherwise the parent's value is carried.
+fn inherit_display(parent: DisplayBehavior, node: DisplayBehavior) -> DisplayBehavior {
+    DisplayBehavior {
+        screen_sized: parent.screen_sized || node.screen_sized,
+        screen_facing: parent.screen_facing || node.screen_facing,
+        layer: if node.layer != RenderLayer::Scene {
+            node.layer
+        } else {
+            parent.layer
+        },
+    }
+}
+
 fn collect_scene_data_recursive(
     scene: &Scene,
     node_id: NodeId,
     parent_transform: Matrix4,
+    parent_display: DisplayBehavior,
     parent_changed: bool,
     data: &mut SceneFrameData,
 ) {
@@ -129,9 +167,13 @@ fn collect_scene_data_recursive(
         return;
     }
 
+    let display = inherit_display(parent_display, node.display());
+
     match node.payload() {
         NodePayload::Instance(instance_id) => {
-            data.instance_transforms.push(InstanceTransform::new(node.id, *instance_id, world_transform));
+            data.instance_transforms.push(
+                InstanceTransform::new(node.id, *instance_id, world_transform).with_display(display),
+            );
         }
         NodePayload::Light(light) => {
             let (position, direction) = Light::world_position_and_direction(&world_transform);
@@ -141,7 +183,7 @@ fn collect_scene_data_recursive(
     }
 
     for &child_id in node.children() {
-        collect_scene_data_recursive(scene, child_id, world_transform, needs_recompute, data);
+        collect_scene_data_recursive(scene, child_id, world_transform, display, needs_recompute, data);
     }
 }
 
@@ -152,7 +194,14 @@ pub(crate) fn collect_scene_data(scene: &Scene) -> SceneFrameData {
         lights: Vec::new(),
     };
     for &root_id in scene.root_nodes() {
-        collect_scene_data_recursive(scene, root_id, Matrix4::identity(), false, &mut data);
+        collect_scene_data_recursive(
+            scene,
+            root_id,
+            Matrix4::identity(),
+            DisplayBehavior::default(),
+            false,
+            &mut data,
+        );
     }
     data
 }
@@ -358,7 +407,7 @@ pub struct DrawData {
     /// Subset of batches containing secondary (non-primary) highlighted instances.
     /// Empty if there is only one selection or no highlight is active.
     secondary_highlighted_batches: Vec<DrawBatch>,
-    /// Batches with ALWAYS_ON_TOP materials, rendered in a separate overlay pass.
+    /// Batches on `RenderLayer::Overlay`, rendered in a separate overlay pass.
     overlay_batches: Vec<DrawBatch>,
     /// Sub-geometry draw calls for highlighted faces/edges belonging to the primary selection.
     /// Each entry targets a specific index range within a mesh's index buffer.
@@ -380,24 +429,26 @@ impl DrawData {
     /// - Groups into batches by mesh/material/primitive
     /// - Sorts for transparency (opaque first, transparent back-to-front)
     /// - Partitions highlighted instances if a non-empty highlight is provided
+    ///
+    /// `camera` and `viewport` are used to resolve transparency ordering and the
+    /// (currently identity) camera-dependent screen-space adjustments; see
+    /// `duck/docs/screen-space-presentation.md`.
     pub(crate) fn new(
         scene: &Scene,
-        camera_position: Point3,
+        camera: &PositionedCamera,
+        viewport: (u32, u32),
         highlight: Option<&dyn HighlightQuery>,
     ) -> Self {
+        let _ = viewport; // reserved for screen-sizing math (see design doc)
         let mut batches = collect_draw_batches(scene);
-        sort_batches_for_transparency(&mut batches, scene, camera_position);
+        sort_batches_for_transparency(&mut batches, scene, camera.eye);
 
-        // Partition out overlay (always-on-top) batches so they render in a separate pass
-        let (overlay_batches, normal_batches) = partition_batches(&batches, |inst| {
-            // Look up the instance's material to check the always_on_top flag.
-            // All instances in a batch share the same material, so this is consistent.
-            scene
-                .get_instance(inst.instance_id)
-                .and_then(|instance| scene.get_material(instance.material()))
-                .map(|mat| mat.flags().contains(crate::scene::MaterialFlags::ALWAYS_ON_TOP))
-                .unwrap_or(false)
-        });
+        // Partition out overlay batches (RenderLayer::Overlay) so they render in
+        // a separate pass. The effective layer is resolved per instance during
+        // the scene traversal, so two instances sharing a mesh+material but
+        // differing in layer are separated correctly.
+        let (overlay_batches, normal_batches) =
+            partition_batches(&batches, |inst| inst.display.layer == RenderLayer::Overlay);
         batches = normal_batches;
 
         let active_highlight = highlight.filter(|h| !h.is_empty());
@@ -480,7 +531,7 @@ impl DrawData {
         &self.secondary_highlight_sub_geom_batches
     }
 
-    /// Batches with ALWAYS_ON_TOP materials, rendered in a separate overlay pass.
+    /// Batches on `RenderLayer::Overlay`, rendered in a separate overlay pass.
     pub fn overlay_batches(&self) -> &[DrawBatch] {
         &self.overlay_batches
     }
@@ -877,6 +928,20 @@ use duck_engine_scene::NodeFlags;
         }
     }
 
+    /// A simple camera for tests that exercise `DrawData::new`.
+    fn test_camera() -> PositionedCamera {
+        PositionedCamera {
+            eye: Point3::new(0.0, 0.0, 5.0),
+            target: Point3::new(0.0, 0.0, 0.0),
+            up: duck_engine_common::Vector3::new(0.0, 1.0, 0.0),
+            aspect: 1.0,
+            fovy: 45.0,
+            znear: 0.1,
+            zfar: 100.0,
+            ortho: false,
+        }
+    }
+
     /// Creates a scene with one instance node (empty mesh + default material).
     fn build_simple_scene() -> (Scene, NodeId) {
         let mut scene = Scene::new();
@@ -891,7 +956,7 @@ use duck_engine_scene::NodeFlags;
     #[test]
     fn test_draw_data_no_highlight() {
         let scene = Scene::new();
-        let draw_data = DrawData::new(&scene, Point3::new(0.0, 0.0, 0.0), None);
+        let draw_data = DrawData::new(&scene, &test_camera(), (256, 256), None);
 
         assert!(draw_data.all_batches().is_empty());
         assert!(draw_data.highlighted_batches().is_empty());
@@ -906,7 +971,8 @@ use duck_engine_scene::NodeFlags;
         };
         let draw_data = DrawData::new(
             &scene,
-            Point3::new(0.0, 0.0, 0.0),
+            &test_camera(),
+            (256, 256),
             Some(&highlight),
         );
 
@@ -922,12 +988,66 @@ use duck_engine_scene::NodeFlags;
         };
         let draw_data = DrawData::new(
             &scene,
-            Point3::new(0.0, 0.0, 0.0),
+            &test_camera(),
+            (256, 256),
             Some(&highlight),
         );
 
         // Scene has no mesh primitives (empty mesh), so no batches are generated
         // This test verifies the highlight path runs without errors
         assert!(!draw_data.has_highlights() || !draw_data.highlighted_batches().is_empty());
+    }
+
+    /// Two instance nodes share the same mesh + material but differ in render
+    /// layer; the overlay partition must split them per instance.
+    #[test]
+    fn test_overlay_partition_is_per_instance() {
+        use crate::scene::{DisplayBehavior, Mesh, MeshPrimitive, PrimitiveType, RenderLayer, Vertex};
+
+        let vertex = Vertex {
+            position: [0.0, 0.0, 0.0],
+            tex_coords: [0.0, 0.0, 0.0],
+            normal: [0.0, 0.0, 1.0],
+        };
+        let mesh = Mesh::from_raw(
+            vec![vertex, vertex, vertex],
+            vec![MeshPrimitive {
+                primitive_type: PrimitiveType::TriangleList,
+                indices: vec![0, 1, 2],
+            }],
+        );
+
+        let mut scene = Scene::new();
+        let mesh_id = scene.add_mesh(mesh);
+        let material_id = scene.add_material(crate::scene::Material::new());
+
+        let scene_node = scene
+            .add_instance_node(None, mesh_id, material_id, None, common::Transform::IDENTITY, NodeFlags::NONE)
+            .unwrap();
+        let overlay_node = scene
+            .add_instance_node(None, mesh_id, material_id, None, common::Transform::IDENTITY, NodeFlags::NONE)
+            .unwrap();
+        scene.set_node_display(
+            overlay_node,
+            DisplayBehavior { layer: RenderLayer::Overlay, ..Default::default() },
+        );
+
+        let draw_data = DrawData::new(&scene, &test_camera(), (256, 256), None);
+
+        // Exactly one overlay batch and one normal batch, each with one instance.
+        let overlay_instances: usize = draw_data.overlay_batches().iter().map(|b| b.len()).sum();
+        let normal_instances: usize = draw_data.all_batches().iter().map(|b| b.len()).sum();
+        assert_eq!(overlay_instances, 1, "overlay node should produce one overlay instance");
+        assert_eq!(normal_instances, 1, "scene node should produce one normal instance");
+        assert!(draw_data.has_overlay());
+
+        // Sanity: the overlay instance is the one we flagged.
+        let overlay_node_ids: Vec<_> = draw_data
+            .overlay_batches()
+            .iter()
+            .flat_map(|b| b.instances.iter().map(|i| i.node_id))
+            .collect();
+        assert_eq!(overlay_node_ids, vec![overlay_node]);
+        let _ = scene_node;
     }
 }

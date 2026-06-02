@@ -36,7 +36,7 @@ use crate::geom_query::{pick_all_from_ray, RayPickQuery};
 use crate::input::{ElementState, Key, Modifiers, MouseButton, NamedKey};
 use crate::operator::Operator;
 use crate::gizmo::{self, GizmoType};
-use crate::scene::{Material, MaterialId, MeshId, NodeId};
+use crate::scene::{DisplayBehavior, Material, MaterialId, MeshId, NodeId, RenderLayer};
 use crate::scene_scale;
 
 /// Semantic actions for the transform operator.
@@ -162,11 +162,14 @@ impl GizmoState {
         self.hide(ctx);
 
         let mut scene = ctx.scene.lock().unwrap();
-        self.root_node.get_or_insert(
-            scene.add_node(
+        self.root_node.get_or_insert_with(|| {
+            let id = scene.add_node(
                 None, Some("Gizmo root".to_owned()), Transform::IDENTITY, NodeFlags::DO_NOT_EXPORT
-            ).expect("Failed to create Gizmo root node")
-        );
+            ).expect("Failed to create Gizmo root node");
+            // Draw the gizmo on the overlay layer; handles inherit it.
+            scene.set_node_display(id, DisplayBehavior { layer: RenderLayer::Overlay, ..Default::default() });
+            id
+        });
 
         let handles = gizmo::build_handles(gizmo_type, size);
         let pivot_transform = common::Transform::from_position(pivot);

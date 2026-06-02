@@ -10,8 +10,7 @@ use crate::common::{Axis, RgbaColor};
 use crate::scene::{AlphaMode, Material, MaterialFlags, Mesh, PrimitiveType};
 
 const GIZMO_FLAGS: MaterialFlags = MaterialFlags::DO_NOT_LIGHT
-    .union(MaterialFlags::DOUBLE_SIDED)
-    .union(MaterialFlags::ALWAYS_ON_TOP);
+    .union(MaterialFlags::DOUBLE_SIDED);
 
 const SEGMENTS: u32 = 16;
 
@@ -248,7 +247,6 @@ use crate::geom_query::RayPickQuery;
             let flags = handle.material.flags();
             assert!(flags.contains(MaterialFlags::DO_NOT_LIGHT));
             assert!(flags.contains(MaterialFlags::DOUBLE_SIDED));
-            assert!(flags.contains(MaterialFlags::ALWAYS_ON_TOP));
         }
     }
 

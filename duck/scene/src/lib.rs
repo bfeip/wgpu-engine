@@ -6,6 +6,7 @@ mod id;
 #[cfg(feature = "cad")]
 pub mod cad;
 mod camera;
+mod display;
 mod event;
 mod environment;
 pub mod geom_query;
@@ -33,6 +34,7 @@ pub use node::NodeId;
 pub use texture::TextureId;
 
 pub use camera::{CameraProjection, PositionedCamera};
+pub use display::{DisplayBehavior, RenderLayer};
 pub use coordinate_space::CoordinateSpace;
 pub use view::{View, ViewId};
 pub use instance::Instance;
@@ -870,6 +872,16 @@ impl Scene {
         node.set_scale(scale);
         self.invalidate_subtree_transforms(node_id);
         self.invalidate_ancestor_bounds(node_id);
+        self.node_generation += 1;
+    }
+
+    /// Sets a node's render-presentation behavior (layer, screen-space flags).
+    ///
+    /// The behavior inherits down the subtree and is resolved by the renderer,
+    /// so no cache invalidation beyond bumping the node generation is needed.
+    pub fn set_node_display(&mut self, node_id: NodeId, display: crate::DisplayBehavior) {
+        let node = self.nodes.get_mut(&node_id).expect("Node not found");
+        node.set_display(display);
         self.node_generation += 1;
     }
 

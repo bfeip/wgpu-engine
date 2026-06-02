@@ -453,7 +453,7 @@ impl Renderer {
             .write_buffer(&self.camera_resources.buffer, 0, camera_buffer_contents);
 
         // Collect, sort, and partition draw batches for this frame
-        let draw_data = DrawData::new(scene, camera.eye, highlight);
+        let draw_data = DrawData::new(scene, camera, self.size, highlight);
 
         // Resolve IBL bind group once — shared by all geometry passes this frame.
         let ibl_bind_group = scene

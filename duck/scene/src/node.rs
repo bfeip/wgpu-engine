@@ -1,6 +1,8 @@
 use super::InstanceId;
 use crate::CameraProjection;
+use crate::DisplayBehavior;
 use crate::Light;
+use crate::RenderLayer;
 use crate::common::{
     Aabb, Transform, apply_scale, compose_rotation, local_axes, local_axis_x, local_axis_y,
     local_axis_z, rotate_position_about_pivot, scale_position_about_pivot_local,
@@ -130,6 +132,10 @@ pub struct Node {
 
     payload: NodePayload,
 
+    // Render-presentation behavior (placement / screen-space). Inherits down
+    // the subtree; resolved by the renderer, so no cache is needed here.
+    display: DisplayBehavior,
+
     // Visibility
     visibility: Visibility,
     #[cfg_attr(feature = "serde", serde(skip))]
@@ -153,6 +159,7 @@ impl Node {
             children: Vec::new(),
             flags,
             payload: NodePayload::None,
+            display: DisplayBehavior::default(),
             visibility: Visibility::default(),
             cached_effective_visibility: Cell::new(None),
             cached_world_transform: Cell::new(None),
@@ -347,6 +354,38 @@ impl Node {
     pub fn set_payload(&mut self, payload: NodePayload) {
         self.payload = payload;
         self.cached_bounds.set(None);
+    }
+
+    // ========== Display Behavior ==========
+
+    /// Returns this node's render-presentation behavior.
+    pub fn display(&self) -> DisplayBehavior {
+        self.display
+    }
+
+    /// Sets this node's render-presentation behavior.
+    ///
+    /// Does not touch the world-transform or bounds caches: the layer affects
+    /// neither, and the screen-space effects are applied by the renderer
+    /// downstream of the camera-independent cached transform (which is reused
+    /// for picking and bounding).
+    pub fn set_display(&mut self, display: DisplayBehavior) {
+        self.display = display;
+    }
+
+    /// Sets which render layer / pass this node draws in.
+    pub fn set_render_layer(&mut self, layer: RenderLayer) {
+        self.display.layer = layer;
+    }
+
+    /// Sets whether this node keeps a constant pixel size regardless of camera distance.
+    pub fn set_screen_sized(&mut self, screen_sized: bool) {
+        self.display.screen_sized = screen_sized;
+    }
+
+    /// Sets whether this node orients to face the camera (billboard).
+    pub fn set_screen_facing(&mut self, screen_facing: bool) {
+        self.display.screen_facing = screen_facing;
     }
 
     // ============== Dirty State ==============
@@ -1048,6 +1087,55 @@ mod tests {
         // Visibility cache should still be valid
         assert!(!node.effective_visibility_dirty());
         assert_eq!(node.cached_effective_visibility(), Some(EffectiveVisibility::Visible));
+    }
+
+    // ========================================================================
+    // Display Behavior Tests
+    // ========================================================================
+
+    #[test]
+    fn test_display_default_is_ordinary() {
+        let node = Node::new_default();
+        let d = node.display();
+        assert!(!d.screen_sized);
+        assert!(!d.screen_facing);
+        assert_eq!(d.layer, RenderLayer::Scene);
+    }
+
+    #[test]
+    fn test_set_display_does_not_dirty_caches() {
+        let mut node = Node::new_default();
+
+        // Prime both caches so we can detect any unwanted invalidation.
+        node.set_cached_world_transform(Matrix4::from_scale(2.0));
+        node.set_cached_bounds(Some(Aabb::new(
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(1.0, 1.0, 1.0),
+        )));
+        assert!(!node.transform_dirty());
+        assert!(!node.bounds_dirty());
+
+        node.set_display(DisplayBehavior {
+            screen_sized: true,
+            screen_facing: true,
+            layer: RenderLayer::Overlay,
+        });
+
+        // Display behavior is resolved by the renderer and applies camera-side,
+        // so it must not invalidate the camera-independent caches.
+        assert!(!node.transform_dirty());
+        assert!(!node.bounds_dirty());
+        assert_eq!(node.display().layer, RenderLayer::Overlay);
+    }
+
+    #[test]
+    fn test_display_field_setters() {
+        let mut node = Node::new_default();
+        node.set_render_layer(RenderLayer::Overlay);
+        node.set_screen_sized(true);
+        assert_eq!(node.display().layer, RenderLayer::Overlay);
+        assert!(node.display().screen_sized);
+        assert!(!node.display().screen_facing);
     }
 
     // ========================================================================
