@@ -10,7 +10,9 @@ use winit::{
 
 use duck_engine_viewer::common::{RgbaColor, Transform, Point3};
 use duck_engine_viewer::input::{ElementState, Key};
-use duck_engine_viewer::scene::{EnvironmentMapId, Material, MaterialFlags, Mesh, PrimitiveType};
+use duck_engine_viewer::scene::{
+    DisplayBehavior, EnvironmentMapId, Material, MaterialFlags, Mesh, PrimitiveType,
+};
 use duck_engine_viewer::{Viewer, winit_support};
 use duck_engine_viewer::operator::{NavigationOperator, SelectionOperator, TransformOperator};
 
@@ -30,7 +32,8 @@ fn grid_position(row: usize, col: usize) -> Point3 {
 
 /// Build the material showcase scene: a 5x5 grid of spheres demonstrating PBR properties.
 fn build_material_scene(viewer: &mut Viewer) {
-    let scene = viewer.scene_mut();
+    let scene_arc = viewer.scene();
+    let mut scene = scene_arc.lock().unwrap();
 
     // Attach default camera-space key + fill lights to a placeholder camera node.
     let camera_node = scene.add_node(
@@ -228,12 +231,38 @@ fn build_material_scene(viewer: &mut Viewer) {
             .unwrap();
     }
 
+    // Billboard demo: a flat quad placed above the grid that always faces the
+    // camera (screen_facing). Orbiting the view should keep it edge-on to the
+    // viewer while the spheres rotate normally. (Screen-sizing is intentionally
+    // left unset — its scale math is still a `todo!()` stub.)
+    let quad_mesh = scene.add_mesh(Mesh::quad(1.0, 1.6, PrimitiveType::TriangleList));
+    let quad_mat = scene.add_material(
+        Material::new()
+            .with_base_color_factor(RgbaColor::MAGENTA)
+            .with_flags(MaterialFlags::DO_NOT_LIGHT | MaterialFlags::DOUBLE_SIDED),
+    );
+    let billboard = scene
+        .add_instance_node(
+            None,
+            quad_mesh,
+            quad_mat,
+            Some("Billboard".to_string()),
+            Transform::from_position(Point3::new(0.0, 2.5, 0.0)),
+            NodeFlags::NONE,
+        )
+        .unwrap();
+    scene.set_node_display(billboard, DisplayBehavior { screen_facing: true, ..Default::default() });
+
+    // Release the scene lock before re-borrowing the viewer for the camera.
+    drop(scene);
+
     // Camera: elevated view looking down at the grid
     viewer.with_camera_mut(|camera| {
         camera.eye = Point3::new(0.0, 6.0, 8.0);
         camera.target = Point3::new(0.0, 0.0, 0.0);
     });
-    if let Some(bounds) = viewer.scene().bounding().bounds {
+    let bounds = scene_arc.lock().unwrap().bounding().bounds;
+    if let Some(bounds) = bounds {
         viewer.with_camera_mut(|camera| camera.fit_to_bounds(&bounds));
     }
 }
@@ -267,10 +296,11 @@ impl<'a> App<'a> {
         // Load environment map for IBL (toggled with 'e' key)
         let env_map_path: std::path::PathBuf =
             [env!("CARGO_MANIFEST_DIR"), "..", "..", "assets", "studio_small_09_4k.hdr"].iter().collect();
-        let env_map_id =
-            viewer
-                .scene_mut()
-                .add_environment_map_from_hdr_path(env_map_path);
+        let env_map_id = viewer
+            .scene()
+            .lock()
+            .unwrap()
+            .add_environment_map_from_hdr_path(env_map_path);
         self.env_map_id = Some(env_map_id);
 
         window.request_redraw();
@@ -326,7 +356,8 @@ impl<'a> ApplicationHandler for App<'a> {
             Key::Named(duck_engine_viewer::input::NamedKey::Escape) => event_loop.exit(),
             Key::Character('e') => {
                 if let Some(env_id) = self.env_map_id {
-                    let scene = viewer.scene_mut();
+                    let scene = viewer.scene();
+                    let mut scene = scene.lock().unwrap();
                     let ibl_active = scene.active_environment_map().is_some();
                     if ibl_active {
                         scene.set_active_environment_map(None);

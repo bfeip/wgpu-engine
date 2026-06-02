@@ -378,9 +378,10 @@ impl Node {
         self.display.layer = layer;
     }
 
-    /// Sets whether this node keeps a constant pixel size regardless of camera distance.
-    pub fn set_screen_sized(&mut self, screen_sized: bool) {
-        self.display.screen_sized = screen_sized;
+    /// Sets the node's constant on-screen size, or `None` to leave it at its
+    /// authored world size. See [`DisplayBehavior::screen_size`].
+    pub fn set_screen_size(&mut self, screen_size: Option<f32>) {
+        self.display.screen_size = screen_size;
     }
 
     /// Sets whether this node orients to face the camera (billboard).
@@ -1097,7 +1098,7 @@ mod tests {
     fn test_display_default_is_ordinary() {
         let node = Node::new_default();
         let d = node.display();
-        assert!(!d.screen_sized);
+        assert!(d.screen_size.is_none());
         assert!(!d.screen_facing);
         assert_eq!(d.layer, RenderLayer::Scene);
     }
@@ -1116,7 +1117,7 @@ mod tests {
         assert!(!node.bounds_dirty());
 
         node.set_display(DisplayBehavior {
-            screen_sized: true,
+            screen_size: Some(16.0),
             screen_facing: true,
             layer: RenderLayer::Overlay,
         });
@@ -1132,9 +1133,9 @@ mod tests {
     fn test_display_field_setters() {
         let mut node = Node::new_default();
         node.set_render_layer(RenderLayer::Overlay);
-        node.set_screen_sized(true);
+        node.set_screen_size(Some(20.0));
         assert_eq!(node.display().layer, RenderLayer::Overlay);
-        assert!(node.display().screen_sized);
+        assert_eq!(node.display().screen_size, Some(20.0));
         assert!(!node.display().screen_facing);
     }
 

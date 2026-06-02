@@ -31,12 +31,15 @@ pub enum RenderLayer {
 /// Defaults to ordinary scene geometry, so a node with the default value is
 /// rendered exactly as a node with no special behavior. Inherits down the
 /// subtree (see the module docs).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DisplayBehavior {
-    /// Keep a constant pixel size regardless of camera distance (the renderer
-    /// scales the geometry up as the camera recedes). Applied at render time.
-    pub screen_sized: bool,
+    /// Keep a constant pixel size regardless of camera distance: `Some(px)`
+    /// requests a constant on-screen size of `px` pixels for the geometry's
+    /// unit extent (the renderer scales the geometry up as the camera recedes);
+    /// `None` leaves the geometry at its authored world size. Applied at render
+    /// time.
+    pub screen_size: Option<f32>,
     /// Orient the geometry to face the camera (billboard): a `look_at` is
     /// applied at render time in addition to the node's own transform.
     pub screen_facing: bool,

@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use duck_engine_common::{Matrix3, Matrix4, Point3, SquareMatrix};
+use duck_engine_common::{
+    EuclideanSpace, InnerSpace, Matrix3, Matrix4, Point3, SquareMatrix, Vector3,
+};
 
 use crate::scene::{
     AlphaMode, DisplayBehavior, InstanceId, Light, MaterialId, MeshId, NodeId, NodePayload,
@@ -134,7 +136,9 @@ pub(crate) struct SceneFrameData {
 /// otherwise the parent's value is carried.
 fn inherit_display(parent: DisplayBehavior, node: DisplayBehavior) -> DisplayBehavior {
     DisplayBehavior {
-        screen_sized: parent.screen_sized || node.screen_sized,
+        // A node that opts into screen-sizing supplies its own size; otherwise
+        // inherit the parent's.
+        screen_size: node.screen_size.or(parent.screen_size),
         screen_facing: parent.screen_facing || node.screen_facing,
         layer: if node.layer != RenderLayer::Scene {
             node.layer
@@ -355,6 +359,118 @@ where
     (matched, unmatched)
 }
 
+/// Normalizes `v`, returning `fallback` if `v` is (near) zero-length.
+fn normalize_or(v: Vector3, fallback: Vector3) -> Vector3 {
+    if v.magnitude2() > f32::EPSILON {
+        v.normalize()
+    } else {
+        fallback
+    }
+}
+
+/// Overwrites the effective transform of every instance that requests a
+/// camera-dependent presentation (`screen_size` and/or `screen_facing`).
+/// Ordinary instances are left untouched — their effective transform already
+/// equals the camera-independent world transform.
+fn apply_screen_space_transforms(
+    batches: &mut [DrawBatch],
+    camera: &PositionedCamera,
+    viewport: (u32, u32),
+) {
+    for batch in batches.iter_mut() {
+        for inst in batch.instances.iter_mut() {
+            if inst.display.screen_size.is_none() && !inst.display.screen_facing {
+                continue;
+            }
+            let m = screen_space_matrix(inst.world_transform, inst.display, camera, viewport);
+            inst.effective_transform = m;
+            inst.effective_normal_matrix = common::compute_normal_matrix(&m);
+        }
+    }
+}
+
+/// Builds the camera-dependent model matrix for a screen-space instance.
+///
+/// Billboarding (`screen_facing`) replaces the rotation basis with one that
+/// faces the camera; screen-sizing (`screen_size`) replaces the per-axis scale
+/// with a uniform constant-pixel-size scale. The node origin (translation) is
+/// always preserved.
+fn screen_space_matrix(
+    world: Matrix4,
+    display: DisplayBehavior,
+    camera: &PositionedCamera,
+    viewport: (u32, u32),
+) -> Matrix4 {
+    // Node origin in world space (translation column of the world transform).
+    let p = Point3::from_vec(world.w.truncate());
+
+    // Rotation basis (orthonormal columns: right, up, forward).
+    let (right, up, fwd) = if display.screen_facing {
+        // Billboard: face the camera, discarding the node's authored rotation.
+        // Falls back to the camera forward if the node sits on the eye.
+        let fwd = normalize_or(camera.eye - p, -camera.forward());
+        let right = camera.up.cross(fwd).normalize();
+        let up = fwd.cross(right);
+        (right, up, fwd)
+    } else {
+        // Keep the authored orientation, orthonormalized so the basis carries
+        // rotation only (scale is reintroduced below).
+        (
+            normalize_or(world.x.truncate(), Vector3::unit_x()),
+            normalize_or(world.y.truncate(), Vector3::unit_y()),
+            normalize_or(world.z.truncate(), Vector3::unit_z()),
+        )
+    };
+
+    // Per-axis scale.
+    let scale = match display.screen_size {
+        // Constant pixel size: uniform scale on every axis. Parent scale is
+        // intentionally discarded — that is the point of constant pixel size.
+        Some(target_px) => {
+            let s = screen_size_scale(p, target_px, camera, viewport);
+            Vector3::new(s, s, s)
+        }
+        // Preserve the authored world scale (the world column lengths).
+        None => Vector3::new(
+            world.x.truncate().magnitude(),
+            world.y.truncate().magnitude(),
+            world.z.truncate().magnitude(),
+        ),
+    };
+
+    Matrix4::from_cols(
+        (right * scale.x).extend(0.0),
+        (up * scale.y).extend(0.0),
+        (fwd * scale.z).extend(0.0),
+        p.to_vec().extend(1.0),
+    )
+}
+
+/// Uniform world-space scale that makes a unit-extent geometry span `target_px`
+/// pixels on screen, regardless of camera distance.
+///
+/// STUB — left as an exercise. Implement per the "Screen-sized" section of
+/// `duck/docs/screen-space-presentation.md`:
+///
+/// ```text
+/// depth = dot(p - eye, forward)   // view-space distance; ortho ignores it
+/// depth = depth.max(camera.znear) // clamp to avoid zero/negative scale
+/// s     = camera.world_size_per_pixel(depth, viewport.1) * target_px
+/// ```
+///
+/// `PositionedCamera::world_size_per_pixel` (duck/scene/src/camera.rs) is the
+/// building block; it already substitutes the eye-to-target distance for `depth`
+/// under orthographic projection, so the same path works for both.
+fn screen_size_scale(
+    p: Point3,
+    target_px: f32,
+    camera: &PositionedCamera,
+    viewport: (u32, u32),
+) -> f32 {
+    let _ = (p, target_px, camera, viewport);
+    todo!()
+}
+
 /// Builds sub-geometry draw calls for all highlighted faces in the current frame.
 ///
 /// For each node with highlighted faces, looks up the instance's mesh topology and converts
@@ -439,9 +555,14 @@ impl DrawData {
         viewport: (u32, u32),
         highlight: Option<&dyn HighlightQuery>,
     ) -> Self {
-        let _ = viewport; // reserved for screen-sizing math (see design doc)
         let mut batches = collect_draw_batches(scene);
         sort_batches_for_transparency(&mut batches, scene, camera.eye);
+
+        // Replace the effective transform of screen-space instances before any
+        // partitioning. `partition_batches` clones instances, so doing this on
+        // `batches` first propagates the adjusted transforms into every derived
+        // partition (overlay, highlight) automatically.
+        apply_screen_space_transforms(&mut batches, camera, viewport);
 
         // Partition out overlay batches (RenderLayer::Overlay) so they render in
         // a separate pass. The effective layer is resolved per instance during
@@ -1049,5 +1170,75 @@ use duck_engine_scene::NodeFlags;
             .collect();
         assert_eq!(overlay_node_ids, vec![overlay_node]);
         let _ = scene_node;
+    }
+
+    /// A `screen_facing` instance gets an effective transform whose rotation
+    /// basis faces the camera (forward column points at the eye, columns are
+    /// orthonormal and right-handed) while its world position is preserved.
+    #[test]
+    fn test_billboard_effective_transform() {
+        use crate::scene::{Mesh, MeshPrimitive, PrimitiveType, Vertex};
+
+        let vertex = Vertex {
+            position: [0.0, 0.0, 0.0],
+            tex_coords: [0.0, 0.0, 0.0],
+            normal: [0.0, 0.0, 1.0],
+        };
+        let mesh = Mesh::from_raw(
+            vec![vertex, vertex, vertex],
+            vec![MeshPrimitive {
+                primitive_type: PrimitiveType::TriangleList,
+                indices: vec![0, 1, 2],
+            }],
+        );
+
+        let mut scene = Scene::new();
+        let mesh_id = scene.add_mesh(mesh);
+        let material_id = scene.add_material(crate::scene::Material::new());
+
+        // Place the node off the view axis so the billboard basis is non-trivial.
+        let p = Point3::new(5.0, 0.0, 0.0);
+        let node = scene
+            .add_instance_node(
+                None,
+                mesh_id,
+                material_id,
+                None,
+                common::Transform::from_position(p),
+                NodeFlags::NONE,
+            )
+            .unwrap();
+        scene.set_node_display(node, DisplayBehavior { screen_facing: true, ..Default::default() });
+
+        let camera = test_camera();
+        let draw_data = DrawData::new(&scene, &camera, (256, 256), None);
+
+        let inst = &draw_data.all_batches()[0].instances[0];
+        let m = inst.effective_transform;
+        let right = m.x.truncate();
+        let up = m.y.truncate();
+        let fwd = m.z.truncate();
+
+        // World position is preserved in the translation column.
+        assert!((m.w.truncate() - p.to_vec()).magnitude() < EPSILON);
+
+        // Forward column faces the eye.
+        let expected_fwd = (camera.eye - p).normalize();
+        assert!((fwd - expected_fwd).magnitude() < EPSILON);
+
+        // Orthonormal columns.
+        for c in [right, up, fwd] {
+            assert!((c.magnitude() - 1.0).abs() < EPSILON);
+        }
+        assert!(right.dot(up).abs() < EPSILON);
+        assert!(right.dot(fwd).abs() < EPSILON);
+        assert!(up.dot(fwd).abs() < EPSILON);
+
+        // Right-handed basis (right × up == fwd) and right ⟂ camera up.
+        assert!((right.cross(up) - fwd).magnitude() < EPSILON);
+        assert!(right.dot(camera.up).abs() < EPSILON);
+
+        // The camera-independent world transform is untouched.
+        assert!((inst.world_transform.w.truncate() - p.to_vec()).magnitude() < EPSILON);
     }
 }
