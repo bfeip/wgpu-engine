@@ -142,6 +142,20 @@ impl Texture {
         }
     }
 
+    /// Create a texture from raw RGBA8 pixel data.
+    ///
+    /// Pixels are row-major, 4 bytes per pixel (R, G, B, A). Convenient for
+    /// procedurally generated textures, letting callers build a texture without
+    /// depending on the `image` crate directly.
+    ///
+    /// # Panics
+    /// Panics if `pixels.len()` is not exactly `width * height * 4`.
+    pub fn from_rgba8(width: u32, height: u32, pixels: Vec<u8>) -> Self {
+        let img = image::RgbaImage::from_raw(width, height, pixels)
+            .expect("pixel buffer length must equal width * height * 4");
+        Self::from_image(image::DynamicImage::ImageRgba8(img))
+    }
+
     /// Create a texture from a file path.
     ///
     /// The image is not loaded immediately - it will be loaded on demand when
@@ -360,5 +374,28 @@ impl<'de> serde::Deserialize<'de> for Texture {
             source: TextureSource::Embedded { image, original_bytes },
             generation: 1,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_rgba8_round_trips_pixels() {
+        // 2x1 image: one red opaque pixel, one transparent pixel.
+        let pixels = vec![255, 0, 0, 255, 0, 0, 0, 0];
+        let texture = Texture::from_rgba8(2, 1, pixels.clone());
+
+        assert_eq!(texture.dimensions(), Some((2, 1)));
+        let img = texture.get_image().unwrap().to_rgba8();
+        assert_eq!(img.as_raw(), &pixels);
+    }
+
+    #[test]
+    #[should_panic]
+    fn from_rgba8_rejects_wrong_length() {
+        // 3 bytes is not 1*1*4.
+        Texture::from_rgba8(1, 1, vec![0, 0, 0]);
     }
 }

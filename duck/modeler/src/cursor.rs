@@ -2,43 +2,62 @@
 //! constant on-screen size. Owned by the modeler and driven each frame from the
 //! active tool's reported target.
 //!
-//! The marker is a 3D line "asterisk" (orientation-independent), rendered through
-//! the same `LineList` path as the grid and CAD edges. wgpu point primitives are
-//! 1px and too small to be useful; when screen-facing splats land, only
-//! [`build_marker_mesh`] needs to change.
+//! The marker is a screen-facing, screen-sized textured quad showing an
+//! anti-aliased dot. Billboarding and constant-pixel scaling are handled by the
+//! renderer via [`DisplayBehavior`], so this module only places the node and
+//! lets the render-time presentation do the rest. The dot's color is settable
+//! ([`Cursor3d::set_color`]); it tints a white disc texture via the material's
+//! base-color factor.
 
-use duck_engine_viewer::common::{InnerSpace, Point3, Quaternion, RgbaColor, Transform, Vector3};
+use duck_engine_viewer::common::{Point3, RgbaColor, Transform};
 use duck_engine_viewer::scene::{
-    Material, Mesh, MeshPrimitive, NodeFlags, NodeId, PositionedCamera, PrimitiveType, Scene,
-    Vertex, Visibility,
+    AlphaMode, DisplayBehavior, Material, MaterialFlags, MaterialId, Mesh, NodeFlags, NodeId,
+    PrimitiveType, RenderLayer, Scene, Texture, Visibility,
 };
 
-/// Half-extent of the marker, in screen pixels (the asterisk arms are this long).
-const MARKER_HALF_PIXELS: f32 = 8.0;
+/// On-screen diameter of the dot, in pixels. The quad's half-width (0.5) is
+/// scaled by `screen_size`, so this is also the screen-space size value.
+const CURSOR_PIXELS: f32 = 16.0;
 
-/// Marker color (amber), chosen to read against both the grid and parts.
+/// Default marker color (amber), chosen to read against both the grid and parts.
 const MARKER_COLOR: RgbaColor = RgbaColor { r: 1.0, g: 0.78, b: 0.12, a: 1.0 };
+
+/// Edge of the dot texture, in source-texel units, over which alpha ramps from
+/// 1 to 0 for anti-aliasing.
+const DOT_EDGE_TEXELS: f32 = 1.5;
+
+/// Resolution of the generated dot texture (square).
+const DOT_TEXTURE_SIZE: u32 = 64;
 
 /// A marker placed at a world point and kept at a constant pixel size. The node
 /// is created lazily on first show; redundant updates are skipped so it is cheap
 /// to call every frame.
-#[derive(Default)]
 pub struct Cursor3d {
     node: Option<NodeId>,
-    /// Last (position, uniform scale) actually written, to skip redundant writes.
-    shown: Option<(Point3, f32)>,
+    /// Material backing the dot; kept so [`set_color`](Self::set_color) can
+    /// retint the white disc.
+    material: Option<MaterialId>,
+    /// Desired dot color; applied to the material as its base-color factor.
+    color: RgbaColor,
+    /// Last position actually written, to skip redundant writes. Scale is now
+    /// owned by the renderer (screen_size), so it is no longer tracked here.
+    shown: Option<Point3>,
+}
+
+impl Default for Cursor3d {
+    fn default() -> Self {
+        Self {
+            node: None,
+            material: None,
+            color: MARKER_COLOR,
+            shown: None,
+        }
+    }
 }
 
 impl Cursor3d {
-    /// Places the cursor at `target` (rescaled to a constant pixel size), or
-    /// hides it when `target` is `None`.
-    pub fn update(
-        &mut self,
-        target: Option<Point3>,
-        camera: &PositionedCamera,
-        viewport: (u32, u32),
-        scene: &mut Scene,
-    ) {
+    /// Places the cursor at `target`, or hides it when `target` is `None`.
+    pub fn update(&mut self, target: Option<Point3>, scene: &mut Scene) {
         let Some(position) = target else {
             if self.shown.take().is_some() {
                 if let Some(node) = self.node {
@@ -48,36 +67,44 @@ impl Cursor3d {
             return;
         };
 
-        // Constant on-screen size: scale a unit marker by the world size of one
-        // pixel at the marker's depth.
-        let depth = (position - camera.eye).dot(camera.forward()).max(camera.znear);
-        let scale = (camera.world_size_per_pixel(depth, viewport.1) * MARKER_HALF_PIXELS)
-            .max(f32::EPSILON);
-
-        if self.shown == Some((position, scale)) {
+        if self.shown == Some(position) {
             return;
         }
 
         let node = self.ensure_node(scene);
-        scene.set_node_transform(
-            node,
-            Transform {
-                position,
-                rotation: Quaternion::new(1.0, 0.0, 0.0, 0.0),
-                scale: Vector3::new(scale, scale, scale),
-            },
-        );
+        scene.set_node_transform(node, Transform::from_position(position));
         scene.set_node_visibility(node, Visibility::Visible);
-        self.shown = Some((position, scale));
+        self.shown = Some(position);
     }
 
-    /// Returns the marker node, creating its mesh/material/node on first use.
+    /// Sets the dot color. Takes effect immediately if the node already exists,
+    /// otherwise it is applied when the node is first created.
+    pub fn set_color(&mut self, color: RgbaColor, scene: &mut Scene) {
+        self.color = color;
+        if let Some(material) = self.material {
+            if let Some(mat) = scene.get_material_mut(material) {
+                mat.set_base_color_factor(color);
+            }
+        }
+    }
+
+    /// Returns the marker node, creating its mesh/material/texture/node on first
+    /// use.
     fn ensure_node(&mut self, scene: &mut Scene) -> NodeId {
         if let Some(node) = self.node {
             return node;
         }
-        let mesh = scene.add_mesh(build_marker_mesh());
-        let material = scene.add_material(Material::new().with_line_color(MARKER_COLOR));
+        let mesh = scene.add_mesh(Mesh::quad(1.0, 1.0, PrimitiveType::TriangleList));
+        let texture = scene.add_texture(build_dot_texture());
+        let material = scene.add_material(
+            Material::new()
+                .with_base_color_texture(texture)
+                // Tint the white disc to the requested color.
+                .with_base_color_factor(self.color)
+                // Blend the anti-aliased / transparent dot edge.
+                .with_alpha_mode(AlphaMode::Blend)
+                .with_flags(MaterialFlags::DO_NOT_LIGHT | MaterialFlags::DOUBLE_SIDED),
+        );
         let node = scene
             .add_instance_node(
                 None,
@@ -90,32 +117,40 @@ impl Cursor3d {
                 NodeFlags::inert(),
             )
             .expect("Failed to create 3D cursor node");
+        // Billboard, constant pixel size, always drawn on top.
+        scene.set_node_display(
+            node,
+            DisplayBehavior {
+                screen_facing: true,
+                screen_size: Some(CURSOR_PIXELS),
+                layer: RenderLayer::Overlay,
+            },
+        );
+        self.material = Some(material);
         self.node = Some(node);
         node
     }
 }
 
-/// A unit 3D asterisk: three `LineList` segments along ±X, ±Y, ±Z. Scaled
-/// uniformly by the caller to a constant pixel size.
-fn build_marker_mesh() -> Mesh {
-    let vertex = |x: f32, y: f32, z: f32| Vertex {
-        position: [x, y, z],
-        tex_coords: [0.0; 3],
-        normal: [0.0; 3],
-    };
-    let vertices = vec![
-        vertex(-1.0, 0.0, 0.0),
-        vertex(1.0, 0.0, 0.0),
-        vertex(0.0, -1.0, 0.0),
-        vertex(0.0, 1.0, 0.0),
-        vertex(0.0, 0.0, -1.0),
-        vertex(0.0, 0.0, 1.0),
-    ];
-    Mesh::from_raw(
-        vertices,
-        vec![MeshPrimitive {
-            primitive_type: PrimitiveType::LineList,
-            indices: vec![0, 1, 2, 3, 4, 5],
-        }],
-    )
+/// Builds a white, anti-aliased filled disc on a transparent background. The
+/// color is left white so the material's base-color factor can tint it to any
+/// hue; only the alpha channel carries the disc shape.
+fn build_dot_texture() -> Texture {
+    let size = DOT_TEXTURE_SIZE;
+    let center = (size as f32 - 1.0) / 2.0;
+    // Leave a one-texel margin so the disc edge sits inside the texture.
+    let radius = center - 1.0;
+
+    let mut pixels = Vec::with_capacity((size * size * 4) as usize);
+    for y in 0..size {
+        for x in 0..size {
+            let dx = x as f32 - center;
+            let dy = y as f32 - center;
+            let dist = (dx * dx + dy * dy).sqrt();
+            // Linear alpha ramp from 1 (inside) to 0 over the edge band.
+            let alpha = ((radius - dist) / DOT_EDGE_TEXELS).clamp(0.0, 1.0);
+            pixels.extend_from_slice(&[255, 255, 255, (alpha * 255.0).round() as u8]);
+        }
+    }
+    Texture::from_rgba8(size, size, pixels)
 }

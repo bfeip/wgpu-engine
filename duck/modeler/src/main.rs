@@ -226,13 +226,9 @@ impl<'a> ViewerState<'a> {
             OperatorKind::Sphere => self.sphere_op.lock().unwrap().cursor_target(),
             _ => None,
         };
-        let (w, h) = self.viewer.size();
-        let aspect = w as f32 / h.max(1) as f32;
         let scene_arc = self.viewer.scene();
         let mut scene = scene_arc.lock().unwrap();
-        if let Some(camera) = scene.active_camera_positioned(aspect) {
-            self.cursor.update(target, &camera, (w, h), &mut scene);
-        }
+        self.cursor.update(target, &mut scene);
     }
 
     fn switch_tool(&mut self, kind: OperatorKind) {
