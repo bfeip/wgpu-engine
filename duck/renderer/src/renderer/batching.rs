@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use duck_engine_common::{
     EuclideanSpace, InnerSpace, Matrix3, Matrix4, Point3, SquareMatrix, Vector3,
@@ -6,7 +6,7 @@ use duck_engine_common::{
 
 use crate::scene::{
     AlphaMode, DisplayBehavior, InstanceId, Light, MaterialId, MeshId, NodeId, NodePayload,
-    PositionedCamera, PrimitiveType, RenderLayer, Scene, Visibility,
+    PositionedCamera, PrimitiveType, RenderLayer, Scene, ViewportRect, Visibility,
 };
 use crate::scene::common;
 use crate::highlight_query::HighlightQuery;
@@ -154,8 +154,14 @@ fn collect_scene_data_recursive(
     parent_transform: Matrix4,
     parent_display: DisplayBehavior,
     parent_changed: bool,
+    exclude_roots: &HashSet<NodeId>,
     data: &mut SceneFrameData,
 ) {
+    // Skipping here also excludes any lights defined under exclude nodes.
+    if exclude_roots.contains(&node_id) {
+        return;
+    }
+
     let Some(node) = scene.get_node(node_id) else { return };
 
     let needs_recompute = parent_changed || node.transform_dirty();
@@ -187,12 +193,19 @@ fn collect_scene_data_recursive(
     }
 
     for &child_id in node.children() {
-        collect_scene_data_recursive(scene, child_id, world_transform, display, needs_recompute, data);
+        collect_scene_data_recursive(scene, child_id, world_transform, display, needs_recompute, exclude_roots, data);
     }
 }
 
-/// Walks the entire scene tree and collects all instances and lights in one pass.
-pub(crate) fn collect_scene_data(scene: &Scene) -> SceneFrameData {
+/// Set of node IDs that root a sub-view's subtree. Subtrees rooted at these nodes
+/// are excluded from the main traversal and drawn only inside their sub-view.
+pub(crate) fn sub_view_root_set(scene: &Scene) -> HashSet<NodeId> {
+    scene.sub_views().map(|sv| sv.root).collect()
+}
+
+/// Walks the scene tree and collects all instances and lights in one pass,
+/// skipping any subtree rooted at a node in `sub_view_roots`.
+pub(crate) fn collect_main_scene_data(scene: &Scene, sub_view_roots: &HashSet<NodeId>) -> SceneFrameData {
     let mut data = SceneFrameData {
         instance_transforms: Vec::new(),
         lights: Vec::new(),
@@ -204,9 +217,42 @@ pub(crate) fn collect_scene_data(scene: &Scene) -> SceneFrameData {
             Matrix4::identity(),
             DisplayBehavior::default(),
             false,
+            sub_view_roots,
             &mut data,
         );
     }
+    data
+}
+
+/// Collects the instances under a single sub-view's subtree, keeping their real
+/// world placement. `other_roots` excludes any *nested* sub-view roots while
+/// still collecting `root` itself.
+pub(crate) fn collect_subview_data(
+    scene: &Scene,
+    root: NodeId,
+    other_roots: &HashSet<NodeId>,
+) -> SceneFrameData {
+    let mut data = SceneFrameData {
+        instance_transforms: Vec::new(),
+        lights: Vec::new(),
+    };
+    // Start from the root's parent world transform so the subtree keeps its
+    // authored world placement (the root's own local transform is applied inside
+    // the recursion).
+    let parent_transform = scene
+        .get_node(root)
+        .and_then(|n| n.parent())
+        .and_then(|p| scene.nodes_transform(p))
+        .unwrap_or_else(Matrix4::identity);
+    collect_scene_data_recursive(
+        scene,
+        root,
+        parent_transform,
+        DisplayBehavior::default(),
+        false,
+        other_roots,
+        &mut data,
+    );
     data
 }
 
@@ -220,8 +266,17 @@ pub(crate) fn collect_scene_data(scene: &Scene) -> SceneFrameData {
 /// 1. By material ID (to minimize bind group changes)
 /// 2. By primitive type (to minimize pipeline changes)
 /// 3. By mesh ID (for GPU cache locality)
-pub(crate) fn collect_draw_batches(scene: &Scene) -> Vec<DrawBatch> {
-    let instance_transforms = collect_scene_data(scene).instance_transforms;
+pub(crate) fn collect_main_draw_batches(scene: &Scene, sub_view_roots: &HashSet<NodeId>) -> Vec<DrawBatch> {
+    let instance_transforms = collect_main_scene_data(scene, sub_view_roots).instance_transforms;
+    group_instances_into_batches(scene, instance_transforms)
+}
+
+/// Groups resolved instance transforms into draw batches by mesh/material/primitive,
+/// sorted to minimize GPU state changes. Shared by the main view and each sub-view.
+pub(crate) fn group_instances_into_batches(
+    scene: &Scene,
+    instance_transforms: Vec<InstanceTransform>,
+) -> Vec<DrawBatch> {
     let mut batch_map: HashMap<BatchKey, DrawBatch> = HashMap::new();
 
     for inst_transform in instance_transforms {
@@ -496,6 +551,17 @@ fn collect_highlight_sub_geom_batches(
     sub_geom
 }
 
+/// A single sub-view's draw list for the current frame: where it goes on the
+/// surface, the camera it is viewed through, and the batches under its subtree.
+pub(crate) struct SubViewDraw {
+    /// Placement on the surface, as a proportion of the full surface.
+    pub rect: ViewportRect,
+    /// Camera resolved with the sub-view's pixel aspect ratio.
+    pub camera: PositionedCamera,
+    /// Subtree batches, sorted for transparency by this camera.
+    pub batches: Vec<DrawBatch>,
+}
+
 /// Frame-scoped collection of draw batches, sorted and partitioned for rendering.
 ///
 /// Constructed once per frame from the scene, camera, and optional selection.
@@ -524,6 +590,8 @@ pub struct DrawData {
     /// Resolved outline configuration for secondary selections. `Some` when secondary
     /// highlights exist; `None` otherwise.
     secondary_outline_config: Option<crate::highlight_query::OutlineConfig>,
+    /// Per-sub-view draw lists, each drawn in its own region after the main view.
+    sub_views: Vec<SubViewDraw>,
 }
 
 impl DrawData {
@@ -543,7 +611,8 @@ impl DrawData {
         viewport: (u32, u32),
         highlight: Option<&dyn HighlightQuery>,
     ) -> Self {
-        let mut batches = collect_draw_batches(scene);
+        let sub_view_roots = sub_view_root_set(scene);
+        let mut batches = collect_main_draw_batches(scene, &sub_view_roots);
         sort_batches_for_transparency(&mut batches, scene, camera.eye);
 
         // Replace the effective transform of screen-space instances before any
@@ -593,6 +662,25 @@ impl DrawData {
         let outline_config = active_highlight.map(|h| h.outline_config());
         let secondary_outline_config = active_highlight.and_then(|h| h.secondary_outline_config());
 
+        // Build one draw list per sub-view: resolve its camera at the sub-view's
+        // own pixel aspect, collect the subtree, then sort/adjust for that camera.
+        let mut sub_views: Vec<SubViewDraw> = Vec::new();
+        for sv in scene.sub_views() {
+            let (_, _, px_w, px_h) = sv.rect.to_pixels(viewport.0, viewport.1);
+            let aspect = px_w as f32 / px_h as f32;
+            let Some(sv_camera) = scene.positioned_camera_for_node(sv.camera, aspect) else {
+                continue;
+            };
+            // Exclude any *nested* sub-view roots, but keep this sub-view's own root.
+            let mut nested = sub_view_roots.clone();
+            nested.remove(&sv.root);
+            let instances = collect_subview_data(scene, sv.root, &nested).instance_transforms;
+            let mut sv_batches = group_instances_into_batches(scene, instances);
+            sort_batches_for_transparency(&mut sv_batches, scene, sv_camera.eye);
+            apply_screen_space_transforms(&mut sv_batches, &sv_camera, (px_w, px_h));
+            sub_views.push(SubViewDraw { rect: sv.rect, camera: sv_camera, batches: sv_batches });
+        }
+
         Self {
             batches,
             highlighted_batches,
@@ -602,6 +690,7 @@ impl DrawData {
             secondary_highlight_sub_geom_batches,
             outline_config,
             secondary_outline_config,
+            sub_views,
         }
     }
 
@@ -658,6 +747,16 @@ impl DrawData {
     /// Outline configuration for secondary selections, or `None` if there are none.
     pub fn secondary_outline_config(&self) -> Option<&crate::highlight_query::OutlineConfig> {
         self.secondary_outline_config.as_ref()
+    }
+
+    /// Per-sub-view draw lists, drawn in their own regions after the main view.
+    pub(crate) fn sub_views(&self) -> &[SubViewDraw] {
+        &self.sub_views
+    }
+
+    /// Whether any sub-views need to be drawn this frame.
+    pub fn has_sub_views(&self) -> bool {
+        !self.sub_views.is_empty()
     }
 }
 
@@ -1158,6 +1257,81 @@ mod tests {
             .collect();
         assert_eq!(overlay_node_ids, vec![overlay_node]);
         let _ = scene_node;
+    }
+
+    /// A node under a sub-view's root is excluded from the main batches and
+    /// appears only in that sub-view's draw list.
+    #[test]
+    fn test_sub_view_subtree_excluded_from_main() {
+        use crate::scene::{CameraProjection, Mesh, MeshPrimitive, NodePayload, PrimitiveType, Vertex, ViewportRect};
+
+        let vertex = Vertex {
+            position: [0.0, 0.0, 0.0],
+            tex_coords: [0.0, 0.0, 0.0],
+            normal: [0.0, 0.0, 1.0],
+        };
+        let mesh = Mesh::from_raw(
+            vec![vertex, vertex, vertex],
+            vec![MeshPrimitive {
+                primitive_type: PrimitiveType::TriangleList,
+                indices: vec![0, 1, 2],
+            }],
+        );
+
+        let mut scene = Scene::new();
+        let mesh_id = scene.add_mesh(mesh);
+        let material_id = scene.add_material(crate::scene::Material::new());
+
+        // One instance stays in the main view.
+        let main_node = scene
+            .add_instance_node(None, mesh_id, material_id, None, common::Transform::IDENTITY, NodeFlags::NONE)
+            .unwrap();
+
+        // A sub-view root with one instance beneath it.
+        let sv_root = scene
+            .add_node(None, Some("sv_root".into()), common::Transform::IDENTITY, NodeFlags::NONE)
+            .unwrap();
+        let sv_child = scene
+            .add_instance_node(Some(sv_root), mesh_id, material_id, None, common::Transform::IDENTITY, NodeFlags::NONE)
+            .unwrap();
+
+        // A camera node for the sub-view.
+        let cam_node = scene
+            .add_node(None, Some("sv_cam".into()), common::Transform::IDENTITY, NodeFlags::NONE)
+            .unwrap();
+        scene.set_node_payload(
+            cam_node,
+            NodePayload::Camera(CameraProjection {
+                fovy: 45.0,
+                znear: 0.1,
+                zfar: 100.0,
+                ortho: false,
+                focus_distance: 5.0,
+            }),
+        );
+
+        scene.add_sub_view(ViewportRect::new(0.7, 0.0, 0.3, 0.3), sv_root, cam_node);
+
+        let draw_data = DrawData::new(&scene, &test_camera(), (256, 256), None);
+
+        // Main view: only the main node's instance.
+        let main_node_ids: Vec<_> = draw_data
+            .all_batches()
+            .iter()
+            .flat_map(|b| b.instances.iter().map(|i| i.node_id))
+            .collect();
+        assert_eq!(main_node_ids, vec![main_node], "sub-view subtree must be excluded from main");
+
+        // Sub-view: exactly one, containing only the sub-view child.
+        assert!(draw_data.has_sub_views());
+        let sub_views = draw_data.sub_views();
+        assert_eq!(sub_views.len(), 1);
+        let sv_node_ids: Vec<_> = sub_views[0]
+            .batches
+            .iter()
+            .flat_map(|b| b.instances.iter().map(|i| i.node_id))
+            .collect();
+        assert_eq!(sv_node_ids, vec![sv_child]);
     }
 
     /// A `screen_facing` instance gets an effective transform whose rotation

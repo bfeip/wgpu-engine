@@ -4,7 +4,7 @@ use wgpu::util::DeviceExt;
 
 use crate::scene::{MaterialId, PrimitiveType, Scene, TextureId};
 
-use super::batching::collect_scene_data;
+use super::batching::collect_main_scene_data;
 use super::gpu_resources::{LightsArrayUniform, MaterialGpuResources, PbrUniform};
 use super::Renderer;
 
@@ -60,7 +60,7 @@ impl Renderer {
         // 4. Prepare lights
         let node_gen = scene.node_generation();
         if self.lights.synced_generation != node_gen {
-            let frame_data = collect_scene_data(scene);
+            let frame_data = collect_main_scene_data(scene, &super::batching::sub_view_root_set(scene));
             let lights_uniform = LightsArrayUniform::from_resolved_lights(&frame_data.lights);
             self.queue
                 .write_buffer(&self.lights.buffer, 0, bytes_of(&lights_uniform));

@@ -6,7 +6,7 @@ use super::pass_context::{FrameContext, SceneRenderPass};
 use super::pipeline::MaterialPipelineCache;
 use super::scene_pass::{
     FlatColorPass, FlatColorPassDesc,
-    MainPass, OverlayPass, OutlinePass, SilhouetteEdgesPass,
+    MainPass, OverlayPass, OutlinePass, SilhouetteEdgesPass, SubViewPass,
 };
 use crate::shaders::ShaderGenerator;
 
@@ -58,6 +58,8 @@ impl ShadedWorkflow {
                 Box::new(MainPass),
                 Box::new(OverlayPass::new(device, config.width, config.height, sample_count)),
                 Box::new(OutlinePass::new(device, config, camera_bgl, shader_generator, sample_count)),
+                // Drawn last so each sub-view composites on top of the finished main view.
+                Box::new(SubViewPass::new(device, config.width, config.height, sample_count, camera_bgl)),
             ],
         }
     }

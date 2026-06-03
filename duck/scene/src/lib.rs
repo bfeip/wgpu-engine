@@ -16,6 +16,7 @@ mod light;
 mod material;
 mod mesh;
 mod node;
+mod sub_view;
 mod texture;
 mod view;
 
@@ -45,6 +46,7 @@ pub use material::{
 };
 pub use mesh::{Mesh, MeshDescriptor, MeshIndex, MeshPrimitive, ObjMesh, PrimitiveType, SubMeshRange, Topology, Vertex};
 pub use node::{CustomNodePayload, EffectiveVisibility, Node, NodePayload, Visibility, NodeFlags};
+pub use sub_view::{SubView, SubViewId, ViewportRect};
 pub use texture::{Texture, TextureFormat};
 pub use environment::{
     CubemapFaceData, CubemapMipData, EnvironmentMap, EnvironmentSource, PreprocessedCubemap,
@@ -134,6 +136,9 @@ pub struct Scene {
     /// The node (with a Camera payload) that drives rendering when no explicit camera is passed.
     active_camera: Option<NodeId>,
 
+    /// Sub-views: sub-regions of the surface that render a subtree through their own camera.
+    sub_views: HashMap<SubViewId, SubView>,
+
     /// Generation counter that increments on any node add, remove, or mutation.
     /// Used by the renderer to detect when scene data need re-collection.
     node_generation: u64,
@@ -155,6 +160,7 @@ impl Clone for Scene {
             environment_maps: self.environment_maps.clone(),
             active_environment_map: self.active_environment_map,
             active_camera: self.active_camera,
+            sub_views: self.sub_views.clone(),
             node_generation: self.node_generation,
             event_log: None,
         }
@@ -178,6 +184,8 @@ impl Scene {
             active_environment_map: None,
 
             active_camera: None,
+
+            sub_views: HashMap::new(),
 
             node_generation: initial_generation(),
 
@@ -496,9 +504,21 @@ impl Scene {
     ///
     /// Returns `None` if there is no active camera or the node lacks a Camera payload.
     pub fn active_camera_positioned(&self, aspect: f32) -> Option<PositionedCamera> {
-        let id = self.active_camera?;
-        let proj = self.active_camera_data()?.clone();
-        let world_transform = self.nodes_transform(id)?;
+        self.positioned_camera_for_node(self.active_camera?, aspect)
+    }
+
+    /// Constructs a [`PositionedCamera`] from any node carrying a `NodePayload::Camera`
+    /// payload, using its world transform and the given viewport aspect ratio.
+    ///
+    /// Returns `None` if the node does not exist, lacks a Camera payload, or its
+    /// world transform cannot be resolved (incomplete tree).
+    pub fn positioned_camera_for_node(&self, node_id: NodeId, aspect: f32) -> Option<PositionedCamera> {
+        let node = self.get_node(node_id)?;
+        let proj = match node.payload() {
+            NodePayload::Camera(cam) => cam.clone(),
+            _ => return None,
+        };
+        let world_transform = self.nodes_transform(node_id)?;
         Some(proj.into_positioned(world_transform, aspect))
     }
 
@@ -508,6 +528,45 @@ impl Scene {
         if let Some(log) = &mut self.event_log {
             log.push(SceneEvent::ActiveCameraSet(node_id));
         }
+    }
+
+    // ========== Sub-View API ==========
+
+    /// Adds a sub-view that renders the subtree rooted at `root` through the camera
+    /// node `camera`, confined to the region `rect` (a proportion of the surface).
+    /// Returns the new [`SubViewId`].
+    pub fn add_sub_view(&mut self, rect: ViewportRect, root: NodeId, camera: NodeId) -> SubViewId {
+        let sub_view = SubView::new(rect, root, camera);
+        let id = sub_view.id;
+        self.sub_views.insert(id, sub_view);
+        id
+    }
+
+    /// Gets a reference to a sub-view by ID.
+    pub fn get_sub_view(&self, id: SubViewId) -> Option<&SubView> {
+        self.sub_views.get(&id)
+    }
+
+    /// Returns an iterator over all sub-views.
+    pub fn sub_views(&self) -> impl Iterator<Item = &SubView> {
+        self.sub_views.values()
+    }
+
+    /// Returns the number of sub-views in the scene.
+    pub fn sub_view_count(&self) -> usize {
+        self.sub_views.len()
+    }
+
+    /// Updates the viewport rectangle of an existing sub-view. No-op if absent.
+    pub fn set_sub_view_rect(&mut self, id: SubViewId, rect: ViewportRect) {
+        if let Some(sv) = self.sub_views.get_mut(&id) {
+            sv.rect = rect;
+        }
+    }
+
+    /// Removes a sub-view by ID.
+    pub fn remove_sub_view(&mut self, id: SubViewId) {
+        self.sub_views.remove(&id);
     }
 
     // ========== Node Generation ==========
@@ -738,6 +797,7 @@ impl Scene {
         self.environment_maps.clear();
         self.active_environment_map = None;
         self.active_camera = None;
+        self.sub_views.clear();
         self.node_generation += 1;
     }
 
