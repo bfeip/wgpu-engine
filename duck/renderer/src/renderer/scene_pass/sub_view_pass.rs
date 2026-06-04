@@ -1,41 +1,8 @@
-use wgpu::util::{BufferInitDescriptor, DeviceExt};
-
 use super::super::batching::DrawData;
-use super::super::gpu_resources::{CameraUniform, GpuTexture};
+use super::super::gpu_resources::{CameraResources, CameraUniform, GpuTexture};
 use super::super::pass_context::{FrameContext, SceneRenderPass};
 use super::super::pipeline::MaterialPipelineCache;
 use super::main_pass::draw_batches;
-
-/// A camera uniform buffer + bind group dedicated to one sub-view slot.
-///
-/// Sub-views each need their own camera buffer: the renderer writes all camera
-/// uniforms via `queue.write_buffer`, which executes on the queue timeline before
-/// any recorded pass, so a single shared buffer cannot carry per-pass values.
-/// Distinct buffers per slot are written independently with no aliasing.
-// TODO: Basically a duplicate of camera resources. Remove ASAP.
-struct CameraSlot {
-    buffer: wgpu::Buffer,
-    bind_group: wgpu::BindGroup,
-}
-
-impl CameraSlot {
-    fn new(device: &wgpu::Device, layout: &wgpu::BindGroupLayout) -> Self {
-        let buffer = device.create_buffer_init(&BufferInitDescriptor {
-            label: Some("Sub-View Camera Buffer"),
-            contents: bytemuck::cast_slice(&[CameraUniform::new()]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: buffer.as_entire_binding(),
-            }],
-            label: Some("sub_view_camera_bind_group"),
-        });
-        Self { buffer, bind_group }
-    }
-}
 
 /// Draws each sub-view in its own region of the surface, after the main view.
 ///
@@ -58,7 +25,7 @@ impl CameraSlot {
 pub(crate) struct SubViewPass {
     depth: GpuTexture,
     camera_layout: wgpu::BindGroupLayout,
-    slots: Vec<CameraSlot>,
+    cameras: Vec<CameraResources>,
 }
 
 impl SubViewPass {
@@ -72,14 +39,14 @@ impl SubViewPass {
         Self {
             depth: GpuTexture::depth_sized(device, width, height, sample_count, "sub_view_depth_texture"),
             camera_layout: camera_layout.clone(),
-            slots: Vec::new(),
+            cameras: Vec::new(),
         }
     }
 
     /// Ensures at least `count` camera slots exist.
-    fn ensure_slots(&mut self, device: &wgpu::Device, count: usize) {
-        while self.slots.len() < count {
-            self.slots.push(CameraSlot::new(device, &self.camera_layout));
+    fn ensure_cameras(&mut self, device: &wgpu::Device, count: usize) {
+        while self.cameras.len() < count {
+            self.cameras.push(CameraResources::new(device, &self.camera_layout));
         }
     }
 }
@@ -102,13 +69,13 @@ impl SceneRenderPass for SubViewPass {
         draw_data: &DrawData,
     ) {
         let sub_views = draw_data.sub_views();
-        self.ensure_slots(ctx.device, sub_views.len());
+        self.ensure_cameras(ctx.device, sub_views.len());
 
         for (i, sv) in sub_views.iter().enumerate() {
             // Write this sub-view's camera into its dedicated slot buffer.
             let uniform = CameraUniform::from_positioned_camera(&sv.camera);
             ctx.queue
-                .write_buffer(&self.slots[i].buffer, 0, bytemuck::cast_slice(&[uniform]));
+                .write_buffer(&self.cameras[i].buffer, 0, bytemuck::cast_slice(&[uniform]));
 
             let (x, y, w, h) = sv.rect.to_pixels(ctx.size.0, ctx.size.1);
             let (color_view, resolve_target) = ctx.renderer_textures.msaa_views(view);
@@ -143,7 +110,7 @@ impl SceneRenderPass for SubViewPass {
             render_pass.set_scissor_rect(x, y, w, h);
 
             // Bind this sub-view's camera at group 0; share lights/IBL with the scene.
-            render_pass.set_bind_group(0, &self.slots[i].bind_group, &[]);
+            render_pass.set_bind_group(0, &self.cameras[i].bind_group, &[]);
             render_pass.set_bind_group(1, ctx.lights_bind_group, &[]);
             if let Some(ibl) = ctx.ibl_bind_group {
                 render_pass.set_bind_group(3, ibl, &[]);

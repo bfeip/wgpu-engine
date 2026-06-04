@@ -21,8 +21,8 @@ use crate::{
 };
 
 use gpu_resources::{
-    CameraResources, CameraUniform, GpuResourceManager, GpuTexture, HeadlessResources,
-    LightResources, MaterialBindGroupLayouts, MaterialPipelineLayouts, RendererTextures,
+    BindGroupLayouts, CameraResources, CameraUniform, GpuResourceManager, GpuTexture,
+    HeadlessResources, LightResources, MaterialPipelineLayouts, RendererTextures,
 };
 
 pub struct Renderer {
@@ -37,9 +37,9 @@ pub struct Renderer {
     config: wgpu::SurfaceConfiguration,
 
     // Grouped resources
+    layouts: BindGroupLayouts,
     camera_resources: CameraResources,
     lights: LightResources,
-    material_layouts: MaterialBindGroupLayouts,
     renderer_textures: RendererTextures,
 
     // Other
@@ -87,17 +87,11 @@ impl Renderer {
         };
 
         // Create grouped resources
-        let material_layouts = MaterialBindGroupLayouts::new(&device);
-        let camera_resources = CameraResources::new(&device);
-        let lights = LightResources::new(&device);
-        let ibl_resources = IblResources::new(&device, &queue, has_compute);
-        let pipelines = MaterialPipelineLayouts::new(
-            &device,
-            &camera_resources.bind_group_layout,
-            &lights.bind_group_layout,
-            &material_layouts,
-            &ibl_resources.bind_group_layout,
-        );
+        let layouts = BindGroupLayouts::new(&device);
+        let camera_resources = CameraResources::new(&device, &layouts.camera);
+        let lights = LightResources::new(&device, &layouts.light);
+        let ibl_resources = IblResources::new(&device, &queue, &layouts.ibl, has_compute);
+        let pipelines = MaterialPipelineLayouts::new(&device, &layouts);
 
         let renderer_textures = RendererTextures::new(&device, &queue, &config, sample_count);
 
@@ -108,7 +102,7 @@ impl Renderer {
         let shaded_workflow = ShadedWorkflow::new(
             &device,
             &config,
-            &camera_resources.bind_group_layout,
+            &layouts.camera,
             &mut shader_generator,
             sample_count,
         );
@@ -121,9 +115,9 @@ impl Renderer {
             size: (width, height),
             surface_format,
             config,
+            layouts,
             camera_resources,
             lights,
-            material_layouts,
             renderer_textures,
             pipeline_cache,
             ibl_resources,
@@ -221,8 +215,8 @@ impl Renderer {
             &self.device,
             self.surface_format,
             self.sample_count,
-            &self.camera_resources.bind_group_layout,
-            &self.lights.bind_group_layout,
+            &self.layouts.camera,
+            &self.layouts.light,
         )
     }
 
@@ -231,7 +225,7 @@ impl Renderer {
     /// Prefer [`custom_pipeline_builder`](Self::custom_pipeline_builder) for
     /// building custom pipelines — this method is a lower-level escape hatch.
     pub fn camera_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
-        &self.camera_resources.bind_group_layout
+        &self.layouts.camera
     }
 
     /// Get the bind group layout for the lights uniform (group 1).
@@ -239,7 +233,7 @@ impl Renderer {
     /// Prefer [`custom_pipeline_builder`](Self::custom_pipeline_builder) for
     /// building custom pipelines — this method is a lower-level escape hatch.
     pub fn lights_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
-        &self.lights.bind_group_layout
+        &self.layouts.light
     }
 
     pub fn set_background_color(&mut self, color: RgbaColor) {
@@ -261,7 +255,7 @@ impl Renderer {
         ShadedWorkflow::new(
             &self.device,
             &self.config,
-            &self.camera_resources.bind_group_layout,
+            &self.layouts.camera,
             self.pipeline_cache.shader_generator_mut(),
             self.sample_count,
         )
@@ -274,9 +268,9 @@ impl Renderer {
             &self.device,
             self.surface_format,
             self.sample_count,
-            &self.camera_resources.bind_group_layout,
-            &self.lights.bind_group_layout,
-            &self.material_layouts.color,
+            &self.layouts.camera,
+            &self.layouts.light,
+            &self.layouts.color,
             self.pipeline_cache.shader_generator_mut(),
             config,
         )

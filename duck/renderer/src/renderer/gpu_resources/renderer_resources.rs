@@ -1,29 +1,95 @@
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
+use crate::ibl::ibl_bind_group_layout;
 use crate::scene::{MaterialProperties, PrimitiveType, SceneProperties};
 
 use super::state::GpuTexture;
 use super::uniforms::{CameraUniform, LightsArrayUniform};
 
-/// GPU resources for camera view/projection uniforms.
+/// GPU instance data for one camera: a uniform buffer plus its bind group.
 pub(crate) struct CameraResources {
     pub buffer: wgpu::Buffer,
-    pub bind_group_layout: wgpu::BindGroupLayout,
     pub bind_group: wgpu::BindGroup,
 }
 
 impl CameraResources {
-    /// Create camera resources including bind group layout.
-    pub fn new(device: &wgpu::Device) -> CameraResources {
-        let camera_uniform = CameraUniform::new();
-
+    /// Create a camera buffer and bind group against the shared camera layout.
+    pub fn new(device: &wgpu::Device, layout: &wgpu::BindGroupLayout) -> CameraResources {
         let buffer = device.create_buffer_init(&BufferInitDescriptor {
             label: Some("Camera Buffer"),
-            contents: bytemuck::cast_slice(&[camera_uniform]),
+            contents: bytemuck::cast_slice(&[CameraUniform::new()]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffer.as_entire_binding(),
+            }],
+            label: Some("camera_bind_group"),
+        });
+
+        CameraResources { buffer, bind_group }
+    }
+}
+
+/// GPU instance data for lighting uniforms: a buffer plus its bind group.
+pub(crate) struct LightResources {
+    pub buffer: wgpu::Buffer,
+    pub bind_group: wgpu::BindGroup,
+    pub synced_generation: u64,
+}
+
+impl LightResources {
+    /// Create the light buffer and bind group against the shared light layout.
+    pub fn new(device: &wgpu::Device, layout: &wgpu::BindGroupLayout) -> LightResources {
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Light buffer"),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            size: std::mem::size_of::<LightsArrayUniform>() as wgpu::BufferAddress,
+            mapped_at_creation: false,
+        });
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffer.as_entire_binding(),
+            }],
+            label: Some("Light bind group"),
+        });
+
+        LightResources {
+            buffer,
+            bind_group,
+            synced_generation: 0,
+        }
+    }
+}
+
+/// Canonical owner of every bind group layout used by the renderer.
+///
+/// A bind group layout is a *schema*: exactly one per kind, created once and
+/// shared by every pipeline layout and every conforming bind group. Keeping them
+/// all here (rather than bundled into the resource structs that happen to create
+/// the first bind group of each kind) lets multiple instances — e.g. the main
+/// camera plus per-sub-view camera slots — share a single layout, and gives
+/// pipeline-layout construction one place to borrow from.
+pub(crate) struct BindGroupLayouts {
+    pub camera: wgpu::BindGroupLayout,
+    pub light: wgpu::BindGroupLayout,
+    /// Color material layout.
+    pub color: wgpu::BindGroupLayout,
+    /// PBR material layout.
+    pub pbr: wgpu::BindGroupLayout,
+    pub ibl: wgpu::BindGroupLayout,
+}
+
+impl BindGroupLayouts {
+    /// Create all bind group layouts.
+    pub fn new(device: &wgpu::Device) -> BindGroupLayouts {
+        let camera = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 // Visible in both VERTEX (for view_proj) and FRAGMENT (for eye_position in PBR)
@@ -38,42 +104,7 @@ impl CameraResources {
             label: Some("camera_bind_group_layout"),
         });
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: buffer.as_entire_binding(),
-            }],
-            label: Some("camera_bind_group"),
-        });
-
-        CameraResources {
-            buffer,
-            bind_group_layout,
-            bind_group,
-        }
-    }
-}
-
-/// GPU resources for lighting uniform data.
-pub(crate) struct LightResources {
-    pub buffer: wgpu::Buffer,
-    pub bind_group_layout: wgpu::BindGroupLayout,
-    pub bind_group: wgpu::BindGroup,
-    pub synced_generation: u64,
-}
-
-impl LightResources {
-    /// Create light resources including bind group layout.
-    pub fn new(device: &wgpu::Device) -> LightResources {
-        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Light buffer"),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            size: std::mem::size_of::<LightsArrayUniform>() as wgpu::BufferAddress,
-            mapped_at_creation: false,
-        });
-
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let light = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
@@ -87,33 +118,6 @@ impl LightResources {
             label: Some("Light bind group layout"),
         });
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: buffer.as_entire_binding(),
-            }],
-            label: Some("Light bind group"),
-        });
-
-        LightResources {
-            buffer,
-            bind_group_layout,
-            bind_group,
-            synced_generation: 0,
-        }
-    }
-}
-
-/// Bind group layouts for different material types.
-pub(crate) struct MaterialBindGroupLayouts {
-    pub color: wgpu::BindGroupLayout,
-    pub pbr: wgpu::BindGroupLayout,
-}
-
-impl MaterialBindGroupLayouts {
-    /// Create bind group layouts for all material types.
-    pub fn new(device: &wgpu::Device) -> MaterialBindGroupLayouts {
         let color = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Color Material Bind Group Layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -199,7 +203,9 @@ impl MaterialBindGroupLayouts {
             ],
         });
 
-        MaterialBindGroupLayouts { color, pbr }
+        let ibl = ibl_bind_group_layout(device);
+
+        BindGroupLayouts { camera, light, color, pbr, ibl }
     }
 }
 
@@ -213,41 +219,22 @@ pub(crate) struct MaterialPipelineLayouts {
 
 impl MaterialPipelineLayouts {
     /// Create pipeline layouts for all material types.
-    pub fn new(
-        device: &wgpu::Device,
-        camera_bind_group_layout: &wgpu::BindGroupLayout,
-        light_bind_group_layout: &wgpu::BindGroupLayout,
-        material_layouts: &MaterialBindGroupLayouts,
-        ibl_bind_group_layout: &wgpu::BindGroupLayout,
-    ) -> MaterialPipelineLayouts {
+    pub fn new(device: &wgpu::Device, layouts: &BindGroupLayouts) -> MaterialPipelineLayouts {
         let color = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Color Material Pipeline Layout"),
-            bind_group_layouts: &[
-                camera_bind_group_layout,
-                light_bind_group_layout,
-                &material_layouts.color,
-            ],
+            bind_group_layouts: &[&layouts.camera, &layouts.light, &layouts.color],
             push_constant_ranges: &[],
         });
 
         let pbr = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("PBR Material Pipeline Layout"),
-            bind_group_layouts: &[
-                camera_bind_group_layout,
-                light_bind_group_layout,
-                &material_layouts.pbr,
-            ],
+            bind_group_layouts: &[&layouts.camera, &layouts.light, &layouts.pbr],
             push_constant_ranges: &[],
         });
 
         let pbr_ibl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("PBR IBL Material Pipeline Layout"),
-            bind_group_layouts: &[
-                camera_bind_group_layout,
-                light_bind_group_layout,
-                &material_layouts.pbr,
-                ibl_bind_group_layout,
-            ],
+            bind_group_layouts: &[&layouts.camera, &layouts.light, &layouts.pbr, &layouts.ibl],
             push_constant_ranges: &[],
         });
 

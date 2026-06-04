@@ -25,6 +25,6 @@ pub use buffer_layouts::{instance_buffer_layout, vertex_buffer_layout};
 
 // From renderer_resources
 pub(super) use renderer_resources::{
-    CameraResources, RendererTextures, HeadlessResources, LightResources,
-    MaterialBindGroupLayouts, MaterialPipelineLayouts, PipelineCacheKey,
+    BindGroupLayouts, CameraResources, RendererTextures, HeadlessResources, LightResources,
+    MaterialPipelineLayouts, PipelineCacheKey,
 };

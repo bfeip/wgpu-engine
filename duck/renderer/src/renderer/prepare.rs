@@ -111,7 +111,7 @@ impl Renderer {
 
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some(label),
-            layout: &self.material_layouts.color,
+            layout: &self.layouts.color,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: buffer.as_entire_binding(),
@@ -181,7 +181,7 @@ impl Renderer {
 
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("PBR Material Bind Group"),
-            layout: &self.material_layouts.pbr,
+            layout: &self.layouts.pbr,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
