@@ -6,7 +6,7 @@ use super::pass_context::{FrameContext, SceneRenderPass};
 use super::pipeline::MaterialPipelineCache;
 use super::scene_pass::{
     FlatColorPass, FlatColorPassDesc,
-    MainPass, OverlayPass, OutlinePass, SilhouetteEdgesPass, SubViewPass,
+    MainPass, OverlayPass, OutlinePass, SilhouetteEdgesPass, SubGeomHighlightPass, SubViewPass,
 };
 use crate::shaders::ShaderGenerator;
 
@@ -50,6 +50,8 @@ impl ShadedWorkflow {
         device: &wgpu::Device,
         config: &wgpu::SurfaceConfiguration,
         camera_bgl: &wgpu::BindGroupLayout,
+        lights_bgl: &wgpu::BindGroupLayout,
+        material_color_bgl: &wgpu::BindGroupLayout,
         shader_generator: &mut ShaderGenerator,
         sample_count: u32,
     ) -> Self {
@@ -58,6 +60,11 @@ impl ShadedWorkflow {
                 Box::new(MainPass),
                 Box::new(OverlayPass::new(device, config.width, config.height, sample_count)),
                 Box::new(OutlinePass::new(device, config, camera_bgl, shader_generator, sample_count)),
+                // Sub-geometry highlights draw on top of the node outlines.
+                Box::new(SubGeomHighlightPass::new(
+                    device, config.format, sample_count,
+                    camera_bgl, lights_bgl, material_color_bgl, shader_generator,
+                )),
                 // Drawn last so each sub-view composites on top of the finished main view.
                 Box::new(SubViewPass::new(device, config.width, config.height, sample_count, camera_bgl)),
             ],

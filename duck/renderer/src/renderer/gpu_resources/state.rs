@@ -44,6 +44,43 @@ pub(crate) struct MaterialGpuResources {
     pub _buffer: Option<wgpu::Buffer>,
 }
 
+/// A writable flat-color GPU resource: a `vec4<f32>` uniform buffer plus its
+/// bind group against the shared color material layout (group 2 /
+/// `material_color.wesl`).
+///
+/// Wraps the buffer+bind-group pair otherwise re-created inline wherever a flat
+/// color is pushed to the GPU. The buffer is `COPY_DST` so [`write`](Self::write)
+/// can update the color per frame.
+pub(crate) struct ColorResources {
+    pub buffer: wgpu::Buffer,
+    pub bind_group: wgpu::BindGroup,
+}
+
+impl ColorResources {
+    pub fn new(
+        device: &wgpu::Device,
+        color_bgl: &wgpu::BindGroupLayout,
+        color: crate::scene::common::RgbaColor,
+        label: &str,
+    ) -> Self {
+        let buffer = device.create_buffer_init(&BufferInitDescriptor {
+            label: Some(label),
+            contents: bytemuck::bytes_of(&color),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(label),
+            layout: color_bgl,
+            entries: &[wgpu::BindGroupEntry { binding: 0, resource: buffer.as_entire_binding() }],
+        });
+        Self { buffer, bind_group }
+    }
+
+    pub fn write(&self, queue: &wgpu::Queue, color: crate::scene::common::RgbaColor) {
+        queue.write_buffer(&self.buffer, 0, bytemuck::bytes_of(&color));
+    }
+}
+
 /// GPU state for a material, with per-primitive-type tracking.
 pub(crate) struct MaterialGpuState {
     pub face: Option<MaterialGpuResources>,

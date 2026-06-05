@@ -514,23 +514,43 @@ fn screen_size_scale(
     depth_size * target_px
 }
 
-/// Builds sub-geometry draw calls for all highlighted faces in the current frame.
+/// Sub-geometry highlight draw calls for the current frame, split into the
+/// primary selection and the secondary (everything else) tier so each can be
+/// drawn in its own color.
+#[derive(Default)]
+struct SubGeomHighlights {
+    primary: Vec<SubGeomBatch>,
+    secondary: Vec<SubGeomBatch>,
+}
+
+/// Builds sub-geometry draw calls for all highlighted faces and edges in the
+/// current frame.
 ///
-/// For each node with highlighted faces, looks up the instance's mesh topology and converts
-/// each highlighted face index into a `SubGeomBatch` targeting that face's triangle range.
+/// For each node with highlighted faces/edges, looks up the instance's mesh
+/// topology and converts each highlighted face/edge index into a `SubGeomBatch`
+/// targeting that element's index range. The single primary element (if it is a
+/// face or edge) is sorted into the primary tier; everything else is secondary.
+///
+/// Points have a topology slot (`point_ranges`) but no selection path yet, so no
+/// point batches are produced; the renderer pass is nonetheless ready for them.
 fn collect_highlight_sub_geom_batches(
     batches: &[DrawBatch],
     scene: &Scene,
     highlight: &dyn HighlightQuery,
-) -> Vec<SubGeomBatch> {
-    // Build a node_id → InstanceTransform index so we can resolve faces by node
+) -> SubGeomHighlights {
+    // Build a node_id → InstanceTransform index so we can resolve elements by node.
     let instance_by_node: HashMap<NodeId, &InstanceTransform> = batches
         .iter()
         .flat_map(|b| b.instances.iter())
         .map(|it| (it.node_id, it))
         .collect();
 
-    let mut sub_geom: Vec<SubGeomBatch> = Vec::new();
+    let primary_face = highlight.primary_face();
+    let primary_edge = highlight.primary_edge();
+
+    let mut out = SubGeomHighlights::default();
+
+    // Faces → TriangleList ranges (3 indices per triangle).
     for node_id in highlight.nodes_with_highlighted_faces() {
         let Some(it) = instance_by_node.get(&node_id) else { continue };
         let Some(instance) = scene.get_instance(it.instance_id) else { continue };
@@ -539,16 +559,46 @@ fn collect_highlight_sub_geom_batches(
 
         for face_index in highlight.highlighted_faces_for_node(node_id) {
             let Some(range) = topology.face_ranges.get(face_index as usize) else { continue };
-            sub_geom.push(SubGeomBatch {
+            let batch = SubGeomBatch {
                 mesh_id: instance.mesh(),
                 instance_transform: (*it).clone(),
                 primitive_type: PrimitiveType::TriangleList,
                 first_index: range.start * 3,
                 index_count: range.count * 3,
-            });
+            };
+            if primary_face == Some((node_id, face_index)) {
+                out.primary.push(batch);
+            } else {
+                out.secondary.push(batch);
+            }
         }
     }
-    sub_geom
+
+    // Edges → LineList ranges (2 indices per segment).
+    for node_id in highlight.nodes_with_highlighted_edges() {
+        let Some(it) = instance_by_node.get(&node_id) else { continue };
+        let Some(instance) = scene.get_instance(it.instance_id) else { continue };
+        let Some(mesh) = scene.get_mesh(instance.mesh()) else { continue };
+        let Some(topology) = mesh.topology() else { continue };
+
+        for edge_index in highlight.highlighted_edges_for_node(node_id) {
+            let Some(range) = topology.edge_ranges.get(edge_index as usize) else { continue };
+            let batch = SubGeomBatch {
+                mesh_id: instance.mesh(),
+                instance_transform: (*it).clone(),
+                primitive_type: PrimitiveType::LineList,
+                first_index: range.start * 2,
+                index_count: range.count * 2,
+            };
+            if primary_edge == Some((node_id, edge_index)) {
+                out.primary.push(batch);
+            } else {
+                out.secondary.push(batch);
+            }
+        }
+    }
+
+    out
 }
 
 /// A single sub-view's draw list for the current frame: where it goes on the
@@ -586,10 +636,10 @@ pub struct DrawData {
     secondary_highlight_sub_geom_batches: Vec<SubGeomBatch>,
     /// Resolved outline configuration for the primary selection. `Some` when a
     /// non-empty highlight is active; `None` otherwise.
-    outline_config: Option<crate::highlight_query::OutlineConfig>,
+    highlight_config: Option<crate::highlight_query::HighlightConfig>,
     /// Resolved outline configuration for secondary selections. `Some` when secondary
     /// highlights exist; `None` otherwise.
-    secondary_outline_config: Option<crate::highlight_query::OutlineConfig>,
+    secondary_highlight_config: Option<crate::highlight_query::HighlightConfig>,
     /// Per-sub-view draw lists, each drawn in its own region after the main view.
     sub_views: Vec<SubViewDraw>,
 }
@@ -630,37 +680,34 @@ impl DrawData {
         batches = normal_batches;
 
         let active_highlight = highlight.filter(|h| !h.is_empty());
-        let primary_node = active_highlight.and_then(|h| h.primary_node());
+
+        // Whole-node outlines: only nodes selected *as a node* are outlined.
+        // Sub-geometry selections do not contribute here — they are handled by
+        // the sub-geom batches below.
+        let primary_outlined_node = active_highlight.and_then(|h| h.primary_outlined_node());
 
         let highlighted_batches = active_highlight
-            .map(|_| partition_batches(&batches, |inst| Some(inst.node_id) == primary_node).0)
+            .map(|_| partition_batches(&batches, |inst| Some(inst.node_id) == primary_outlined_node).0)
             .unwrap_or_default();
 
         let secondary_highlighted_batches = active_highlight
             .map(|h| {
+                let outlined: HashSet<NodeId> = h.outlined_nodes().into_iter().collect();
                 partition_batches(&batches, |inst| {
-                    h.is_node_highlighted(inst.node_id) && Some(inst.node_id) != primary_node
+                    outlined.contains(&inst.node_id) && Some(inst.node_id) != primary_outlined_node
                 })
                 .0
             })
             .unwrap_or_default();
 
-        let all_sub_geom = active_highlight
+        let sub_geom = active_highlight
             .map(|h| collect_highlight_sub_geom_batches(&batches, scene, h))
             .unwrap_or_default();
+        let highlight_sub_geom_batches = sub_geom.primary;
+        let secondary_highlight_sub_geom_batches = sub_geom.secondary;
 
-        let mut highlight_sub_geom_batches = Vec::new();
-        let mut secondary_highlight_sub_geom_batches = Vec::new();
-        for batch in all_sub_geom {
-            if Some(batch.instance_transform.node_id) == primary_node {
-                highlight_sub_geom_batches.push(batch);
-            } else {
-                secondary_highlight_sub_geom_batches.push(batch);
-            }
-        }
-
-        let outline_config = active_highlight.map(|h| h.outline_config());
-        let secondary_outline_config = active_highlight.and_then(|h| h.secondary_outline_config());
+        let highlight_config = active_highlight.map(|h| h.highlight_config());
+        let secondary_highlight_config = active_highlight.and_then(|h| h.secondary_highlight_config());
 
         // Build one draw list per sub-view: resolve its camera at the sub-view's
         // own pixel aspect, collect the subtree, then sort/adjust for that camera.
@@ -688,8 +735,8 @@ impl DrawData {
             overlay_batches,
             highlight_sub_geom_batches,
             secondary_highlight_sub_geom_batches,
-            outline_config,
-            secondary_outline_config,
+            highlight_config,
+            secondary_highlight_config,
             sub_views,
         }
     }
@@ -713,9 +760,17 @@ impl DrawData {
 
     /// Whether any instances or sub-geometry are highlighted (primary or secondary).
     pub fn has_highlights(&self) -> bool {
-        !self.highlighted_batches.is_empty()
-            || !self.highlight_sub_geom_batches.is_empty()
-            || !self.secondary_highlighted_batches.is_empty()
+        self.has_node_highlights() || self.has_sub_geom_highlights()
+    }
+
+    /// Whether any whole-node outlines need to be drawn (primary or secondary).
+    pub fn has_node_highlights(&self) -> bool {
+        !self.highlighted_batches.is_empty() || !self.secondary_highlighted_batches.is_empty()
+    }
+
+    /// Whether any sub-geometry highlights need to be drawn (primary or secondary).
+    pub fn has_sub_geom_highlights(&self) -> bool {
+        !self.highlight_sub_geom_batches.is_empty()
             || !self.secondary_highlight_sub_geom_batches.is_empty()
     }
 
@@ -740,13 +795,13 @@ impl DrawData {
     }
 
     /// Outline configuration for the primary selection, or `None` if nothing is highlighted.
-    pub fn outline_config(&self) -> Option<&crate::highlight_query::OutlineConfig> {
-        self.outline_config.as_ref()
+    pub fn highlight_config(&self) -> Option<&crate::highlight_query::HighlightConfig> {
+        self.highlight_config.as_ref()
     }
 
     /// Outline configuration for secondary selections, or `None` if there are none.
-    pub fn secondary_outline_config(&self) -> Option<&crate::highlight_query::OutlineConfig> {
-        self.secondary_outline_config.as_ref()
+    pub fn secondary_highlight_config(&self) -> Option<&crate::highlight_query::HighlightConfig> {
+        self.secondary_highlight_config.as_ref()
     }
 
     /// Per-sub-view draw lists, drawn in their own regions after the main view.
@@ -1088,7 +1143,7 @@ mod tests {
     // DrawData Tests
     // ========================================================================
 
-    use crate::highlight_query::OutlineConfig;
+    use crate::highlight_query::HighlightConfig;
 
     struct MockHighlight {
         highlighted_nodes: Vec<NodeId>,
@@ -1099,8 +1154,12 @@ mod tests {
             self.highlighted_nodes.is_empty()
         }
 
-        fn is_node_highlighted(&self, node_id: NodeId) -> bool {
-            self.highlighted_nodes.contains(&node_id)
+        fn outlined_nodes(&self) -> Vec<NodeId> {
+            self.highlighted_nodes.clone()
+        }
+
+        fn primary_outlined_node(&self) -> Option<NodeId> {
+            self.highlighted_nodes.first().copied()
         }
 
         fn highlighted_faces_for_node(&self, _node_id: NodeId) -> Vec<u32> {
@@ -1119,17 +1178,21 @@ mod tests {
             Vec::new()
         }
 
-        fn outline_config(&self) -> OutlineConfig {
-            OutlineConfig::default()
+        fn primary_face(&self) -> Option<(NodeId, u32)> {
+            None
         }
 
-        fn primary_node(&self) -> Option<NodeId> {
-            self.highlighted_nodes.first().copied()
+        fn primary_edge(&self) -> Option<(NodeId, u32)> {
+            None
         }
 
-        fn secondary_outline_config(&self) -> Option<OutlineConfig> {
+        fn highlight_config(&self) -> HighlightConfig {
+            HighlightConfig::default()
+        }
+
+        fn secondary_highlight_config(&self) -> Option<HighlightConfig> {
             if self.highlighted_nodes.len() > 1 {
-                Some(OutlineConfig::default())
+                Some(HighlightConfig::default())
             } else {
                 None
             }

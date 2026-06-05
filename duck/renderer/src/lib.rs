@@ -15,4 +15,4 @@ pub use renderer::{
     MaterialPipelineCache, Renderer, RenderWorkflow, SceneRenderPass, ShadedWorkflow,
     instance_buffer_layout, vertex_buffer_layout,
 };
-pub use highlight_query::{OutlineConfig, HighlightQuery};
+pub use highlight_query::{HighlightConfig, HighlightQuery};

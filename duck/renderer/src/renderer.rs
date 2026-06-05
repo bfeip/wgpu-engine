@@ -103,6 +103,8 @@ impl Renderer {
             &device,
             &config,
             &layouts.camera,
+            &layouts.light,
+            &layouts.color,
             &mut shader_generator,
             sample_count,
         );
@@ -256,6 +258,8 @@ impl Renderer {
             &self.device,
             &self.config,
             &self.layouts.camera,
+            &self.layouts.light,
+            &self.layouts.color,
             self.pipeline_cache.shader_generator_mut(),
             self.sample_count,
         )

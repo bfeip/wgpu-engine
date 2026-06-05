@@ -6,7 +6,7 @@
 use std::collections::HashSet;
 
 use crate::scene::NodeId;
-use crate::renderer::{HighlightQuery, OutlineConfig};
+use crate::renderer::{HighlightQuery, HighlightConfig};
 
 /// Configuration for selection visual feedback.
 #[derive(Debug, Clone)]
@@ -17,6 +17,8 @@ pub struct SelectionConfig {
     pub secondary_outline_color: [f32; 4],
     /// Width of the outline in pixels (screen-space).
     pub outline_width: f32,
+    /// Alpha (0.0-1.0) of the transparent face-highlight overlay.
+    pub face_highlight_alpha: f32,
     /// Whether outline rendering is enabled.
     pub outline_enabled: bool,
     /// Whether debug annotations (pick rays) are drawn on selection.
@@ -29,6 +31,7 @@ impl Default for SelectionConfig {
             outline_color: [1.0, 0.6, 0.0, 1.0],           // Orange
             secondary_outline_color: [0.7, 0.35, 0.0, 1.0], // Darker orange
             outline_width: 3.0,                              // 3 pixels
+            face_highlight_alpha: 0.4,
             outline_enabled: true,
             debug_annotations: false,
         }
@@ -256,8 +259,21 @@ impl HighlightQuery for SelectionManager {
         self.selected.is_empty()
     }
 
-    fn is_node_highlighted(&self, node_id: NodeId) -> bool {
-        self.is_node_selected(node_id)
+    fn outlined_nodes(&self) -> Vec<NodeId> {
+        self.selection_order
+            .iter()
+            .filter_map(|item| match item {
+                SelectionItem::Node(node_id) => Some(*node_id),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn primary_outlined_node(&self) -> Option<NodeId> {
+        match self.primary {
+            Some(SelectionItem::Node(node_id)) => Some(node_id),
+            _ => None,
+        }
     }
 
     fn highlighted_faces_for_node(&self, node_id: NodeId) -> Vec<u32> {
@@ -294,22 +310,34 @@ impl HighlightQuery for SelectionManager {
         nodes
     }
 
-    fn outline_config(&self) -> OutlineConfig {
-        OutlineConfig {
-            color: self.config.outline_color,
-            width_pixels: self.config.outline_width,
+    fn primary_face(&self) -> Option<(NodeId, u32)> {
+        match self.primary {
+            Some(SelectionItem::Face { node_id, face_index }) => Some((node_id, face_index)),
+            _ => None,
         }
     }
 
-    fn primary_node(&self) -> Option<NodeId> {
-        self.primary.map(|p| p.node_id())
+    fn primary_edge(&self) -> Option<(NodeId, u32)> {
+        match self.primary {
+            Some(SelectionItem::Edge { node_id, edge_index }) => Some((node_id, edge_index)),
+            _ => None,
+        }
     }
 
-    fn secondary_outline_config(&self) -> Option<OutlineConfig> {
+    fn highlight_config(&self) -> HighlightConfig {
+        HighlightConfig {
+            color: self.config.outline_color,
+            width_pixels: self.config.outline_width,
+            face_alpha: self.config.face_highlight_alpha,
+        }
+    }
+
+    fn secondary_highlight_config(&self) -> Option<HighlightConfig> {
         let has_secondary = self.selected.iter().any(|item| Some(*item) != self.primary);
-        has_secondary.then(|| OutlineConfig {
+        has_secondary.then(|| HighlightConfig {
             color: self.config.secondary_outline_color,
             width_pixels: self.config.outline_width,
+            face_alpha: self.config.face_highlight_alpha,
         })
     }
 }

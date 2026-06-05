@@ -242,7 +242,6 @@ impl OutlinePass {
         uniform_buffer: &wgpu::Buffer,
         cfg: &OutlineUniform,
         highlighted_batches: &[super::super::batching::DrawBatch],
-        sub_geom_batches: &[super::super::batching::SubGeomBatch],
     ) {
         ctx.queue.write_buffer(uniform_buffer, 0, bytemuck::cast_slice(&[*cfg]));
 
@@ -282,19 +281,6 @@ impl OutlinePass {
                     mesh.index_count(batch.primitive_type),
                 );
             }
-            for batch in sub_geom_batches {
-                if batch.primitive_type != PrimitiveType::TriangleList { continue; }
-                let gpu_mesh = ctx.gpu_resources.get_mesh(batch.mesh_id).expect("Mesh GPU resources not initialized");
-                gpu_resources::draw_mesh_subgeom(
-                    ctx.device,
-                    &mut rp,
-                    gpu_mesh,
-                    batch.primitive_type,
-                    &batch.instance_transform,
-                    batch.first_index,
-                    batch.index_count,
-                );
-            }
         }
 
         // Screenspace pass — composite outline color over scene.
@@ -321,7 +307,7 @@ impl OutlinePass {
 
 impl SceneRenderPass for OutlinePass {
     fn is_active(&self, draw_data: &DrawData) -> bool {
-        draw_data.has_highlights()
+        draw_data.has_node_highlights()
     }
 
     fn resize(&mut self, device: &wgpu::Device, size: (u32, u32), sample_count: u32) {
@@ -350,7 +336,7 @@ impl SceneRenderPass for OutlinePass {
         _pipeline_cache: &mut MaterialPipelineCache,
         draw_data: &DrawData,
     ) {
-        let make_uniform = |cfg: &crate::highlight_query::OutlineConfig| gpu_resources::OutlineUniform {
+        let make_uniform = |cfg: &crate::highlight_query::HighlightConfig| gpu_resources::OutlineUniform {
             color: cfg.color,
             width_pixels: cfg.width_pixels,
             screen_width: ctx.size.0 as f32,
@@ -358,26 +344,24 @@ impl SceneRenderPass for OutlinePass {
             _padding: 0.0,
         };
 
-        if !draw_data.highlighted_batches().is_empty() || !draw_data.highlight_sub_geom_batches().is_empty() {
-            if let Some(cfg) = draw_data.outline_config() {
+        if !draw_data.highlighted_batches().is_empty() {
+            if let Some(cfg) = draw_data.highlight_config() {
                 self.run_cycle(
                     encoder, view, ctx,
                     &self.screenspace.primary_bind_group,
                     &self.primary_uniform_buffer, &make_uniform(cfg),
                     draw_data.highlighted_batches(),
-                    draw_data.highlight_sub_geom_batches(),
                 );
             }
         }
 
-        if !draw_data.secondary_highlighted_batches().is_empty() || !draw_data.secondary_highlight_sub_geom_batches().is_empty() {
-            if let Some(cfg) = draw_data.secondary_outline_config() {
+        if !draw_data.secondary_highlighted_batches().is_empty() {
+            if let Some(cfg) = draw_data.secondary_highlight_config() {
                 self.run_cycle(
                     encoder, view, ctx,
                     &self.screenspace.secondary_bind_group,
                     &self.secondary_uniform_buffer, &make_uniform(cfg),
                     draw_data.secondary_highlighted_batches(),
-                    draw_data.secondary_highlight_sub_geom_batches(),
                 );
             }
         }
