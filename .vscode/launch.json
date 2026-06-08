@@ -42,6 +42,22 @@
         },
         {
             "type": "lldb",
+            "request": "launch",
+            "name": "Debug 'modeler",
+            "cargo": {
+                "cwd": "${workspaceFolder}/duck/modeler",
+                "args": [
+                    "build",
+                ],
+                "filter": {
+                    "name": "modeler",
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}/duck/modeler"
+        },
+        {
+            "type": "lldb",
             "request": "attach",
             "name": "Attach to Rust Process",
             "pid": "${command:pickMyProcess}"
