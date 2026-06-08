@@ -31,7 +31,7 @@ use duck_engine_viewer::selection::SelectionItem;
 
 use crate::boolean::BooleanKind;
 use crate::cursor::Cursor3d;
-use crate::operators::{BooleanOperator, ConstructionOptions, SphereOperator};
+use crate::operators::{BooleanOperator, ConstructionOptions, LineOperator, SphereOperator};
 use crate::tool::ModelingTool;
 
 use document::Document;
@@ -41,6 +41,7 @@ enum OperatorKind {
     #[default]
     Selection,
     Sphere,
+    Line,
     Boolean,
 }
 
@@ -63,6 +64,7 @@ struct ViewerState<'a> {
 
     sel_op: Arc<Mutex<SelectionOperator>>,
     sphere_op: Arc<Mutex<SphereOperator>>,
+    line_op: Arc<Mutex<LineOperator>>,
     boolean_op: Arc<Mutex<BooleanOperator>>,
     active_operator: OperatorKind,
 }
@@ -106,6 +108,11 @@ impl ViewerState<'static> {
             Arc::clone(&document),
         )));
 
+        let line_op = Arc::new(Mutex::new(LineOperator::new(
+            Rc::clone(&construction_options),
+            Arc::clone(&document),
+        )));
+
         let boolean_op = Arc::new(Mutex::new(BooleanOperator::new(
             Rc::clone(&construction_options),
             Arc::clone(&document),
@@ -122,6 +129,7 @@ impl ViewerState<'static> {
             cursor: Cursor3d::default(),
             sel_op,
             sphere_op,
+            line_op,
             boolean_op,
             active_operator: OperatorKind::Selection,
         }
@@ -208,6 +216,13 @@ impl<'a> ViewerState<'a> {
             self.switch_tool(OperatorKind::Selection);
         }
 
+        // Cede back to selection once the line tool has committed a line.
+        if self.active_operator == OperatorKind::Line
+            && self.line_op.lock().unwrap().is_finished()
+        {
+            self.switch_tool(OperatorKind::Selection);
+        }
+
         match self.viewer.render_scene() {
             Ok((output, view, mut encoder)) => {
                 self.render_egui_overlay(&full_output, &mut encoder, &view);
@@ -224,6 +239,7 @@ impl<'a> ViewerState<'a> {
     fn update_cursor(&mut self) {
         let target = match self.active_operator {
             OperatorKind::Sphere => self.sphere_op.lock().unwrap().cursor_target(),
+            OperatorKind::Line => self.line_op.lock().unwrap().cursor_target(),
             _ => None,
         };
         let scene_arc = self.viewer.scene();
@@ -233,12 +249,15 @@ impl<'a> ViewerState<'a> {
 
     fn switch_tool(&mut self, kind: OperatorKind) {
         self.sphere_op.lock().unwrap().deactivate();
+        self.line_op.lock().unwrap().deactivate();
         self.boolean_op.lock().unwrap().deactivate();
         self.viewer.dispatcher_mut().remove(&self.sphere_op);
+        self.viewer.dispatcher_mut().remove(&self.line_op);
         self.viewer.dispatcher_mut().remove(&self.boolean_op);
         match kind {
             OperatorKind::Selection => { self.viewer.dispatcher_mut().move_to_front(&self.sel_op); }
             OperatorKind::Sphere    => { self.viewer.dispatcher_mut().push_front(self.sphere_op.clone()); }
+            OperatorKind::Line      => { self.viewer.dispatcher_mut().push_front(self.line_op.clone()); }
             OperatorKind::Boolean   => { self.viewer.dispatcher_mut().push_front(self.boolean_op.clone()); }
         }
         self.active_operator = kind;
@@ -249,6 +268,8 @@ impl<'a> ViewerState<'a> {
             include_bytes!("../../../assets/svg/cursor-svgrepo-com.svg");
         const SPHERE_SVG: &[u8] =
             include_bytes!("../../../assets/svg/sphere-svgrepo-com.svg");
+        const LINE_SVG: &[u8] =
+            include_bytes!("../../../assets/svg/line-tool-svgrepo-com.svg");
         const BOOLEAN_SVG: &[u8] =
             include_bytes!("../../../assets/svg/boolean-and.svg");
 
@@ -280,6 +301,19 @@ impl<'a> ViewerState<'a> {
                 );
                 if sphere_btn.clicked() {
                     self.switch_tool(OperatorKind::Sphere);
+                }
+
+                ui.add_space(4.0);
+
+                let line_btn = ui.add(
+                    egui::Button::image(
+                        egui::Image::from_bytes("bytes://line.svg", LINE_SVG)
+                            .fit_to_exact_size(egui::vec2(32.0, 32.0)),
+                    )
+                    .selected(self.active_operator == OperatorKind::Line),
+                );
+                if line_btn.clicked() {
+                    self.switch_tool(OperatorKind::Line);
                 }
 
                 ui.add_space(4.0);

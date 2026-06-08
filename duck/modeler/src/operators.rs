@@ -1,7 +1,9 @@
 mod boolean;
+mod line;
 mod sphere;
 
 pub use boolean::BooleanOperator;
+pub use line::LineOperator;
 pub use sphere::SphereOperator;
 
 use duck_engine_common::{Plane, RgbaColor};
