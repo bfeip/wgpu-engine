@@ -11,13 +11,12 @@ use duck_engine_viewer::{
     event::{Event, EventContext},
     input::{Modifiers, MouseButton},
     operator::Operator,
-    scene::PositionedCamera,
 };
 use glam::dvec3;
 use opencascade::primitives::Shape;
 
 use crate::document::Document;
-use crate::snap::{Snap, SnapInput, SnapKind, SnapFlags};
+use crate::snap::SnapKind;
 use crate::tool::ModelingTool;
 use super::ConstructionOptions;
 
@@ -73,35 +72,11 @@ impl SphereOperator {
         }
     }
 
-    /// Resolves a cursor position to a snapped world location via the shared snap
-    /// engine. The caller supplies `camera` so we never rebuild it while holding a
-    /// scene lock. `exclude` lists nodes to ignore — e.g. our own in-progress
-    /// preview.
-    fn resolve_snap(
-        &self,
-        cursor: (f32, f32),
-        exclude: &[NodeId],
-        camera: &PositionedCamera,
-        ctx: &EventContext,
-    ) -> Option<Snap> {
-        let coptions = self.construction_options.borrow();
-        let input = SnapInput {
-            ray: camera.ray_from_screen_point(cursor.0, cursor.1, ctx.size.0, ctx.size.1),
-            cursor,
-            viewport: ctx.size,
-            camera,
-            plane: &coptions.construction_plane,
-            grid: &coptions.grid,
-            requested: SnapFlags::all(),
-            exclude_nodes: exclude,
-        };
-        let scene = ctx.scene.lock().unwrap();
-        coptions.snap.snap(&input, &scene)
-    }
-
     fn on_place_center(&mut self, position: (f32, f32), ctx: &mut EventContext) -> bool {
         let camera = ctx.camera();
         let Some(center) = self
+            .construction_options
+            .borrow()
             .resolve_snap(position, &[], &camera, ctx)
             .map(|s| s.position)
         else {
@@ -138,6 +113,8 @@ impl SphereOperator {
         // Exclude the preview so the radius can snap through a corner, not to the
         // preview's own geometry.
         let radius = self
+            .construction_options
+            .borrow()
             .resolve_snap(position, &[preview_node], &camera, ctx)
             .map(|s| center.distance(s.position).max(0.01))
             .unwrap_or(0.01);
@@ -182,7 +159,10 @@ impl SphereOperator {
         };
 
         let camera = ctx.camera();
-        let snap = self.resolve_snap(cursor, &exclude, &camera, ctx);
+        let snap = self
+            .construction_options
+            .borrow()
+            .resolve_snap(cursor, &exclude, &camera, ctx);
 
         // Record where the modeler should draw the 3D cursor: a real snap, not
         // the free construction-plane fallback (which sits under the cursor).

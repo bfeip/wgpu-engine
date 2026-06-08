@@ -7,10 +7,13 @@ pub use line::LineOperator;
 pub use sphere::SphereOperator;
 
 use duck_engine_common::{Plane, RgbaColor};
+use duck_engine_scene::NodeId;
 use duck_engine_scene::cad::CadTessellationOptions;
+use duck_engine_viewer::event::EventContext;
+use duck_engine_viewer::scene::PositionedCamera;
 
 use crate::grid::GridConfig;
-use crate::snap::SnapEngine;
+use crate::snap::{Snap, SnapEngine, SnapFlags, SnapInput};
 
 pub struct ConstructionOptions {
     pub geometry_preview_options: CadTessellationOptions,
@@ -38,5 +41,31 @@ impl ConstructionOptions {
             grid,
             snap
         }
+    }
+
+    /// Resolves a cursor position to a snapped world location via the shared snap
+    /// engine, using this context's construction plane, grid, and snap settings.
+    /// `exclude` lists nodes the snap should ignore — e.g. an operator's own
+    /// in-progress preview geometry. The caller supplies `camera` so we never
+    /// rebuild it while holding a scene lock.
+    pub fn resolve_snap(
+        &self,
+        cursor: (f32, f32),
+        exclude: &[NodeId],
+        camera: &PositionedCamera,
+        ctx: &EventContext,
+    ) -> Option<Snap> {
+        let input = SnapInput {
+            ray: camera.ray_from_screen_point(cursor.0, cursor.1, ctx.size.0, ctx.size.1),
+            cursor,
+            viewport: ctx.size,
+            camera,
+            plane: &self.construction_plane,
+            grid: &self.grid,
+            requested: SnapFlags::all(),
+            exclude_nodes: exclude,
+        };
+        let scene = ctx.scene.lock().unwrap();
+        self.snap.snap(&input, &scene)
     }
 }

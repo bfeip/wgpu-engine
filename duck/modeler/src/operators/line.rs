@@ -17,7 +17,7 @@ use log::warn;
 use opencascade::primitives::{Edge, Shape, Wire};
 
 use crate::document::Document;
-use crate::snap::{Snap, SnapFlags, SnapInput, SnapKind};
+use crate::snap::SnapKind;
 use crate::tool::ModelingTool;
 use super::ConstructionOptions;
 
@@ -106,30 +106,6 @@ impl LineOperator {
         }
     }
 
-    /// Resolves a cursor position to a snapped world location via the shared snap
-    /// engine. Mirrors `SphereOperator::resolve_snap`.
-    fn resolve_snap(
-        &self,
-        cursor: (f32, f32),
-        exclude: &[NodeId],
-        camera: &PositionedCamera,
-        ctx: &EventContext,
-    ) -> Option<Snap> {
-        let coptions = self.construction_options.borrow();
-        let input = SnapInput {
-            ray: camera.ray_from_screen_point(cursor.0, cursor.1, ctx.size.0, ctx.size.1),
-            cursor,
-            viewport: ctx.size,
-            camera,
-            plane: &coptions.construction_plane,
-            grid: &coptions.grid,
-            requested: SnapFlags::all(),
-            exclude_nodes: exclude,
-        };
-        let scene = ctx.scene.lock().unwrap();
-        coptions.snap.snap(&input, &scene)
-    }
-
     /// Resolves a snapped point and, while building, decides whether the cursor is
     /// close enough (in screen space) to the start point to close the wire.
     /// Returns `(position, kind, closing)`.
@@ -140,7 +116,10 @@ impl LineOperator {
         camera: &PositionedCamera,
         ctx: &EventContext,
     ) -> Option<(Point3, SnapKind, bool)> {
-        let base = self.resolve_snap(cursor, exclude, camera, ctx)?;
+        let base = self
+            .construction_options
+            .borrow()
+            .resolve_snap(cursor, exclude, camera, ctx)?;
 
         if let Phase::Building { points, .. } = &self.phase {
             // A face needs at least three vertices to enclose an area.
