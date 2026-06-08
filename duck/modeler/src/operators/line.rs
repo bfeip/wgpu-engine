@@ -75,15 +75,27 @@ fn open_wire_shape(points: &[Point3]) -> Option<Shape> {
     Some(Shape::from(&wire))
 }
 
-/// Builds a closed planar face shape from `points`. Returns `None` with fewer than
-/// three points. `Wire::from_ordered_points` closes the loop automatically.
-fn closed_face_shape(points: &[Point3]) -> Option<Shape> {
+/// Builds a closed wire from `points`. Returns `None` with fewer than three points.
+/// `Wire::from_ordered_points` closes the loop automatically.
+fn closed_wire(points: &[Point3]) -> Option<Wire> {
     if points.len() < 3 {
         return None;
     }
-    let wire = Wire::from_ordered_points(points.iter().map(to_dvec3))
+    Wire::from_ordered_points(points.iter().map(to_dvec3))
         .map_err(|e| warn!("Failed to build closed wire: {e}"))
-        .ok()?;
+        .ok()
+}
+
+/// Builds a closed wire shape (the loop, with no fill) from `points`. Used as a
+/// fallback when the points are not co-planar and a face cannot be built.
+fn closed_wire_shape(points: &[Point3]) -> Option<Shape> {
+    Some(Shape::from(&closed_wire(points)?))
+}
+
+/// Builds a closed planar face shape from `points`. Returns `None` with fewer than
+/// three points, or when the points are not co-planar (no face can be built).
+fn closed_face_shape(points: &[Point3]) -> Option<Shape> {
+    let wire = closed_wire(points)?;
     let face = wire.to_face().map_err(|e| warn!("Failed to build face from wire: {e}")).ok()?;
     Some(Shape::from(&face))
 }
@@ -158,7 +170,8 @@ impl LineOperator {
         self.remove_preview(ctx);
 
         let shape = if closing {
-            closed_face_shape(&points)
+            // Non-coplanar points can't form a face; fall back to the closed wire.
+            closed_face_shape(&points).or_else(|| closed_wire_shape(&points))
         } else {
             let mut all = points;
             if let Some(c) = cursor_point {
@@ -221,7 +234,7 @@ impl LineOperator {
         };
         self.remove_preview(ctx);
 
-        if let Some(shape) = closed_face_shape(&points) {
+        if let Some(shape) = closed_face_shape(&points).or_else(|| closed_wire_shape(&points)) {
             let coptions = self.construction_options.borrow();
             let mut doc = self.document.lock().unwrap();
             if doc
