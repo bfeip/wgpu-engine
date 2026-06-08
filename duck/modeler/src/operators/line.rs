@@ -173,6 +173,8 @@ impl LineOperator {
         }
     }
 
+    /// Adds a point to the wire or starts building a wire if there were no previous points.
+    /// Returns true if a point was successfully added.
     fn on_add_point(&mut self, position: (f32, f32), ctx: &mut EventContext) -> bool {
         let exclude: Vec<NodeId> = match &self.phase {
             Phase::Building { preview_node: Some(n), .. } => vec![*n],
@@ -188,22 +190,21 @@ impl LineOperator {
         match &mut self.phase {
             Phase::Idle => {
                 self.phase = Phase::Building { points: vec![point], preview_node: None, closing: false };
-                true
             }
             Phase::Building { .. } => {
                 if closing {
                     self.commit_closed(ctx);
-                    true
                 } else {
                     if let Phase::Building { points, .. } = &mut self.phase {
                         points.push(point);
                     }
                     // Show the placed polyline; the next cursor move adds the rubber band.
                     self.rebuild_preview(None, false, ctx);
-                    true
                 }
             }
         }
+
+        true
     }
 
     /// Commits the placed points as a closed planar region and ends the tool.
