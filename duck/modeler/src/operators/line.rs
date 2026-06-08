@@ -66,8 +66,12 @@ fn open_wire_shape(points: &[Point3]) -> Option<Shape> {
     let edges: Vec<Edge> = points
         .windows(2)
         .map(|w| Edge::segment(to_dvec3(&w[0]), to_dvec3(&w[1])))
-        .collect();
-    let wire = Wire::from_edges(&edges);
+        .collect::<Result<_, _>>()
+        .map_err(|e| warn!("Failed to build polyline edge: {e}"))
+        .ok()?;
+    let wire = Wire::from_edges(&edges)
+        .map_err(|e| warn!("Failed to build polyline wire: {e}"))
+        .ok()?;
     Some(Shape::from(&wire))
 }
 
@@ -77,8 +81,10 @@ fn closed_face_shape(points: &[Point3]) -> Option<Shape> {
     if points.len() < 3 {
         return None;
     }
-    let wire = Wire::from_ordered_points(points.iter().map(to_dvec3)).ok()?;
-    let face = wire.to_face();
+    let wire = Wire::from_ordered_points(points.iter().map(to_dvec3))
+        .map_err(|e| warn!("Failed to build closed wire: {e}"))
+        .ok()?;
+    let face = wire.to_face().map_err(|e| warn!("Failed to build face from wire: {e}")).ok()?;
     Some(Shape::from(&face))
 }
 
