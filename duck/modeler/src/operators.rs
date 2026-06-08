@@ -13,7 +13,7 @@ use duck_engine_viewer::event::EventContext;
 use duck_engine_viewer::scene::PositionedCamera;
 
 use crate::grid::GridConfig;
-use crate::snap::{Snap, SnapEngine, SnapFlags, SnapInput};
+use crate::snap::{Snap, SnapEngine, SnapFlags, SnapInput, SnapProvider};
 
 pub struct ConstructionOptions {
     pub geometry_preview_options: CadTessellationOptions,
@@ -47,13 +47,16 @@ impl ConstructionOptions {
     /// engine, using this context's construction plane, grid, and snap settings.
     /// `exclude` lists nodes the snap should ignore — e.g. an operator's own
     /// in-progress preview geometry. The caller supplies `camera` so we never
-    /// rebuild it while holding a scene lock.
+    /// rebuild it while holding a scene lock. `additional_providers` lets the
+    /// caller inject per-call snaps (e.g. an in-progress wire's start point)
+    /// that compete in the normal ranking alongside the registered providers.
     pub fn resolve_snap(
         &self,
         cursor: (f32, f32),
         exclude: &[NodeId],
         camera: &PositionedCamera,
         ctx: &EventContext,
+        additional_providers: &[&dyn SnapProvider],
     ) -> Option<Snap> {
         let input = SnapInput {
             ray: camera.ray_from_screen_point(cursor.0, cursor.1, ctx.size.0, ctx.size.1),
@@ -66,6 +69,6 @@ impl ConstructionOptions {
             exclude_nodes: exclude,
         };
         let scene = ctx.scene.lock().unwrap();
-        self.snap.snap(&input, &scene)
+        self.snap.snap(&input, &scene, additional_providers)
     }
 }

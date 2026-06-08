@@ -25,6 +25,8 @@
 
 mod providers;
 
+pub(crate) use providers::WireStartSnap;
+
 use bitflags::bitflags;
 
 use duck_engine_viewer::common::{InnerSpace, Plane, Point3, Ray, Vector3};
@@ -46,7 +48,9 @@ pub enum SnapKind {
     GridAxis,
     /// A B-rep corner / vertex of existing geometry.
     Corner,
-    // future: Edge, Midpoint, Center, Tangent, Parallel, Perpendicular, ...
+    /// The start point of an in-progress wire, offered so the path can be
+    /// closed back onto itself.
+    WireStart,
 }
 
 impl SnapKind {
@@ -56,7 +60,7 @@ impl SnapKind {
             ConstructionPlane => SnapTier::Free,
             GridGuide => SnapTier::Guide,
             GridAxis => SnapTier::Axis,
-            Origin | Corner => SnapTier::Feature,
+            Origin | Corner | WireStart => SnapTier::Feature,
         }
     }
 
@@ -68,6 +72,7 @@ impl SnapKind {
             GridGuide => SnapFlags::GRID_GUIDE,
             GridAxis => SnapFlags::GRID_AXIS,
             Corner => SnapFlags::CORNER,
+            WireStart => SnapFlags::WIRE_START,
         }
     }
 }
@@ -102,6 +107,7 @@ bitflags! {
         const GRID_GUIDE         = 1 << 2;
         const GRID_AXIS          = 1 << 3;
         const CORNER             = 1 << 4;
+        const WIRE_START         = 1 << 5;
     }
 }
 
@@ -214,8 +220,14 @@ impl SnapEngine {
     }
 
     /// Resolves the best snap for `input`, or `None` if nothing (not even the
-    /// plane fallback) applies.
-    pub fn snap(&self, input: &SnapInput, scene: &Scene) -> Option<Snap> {
+    /// plane fallback) applies. `extra` holds caller-supplied per-call providers
+    /// (e.g. a wire-start snap), consulted alongside the registered ones.
+    pub fn snap(
+        &self,
+        input: &SnapInput,
+        scene: &Scene,
+        extra: &[&dyn SnapProvider],
+    ) -> Option<Snap> {
         // Effective kinds = requested ∩ enabled, but the construction-plane
         // fallback is always available so operators still get a position.
         let mut active = if self.settings.enabled {
@@ -226,7 +238,8 @@ impl SnapEngine {
         active |= SnapFlags::CONSTRUCTION_PLANE;
 
         let mut candidates = Vec::new();
-        for provider in &self.providers {
+        let builtin = self.providers.iter().map(|p| p.as_ref());
+        for provider in builtin.chain(extra.iter().copied()) {
             if provider.produces().intersects(active) {
                 let provider_candidates = provider.collect(input, scene);
                 candidates.extend(provider_candidates);
@@ -432,7 +445,7 @@ mod tests {
         let cursor = screen_of(&cam, Point3::new(0.0, 0.0, 0.0));
         let inp = input(&cam, &plane, &grid, cursor);
         assert_eq!(
-            engine.snap(&inp, &scene).unwrap().kind,
+            engine.snap(&inp, &scene, &[]).unwrap().kind,
             SnapKind::ConstructionPlane
         );
     }

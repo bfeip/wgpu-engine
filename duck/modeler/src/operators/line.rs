@@ -17,7 +17,7 @@ use log::warn;
 use opencascade::primitives::{Edge, Shape, Wire};
 
 use crate::document::Document;
-use crate::snap::SnapKind;
+use crate::snap::{Snap, SnapKind, SnapProvider, WireStartSnap};
 use crate::tool::ModelingTool;
 use super::ConstructionOptions;
 
@@ -106,34 +106,30 @@ impl LineOperator {
         }
     }
 
-    /// Resolves a snapped point and, while building, decides whether the cursor is
-    /// close enough (in screen space) to the start point to close the wire.
-    /// Returns `(position, kind, closing)`.
+    /// Resolves a snapped point. While building a face (≥3 points), offers the
+    /// wire's start point as a [`SnapKind::WireStart`] candidate so the snap
+    /// engine can close the path; callers read `snap.kind == WireStart` to learn
+    /// whether the cursor is closing the wire.
     fn snapped_point(
         &self,
         cursor: (f32, f32),
         exclude: &[NodeId],
         camera: &PositionedCamera,
         ctx: &EventContext,
-    ) -> Option<(Point3, SnapKind, bool)> {
-        let base = self
-            .construction_options
-            .borrow()
-            .resolve_snap(cursor, exclude, camera, ctx)?;
-
-        if let Phase::Building { points, .. } = &self.phase {
-            // A face needs at least three vertices to enclose an area.
-            if points.len() >= 3 {
-                let start = points[0];
-                let s = camera.project_point_screen(start, ctx.size.0, ctx.size.1);
-                let (dx, dy) = (s.x - cursor.0, s.y - cursor.1);
-                let tol = self.construction_options.borrow().snap.settings.pixel_tolerance;
-                if (dx * dx + dy * dy).sqrt() <= tol {
-                    return Some((start, SnapKind::Corner, true));
-                }
+    ) -> Option<Snap> {
+        // A face needs at least three vertices to enclose an area.
+        let wire_start = match &self.phase {
+            Phase::Building { points, .. } if points.len() >= 3 => {
+                Some(WireStartSnap { start: points[0] })
             }
-        }
-        Some((base.position, base.kind, false))
+            _ => None,
+        };
+        let extra: Vec<&dyn SnapProvider> =
+            wire_start.iter().map(|p| p as &dyn SnapProvider).collect();
+
+        self.construction_options
+            .borrow()
+            .resolve_snap(cursor, exclude, camera, ctx, &extra)
     }
 
     /// Removes the transient preview node, if any, using the supplied scene lock.
@@ -183,9 +179,11 @@ impl LineOperator {
             _ => Vec::new(),
         };
         let camera = ctx.camera();
-        let Some((point, _kind, closing)) = self.snapped_point(position, &exclude, &camera, ctx) else {
+        let Some(snap) = self.snapped_point(position, &exclude, &camera, ctx) else {
             return false;
         };
+        let point = snap.position;
+        let closing = snap.kind == SnapKind::WireStart;
 
         match &mut self.phase {
             Phase::Idle => {
@@ -288,12 +286,13 @@ impl LineOperator {
         // Record where the 3D cursor should sit: a real snap, not the free
         // construction-plane fallback (which sits under the cursor).
         self.cursor_target = snapped
-            .filter(|(_, kind, _)| *kind != SnapKind::ConstructionPlane)
-            .map(|(p, _, _)| p);
+            .filter(|s| s.kind != SnapKind::ConstructionPlane)
+            .map(|s| s.position);
 
         if matches!(self.phase, Phase::Building { .. }) {
-            if let Some((point, _, closing)) = snapped {
-                self.rebuild_preview(Some(point), closing, ctx);
+            if let Some(snap) = snapped {
+                let closing = snap.kind == SnapKind::WireStart;
+                self.rebuild_preview(Some(snap.position), closing, ctx);
             }
         }
     }

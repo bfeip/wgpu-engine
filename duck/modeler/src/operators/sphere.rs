@@ -77,7 +77,7 @@ impl SphereOperator {
         let Some(center) = self
             .construction_options
             .borrow()
-            .resolve_snap(position, &[], &camera, ctx)
+            .resolve_snap(position, &[], &camera, ctx, &[])
             .map(|s| s.position)
         else {
             return false;
@@ -115,7 +115,7 @@ impl SphereOperator {
         let radius = self
             .construction_options
             .borrow()
-            .resolve_snap(position, &[preview_node], &camera, ctx)
+            .resolve_snap(position, &[preview_node], &camera, ctx, &[])
             .map(|s| center.distance(s.position).max(0.01))
             .unwrap_or(0.01);
 
@@ -162,7 +162,7 @@ impl SphereOperator {
         let snap = self
             .construction_options
             .borrow()
-            .resolve_snap(cursor, &exclude, &camera, ctx);
+            .resolve_snap(cursor, &exclude, &camera, ctx, &[]);
 
         // Record where the modeler should draw the 3D cursor: a real snap, not
         // the free construction-plane fallback (which sits under the cursor).

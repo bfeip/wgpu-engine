@@ -48,6 +48,28 @@ impl SnapProvider for OriginSnap {
     }
 }
 
+/// The start vertex of an in-progress wire, offered so a path can be closed
+/// back onto itself. Transient: constructed per cursor move with the live start
+/// point, then passed to [`SnapEngine::snap`](super::SnapEngine::snap) as an
+/// extra provider.
+pub(crate) struct WireStartSnap {
+    pub start: Point3,
+}
+
+impl SnapProvider for WireStartSnap {
+    fn produces(&self) -> SnapFlags {
+        SnapFlags::WIRE_START
+    }
+
+    fn collect(&self, _input: &SnapInput, _scene: &Scene) -> Vec<Snap> {
+        vec![Snap {
+            position: self.start,
+            direction: None,
+            kind: SnapKind::WireStart,
+        }]
+    }
+}
+
 /// The two construction-frame snaps the grid visualizes: the principal axes
 /// (U, V, N — higher tier) and gridline-intersection guide points (lower tier).
 pub(crate) struct GridSnap;
@@ -315,6 +337,22 @@ mod tests {
             .find(|s| s.direction.map_or(false, |d| d.x.abs() > 0.9))
             .expect("expected an X-axis candidate");
         assert!(close(x_axis.position, Point3::new(7.0, 0.0, 0.0)), "{:?}", x_axis.position);
+    }
+
+    #[test]
+    fn wire_start_emits_its_start_point() {
+        let cam = dummy_camera();
+        let plane = Plane::xz();
+        let grid = GridConfig::default();
+        let ray = Ray::new(Point3::new(0.0, 10.0, 0.0), Vector3::new(0.0, -1.0, 0.0));
+        let inp = input_with_ray(ray, &cam, &plane, &grid);
+
+        let start = Point3::new(2.0, 0.0, -3.0);
+        let snaps = WireStartSnap { start }.collect(&inp, &Scene::new());
+
+        assert_eq!(snaps.len(), 1);
+        assert_eq!(snaps[0].kind, SnapKind::WireStart);
+        assert!(close(snaps[0].position, start), "{:?}", snaps[0].position);
     }
 
     #[test]
