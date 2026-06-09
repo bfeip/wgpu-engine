@@ -132,7 +132,6 @@ impl SphereOperator {
             doc.add_part(
                 "Sphere".to_owned(),
                 world_shape,
-                coptions.geometry_preview_options.face_color,
                 &coptions.geometry_preview_options,
             )
             .is_ok()

@@ -7,8 +7,8 @@ pub use line::LineOperator;
 pub use sphere::SphereOperator;
 
 use duck_engine_common::{Plane, RgbaColor};
-use duck_engine_scene::NodeId;
 use duck_engine_scene::cad::CadTessellationOptions;
+use duck_engine_scene::{FaceMaterial, LineMaterial, MaterialFlags, NodeId};
 use duck_engine_viewer::event::EventContext;
 use duck_engine_viewer::scene::PositionedCamera;
 
@@ -28,8 +28,11 @@ impl ConstructionOptions {
         let geometry_preview_options = CadTessellationOptions {
             tessellation_tolerance: 0.01,
             scale_factor: 1.0,
-            face_color: RgbaColor { r: 0.55, g: 0.65, b: 0.9, a: 1.0 },
-            edge_color: RgbaColor { r: 0.0, g: 0.0, b: 0.0, a: 1.0 },
+            face_material: FaceMaterial::new()
+                .with_base_color_factor(RgbaColor { r: 0.55, g: 0.65, b: 0.9, a: 1.0 })
+                // Double sided for now since regions are created with arbitrary orientation
+                .with_flags(MaterialFlags::DOUBLE_SIDED),
+            line_material: LineMaterial::new(RgbaColor { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }),
             include_edges: true,
         };
         let construction_plane = Plane::xz();

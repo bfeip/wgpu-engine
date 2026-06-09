@@ -152,6 +152,15 @@ impl FaceMaterial {
 
     // ========== Builder methods (chainable) ==========
 
+    /// Return this material with a fresh, globally-unique id.
+    ///
+    /// Useful when a material is held as a template and instantiated once per
+    /// object: scene insertion keys on the id, so each instance needs its own.
+    pub fn with_fresh_id(mut self) -> Self {
+        self.id = FaceMaterialId::new();
+        self
+    }
+
     /// Set the base color texture.
     pub fn with_base_color_texture(mut self, texture_id: TextureId) -> Self {
         self.set_base_color_texture(texture_id);

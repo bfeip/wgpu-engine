@@ -241,7 +241,6 @@ impl LineOperator {
                 .add_part(
                     "Region".to_owned(),
                     shape,
-                    coptions.geometry_preview_options.face_color,
                     &coptions.geometry_preview_options,
                 )
                 .is_ok()
@@ -272,7 +271,6 @@ impl LineOperator {
                 .add_part(
                     "Line".to_owned(),
                     shape,
-                    coptions.geometry_preview_options.face_color,
                     &coptions.geometry_preview_options,
                 )
                 .is_ok();

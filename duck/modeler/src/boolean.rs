@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use duck_engine_common::RgbaColor;
 use duck_engine_scene::NodeId;
 use duck_engine_scene::cad::{CadTessellationOptions, tessellate_into};
 use opencascade::primitives::Shape;
@@ -16,7 +15,6 @@ pub enum BooleanKind {
 
 struct BooleanResult {
     shape: Shape,
-    color: RgbaColor,
     target_part_id: PartId,
     tool_part_ids: Vec<PartId>,
 }
@@ -36,7 +34,6 @@ fn compute_boolean(
 
     let target_part = doc.get_part(target_part_id)
         .context("Target part not found")?;
-    let color = target_part.color;
     let tool_shapes: Vec<_> = tool_part_ids.iter()
         .map(|&id| doc.get_part(id).map(|p| p.shape.clone()).context("Tool part not found"))
         .collect::<Result<_>>()?;
@@ -50,7 +47,7 @@ fn compute_boolean(
         };
     }
 
-    Ok(BooleanResult { shape, color, target_part_id, tool_part_ids })
+    Ok(BooleanResult { shape, target_part_id, tool_part_ids })
 }
 
 pub fn execute_boolean(
@@ -63,7 +60,7 @@ pub fn execute_boolean(
     let computed = compute_boolean(kind, target, tools, doc)?;
 
     // Tessellates atomically — if this fails, nothing is changed.
-    doc.add_part("Boolean result".to_owned(), computed.shape, computed.color, options)
+    doc.add_part("Boolean result".to_owned(), computed.shape, options)
         .context("Failed to tessellate boolean result")?;
 
     // Tessellation succeeded — remove inputs.

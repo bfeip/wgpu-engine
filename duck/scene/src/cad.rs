@@ -18,10 +18,12 @@ pub struct CadTessellationOptions {
     /// Uniform scale applied to all vertex positions. Use `0.001` to convert
     /// from millimeters (STEP default) to metres.
     pub scale_factor: f32,
-    /// Color applied to triangle faces.
-    pub face_color: RgbaColor,
-    /// Color applied to wireframe edges.
-    pub edge_color: RgbaColor,
+    /// Material applied to triangle faces. Acts as a template: each tessellated
+    /// part receives a clone with a fresh id.
+    pub face_material: FaceMaterial,
+    /// Material applied to wireframe edges. Acts as a template: each tessellated
+    /// part receives a clone with a fresh id.
+    pub line_material: LineMaterial,
     /// Whether to include wireframe edges as `LineList` meshes.
     pub include_edges: bool,
 }
@@ -31,8 +33,9 @@ impl Default for CadTessellationOptions {
         Self {
             tessellation_tolerance: 0.01,
             scale_factor: 1.0,
-            face_color: RgbaColor { r: 0.8, g: 0.8, b: 0.8, a: 1.0 },
-            edge_color: RgbaColor { r: 0.15, g: 0.15, b: 0.15, a: 1.0 },
+            face_material: FaceMaterial::new()
+                .with_base_color_factor(RgbaColor { r: 0.8, g: 0.8, b: 0.8, a: 1.0 }),
+            line_material: LineMaterial::new(RgbaColor { r: 0.15, g: 0.15, b: 0.15, a: 1.0 }),
             include_edges: true,
         }
     }
@@ -152,9 +155,8 @@ pub fn tessellate_into(
         options.scale_factor,
         options.include_edges,
     )?;
-    let face_mat =
-        scene.add_face_material(FaceMaterial::new().with_base_color_factor(options.face_color));
-    let line_mat = scene.add_line_material(LineMaterial::new(options.edge_color));
+    let face_mat = scene.add_face_material(options.face_material.clone().with_fresh_id());
+    let line_mat = scene.add_line_material(options.line_material.clone().with_fresh_id());
     let mesh_id = scene.add_mesh(mesh);
     let instance_id = scene.add_instance(
         Instance::new(mesh_id)
@@ -223,5 +225,20 @@ mod tests {
         let mut scene = Scene::new();
         tessellate_into(&shape, &mut scene, &default_options(), None, None).unwrap();
         assert!(scene.mesh_count() > 0);
+    }
+
+    #[test]
+    fn each_part_gets_distinct_materials() {
+        // The material fields act as templates: tessellating multiple parts from
+        // one options value must produce a distinct material per part, otherwise
+        // they collide on the same id in the scene's material maps.
+        let options = default_options();
+        let mut scene = Scene::new();
+        for _ in 0..3 {
+            let shape = opencascade::primitives::Shape::box_centered(1.0, 1.0, 1.0);
+            tessellate_into(&shape, &mut scene, &options, None, None).unwrap();
+        }
+        assert_eq!(scene.face_material_count(), 3);
+        assert_eq!(scene.line_material_count(), 3);
     }
 }

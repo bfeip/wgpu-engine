@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
-use duck_engine_common::RgbaColor;
 use duck_engine_scene::{Id, NodeId, Scene};
 use duck_engine_scene::cad::{CadTessellationOptions, tessellate_into};
 use opencascade::primitives::Shape;
@@ -13,7 +12,6 @@ pub struct CadPart {
     pub id: PartId,
     pub name: String,
     pub shape: Shape,
-    pub color: RgbaColor,
 }
 
 pub struct Document {
@@ -47,7 +45,6 @@ impl Document {
         &mut self,
         name: impl Into<String>,
         shape: Shape,
-        color: RgbaColor,
         options: &CadTessellationOptions,
     ) -> Result<PartId> {
         let name = name.into();
@@ -57,7 +54,7 @@ impl Document {
                 .context("Failed to tessellate part")?
         };
         let id = PartId::new();
-        self.parts.push(CadPart { id, name, shape, color });
+        self.parts.push(CadPart { id, name, shape });
         self.part_to_node.insert(id, node);
         self.node_to_part.insert(node, id);
         Ok(id)

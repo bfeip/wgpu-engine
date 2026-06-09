@@ -10,7 +10,7 @@ use duck_engine_common::{decompose_matrix, Matrix4, RgbaColor};
 use duck_engine_scene::cad::{tessellate_occ_shape, CadTessellationOptions};
 use duck_engine_scene::common::Transform;
 use duck_engine_scene::{
-    FaceMaterial, Instance, LineMaterial, Mesh, MeshPrimitive, NodeFlags, NodeId, NodePayload,
+    Instance, LineMaterial, Mesh, MeshPrimitive, NodeFlags, NodeId, NodePayload,
     PrimitiveType, Scene, Vertex,
 };
 use opencascade::primitives::{EdgeType, Shape};
@@ -146,8 +146,7 @@ fn import_xcaf_label(
         let face_color = color_tool
             .color_of_label(label)
             .or_else(|| color_tool.color_of_shape(&shape))
-            .map(|(r, g, b)| RgbaColor { r, g, b, a: 1.0 })
-            .unwrap_or(options.tessellation.face_color);
+            .map(|(r, g, b)| RgbaColor { r, g, b, a: 1.0 });
 
         import_leaf_part(&shape, scene, options, node_id, face_color)?;
     };
@@ -160,13 +159,19 @@ fn import_leaf_part(
     scene: &mut Scene,
     options: &CadImportOptions,
     node: NodeId,
-    face_color: RgbaColor,
+    face_color: Option<RgbaColor>,
 ) -> Result<()> {
     let t = &options.tessellation;
     let mesh =
         tessellate_occ_shape(shape, t.tessellation_tolerance, t.scale_factor, t.include_edges)?;
-    let face_mat = scene.add_face_material(FaceMaterial::new().with_base_color_factor(face_color));
-    let line_mat = scene.add_line_material(LineMaterial::new(t.edge_color));
+    // Start from the configured material template; honor the file's per-part
+    // color override when present, keeping the template's other PBR properties.
+    let mut face_material = t.face_material.clone().with_fresh_id();
+    if let Some(color) = face_color {
+        face_material.set_base_color_factor(color);
+    }
+    let face_mat = scene.add_face_material(face_material);
+    let line_mat = scene.add_line_material(t.line_material.clone().with_fresh_id());
     let mesh_id = scene.add_mesh(mesh);
     let instance_id = scene.add_instance(
         Instance::new(mesh_id)

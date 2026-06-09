@@ -40,6 +40,15 @@ impl LineMaterial {
         self.generation
     }
 
+    /// Return this material with a fresh, globally-unique id.
+    ///
+    /// Useful when a material is held as a template and instantiated once per
+    /// object: scene insertion keys on the id, so each instance needs its own.
+    pub fn with_fresh_id(mut self) -> Self {
+        self.id = LineMaterialId::new();
+        self
+    }
+
     /// Set the line color (chainable).
     pub fn with_color(mut self, color: RgbaColor) -> Self {
         self.set_color(color);
