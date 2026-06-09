@@ -94,8 +94,11 @@ impl CameraProjection {
 /// # Example
 ///
 /// ```
-/// use cgmath::{Point3, Vector3};
-/// use duck_engine_scene::PositionedCamera;
+/// use duck_engine_scene::{
+///     PositionedCamera,
+///     common::Point3,
+///     common::Vector3
+/// };
 ///
 /// let camera = PositionedCamera {
 ///     eye: Point3::new(0.0, 0.0, 5.0),
