@@ -11,8 +11,8 @@ use winit::{
 use duck_engine_viewer::common::{RgbaColor, Transform, Point3};
 use duck_engine_viewer::input::{ElementState, Key};
 use duck_engine_viewer::scene::{
-    DisplayBehavior, EnvironmentMapId, Material, MaterialFlags, Mesh, NodePayload,
-    PositionedCamera, PrimitiveType, ViewportRect,
+    DisplayBehavior, EnvironmentMapId, FaceMaterial, Instance, LineMaterial, MaterialFlags, Mesh,
+    NodePayload, PointMaterial, PositionedCamera, PrimitiveType, ViewportRect,
 };
 use duck_engine_viewer::{Viewer, winit_support};
 use duck_engine_viewer::operator::{NavigationOperator, SelectionOperator, TransformOperator};
@@ -56,16 +56,15 @@ fn build_material_scene(viewer: &mut Viewer) {
     // Row 0: Roughness gradient (dielectric blue, roughness 0.0 -> 1.0)
     for col in 0..COLS {
         let roughness = col as f32 / (COLS - 1) as f32;
-        let mat = Material::new()
+        let mat = FaceMaterial::new()
             .with_base_color_factor(RgbaColor::BLUE)
             .with_metallic_factor(0.0)
             .with_roughness_factor(roughness);
-        let mat_id = scene.add_material(mat);
+        let mat_id = scene.add_face_material(mat);
         scene
             .add_instance_node(
                 None,
-                mesh_id,
-                mat_id,
+                Instance::new(mesh_id).with_face_material(mat_id),
                 Some(format!("Roughness {roughness:.2}")),
                 grid_transform(0, col),
                 NodeFlags::NONE
@@ -76,16 +75,15 @@ fn build_material_scene(viewer: &mut Viewer) {
     // Row 1: Metallic gradient (blue, roughness 0.3, metallic 0.0 -> 1.0)
     for col in 0..COLS {
         let metallic = col as f32 / (COLS - 1) as f32;
-        let mat = Material::new()
+        let mat = FaceMaterial::new()
             .with_base_color_factor(RgbaColor::BLUE)
             .with_roughness_factor(0.3)
             .with_metallic_factor(metallic);
-        let mat_id = scene.add_material(mat);
+        let mat_id = scene.add_face_material(mat);
         scene
             .add_instance_node(
                 None,
-                mesh_id,
-                mat_id,
+                Instance::new(mesh_id).with_face_material(mat_id),
                 Some(format!("Metallic {metallic:.2}")),
                 grid_transform(1, col),
                 NodeFlags::NONE
@@ -102,16 +100,15 @@ fn build_material_scene(viewer: &mut Viewer) {
         ("Yellow", RgbaColor::YELLOW),
     ];
     for (col, (name, color)) in colors.iter().enumerate() {
-        let mat = Material::new()
+        let mat = FaceMaterial::new()
             .with_base_color_factor(*color)
             .with_metallic_factor(0.0)
             .with_roughness_factor(0.4);
-        let mat_id = scene.add_material(mat);
+        let mat_id = scene.add_face_material(mat);
         scene
             .add_instance_node(
                 None,
-                mesh_id,
-                mat_id,
+                Instance::new(mesh_id).with_face_material(mat_id),
                 Some(name.to_string()),
                 grid_transform(2, col),
                 NodeFlags::NONE
@@ -128,16 +125,15 @@ fn build_material_scene(viewer: &mut Viewer) {
         ("Yellow", RgbaColor::YELLOW),
     ];
     for (col, (name, color)) in metals.iter().enumerate() {
-        let mat = Material::new()
+        let mat = FaceMaterial::new()
             .with_base_color_factor(*color)
             .with_metallic_factor(1.0)
             .with_roughness_factor(0.25);
-        let mat_id = scene.add_material(mat);
+        let mat_id = scene.add_face_material(mat);
         scene
             .add_instance_node(
                 None,
-                mesh_id,
-                mat_id,
+                Instance::new(mesh_id).with_face_material(mat_id),
                 Some(name.to_string()),
                 grid_transform(3, col),
                 NodeFlags::NONE
@@ -154,15 +150,14 @@ fn build_material_scene(viewer: &mut Viewer) {
         ("Unlit Yellow", RgbaColor::YELLOW),
     ];
     for (col, (name, color)) in unlit_colors.iter().enumerate() {
-        let mat = Material::new()
+        let mat = FaceMaterial::new()
             .with_base_color_factor(*color)
             .with_flags(MaterialFlags::DO_NOT_LIGHT);
-        let mat_id = scene.add_material(mat);
+        let mat_id = scene.add_face_material(mat);
         scene
             .add_instance_node(
                 None,
-                mesh_id,
-                mat_id,
+                Instance::new(mesh_id).with_face_material(mat_id),
                 Some(name.to_string()),
                 grid_transform(4, col),
                 NodeFlags::NONE
@@ -185,15 +180,11 @@ fn build_material_scene(viewer: &mut Viewer) {
         ("Lines Yellow", RgbaColor::YELLOW),
     ];
     for (col, (name, color)) in line_colors.iter().enumerate() {
-        let mat = Material::new()
-            .with_line_color(*color)
-            .with_flags(MaterialFlags::DO_NOT_LIGHT);
-        let mat_id = scene.add_material(mat);
+        let mat_id = scene.add_line_material(LineMaterial::new(*color));
         scene
             .add_instance_node(
                 None,
-                line_mesh_id,
-                mat_id,
+                Instance::new(line_mesh_id).with_line_material(mat_id),
                 Some(name.to_string()),
                 grid_transform(5, col),
                 NodeFlags::NONE
@@ -216,15 +207,11 @@ fn build_material_scene(viewer: &mut Viewer) {
         ("Points Yellow", RgbaColor::YELLOW),
     ];
     for (col, (name, color)) in point_colors.iter().enumerate() {
-        let mat = Material::new()
-            .with_point_color(*color)
-            .with_flags(MaterialFlags::DO_NOT_LIGHT);
-        let mat_id = scene.add_material(mat);
+        let mat_id = scene.add_point_material(PointMaterial::new(*color));
         scene
             .add_instance_node(
                 None,
-                point_mesh_id,
-                mat_id,
+                Instance::new(point_mesh_id).with_point_material(mat_id),
                 Some(name.to_string()),
                 grid_transform(6, col),
                 NodeFlags::NONE
@@ -237,16 +224,15 @@ fn build_material_scene(viewer: &mut Viewer) {
     // Orbiting/zooming should keep it the same pixel size and edge-on to the
     // viewer while the spheres rotate and shrink with distance.
     let quad_mesh = scene.add_mesh(Mesh::quad(1.0, 1.6, PrimitiveType::TriangleList));
-    let quad_mat = scene.add_material(
-        Material::new()
+    let quad_mat = scene.add_face_material(
+        FaceMaterial::new()
             .with_base_color_factor(RgbaColor::MAGENTA)
             .with_flags(MaterialFlags::DO_NOT_LIGHT | MaterialFlags::DOUBLE_SIDED),
     );
     let billboard = scene
         .add_instance_node(
             None,
-            quad_mesh,
-            quad_mat,
+            Instance::new(quad_mesh).with_face_material(quad_mat),
             Some("Billboard".to_string()),
             Transform::from_position(Point3::new(0.0, 2.5, 0.0)),
             NodeFlags::NONE,
@@ -268,14 +254,13 @@ fn build_material_scene(viewer: &mut Viewer) {
     let sub_root = scene
         .add_node(None, Some("SubViewRoot".to_string()), Transform::IDENTITY, NodeFlags::NONE)
         .unwrap();
-    let sub_mat = scene.add_material(
-        Material::new().with_base_color_factor(RgbaColor::RED).with_roughness_factor(0.4),
+    let sub_mat = scene.add_face_material(
+        FaceMaterial::new().with_base_color_factor(RgbaColor::RED).with_roughness_factor(0.4),
     );
     scene
         .add_instance_node(
             Some(sub_root),
-            mesh_id,
-            sub_mat,
+            Instance::new(mesh_id).with_face_material(sub_mat),
             Some("SubViewSphere".to_string()),
             Transform::IDENTITY,
             NodeFlags::NONE,

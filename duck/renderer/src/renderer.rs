@@ -17,7 +17,16 @@ pub use workflow::{HiddenLineConfig, HiddenLineWorkflow, RenderWorkflow, ShadedW
 use anyhow::Result;
 
 use crate::{
-    highlight_query::HighlightQuery, ibl::IblResources, rgba_to_wgpu_color, scene::{PositionedCamera, Scene, SceneProperties, common::RgbaColor}, shaders::ShaderGenerator
+    highlight_query::HighlightQuery,
+    ibl::IblResources,
+    rgba_to_wgpu_color,
+    scene::{
+        PositionedCamera,
+        Scene,
+        SceneProperties,
+        common::RgbaColor
+    },
+    shaders::ShaderGenerator
 };
 
 use gpu_resources::{

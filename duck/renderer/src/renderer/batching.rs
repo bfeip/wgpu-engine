@@ -5,8 +5,9 @@ use duck_engine_common::{
 };
 
 use crate::scene::{
-    AlphaMode, DisplayBehavior, InstanceId, Light, MaterialId, MeshId, NodeId, NodePayload,
-    PositionedCamera, PrimitiveType, RenderLayer, Scene, ViewportRect, Visibility,
+    AlphaMode, DisplayBehavior, GenericId, Instance, InstanceId, Light, MaterialProperties, MeshId,
+    NodeId, NodePayload, PositionedCamera, PrimitiveType, RenderLayer, Scene, ViewportRect,
+    Visibility,
 };
 use crate::scene::common;
 use crate::highlight_query::HighlightQuery;
@@ -27,8 +28,17 @@ pub struct SubGeomBatch {
     pub index_count: u32,
 }
 
-/// Key used to group instances into draw batches.
-pub type BatchKey = (MeshId, MaterialId, PrimitiveType);
+/// Key used to group instances into draw batches: instances sharing a mesh,
+/// material, and primitive type render together.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BatchKey {
+    pub mesh_id: MeshId,
+    /// Erased id of the material for `primitive_type`. Which material kind
+    /// (face/line/point) it refers to is implied by `primitive_type`; see
+    /// [`DrawBatch::material_id`].
+    pub material_id: GenericId,
+    pub primitive_type: PrimitiveType,
+}
 
 /// Represents an instance with its computed world transform.
 #[derive(Clone)]
@@ -81,23 +91,40 @@ impl InstanceTransform {
 /// instances that can be rendered together.
 pub struct DrawBatch {
     pub mesh_id: MeshId,
-    pub material_id: MaterialId,
+    /// Erased id of the material for this primitive kind (see [`BatchKey`]). Used
+    /// to look up the GPU bind group; combined with `primitive_type` it selects
+    /// the right per-kind GPU material map.
+    pub material_id: GenericId,
+    /// Shader/pipeline properties resolved from the typed material at batch
+    /// collection time, so the draw loop needs no further scene material lookup.
+    pub material_props: MaterialProperties,
     pub primitive_type: PrimitiveType,
     pub instances: Vec<InstanceTransform>,
 }
 
 impl DrawBatch {
-    pub fn new(mesh_id: MeshId, material_id: MaterialId, primitive_type: PrimitiveType) -> Self {
+    pub fn new(mesh_id: MeshId, material_id: GenericId, primitive_type: PrimitiveType) -> Self {
         Self {
             mesh_id,
             material_id,
+            material_props: MaterialProperties::UNLIT_OPAQUE,
             primitive_type,
             instances: Vec::new(),
         }
     }
 
+    /// Sets the resolved material properties (chainable).
+    pub fn with_material_props(mut self, props: MaterialProperties) -> Self {
+        self.material_props = props;
+        self
+    }
+
     pub fn key(&self) -> BatchKey {
-        (self.mesh_id, self.material_id, self.primitive_type)
+        BatchKey {
+            mesh_id: self.mesh_id,
+            material_id: self.material_id,
+            primitive_type: self.primitive_type,
+        }
     }
 
     pub fn add_instance(&mut self, instance_transform: InstanceTransform) {
@@ -286,11 +313,9 @@ pub(crate) fn group_instances_into_batches(
         let Some(mesh) = scene.get_mesh(instance.mesh()) else {
             continue;
         };
-        if scene.get_material(instance.material()).is_none() {
-            continue;
-        }
 
-        // Create a separate batch for each primitive type the mesh supports
+        // Create a separate batch for each primitive type the mesh supports and
+        // for which the instance has a material assigned.
         for primitive_type in [
             PrimitiveType::TriangleList,
             PrimitiveType::LineList,
@@ -300,10 +325,19 @@ pub(crate) fn group_instances_into_batches(
                 continue;
             }
 
-            let key = (instance.mesh(), instance.material(), primitive_type);
+            let Some((material_id, material_props)) =
+                resolve_batch_material(scene, instance, primitive_type)
+            else {
+                continue;
+            };
+
+            let key = BatchKey { mesh_id: instance.mesh(), material_id, primitive_type };
             batch_map
                 .entry(key)
-                .or_insert_with(|| DrawBatch::new(instance.mesh(), instance.material(), primitive_type))
+                .or_insert_with(|| {
+                    DrawBatch::new(instance.mesh(), material_id, primitive_type)
+                        .with_material_props(material_props)
+                })
                 .add_instance(inst_transform.clone());
         }
     }
@@ -321,13 +355,12 @@ pub(crate) fn group_instances_into_batches(
 /// followed by transparent (Blend) batches sorted back-to-front by distance from camera.
 pub(crate) fn sort_batches_for_transparency(
     batches: &mut Vec<DrawBatch>,
-    scene: &Scene,
     camera_position: Point3,
 ) {
     // Stable partition: opaque/mask first, then blend
     batches.sort_by(|a, b| {
-        let a_transparent = is_transparent_batch(a, scene);
-        let b_transparent = is_transparent_batch(b, scene);
+        let a_transparent = is_transparent_batch(a);
+        let b_transparent = is_transparent_batch(b);
         match (a_transparent, b_transparent) {
             (false, true) => std::cmp::Ordering::Less,
             (true, false) => std::cmp::Ordering::Greater,
@@ -344,11 +377,36 @@ pub(crate) fn sort_batches_for_transparency(
     });
 }
 
-fn is_transparent_batch(batch: &DrawBatch, scene: &Scene) -> bool {
-    scene
-        .get_material(batch.material_id)
-        .map(|m| m.alpha_mode() == AlphaMode::Blend)
-        .unwrap_or(false)
+/// Resolves the material id (erased) and shader properties for one primitive
+/// kind of an instance, or `None` when that kind has no assigned material (so it
+/// is not drawn). Face materials carry real properties; line/point materials are
+/// always unlit and opaque.
+fn resolve_batch_material(
+    scene: &Scene,
+    instance: &Instance,
+    primitive_type: PrimitiveType,
+) -> Option<(GenericId, MaterialProperties)> {
+    match primitive_type {
+        PrimitiveType::TriangleList => {
+            let id = instance.face_material()?;
+            let material = scene.get_face_material(id)?;
+            Some((id.erased(), material.properties()))
+        }
+        PrimitiveType::LineList => {
+            let id = instance.line_material()?;
+            scene.get_line_material(id)?;
+            Some((id.erased(), MaterialProperties::UNLIT_OPAQUE))
+        }
+        PrimitiveType::PointList => {
+            let id = instance.point_material()?;
+            scene.get_point_material(id)?;
+            Some((id.erased(), MaterialProperties::UNLIT_OPAQUE))
+        }
+    }
+}
+
+fn is_transparent_batch(batch: &DrawBatch) -> bool {
+    batch.material_props.alpha_mode == AlphaMode::Blend
 }
 
 fn batch_centroid_distance_sq(batch: &DrawBatch, camera_position: Point3) -> f32 {
@@ -397,13 +455,19 @@ where
         for instance in &batch.instances {
             if predicate(instance) {
                 let idx = *matched_index.entry(key).or_insert_with(|| {
-                    matched.push(DrawBatch::new(batch.mesh_id, batch.material_id, batch.primitive_type));
+                    matched.push(
+                        DrawBatch::new(batch.mesh_id, batch.material_id, batch.primitive_type)
+                            .with_material_props(batch.material_props.clone()),
+                    );
                     matched.len() - 1
                 });
                 matched[idx].add_instance(instance.clone());
             } else {
                 let idx = *unmatched_index.entry(key).or_insert_with(|| {
-                    unmatched.push(DrawBatch::new(batch.mesh_id, batch.material_id, batch.primitive_type));
+                    unmatched.push(
+                        DrawBatch::new(batch.mesh_id, batch.material_id, batch.primitive_type)
+                            .with_material_props(batch.material_props.clone()),
+                    );
                     unmatched.len() - 1
                 });
                 unmatched[idx].add_instance(instance.clone());
@@ -663,7 +727,7 @@ impl DrawData {
     ) -> Self {
         let sub_view_roots = sub_view_root_set(scene);
         let mut batches = collect_main_draw_batches(scene, &sub_view_roots);
-        sort_batches_for_transparency(&mut batches, scene, camera.eye);
+        sort_batches_for_transparency(&mut batches, camera.eye);
 
         // Replace the effective transform of screen-space instances before any
         // partitioning. `partition_batches` clones instances, so doing this on
@@ -723,7 +787,7 @@ impl DrawData {
             nested.remove(&sv.root);
             let instances = collect_subview_data(scene, sv.root, &nested).instance_transforms;
             let mut sv_batches = group_instances_into_batches(scene, instances);
-            sort_batches_for_transparency(&mut sv_batches, scene, sv_camera.eye);
+            sort_batches_for_transparency(&mut sv_batches, sv_camera.eye);
             apply_screen_space_transforms(&mut sv_batches, &sv_camera, (px_w, px_h));
             sub_views.push(SubViewDraw { rect: sv.rect, camera: sv_camera, batches: sv_batches });
         }
@@ -825,7 +889,7 @@ mod tests {
     fn nid() -> NodeId { NodeId::new() }
     fn iid() -> InstanceId { InstanceId::new() }
     fn mid() -> MeshId { MeshId::new() }
-    fn matid() -> MaterialId { MaterialId::new() }
+    fn matid() -> GenericId { GenericId::new() }
 
     // ========================================================================
     // InstanceTransform Tests
@@ -1217,9 +1281,9 @@ mod tests {
     fn build_simple_scene() -> (Scene, NodeId) {
         let mut scene = Scene::new();
         let mesh_id = scene.add_mesh(crate::scene::Mesh::new());
-        let material_id = scene.add_material(crate::scene::Material::new());
+        let material_id = scene.add_face_material(crate::scene::FaceMaterial::new());
         let node_id = scene.add_instance_node(
-            None, mesh_id, material_id, None, common::Transform::IDENTITY, NodeFlags::NONE
+            None, Instance::new(mesh_id).with_face_material(material_id), None, common::Transform::IDENTITY, NodeFlags::NONE
         ).unwrap();
         (scene, node_id)
     }
@@ -1290,13 +1354,13 @@ mod tests {
 
         let mut scene = Scene::new();
         let mesh_id = scene.add_mesh(mesh);
-        let material_id = scene.add_material(crate::scene::Material::new());
+        let material_id = scene.add_face_material(crate::scene::FaceMaterial::new());
 
         let scene_node = scene
-            .add_instance_node(None, mesh_id, material_id, None, common::Transform::IDENTITY, NodeFlags::NONE)
+            .add_instance_node(None, Instance::new(mesh_id).with_face_material(material_id), None, common::Transform::IDENTITY, NodeFlags::NONE)
             .unwrap();
         let overlay_node = scene
-            .add_instance_node(None, mesh_id, material_id, None, common::Transform::IDENTITY, NodeFlags::NONE)
+            .add_instance_node(None, Instance::new(mesh_id).with_face_material(material_id), None, common::Transform::IDENTITY, NodeFlags::NONE)
             .unwrap();
         scene.set_node_display(
             overlay_node,
@@ -1343,11 +1407,11 @@ mod tests {
 
         let mut scene = Scene::new();
         let mesh_id = scene.add_mesh(mesh);
-        let material_id = scene.add_material(crate::scene::Material::new());
+        let material_id = scene.add_face_material(crate::scene::FaceMaterial::new());
 
         // One instance stays in the main view.
         let main_node = scene
-            .add_instance_node(None, mesh_id, material_id, None, common::Transform::IDENTITY, NodeFlags::NONE)
+            .add_instance_node(None, Instance::new(mesh_id).with_face_material(material_id), None, common::Transform::IDENTITY, NodeFlags::NONE)
             .unwrap();
 
         // A sub-view root with one instance beneath it.
@@ -1355,7 +1419,7 @@ mod tests {
             .add_node(None, Some("sv_root".into()), common::Transform::IDENTITY, NodeFlags::NONE)
             .unwrap();
         let sv_child = scene
-            .add_instance_node(Some(sv_root), mesh_id, material_id, None, common::Transform::IDENTITY, NodeFlags::NONE)
+            .add_instance_node(Some(sv_root), Instance::new(mesh_id).with_face_material(material_id), None, common::Transform::IDENTITY, NodeFlags::NONE)
             .unwrap();
 
         // A camera node for the sub-view.
@@ -1419,15 +1483,14 @@ mod tests {
 
         let mut scene = Scene::new();
         let mesh_id = scene.add_mesh(mesh);
-        let material_id = scene.add_material(crate::scene::Material::new());
+        let material_id = scene.add_face_material(crate::scene::FaceMaterial::new());
 
         // Place the node off the view axis so the billboard basis is non-trivial.
         let p = Point3::new(5.0, 0.0, 0.0);
         let node = scene
             .add_instance_node(
                 None,
-                mesh_id,
-                material_id,
+                Instance::new(mesh_id).with_face_material(material_id),
                 None,
                 common::Transform::from_position(p),
                 NodeFlags::NONE,

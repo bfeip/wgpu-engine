@@ -1,4 +1,4 @@
-use crate::scene::{Light, LightType, Material, PositionedCamera, MAX_LIGHTS};
+use crate::scene::{FaceMaterial, Light, LightType, PositionedCamera, MAX_LIGHTS};
 use super::super::batching::ResolvedLight;
 
 /// GPU uniform buffer layout for camera data.
@@ -178,8 +178,8 @@ impl PbrUniform {
     pub const FLAG_HAS_NORMAL_TEXTURE: u32 = 1 << 1;
     pub const FLAG_HAS_METALLIC_ROUGHNESS_TEXTURE: u32 = 1 << 2;
 
-    /// Creates a `PbrUniform` from a scene `Material`.
-    pub fn from_material(material: &Material) -> Self {
+    /// Creates a `PbrUniform` from a scene `FaceMaterial`.
+    pub fn from_face_material(material: &FaceMaterial) -> Self {
         let mut texture_flags = 0u32;
         if material.base_color_texture().is_some() {
             texture_flags |= Self::FLAG_HAS_BASE_COLOR_TEXTURE;

@@ -7,7 +7,7 @@
 use duck_engine_common::{Deg, Matrix4, Vector3};
 
 use crate::common::{Axis, RgbaColor};
-use crate::scene::{AlphaMode, Material, MaterialFlags, Mesh, PrimitiveType};
+use crate::scene::{AlphaMode, FaceMaterial, MaterialFlags, Mesh, PrimitiveType};
 
 const GIZMO_FLAGS: MaterialFlags = MaterialFlags::DO_NOT_LIGHT
     .union(MaterialFlags::DOUBLE_SIDED);
@@ -25,7 +25,7 @@ pub enum GizmoType {
 /// A single gizmo handle (one axis of a gizmo).
 pub struct GizmoHandle {
     pub mesh: Mesh,
-    pub material: Material,
+    pub material: FaceMaterial,
     pub axis: Axis,
 }
 
@@ -39,8 +39,8 @@ pub fn highlight_color(axis: Axis) -> RgbaColor {
 }
 
 /// Create a gizmo material for the given axis color.
-fn gizmo_material(color: RgbaColor) -> Material {
-    Material::new()
+fn gizmo_material(color: RgbaColor) -> FaceMaterial {
+    FaceMaterial::new()
         .with_base_color_factor(color)
         .with_flags(GIZMO_FLAGS)
         .with_alpha_mode(AlphaMode::Opaque)
@@ -183,7 +183,7 @@ pub fn build_handles(gizmo_type: GizmoType, size: f32) -> Vec<GizmoHandle> {
 
 #[cfg(test)]
 mod tests {
-    use duck_engine_scene::NodeFlags;
+    use duck_engine_scene::{Instance, NodeFlags};
 
 use crate::geom_query::RayPickQuery;
 
@@ -383,7 +383,7 @@ use crate::geom_query::RayPickQuery;
     fn translate_handles_pickable_through_scene() {
         use crate::common::Ray;
         use crate::geom_query::pick_all_from_ray;
-        use crate::scene::{Material, Mesh, PrimitiveType, Scene};
+        use crate::scene::{FaceMaterial, Mesh, PrimitiveType, Scene};
         use duck_engine_common::{Point3, Vector3};
 
         let pivot = Point3::new(5.0, 3.0, 0.0);
@@ -393,12 +393,11 @@ use crate::geom_query::RayPickQuery;
         // Add a model cube so the scene isn't empty (like the real app)
         let cube = Mesh::cube(2.0, PrimitiveType::TriangleList);
         let cube_mesh_id = scene.add_mesh(cube);
-        let cube_mat_id = scene.add_material(Material::new());
+        let cube_mat_id = scene.add_face_material(FaceMaterial::new());
         scene
             .add_instance_node(
                 None,
-                cube_mesh_id,
-                cube_mat_id,
+                Instance::new(cube_mesh_id).with_face_material(cube_mat_id),
                 Some("Cube".to_string()),
                 crate::common::Transform::IDENTITY,
                 NodeFlags::NONE
@@ -416,12 +415,11 @@ use crate::geom_query::RayPickQuery;
 
         for handle in &handles {
             let mesh_id = scene.add_mesh(handle.mesh.clone());
-            let material_id = scene.add_material(handle.material.clone());
+            let material_id = scene.add_face_material(handle.material.clone());
             let node_id = scene
                 .add_instance_node(
                     None,
-                    mesh_id,
-                    material_id,
+                    Instance::new(mesh_id).with_face_material(material_id),
                     None,
                     pivot_transform,
                     NodeFlags::NONE
@@ -492,12 +490,11 @@ use crate::geom_query::RayPickQuery;
 
         for handle in &handles {
             let mesh_id = scene.add_mesh(handle.mesh.clone());
-            let material_id = scene.add_material(handle.material.clone());
+            let material_id = scene.add_face_material(handle.material.clone());
             let node_id = scene
                 .add_instance_node(
                     None,
-                    mesh_id,
-                    material_id,
+                    Instance::new(mesh_id).with_face_material(material_id),
                     None,
                     pivot_transform,
                     NodeFlags::NONE

@@ -37,10 +37,7 @@ pub(crate) fn draw_batches(
         // so opaque portions of blend materials establish correct depth occlusion.
         let mut prepass_pipeline_key: Option<PipelineCacheKey> = None;
         for batch in batches {
-            let Some(material) = ctx.scene.get_material(batch.material_id) else {
-                continue;
-            };
-            let material_props = material.get_properties(batch.primitive_type);
+            let material_props = &batch.material_props;
 
             if material_props.alpha_mode != AlphaMode::Blend {
                 continue;
@@ -96,10 +93,7 @@ pub(crate) fn draw_batches(
         let Some(mesh) = ctx.scene.get_mesh(batch.mesh_id) else {
             continue;
         };
-        let Some(material) = ctx.scene.get_material(batch.material_id) else {
-            continue;
-        };
-        let material_props = material.get_properties(batch.primitive_type);
+        let material_props = &batch.material_props;
 
         let Some(material_gpu) = ctx
             .gpu_resources

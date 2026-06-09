@@ -2,7 +2,9 @@ use anyhow::Result;
 use bytemuck::bytes_of;
 use wgpu::util::DeviceExt;
 
-use crate::scene::{MaterialId, PrimitiveType, Scene, TextureId};
+use crate::scene::{
+    FaceMaterialId, LineMaterialId, PointMaterialId, PrimitiveType, Scene, TextureId,
+};
 
 use super::batching::collect_main_scene_data;
 use super::gpu_resources::{LightsArrayUniform, MaterialGpuResources, PbrUniform};
@@ -23,29 +25,33 @@ impl Renderer {
             self.gpu_resources.ensure_texture(texture, &self.device, &self.queue)?;
         }
 
-        // 2. Prepare all materials
-        // We need to collect material IDs first to avoid borrow issues
-        // (prepare_material_primitive takes &mut Scene)
-        let material_ids: Vec<_> = scene.materials().map(|m| m.id).collect();
-        for mat_id in material_ids {
-            // Check each primitive type
-            for prim_type in [
-                PrimitiveType::TriangleList,
-                PrimitiveType::LineList,
-                PrimitiveType::PointList,
-            ] {
-                let needs_update = scene
-                    .get_material(mat_id)
-                    .map(|m| {
-                        m.has_primitive_data(prim_type)
-                            && self.gpu_resources.material_needs_upload(mat_id, prim_type, m.generation(prim_type))
-                    })
-                    .unwrap_or(false);
+        // 2. Prepare all materials, one collection per primitive kind.
+        // We collect ids first to avoid borrow issues (the prepare_* helpers take &mut Scene).
+        let face_ids: Vec<FaceMaterialId> = scene
+            .face_materials()
+            .filter(|m| self.gpu_resources.material_needs_upload(m.id.erased(), PrimitiveType::TriangleList, m.generation()))
+            .map(|m| m.id)
+            .collect();
+        for id in face_ids {
+            self.prepare_face_material(scene, id)?;
+        }
 
-                if needs_update {
-                    self.prepare_material_primitive(scene, mat_id, prim_type)?;
-                }
-            }
+        let line_ids: Vec<LineMaterialId> = scene
+            .line_materials()
+            .filter(|m| self.gpu_resources.material_needs_upload(m.id.erased(), PrimitiveType::LineList, m.generation()))
+            .map(|m| m.id)
+            .collect();
+        for id in line_ids {
+            self.prepare_line_material(scene, id)?;
+        }
+
+        let point_ids: Vec<PointMaterialId> = scene
+            .point_materials()
+            .filter(|m| self.gpu_resources.material_needs_upload(m.id.erased(), PrimitiveType::PointList, m.generation()))
+            .map(|m| m.id)
+            .collect();
+        for id in point_ids {
+            self.prepare_point_material(scene, id)?;
         }
 
         // 3. Prepare all meshes
@@ -124,23 +130,9 @@ impl Renderer {
         }
     }
 
-    /// Prepare GPU resources for a specific material primitive type.
-    fn prepare_material_primitive(
-        &mut self,
-        scene: &mut Scene,
-        material_id: MaterialId,
-        primitive_type: PrimitiveType,
-    ) -> Result<()> {
-        match primitive_type {
-            PrimitiveType::TriangleList => self.prepare_triangle_material(scene, material_id),
-            PrimitiveType::LineList => self.prepare_line_material(scene, material_id),
-            PrimitiveType::PointList => self.prepare_point_material(scene, material_id),
-        }
-    }
-
-    /// Prepare GPU resources for triangle (face) rendering.
-    fn prepare_triangle_material(&mut self, scene: &mut Scene, material_id: MaterialId) -> Result<()> {
-        let material = scene.get_material(material_id).unwrap();
+    /// Prepare GPU resources for face (triangle) rendering.
+    fn prepare_face_material(&mut self, scene: &mut Scene, material_id: FaceMaterialId) -> Result<()> {
+        let material = scene.get_face_material(material_id).unwrap();
         let has_lighting = !material.flags().contains(crate::scene::MaterialFlags::DO_NOT_LIGHT);
 
         if has_lighting {
@@ -151,10 +143,10 @@ impl Renderer {
     }
 
     /// Prepare GPU resources for PBR material (normal/metallic-roughness textures).
-    fn prepare_pbr_material(&mut self, scene: &mut Scene, material_id: MaterialId) -> Result<()> {
-        let material = scene.get_material(material_id).unwrap();
+    fn prepare_pbr_material(&mut self, scene: &mut Scene, material_id: FaceMaterialId) -> Result<()> {
+        let material = scene.get_face_material(material_id).unwrap();
 
-        let pbr_uniform = PbrUniform::from_material(material);
+        let pbr_uniform = PbrUniform::from_face_material(material);
         let buffer = self
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -214,9 +206,9 @@ impl Renderer {
             ],
         });
 
-        let generation = scene.get_material(material_id).unwrap().generation(PrimitiveType::TriangleList);
+        let generation = scene.get_face_material(material_id).unwrap().generation();
         self.gpu_resources.set_material(
-            material_id,
+            material_id.erased(),
             PrimitiveType::TriangleList,
             MaterialGpuResources {
                 bind_group,
@@ -228,39 +220,33 @@ impl Renderer {
     }
 
     /// Prepare GPU resources for color-only material (base_color_factor, no textures).
-    fn prepare_colored_material(&mut self, scene: &mut Scene, material_id: MaterialId) -> Result<()> {
-        let material = scene.get_material(material_id).unwrap();
+    fn prepare_colored_material(&mut self, scene: &mut Scene, material_id: FaceMaterialId) -> Result<()> {
+        let material = scene.get_face_material(material_id).unwrap();
         let gpu_resources =
             self.create_color_material_resources(&material.base_color_factor(), "Base Color Factor");
-        let generation = material.generation(PrimitiveType::TriangleList);
+        let generation = material.generation();
 
-        self.gpu_resources.set_material(material_id, PrimitiveType::TriangleList, gpu_resources, generation);
+        self.gpu_resources.set_material(material_id.erased(), PrimitiveType::TriangleList, gpu_resources, generation);
         Ok(())
     }
 
     /// Prepare GPU resources for line rendering.
-    fn prepare_line_material(&mut self, scene: &mut Scene, material_id: MaterialId) -> Result<()> {
-        let material = scene.get_material(material_id).unwrap();
+    fn prepare_line_material(&mut self, scene: &mut Scene, material_id: LineMaterialId) -> Result<()> {
+        let material = scene.get_line_material(material_id).unwrap();
+        let gpu_resources = self.create_color_material_resources(&material.color(), "Line Color");
+        let generation = material.generation();
 
-        if let Some(color) = material.line_color() {
-            let gpu_resources = self.create_color_material_resources(&color, "Line Color");
-            let generation = material.generation(PrimitiveType::LineList);
-
-            self.gpu_resources.set_material(material_id, PrimitiveType::LineList, gpu_resources, generation);
-        }
+        self.gpu_resources.set_material(material_id.erased(), PrimitiveType::LineList, gpu_resources, generation);
         Ok(())
     }
 
     /// Prepare GPU resources for point rendering.
-    fn prepare_point_material(&mut self, scene: &mut Scene, material_id: MaterialId) -> Result<()> {
-        let material = scene.get_material(material_id).unwrap();
+    fn prepare_point_material(&mut self, scene: &mut Scene, material_id: PointMaterialId) -> Result<()> {
+        let material = scene.get_point_material(material_id).unwrap();
+        let gpu_resources = self.create_color_material_resources(&material.color(), "Point Color");
+        let generation = material.generation();
 
-        if let Some(color) = material.point_color() {
-            let gpu_resources = self.create_color_material_resources(&color, "Point Color");
-            let generation = material.generation(PrimitiveType::PointList);
-
-            self.gpu_resources.set_material(material_id, PrimitiveType::PointList, gpu_resources, generation);
-        }
+        self.gpu_resources.set_material(material_id.erased(), PrimitiveType::PointList, gpu_resources, generation);
         Ok(())
     }
 }

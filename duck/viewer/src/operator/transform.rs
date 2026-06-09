@@ -36,7 +36,10 @@ use crate::geom_query::{pick_all_from_ray, RayPickQuery};
 use crate::input::{ElementState, Key, Modifiers, MouseButton, NamedKey};
 use crate::operator::Operator;
 use crate::gizmo::{self, GizmoType};
-use crate::scene::{DisplayBehavior, Material, MaterialId, MeshId, NodeId, RenderLayer};
+use crate::scene::{
+    DisplayBehavior, FaceMaterialId, Instance, LineMaterial, LineMaterialId, MeshId, NodeId,
+    RenderLayer,
+};
 use crate::scene_scale;
 
 /// Semantic actions for the transform operator.
@@ -131,7 +134,7 @@ struct GizmoState {
     /// Mesh IDs added to the scene for gizmo geometry.
     mesh_ids: Vec<MeshId>,
     /// Material IDs added to the scene for gizmo handles.
-    material_ids: Vec<MaterialId>,
+    material_ids: Vec<FaceMaterialId>,
     /// Which axis is currently highlighted (hovered or active).
     highlighted_axis: Option<Axis>,
     /// Current gizmo type being displayed.
@@ -176,12 +179,11 @@ impl GizmoState {
 
         for handle in handles {
             let mesh_id = scene.add_mesh(handle.mesh);
-            let material_id = scene.add_material(handle.material);
+            let material_id = scene.add_face_material(handle.material);
             let node_id = scene
                 .add_instance_node(
                     self.root_node,
-                    mesh_id,
-                    material_id,
+                    Instance::new(mesh_id).with_face_material(material_id),
                     None,
                     pivot_transform,
                     NodeFlags::DO_NOT_EXPORT
@@ -206,7 +208,7 @@ impl GizmoState {
             scene.remove_mesh(mesh_id);
         }
         for &material_id in &self.material_ids {
-            scene.remove_material(material_id);
+            scene.remove_face_material(material_id);
         }
 
         self.node_ids.clear();
@@ -260,7 +262,7 @@ impl GizmoState {
         if let Some(prev_axis) = self.highlighted_axis {
             let idx = axis_index(prev_axis);
             if let Some(&mat_id) = self.material_ids.get(idx)
-                && let Some(mat) = scene.get_material_mut(mat_id) {
+                && let Some(mat) = scene.get_face_material_mut(mat_id) {
                     mat.set_base_color_factor(prev_axis.color());
                 }
         }
@@ -269,7 +271,7 @@ impl GizmoState {
         if let Some(new_axis) = axis {
             let idx = axis_index(new_axis);
             if let Some(&mat_id) = self.material_ids.get(idx)
-                && let Some(mat) = scene.get_material_mut(mat_id) {
+                && let Some(mat) = scene.get_face_material_mut(mat_id) {
                     mat.set_base_color_factor(gizmo::highlight_color(new_axis));
                 }
         }
@@ -344,7 +346,7 @@ pub struct TransformOperator {
     annotations: Vec<NodeId>,
 
     /// Materials for the colored annotations (So we're not making dozens of copies)
-    annotation_axis_materials: HashMap<Axis, MaterialId>,
+    annotation_axis_materials: HashMap<Axis, LineMaterialId>,
 
     pub bindings: InputMap<TransformAction>,
 }
@@ -671,13 +673,12 @@ impl TransformOperator {
 
                 // Get or insert the material for this axis annotation
                 let create_color_material = |scene: &mut Scene| {
-                    let material = Material::new().with_line_color(color);
-                    scene.add_material(material)
+                    scene.add_line_material(LineMaterial::new(color))
                 };
                 let mut material = self.annotation_axis_materials.entry(
                     axis_from_constraint(&self.axis_constraint).unwrap()
                 ).or_insert(create_color_material(&mut *scene)).to_owned();
-                if scene.get_material(material).is_none() {
+                if scene.get_line_material(material).is_none() {
                     // Our material was removed from the scene since we last used it.
                     // This can happen if, while unused, the scene removed all unreferenced
                     // resources. We'll have to reinsert the material.
@@ -686,8 +687,7 @@ impl TransformOperator {
 
                 let id = scene.add_instance_node(
                     self.annotation_root,
-                    mesh_id,
-                    material,
+                    Instance::new(mesh_id).with_line_material(material),
                     Some("Transform axis annotation".to_owned()),
                     Transform::IDENTITY,
                     NodeFlags::inert()

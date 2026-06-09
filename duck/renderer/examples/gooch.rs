@@ -2,7 +2,7 @@ use duck_engine_renderer::{
     DrawData, FrameContext, MaterialPipelineCache, Renderer, RenderWorkflow, SceneRenderPass,
 };
 use duck_engine_renderer::scene::{
-    Light, Material, Mesh, NodePayload, PositionedCamera, PrimitiveType, Scene,
+    FaceMaterial, Instance, Light, Mesh, NodePayload, PositionedCamera, PrimitiveType, Scene,
     common::RgbaColor,
 };
 
@@ -109,9 +109,10 @@ fn main() -> anyhow::Result<()> {
     // normal direction, so any valid material works here.
     let mut scene = Scene::new();
     let mesh_id = scene.add_mesh(Mesh::sphere(1.0, 48, 24, PrimitiveType::TriangleList));
-    let mat_id = scene.add_material(Material::new());
+    let mat_id = scene.add_face_material(FaceMaterial::new());
     scene.add_instance_node(
-        None, mesh_id, mat_id,
+        None,
+        Instance::new(mesh_id).with_face_material(mat_id),
         Some("sphere".to_string()),
         Default::default(),
         NodeFlags::NONE
