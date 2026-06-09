@@ -15,7 +15,7 @@ use duck_engine_import_export::format::{
     FileHeader, FormatError, ResourceType, SerializedMetadata,
     TocEntry, decode_resource,
 };
-use duck_engine_scene::{Instance, Material, Mesh, Node, NodeId, NodePayload, Texture, TextureFormat};
+use duck_engine_scene::{FaceMaterial, Instance, Mesh, Node, NodeId, NodePayload, Texture, TextureFormat};
 
 #[derive(Parser)]
 #[command(name = "scene-info")]
@@ -189,7 +189,9 @@ fn print_resource_breakdown(toc: &[TocEntry], file_size: u64) {
         ResourceType::Metadata,
         ResourceType::Node,
         ResourceType::Instance,
-        ResourceType::Material,
+        ResourceType::FaceMaterial,
+        ResourceType::LineMaterial,
+        ResourceType::PointMaterial,
         ResourceType::Mesh,
         ResourceType::Texture,
         ResourceType::EnvironmentMap,
@@ -214,7 +216,7 @@ struct SceneStats {
     metadata: Option<SerializedMetadata>,
     nodes: Vec<Node>,
     instances: Vec<Instance>,
-    materials: Vec<Material>,
+    materials: Vec<FaceMaterial>,
     meshes: Vec<Mesh>,
     textures: Vec<Texture>,
 }
@@ -246,15 +248,19 @@ fn gather_statistics(bytes: &[u8], toc: &[TocEntry]) -> Result<SceneStats, Forma
             ResourceType::Instance => {
                 stats.instances.push(decode_resource(resource_bytes)?);
             }
-            ResourceType::Material => {
+            ResourceType::FaceMaterial => {
                 stats.materials.push(decode_resource(resource_bytes)?);
+            }
+            ResourceType::LineMaterial | ResourceType::PointMaterial => {
+                // Detail view is face-centric; line/point materials are counted
+                // via the resource-type table but not detailed here.
             }
             ResourceType::Mesh => {
                 stats.meshes.push(decode_resource(resource_bytes)?);
             }
             ResourceType::Texture => {
                 let raw = resource_bytes.to_vec();
-                let tex = Texture::from_image_bytes_with_id(entry.resource_id, raw)
+                let tex = Texture::from_image_bytes_with_id(entry.resource_id.cast(), raw)
                     .map_err(|e| FormatError::TextureError(e.to_string()))?;
                 stats.textures.push(tex);
             }
@@ -449,7 +455,7 @@ fn print_mesh_details(meshes: &[Mesh]) {
     println!();
 }
 
-fn print_material_details(materials: &[Material]) {
+fn print_material_details(materials: &[FaceMaterial]) {
     println!("Material Details:");
     println!(
         "  {:>4} {:>10} {:>10} {:>10} {:>12}",

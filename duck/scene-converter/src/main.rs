@@ -158,7 +158,10 @@ fn main() -> Result<()> {
 
 fn print_stats(scene: &Scene) {
     eprintln!("  Meshes:    {}", scene.mesh_count());
-    eprintln!("  Materials: {}", scene.material_count());
+    eprintln!(
+        "  Materials: {}",
+        scene.face_material_count() + scene.line_material_count() + scene.point_material_count()
+    );
     eprintln!("  Textures:  {}", scene.texture_count());
     eprintln!("  Nodes:     {}", scene.node_count());
     eprintln!("  Lights:    {}", scene.light_count());

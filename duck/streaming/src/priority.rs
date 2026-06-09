@@ -28,7 +28,7 @@ pub fn build_priority_queue(scene: &Scene, camera: Option<&CameraHint>) -> Vec<P
     for node in scene.nodes() {
         resources.push(PendingResource {
             kind: ResourceType::Node,
-            id: node.id,
+            id: node.id.erased(),
             priority: 10_000_000.0,
         });
     }
@@ -36,15 +36,31 @@ pub fn build_priority_queue(scene: &Scene, camera: Option<&CameraHint>) -> Vec<P
     for instance in scene.instances() {
         resources.push(PendingResource {
             kind: ResourceType::Instance,
-            id: instance.id,
+            id: instance.id.erased(),
             priority: 1_000_000.0,
         });
     }
 
-    for material in scene.materials() {
+    for material in scene.face_materials() {
         resources.push(PendingResource {
-            kind: ResourceType::Material,
-            id: material.id,
+            kind: ResourceType::FaceMaterial,
+            id: material.id.erased(),
+            priority: 900_000.0,
+        });
+    }
+
+    for material in scene.line_materials() {
+        resources.push(PendingResource {
+            kind: ResourceType::LineMaterial,
+            id: material.id.erased(),
+            priority: 900_000.0,
+        });
+    }
+
+    for material in scene.point_materials() {
+        resources.push(PendingResource {
+            kind: ResourceType::PointMaterial,
+            id: material.id.erased(),
             priority: 900_000.0,
         });
     }
@@ -53,7 +69,7 @@ pub fn build_priority_queue(scene: &Scene, camera: Option<&CameraHint>) -> Vec<P
         let score = mesh_screen_priority(scene, mesh.id, camera);
         resources.push(PendingResource {
             kind: ResourceType::Mesh,
-            id: mesh.id,
+            id: mesh.id.erased(),
             priority: score,
         });
     }
@@ -61,7 +77,7 @@ pub fn build_priority_queue(scene: &Scene, camera: Option<&CameraHint>) -> Vec<P
     for texture in scene.textures() {
         resources.push(PendingResource {
             kind: ResourceType::Texture,
-            id: texture.id,
+            id: texture.id.erased(),
             priority: -1.0,
         });
     }
@@ -69,7 +85,7 @@ pub fn build_priority_queue(scene: &Scene, camera: Option<&CameraHint>) -> Vec<P
     for em in scene.environment_maps() {
         resources.push(PendingResource {
             kind: ResourceType::EnvironmentMap,
-            id: em.id,
+            id: em.id.erased(),
             priority: -2.0,
         });
     }

@@ -8,28 +8,43 @@ use duck_engine_scene::{Id, Scene, SceneEvent};
 pub fn build_resource_event(scene: &Scene, kind: ResourceType, resource_id: Id) -> Option<SceneEvent> {
     match kind {
         ResourceType::Node => {
-            let node = scene.get_node(resource_id)?.clone();
+            let node = scene.get_node(resource_id.cast())?.clone();
             Some(SceneEvent::NodeAdded(node))
         }
         ResourceType::Instance => {
-            let inst = scene.get_instance(resource_id)?.clone();
-            Some(SceneEvent::InstanceAdded(resource_id, inst))
+            let id = resource_id.cast();
+            let inst = scene.get_instance(id)?.clone();
+            Some(SceneEvent::InstanceAdded(id, inst))
         }
-        ResourceType::Material => {
-            let mat = scene.get_material(resource_id)?.clone();
-            Some(SceneEvent::MaterialAdded(resource_id, mat))
+        ResourceType::FaceMaterial => {
+            let id = resource_id.cast();
+            let mat = scene.get_face_material(id)?.clone();
+            Some(SceneEvent::FaceMaterialAdded(id, mat))
+        }
+        ResourceType::LineMaterial => {
+            let id = resource_id.cast();
+            let mat = scene.get_line_material(id)?.clone();
+            Some(SceneEvent::LineMaterialAdded(id, mat))
+        }
+        ResourceType::PointMaterial => {
+            let id = resource_id.cast();
+            let mat = scene.get_point_material(id)?.clone();
+            Some(SceneEvent::PointMaterialAdded(id, mat))
         }
         ResourceType::Mesh => {
-            let mesh = scene.get_mesh(resource_id)?.clone();
-            Some(SceneEvent::MeshAdded(resource_id, mesh))
+            let id = resource_id.cast();
+            let mesh = scene.get_mesh(id)?.clone();
+            Some(SceneEvent::MeshAdded(id, mesh))
         }
         ResourceType::Texture => {
-            let tex = scene.get_texture(resource_id)?.clone();
-            Some(SceneEvent::TextureAdded(resource_id, tex))
+            let id = resource_id.cast();
+            let tex = scene.get_texture(id)?.clone();
+            Some(SceneEvent::TextureAdded(id, tex))
         }
         ResourceType::EnvironmentMap => {
-            let em = scene.get_environment_map(resource_id)?.clone();
-            Some(SceneEvent::EnvironmentMapAdded(resource_id, em))
+            let id = resource_id.cast();
+            let em = scene.get_environment_map(id)?.clone();
+            Some(SceneEvent::EnvironmentMapAdded(id, em))
         }
         ResourceType::Metadata => None,
     }
@@ -44,8 +59,12 @@ pub fn apply_event_to_scene(scene: &mut Scene, event: SceneEvent) {
         SceneEvent::MeshAdded(_, mesh) => { scene.add_mesh(mesh); }
         SceneEvent::MeshRemoved(id) => { scene.remove_mesh(id); }
 
-        SceneEvent::MaterialAdded(_, mat) => { scene.add_material(mat); }
-        SceneEvent::MaterialRemoved(id) => { scene.remove_material(id); }
+        SceneEvent::FaceMaterialAdded(_, mat) => { scene.add_face_material(mat); }
+        SceneEvent::FaceMaterialRemoved(id) => { scene.remove_face_material(id); }
+        SceneEvent::LineMaterialAdded(_, mat) => { scene.add_line_material(mat); }
+        SceneEvent::LineMaterialRemoved(id) => { scene.remove_line_material(id); }
+        SceneEvent::PointMaterialAdded(_, mat) => { scene.add_point_material(mat); }
+        SceneEvent::PointMaterialRemoved(id) => { scene.remove_point_material(id); }
 
         SceneEvent::TextureAdded(_, tex) => { scene.add_texture(tex); }
 

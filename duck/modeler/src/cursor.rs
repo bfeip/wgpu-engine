@@ -11,8 +11,8 @@
 
 use duck_engine_viewer::common::{Point3, RgbaColor, Transform};
 use duck_engine_viewer::scene::{
-    AlphaMode, DisplayBehavior, Material, MaterialFlags, MaterialId, Mesh, NodeFlags, NodeId,
-    PrimitiveType, RenderLayer, Scene, Texture, Visibility,
+    AlphaMode, DisplayBehavior, FaceMaterial, FaceMaterialId, Instance, MaterialFlags, Mesh,
+    NodeFlags, NodeId, PrimitiveType, RenderLayer, Scene, Texture, Visibility,
 };
 
 /// On-screen diameter of the dot, in pixels. The quad's half-width (0.5) is
@@ -36,7 +36,7 @@ pub struct Cursor3d {
     node: Option<NodeId>,
     /// Material backing the dot; kept so [`set_color`](Self::set_color) can
     /// retint the white disc.
-    material: Option<MaterialId>,
+    material: Option<FaceMaterialId>,
     /// Desired dot color; applied to the material as its base-color factor.
     color: RgbaColor,
     /// Last position actually written, to skip redundant writes. Scale is now
@@ -82,7 +82,7 @@ impl Cursor3d {
     pub fn set_color(&mut self, color: RgbaColor, scene: &mut Scene) {
         self.color = color;
         if let Some(material) = self.material {
-            if let Some(mat) = scene.get_material_mut(material) {
+            if let Some(mat) = scene.get_face_material_mut(material) {
                 mat.set_base_color_factor(color);
             }
         }
@@ -96,8 +96,8 @@ impl Cursor3d {
         }
         let mesh = scene.add_mesh(Mesh::quad(1.0, 1.0, PrimitiveType::TriangleList));
         let texture = scene.add_texture(build_dot_texture());
-        let material = scene.add_material(
-            Material::new()
+        let material = scene.add_face_material(
+            FaceMaterial::new()
                 .with_base_color_texture(texture)
                 // Tint the white disc to the requested color.
                 .with_base_color_factor(self.color)
@@ -108,8 +108,7 @@ impl Cursor3d {
         let node = scene
             .add_instance_node(
                 None,
-                mesh,
-                material,
+                Instance::new(mesh).with_face_material(material),
                 Some("3D cursor".to_owned()),
                 Transform::IDENTITY,
                 // Inert: not selectable (keeps it out of geometry snapping), not

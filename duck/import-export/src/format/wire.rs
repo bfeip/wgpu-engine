@@ -36,14 +36,18 @@ pub enum ResourceType {
     Node = 1,
     /// Mesh-material instance binding. resource_id = instance.id.
     Instance = 2,
-    /// Material definition. resource_id = material.id.
-    Material = 3,
+    /// Face material definition. resource_id = face_material.id.
+    FaceMaterial = 3,
+    /// Line material definition. resource_id = line_material.id.
+    LineMaterial = 4,
+    /// Point material definition. resource_id = point_material.id.
+    PointMaterial = 5,
     /// Mesh geometry data. resource_id = mesh.id.
-    Mesh = 4,
+    Mesh = 6,
     /// Embedded texture image. resource_id = texture.id. Bytes are raw PNG/JPEG.
-    Texture = 5,
+    Texture = 7,
     /// Environment map. resource_id = environment_map.id.
-    EnvironmentMap = 6,
+    EnvironmentMap = 8,
 }
 
 // ============================================================================

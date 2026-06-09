@@ -4,7 +4,8 @@ use duck_engine_viewer::common::{
     EuclideanSpace, InnerSpace, Matrix3, Plane, Point3, Quaternion, RgbaColor, Transform, Vector3,
 };
 use duck_engine_viewer::scene::{
-    Material, Mesh, MeshIndex, MeshPrimitive, NodeFlags, NodeId, PrimitiveType, Scene, Vertex,
+    Instance, LineMaterial, Mesh, MeshIndex, MeshPrimitive, NodeFlags, NodeId, PrimitiveType, Scene,
+    Vertex,
 };
 
 const GRID_NORMAL: [f32; 3] = [0.0, 1.0, 0.0];
@@ -75,12 +76,11 @@ impl Grid {
         .into_iter()
         .map(|(name, mesh, color)| {
             let mesh_id = scene.add_mesh(mesh);
-            let material_id = scene.add_material(Material::new().with_line_color(color));
+            let material_id = scene.add_line_material(LineMaterial::new(color));
             scene
                 .add_instance_node(
                     None,
-                    mesh_id,
-                    material_id,
+                    Instance::new(mesh_id).with_line_material(material_id),
                     Some(name.to_owned()),
                     transform,
                     NodeFlags::inert(),

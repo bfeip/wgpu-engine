@@ -34,17 +34,21 @@ use serde::de::DeserializeOwned;
 use thiserror::Error;
 
 use duck_engine_scene::{
-    Id,
+    FaceMaterial,
+    FaceMaterialId,
+    GenericId,
     Instance,
     InstanceId,
-    Material,
-    MaterialId,
+    LineMaterial,
+    LineMaterialId,
     Mesh,
     MeshId,
     Node,
     NodeFlags,
     NodeId,
     NodePayload,
+    PointMaterial,
+    PointMaterialId,
     Texture,
     TextureId,
     EnvironmentMap, Scene,
@@ -154,7 +158,7 @@ pub fn decode_resource<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, FormatErr
 fn append_resource(
     resource_bytes: Vec<u8>,
     resource_type: ResourceType,
-    resource_id: Id,
+    resource_id: GenericId,
     output: &mut Vec<u8>,
     toc: &mut Vec<TocEntry>,
 ) {
@@ -169,7 +173,9 @@ fn append_resource(
 struct ParsedSceneData {
     metadata: SerializedMetadata,
     textures: Vec<Texture>,
-    materials: Vec<Material>,
+    face_materials: Vec<FaceMaterial>,
+    line_materials: Vec<LineMaterial>,
+    point_materials: Vec<PointMaterial>,
     meshes: Vec<Mesh>,
     instances: Vec<Instance>,
     nodes: Vec<Node>,
@@ -192,7 +198,9 @@ fn parse_scene(bytes: &[u8]) -> Result<ParsedSceneData, FormatError> {
 
     let mut metadata: Option<SerializedMetadata> = None;
     let mut textures: Vec<Texture> = Vec::new();
-    let mut materials: Vec<Material> = Vec::new();
+    let mut face_materials: Vec<FaceMaterial> = Vec::new();
+    let mut line_materials: Vec<LineMaterial> = Vec::new();
+    let mut point_materials: Vec<PointMaterial> = Vec::new();
     let mut meshes: Vec<Mesh> = Vec::new();
     let mut instances: Vec<Instance> = Vec::new();
     let mut nodes: Vec<Node> = Vec::new();
@@ -209,15 +217,21 @@ fn parse_scene(bytes: &[u8]) -> Result<ParsedSceneData, FormatError> {
             ResourceType::Instance => {
                 instances.push(decode_resource(resource_bytes(entry))?);
             }
-            ResourceType::Material => {
-                materials.push(decode_resource(resource_bytes(entry))?);
+            ResourceType::FaceMaterial => {
+                face_materials.push(decode_resource(resource_bytes(entry))?);
+            }
+            ResourceType::LineMaterial => {
+                line_materials.push(decode_resource(resource_bytes(entry))?);
+            }
+            ResourceType::PointMaterial => {
+                point_materials.push(decode_resource(resource_bytes(entry))?);
             }
             ResourceType::Mesh => {
                 meshes.push(decode_resource(resource_bytes(entry))?);
             }
             ResourceType::Texture => {
                 let raw = resource_bytes(entry).to_vec();
-                let tex = Texture::from_image_bytes_with_id(entry.resource_id, raw)
+                let tex = Texture::from_image_bytes_with_id(entry.resource_id.cast(), raw)
                     .map_err(|e| FormatError::TextureError(e.to_string()))?;
                 textures.push(tex);
             }
@@ -229,7 +243,17 @@ fn parse_scene(bytes: &[u8]) -> Result<ParsedSceneData, FormatError> {
 
     let metadata = metadata.ok_or(FormatError::MissingMetadata)?;
 
-    Ok(ParsedSceneData { metadata, textures, materials, meshes, instances, nodes, environment_maps })
+    Ok(ParsedSceneData {
+        metadata,
+        textures,
+        face_materials,
+        line_materials,
+        point_materials,
+        meshes,
+        instances,
+        nodes,
+        environment_maps,
+    })
 }
 
 /// Assemble a [`Scene`] from parsed sections.
@@ -244,8 +268,16 @@ fn assemble_scene(sections: ParsedSceneData) -> Result<Scene, FormatError> {
         scene.add_mesh(mesh);
     }
 
-    for material in sections.materials {
-        scene.add_material(material);
+    for material in sections.face_materials {
+        scene.add_face_material(material);
+    }
+
+    for material in sections.line_materials {
+        scene.add_line_material(material);
+    }
+
+    for material in sections.point_materials {
+        scene.add_point_material(material);
     }
 
     for instance in sections.instances {
@@ -331,16 +363,20 @@ pub fn estimate_serialized_size(scene: &Scene) -> usize {
         })
         .sum();
 
+    let material_count =
+        scene.face_material_count() + scene.line_material_count() + scene.point_material_count();
     let structured = scene.node_count() * std::mem::size_of::<Node>()
         + scene.instance_count() * std::mem::size_of::<Instance>()
-        + scene.material_count() * std::mem::size_of::<Material>();
+        + scene.face_material_count() * std::mem::size_of::<FaceMaterial>()
+        + scene.line_material_count() * std::mem::size_of::<LineMaterial>()
+        + scene.point_material_count() * std::mem::size_of::<PointMaterial>();
     let structured_estimate = (structured as f64 * GOOD_COMPRESSION_RATIO) as usize;
 
     // 256-byte base covers metadata and zstd framing overhead on small scenes.
     // 64 bytes per resource accounts for zstd per-frame overhead on small payloads.
     let n_resources = scene.node_count()
         + scene.instance_count()
-        + scene.material_count()
+        + material_count
         + scene.mesh_count()
         + scene.texture_count()
         + scene.environment_map_count()
@@ -357,7 +393,9 @@ struct ExportableResources {
     nodes: HashSet<NodeId>,
     instances: HashSet<InstanceId>,
     meshes: HashSet<MeshId>,
-    materials: HashSet<MaterialId>,
+    face_materials: HashSet<FaceMaterialId>,
+    line_materials: HashSet<LineMaterialId>,
+    point_materials: HashSet<PointMaterialId>,
     textures: HashSet<TextureId>,
 }
 
@@ -391,7 +429,9 @@ fn collect_exportable(scene: &Scene) -> ExportableResources {
         nodes: HashSet::new(),
         instances: HashSet::new(),
         meshes: HashSet::new(),
-        materials: HashSet::new(),
+        face_materials: HashSet::new(),
+        line_materials: HashSet::new(),
+        point_materials: HashSet::new(),
         textures: HashSet::new(),
     };
 
@@ -408,11 +448,19 @@ fn collect_exportable(scene: &Scene) -> ExportableResources {
     for &iid in &res.instances {
         let Some(instance) = scene.get_instance(iid) else { continue };
         res.meshes.insert(instance.mesh());
-        res.materials.insert(instance.material());
+        if let Some(id) = instance.face_material() {
+            res.face_materials.insert(id);
+        }
+        if let Some(id) = instance.line_material() {
+            res.line_materials.insert(id);
+        }
+        if let Some(id) = instance.point_material() {
+            res.point_materials.insert(id);
+        }
     }
 
-    for &mid in &res.materials {
-        let Some(mat) = scene.get_material(mid) else { continue };
+    for &mid in &res.face_materials {
+        let Some(mat) = scene.get_face_material(mid) else { continue };
         for tex_id in [mat.base_color_texture(), mat.normal_texture(), mat.metallic_roughness_texture()].into_iter().flatten() {
             res.textures.insert(tex_id);
         }
@@ -449,7 +497,7 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
     append_resource(
         encode_resource(&metadata, compression_level)?,
         ResourceType::Metadata,
-        Id::nil(),
+        GenericId::nil(),
         &mut output,
         &mut toc,
     );
@@ -459,7 +507,7 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
         append_resource(
             encode_resource(node, compression_level)?,
             ResourceType::Node,
-            node.id,
+            node.id.erased(),
             &mut output,
             &mut toc,
         );
@@ -470,18 +518,40 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
         append_resource(
             encode_resource(instance, compression_level)?,
             ResourceType::Instance,
-            instance.id,
+            instance.id.erased(),
             &mut output,
             &mut toc,
         );
     }
 
-    for &material_id in &exportable.materials {
-        let Some(material) = scene.get_material(material_id) else { continue };
+    for &material_id in &exportable.face_materials {
+        let Some(material) = scene.get_face_material(material_id) else { continue };
         append_resource(
             encode_resource(material, compression_level)?,
-            ResourceType::Material,
-            material.id,
+            ResourceType::FaceMaterial,
+            material.id.erased(),
+            &mut output,
+            &mut toc,
+        );
+    }
+
+    for &material_id in &exportable.line_materials {
+        let Some(material) = scene.get_line_material(material_id) else { continue };
+        append_resource(
+            encode_resource(material, compression_level)?,
+            ResourceType::LineMaterial,
+            material.id.erased(),
+            &mut output,
+            &mut toc,
+        );
+    }
+
+    for &material_id in &exportable.point_materials {
+        let Some(material) = scene.get_point_material(material_id) else { continue };
+        append_resource(
+            encode_resource(material, compression_level)?,
+            ResourceType::PointMaterial,
+            material.id.erased(),
             &mut output,
             &mut toc,
         );
@@ -492,7 +562,7 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
         append_resource(
             encode_resource(mesh, compression_level)?,
             ResourceType::Mesh,
-            mesh.id,
+            mesh.id.erased(),
             &mut output,
             &mut toc,
         );
@@ -504,7 +574,7 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
         append_resource(
             image_bytes,
             ResourceType::Texture,
-            tex.id,
+            tex.id.erased(),
             &mut output,
             &mut toc,
         );
@@ -514,7 +584,7 @@ pub fn to_bytes_with_options(scene: &Scene, options: &SaveOptions) -> Result<Vec
         append_resource(
             encode_resource(em, compression_level)?,
             ResourceType::EnvironmentMap,
-            em.id,
+            em.id.erased(),
             &mut output,
             &mut toc,
         );

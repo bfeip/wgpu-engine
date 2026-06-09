@@ -10,7 +10,7 @@ use duck_engine_common::{decompose_matrix, Matrix4, RgbaColor};
 use duck_engine_scene::cad::{tessellate_occ_shape, CadTessellationOptions};
 use duck_engine_scene::common::Transform;
 use duck_engine_scene::{
-    Instance, Material, Mesh, MeshPrimitive, NodeFlags, NodeId, NodePayload,
+    FaceMaterial, Instance, LineMaterial, Mesh, MeshPrimitive, NodeFlags, NodeId, NodePayload,
     PrimitiveType, Scene, Vertex,
 };
 use opencascade::primitives::{EdgeType, Shape};
@@ -165,13 +165,14 @@ fn import_leaf_part(
     let t = &options.tessellation;
     let mesh =
         tessellate_occ_shape(shape, t.tessellation_tolerance, t.scale_factor, t.include_edges)?;
-    let mat = scene.add_material(
-        Material::new()
-            .with_base_color_factor(face_color)
-            .with_line_color(t.edge_color),
-    );
+    let face_mat = scene.add_face_material(FaceMaterial::new().with_base_color_factor(face_color));
+    let line_mat = scene.add_line_material(LineMaterial::new(t.edge_color));
     let mesh_id = scene.add_mesh(mesh);
-    let instance_id = scene.add_instance(Instance::new(mesh_id, mat));
+    let instance_id = scene.add_instance(
+        Instance::new(mesh_id)
+            .with_face_material(face_mat)
+            .with_line_material(line_mat),
+    );
     scene.set_node_payload(node, NodePayload::Instance(instance_id));
     Ok(())
 }
@@ -201,7 +202,7 @@ fn import_pmi(
     let pmi_root = scene
         .add_node(Some(parent), Some("pmi".to_string()), Transform::IDENTITY, NodeFlags::NONE)
         .context("Failed to add PMI root node")?;
-    let mat = scene.add_material(Material::new().with_line_color(options.pmi_color));
+    let mat = scene.add_line_material(LineMaterial::new(options.pmi_color));
 
     let all_labels = dim_tol_tool
         .dimension_labels()
@@ -266,8 +267,7 @@ fn import_pmi(
         scene
             .add_instance_node(
                 Some(pmi_root),
-                mesh_id,
-                mat,
+                Instance::new(mesh_id).with_line_material(mat),
                 Some(name),
                 Transform::IDENTITY,
                 NodeFlags::NONE,

@@ -1,18 +1,18 @@
 use std::path::Path;
 use duck_engine_common::{InnerSpace, Matrix4, Point3, SquareMatrix, Vector3};
 use duck_engine_scene::{
-    AlphaMode, Material, MaterialFlags, MaterialId, Mesh, MeshId, MeshPrimitive,
+    AlphaMode, FaceMaterial, FaceMaterialId, Instance, MaterialFlags, Mesh, MeshId, MeshPrimitive,
     NodeFlags, PositionedCamera, PrimitiveType, Scene, Texture, TextureFormat, Vertex
 };
 
 /// A loaded primitive from a glTF mesh, containing the scene mesh ID and its material ID.
-type LoadedPrimitive = (MeshId, MaterialId);
+type LoadedPrimitive = (MeshId, FaceMaterialId);
 
 /// Maps glTF mesh indices to their loaded primitives.
 ///
 /// Each glTF mesh can contain multiple primitives (e.g. different parts with different materials).
 /// Each primitive is loaded as a separate scene mesh, so a single glTF mesh index maps to
-/// potentially multiple (MeshId, MaterialId) pairs.
+/// potentially multiple (MeshId, FaceMaterialId) pairs.
 type GltfMeshMap = Vec<Vec<LoadedPrimitive>>;
 
 /// Result of loading a glTF scene, containing the scene and optional camera.
@@ -133,8 +133,8 @@ fn map_primitive_mode(mode: gltf::mesh::Mode) -> Option<PrimitiveType> {
 fn get_material_for_primitive(
     primitive: &gltf::Primitive,
     primitive_type: PrimitiveType,
-    material_map: &[MaterialId],
-) -> Option<MaterialId> {
+    material_map: &[FaceMaterialId],
+) -> Option<FaceMaterialId> {
     match primitive_type {
         PrimitiveType::TriangleList => primitive
             .material()
@@ -287,7 +287,7 @@ fn load_gltf_texture(
 /// Loads a material from a glTF material definition.
 ///
 /// Extracts full PBR data including base color, metallic-roughness, and normal maps.
-/// Returns the MaterialId of the created material.
+/// Returns the FaceMaterialId of the created material.
 fn load_material(
     gltf_material: &gltf::Material,
     images: &[gltf::image::Data],
@@ -295,11 +295,11 @@ fn load_material(
     buffers: &[gltf::buffer::Data],
     base_path: Option<&Path>,
     scene: &mut Scene,
-) -> anyhow::Result<MaterialId> {
+) -> anyhow::Result<FaceMaterialId> {
     let pbr = gltf_material.pbr_metallic_roughness();
 
     // Start with a new material
-    let mut material = Material::new();
+    let mut material = FaceMaterial::new();
 
     // Base color factor (always present, defaults to white in glTF)
     let base_color = pbr.base_color_factor();
@@ -372,7 +372,7 @@ fn load_material(
         }
     }
 
-    let mat_id = scene.add_material(material);
+    let mat_id = scene.add_face_material(material);
     Ok(mat_id)
 }
 
@@ -577,11 +577,11 @@ pub fn parse_gltf_from_path(path: &Path) -> anyhow::Result<ParsedGltf> {
 pub fn load_gltf_assets(
     parsed: &ParsedGltf,
     scene: &mut Scene,
-) -> anyhow::Result<(Vec<MaterialId>, GltfMeshMap)> {
+) -> anyhow::Result<(Vec<FaceMaterialId>, GltfMeshMap)> {
     let base_path = parsed.base_path.as_deref();
 
     // Load all materials (which also loads their textures)
-    let mut material_map: Vec<MaterialId> = Vec::new();
+    let mut material_map: Vec<FaceMaterialId> = Vec::new();
     for material in parsed.document.materials() {
         let mat_id = load_material(
             &material,
@@ -596,7 +596,7 @@ pub fn load_gltf_assets(
 
     // Load all meshes
     let mut mesh_map: GltfMeshMap = Vec::new();
-    let mut fallback_material_id: Option<MaterialId> = None;
+    let mut fallback_material_id: Option<FaceMaterialId> = None;
     for mesh in parsed.document.meshes() {
         let mut primitives_data = Vec::new();
 
@@ -616,7 +616,7 @@ pub fn load_gltf_assets(
             let material_id = get_material_for_primitive(&primitive, primitive_type, &material_map)
                 .unwrap_or_else(|| {
                     *fallback_material_id
-                        .get_or_insert_with(|| scene.add_material(Material::default()))
+                        .get_or_insert_with(|| scene.add_face_material(FaceMaterial::default()))
                 });
 
             let primitive = MeshPrimitive { primitive_type, indices: indices_u32 };
@@ -719,8 +719,7 @@ fn load_node_recursive(
             for (mesh_id, material_id) in primitives {
                 scene.add_instance_node(
                     Some(parent_node_id),
-                    *mesh_id,
-                    *material_id,
+                    Instance::new(*mesh_id).with_face_material(*material_id),
                     None,
                     duck_engine_scene::common::Transform::IDENTITY,
                     NodeFlags::NONE
@@ -731,7 +730,8 @@ fn load_node_recursive(
         } else {
             // Single primitive: create a single instance node
             let (mesh_id, material_id) = primitives[0];
-            scene.add_instance_node(parent, mesh_id, material_id, name, transform, NodeFlags::NONE)?
+            let instance = Instance::new(mesh_id).with_face_material(material_id);
+            scene.add_instance_node(parent, instance, name, transform, NodeFlags::NONE)?
         }
     } else {
         // No mesh, just a transform node

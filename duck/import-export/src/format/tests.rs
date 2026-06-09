@@ -9,17 +9,19 @@ fn create_test_scene() -> Scene {
     let mesh = Mesh::cube(1.0, PrimitiveType::TriangleList);
     let mesh_id = scene.add_mesh(mesh);
 
-    let material = Material::new()
+    let face_material = FaceMaterial::new()
         .with_base_color_factor(RgbaColor::RED)
         .with_metallic_factor(0.5)
-        .with_roughness_factor(0.3)
-        .with_line_color(RgbaColor::GREEN);
-    let mat_id = scene.add_material(material);
+        .with_roughness_factor(0.3);
+    let face_id = scene.add_face_material(face_material);
+    let line_id = scene.add_line_material(LineMaterial::new(RgbaColor::GREEN));
 
+    let instance = Instance::new(mesh_id)
+        .with_face_material(face_id)
+        .with_line_material(line_id);
     let node_id = scene.add_instance_node(
         None,
-        mesh_id,
-        mat_id,
+        instance,
         Some("TestNode".to_string()),
         Transform::new(
             Point3::new(1.0, 2.0, 3.0),
@@ -62,7 +64,8 @@ fn test_round_trip_basic() {
 
     assert_eq!(loaded.node_count(), original.node_count());
     assert_eq!(loaded.mesh_count(), original.mesh_count());
-    assert_eq!(loaded.material_count(), original.material_count());
+    assert_eq!(loaded.face_material_count(), original.face_material_count());
+    assert_eq!(loaded.line_material_count(), original.line_material_count());
     assert_eq!(loaded.instance_count(), original.instance_count());
     assert_eq!(loaded.has_light_nodes(), original.has_light_nodes());
     assert_eq!(loaded.root_nodes().len(), original.root_nodes().len());
@@ -102,8 +105,8 @@ fn test_round_trip_material_properties() {
     let bytes = to_bytes(&original).expect("Failed to serialize");
     let loaded = from_bytes(&bytes).expect("Failed to deserialize");
 
-    let original_mat = original.materials().next().expect("No material in original");
-    let loaded_mat = loaded.materials().next().expect("No material in loaded");
+    let original_mat = original.face_materials().next().expect("No material in original");
+    let loaded_mat = loaded.face_materials().next().expect("No material in loaded");
 
     let orig_color = original_mat.base_color_factor();
     let loaded_color = loaded_mat.base_color_factor();
@@ -114,8 +117,9 @@ fn test_round_trip_material_properties() {
     assert!((original_mat.metallic_factor() - loaded_mat.metallic_factor()).abs() < 1e-6);
     assert!((original_mat.roughness_factor() - loaded_mat.roughness_factor()).abs() < 1e-6);
 
-    assert!(original_mat.line_color().is_some());
-    assert!(loaded_mat.line_color().is_some());
+    let original_line = original.line_materials().next().expect("No line material in original");
+    let loaded_line = loaded.line_materials().next().expect("No line material in loaded");
+    assert!((original_line.color().g - loaded_line.color().g).abs() < 1e-6);
 }
 
 #[test]
@@ -184,7 +188,7 @@ fn test_empty_scene_round_trip() {
     let bytes = to_bytes(&scene).expect("Failed to serialize empty scene");
     let loaded = from_bytes(&bytes).expect("Failed to deserialize empty scene");
 
-    assert_eq!(loaded.material_count(), 0);
+    assert_eq!(loaded.face_material_count(), 0);
     assert_eq!(loaded.node_count(), 0);
     assert_eq!(loaded.mesh_count(), 0);
     assert_eq!(loaded.instance_count(), 0);
@@ -238,13 +242,21 @@ fn test_do_not_export_excludes_node() {
 
     let mut scene = Scene::new();
     let mesh_id = scene.add_mesh(Mesh::cube(1.0, PrimitiveType::TriangleList));
-    let mat_id = scene.add_material(Material::new());
+    let mat_id = scene.add_face_material(FaceMaterial::new());
 
     let _normal = scene.add_instance_node(
-        None, mesh_id, mat_id, Some("Normal".to_string()), Transform::IDENTITY, NodeFlags::NONE,
+        None,
+        Instance::new(mesh_id).with_face_material(mat_id),
+        Some("Normal".to_string()),
+        Transform::IDENTITY,
+        NodeFlags::NONE,
     ).unwrap();
     let _hidden = scene.add_instance_node(
-        None, mesh_id, mat_id, Some("Hidden".to_string()), Transform::IDENTITY, NodeFlags::DO_NOT_EXPORT,
+        None,
+        Instance::new(mesh_id).with_face_material(mat_id),
+        Some("Hidden".to_string()),
+        Transform::IDENTITY,
+        NodeFlags::DO_NOT_EXPORT,
     ).unwrap();
 
     let bytes = to_bytes(&scene).expect("serialize");
@@ -285,15 +297,23 @@ fn test_do_not_export_excludes_instance_and_mesh() {
     let mut scene = Scene::new();
     let shared_mesh_id = scene.add_mesh(Mesh::cube(1.0, PrimitiveType::TriangleList));
     let exclusive_mesh_id = scene.add_mesh(Mesh::cube(2.0, PrimitiveType::TriangleList));
-    let mat_id = scene.add_material(Material::new());
+    let mat_id = scene.add_face_material(FaceMaterial::new());
 
     // One normal node using the shared mesh.
     scene.add_instance_node(
-        None, shared_mesh_id, mat_id, Some("Normal".to_string()), Transform::IDENTITY, NodeFlags::NONE,
+        None,
+        Instance::new(shared_mesh_id).with_face_material(mat_id),
+        Some("Normal".to_string()),
+        Transform::IDENTITY,
+        NodeFlags::NONE,
     ).unwrap();
     // One hidden node using the exclusive mesh (not shared with anyone else).
     scene.add_instance_node(
-        None, exclusive_mesh_id, mat_id, Some("Hidden".to_string()), Transform::IDENTITY, NodeFlags::DO_NOT_EXPORT,
+        None,
+        Instance::new(exclusive_mesh_id).with_face_material(mat_id),
+        Some("Hidden".to_string()),
+        Transform::IDENTITY,
+        NodeFlags::DO_NOT_EXPORT,
     ).unwrap();
 
     let bytes = to_bytes(&scene).expect("serialize");

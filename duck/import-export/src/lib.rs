@@ -664,18 +664,17 @@ pub fn save_async(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use duck_engine_scene::{Material, Mesh, PrimitiveType};
+    use duck_engine_scene::{FaceMaterial, Instance, Mesh, PrimitiveType};
 
     fn create_test_scene() -> Scene {
         let mut scene = Scene::new();
         let mesh = Mesh::cube(1.0, PrimitiveType::TriangleList);
         let mesh_id = scene.add_mesh(mesh);
-        let mat_id = scene.add_material(Material::new());
+        let mat_id = scene.add_face_material(FaceMaterial::new());
         scene
             .add_instance_node(
                 None,
-                mesh_id,
-                mat_id,
+                Instance::new(mesh_id).with_face_material(mat_id),
                 Some("TestNode".into()),
                 duck_engine_scene::common::Transform::IDENTITY,
                 duck_engine_scene::NodeFlags::NONE,
