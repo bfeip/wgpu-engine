@@ -13,7 +13,7 @@
 use crate::NodeId;
 
 /// Unique identifier for a [`SubView`]. Backed by UUID v7 like [`NodeId`].
-pub type SubViewId = crate::Id;
+pub type SubViewId = crate::Id<SubView>;
 
 /// A sub-view's placement on the surface, as proportions of the full surface in
 /// the range `[0, 1]`. `(x, y)` is the lower-left-relative origin convention used

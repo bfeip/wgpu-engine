@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use image::{DynamicImage, GenericImageView};
 
 /// Unique identifier for a texture in the scene.
-pub type TextureId = crate::Id;
+pub type TextureId = crate::Id<Texture>;
 
 /// Texture image format.
 #[repr(u8)]

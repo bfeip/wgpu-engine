@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 /// Unique identifier for an environment map in a scene.
-pub type EnvironmentMapId = crate::Id;
+pub type EnvironmentMapId = crate::Id<EnvironmentMap>;
 
 /// Number of faces in a cubemap.
 pub const CUBEMAP_FACES: usize = 6;

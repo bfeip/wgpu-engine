@@ -3,9 +3,11 @@ use std::collections::VecDeque;
 use crate::{
     common::Transform,
     EnvironmentMap, EnvironmentMapId,
+    FaceMaterial, FaceMaterialId,
     Instance, InstanceId,
-    Material, MaterialId,
+    LineMaterial, LineMaterialId,
     Mesh, MeshId,
+    PointMaterial, PointMaterialId,
     Node, NodeId,
     NodePayload,
     Texture, TextureId,
@@ -22,8 +24,12 @@ pub enum SceneEvent {
     MeshAdded(MeshId, Mesh),
     MeshRemoved(MeshId),
 
-    MaterialAdded(MaterialId, Material),
-    MaterialRemoved(MaterialId),
+    FaceMaterialAdded(FaceMaterialId, FaceMaterial),
+    FaceMaterialRemoved(FaceMaterialId),
+    LineMaterialAdded(LineMaterialId, LineMaterial),
+    LineMaterialRemoved(LineMaterialId),
+    PointMaterialAdded(PointMaterialId, PointMaterial),
+    PointMaterialRemoved(PointMaterialId),
 
     TextureAdded(TextureId, Texture),
 

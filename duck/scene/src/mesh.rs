@@ -8,7 +8,7 @@ mod primitives;
 use crate::common::Aabb;
 
 /// Unique identifier for a mesh in the scene.
-pub type MeshId = crate::Id;
+pub type MeshId = crate::Id<Mesh>;
 
 /// Index type used for mesh index buffers.
 pub type MeshIndex = u32;

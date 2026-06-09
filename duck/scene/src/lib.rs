@@ -26,10 +26,10 @@ use std::collections::HashMap;
 use std::path::Path;
 
 // ID types
-pub use id::Id;
+pub use id::{GenericId, Id};
 pub use environment::EnvironmentMapId;
 pub use instance::InstanceId;
-pub use material::MaterialId;
+pub use material::{FaceMaterialId, LineMaterialId, PointMaterialId};
 pub use mesh::MeshId;
 pub use node::NodeId;
 pub use texture::TextureId;
@@ -41,7 +41,7 @@ pub use view::{View, ViewId};
 pub use instance::Instance;
 pub use light::{Light, LightType, MAX_LIGHTS};
 pub use material::{
-    AlphaMode, Material, MaterialFlags, MaterialProperties,
+    AlphaMode, FaceMaterial, LineMaterial, MaterialFlags, MaterialProperties, PointMaterial,
     DEFAULT_METALLIC, DEFAULT_ROUGHNESS,
 };
 pub use mesh::{Mesh, MeshDescriptor, MeshIndex, MeshPrimitive, ObjMesh, PrimitiveType, SubMeshRange, Topology, Vertex};
@@ -92,7 +92,9 @@ pub struct BoundingResult {
 /// # Examples
 ///
 /// ```
-/// use duck_engine_scene::{Scene, Mesh, MeshPrimitive, Vertex, Material, NodeFlags, PrimitiveType, common};
+/// use duck_engine_scene::{
+///     common, FaceMaterial, Instance, Mesh, MeshPrimitive, NodeFlags, PrimitiveType, Scene, Vertex,
+/// };
 /// use duck_engine_scene::common::RgbaColor;
 ///
 /// let mut scene = Scene::new();
@@ -110,12 +112,19 @@ pub struct BoundingResult {
 /// let mesh = Mesh::from_raw(vertices, primitives);
 /// let mesh_id = scene.add_mesh(mesh);
 ///
-/// // Add a material (no device needed)
-/// let material = Material::new().with_base_color_factor(RgbaColor::RED);
-/// let mat_id = scene.add_material(material);
+/// // Add a face material (no device needed)
+/// let material = FaceMaterial::new().with_base_color_factor(RgbaColor::RED);
+/// let mat_id = scene.add_face_material(material);
 ///
 /// // Create an instance node
-/// let node_id = scene.add_instance_node(None, mesh_id, mat_id, None, common::Transform::IDENTITY, NodeFlags::NONE);
+/// let instance = Instance::new(mesh_id).with_face_material(mat_id);
+/// let node_id = scene.add_instance_node(
+///     None,
+///     instance,
+///     None,
+///     common::Transform::IDENTITY,
+///     NodeFlags::NONE,
+/// );
 /// ```
 pub struct Scene {
     meshes: HashMap<MeshId, Mesh>,
@@ -125,7 +134,9 @@ pub struct Scene {
     nodes: HashMap<NodeId, Node>,
     root_nodes: Vec<NodeId>,
 
-    materials: HashMap<MaterialId, Material>,
+    face_materials: HashMap<FaceMaterialId, FaceMaterial>,
+    line_materials: HashMap<LineMaterialId, LineMaterial>,
+    point_materials: HashMap<PointMaterialId, PointMaterial>,
     textures: HashMap<TextureId, Texture>,
 
     // Environment maps for IBL
@@ -155,7 +166,9 @@ impl Clone for Scene {
             instances: self.instances.clone(),
             nodes: self.nodes.clone(),
             root_nodes: self.root_nodes.clone(),
-            materials: self.materials.clone(),
+            face_materials: self.face_materials.clone(),
+            line_materials: self.line_materials.clone(),
+            point_materials: self.point_materials.clone(),
             textures: self.textures.clone(),
             environment_maps: self.environment_maps.clone(),
             active_environment_map: self.active_environment_map,
@@ -177,7 +190,9 @@ impl Scene {
             nodes: HashMap::new(),
             root_nodes: Vec::new(),
 
-            materials: HashMap::new(),
+            face_materials: HashMap::new(),
+            line_materials: HashMap::new(),
+            point_materials: HashMap::new(),
             textures: HashMap::new(),
 
             environment_maps: HashMap::new(),
@@ -259,48 +274,138 @@ impl Scene {
         }
     }
 
-    // ========== Material API ==========
+    // ========== Face material API ==========
 
-    /// Adds a material to the scene.
-    pub fn add_material(&mut self, material: Material) -> MaterialId {
+    /// Adds a face material to the scene.
+    pub fn add_face_material(&mut self, material: FaceMaterial) -> FaceMaterialId {
         let id = material.id;
         if let Some(log) = &mut self.event_log {
-            log.push(SceneEvent::MaterialAdded(id, material.clone()));
+            log.push(SceneEvent::FaceMaterialAdded(id, material.clone()));
         }
-        self.materials.insert(id, material);
+        self.face_materials.insert(id, material);
         id
     }
 
-    /// Gets a reference to a material by ID.
-    pub fn get_material(&self, id: MaterialId) -> Option<&Material> {
-        self.materials.get(&id)
+    /// Gets a reference to a face material by ID.
+    pub fn get_face_material(&self, id: FaceMaterialId) -> Option<&FaceMaterial> {
+        self.face_materials.get(&id)
     }
 
-    /// Gets a mutable reference to a material by ID.
-    pub fn get_material_mut(&mut self, id: MaterialId) -> Option<&mut Material> {
-        self.materials.get_mut(&id)
+    /// Gets a mutable reference to a face material by ID.
+    pub fn get_face_material_mut(&mut self, id: FaceMaterialId) -> Option<&mut FaceMaterial> {
+        self.face_materials.get_mut(&id)
     }
 
-    /// Returns an iterator over all materials.
-    pub fn materials(&self) -> impl Iterator<Item = &Material> {
-        self.materials.values()
+    /// Returns an iterator over all face materials.
+    pub fn face_materials(&self) -> impl Iterator<Item = &FaceMaterial> {
+        self.face_materials.values()
     }
 
-    /// Returns a mutable iterator over all materials.
-    pub fn materials_mut(&mut self) -> impl Iterator<Item = &mut Material> {
-        self.materials.values_mut()
+    /// Returns a mutable iterator over all face materials.
+    pub fn face_materials_mut(&mut self) -> impl Iterator<Item = &mut FaceMaterial> {
+        self.face_materials.values_mut()
     }
 
-    /// Returns the number of materials in the scene.
-    pub fn material_count(&self) -> usize {
-        self.materials.len()
+    /// Returns the number of face materials in the scene.
+    pub fn face_material_count(&self) -> usize {
+        self.face_materials.len()
     }
 
-    /// Removes a material from the scene by ID.
-    pub fn remove_material(&mut self, id: MaterialId) {
-        self.materials.remove(&id);
+    /// Removes a face material from the scene by ID.
+    pub fn remove_face_material(&mut self, id: FaceMaterialId) {
+        self.face_materials.remove(&id);
         if let Some(log) = &mut self.event_log {
-            log.push(SceneEvent::MaterialRemoved(id));
+            log.push(SceneEvent::FaceMaterialRemoved(id));
+        }
+    }
+
+    // ========== Line material API ==========
+
+    /// Adds a line material to the scene.
+    pub fn add_line_material(&mut self, material: LineMaterial) -> LineMaterialId {
+        let id = material.id;
+        if let Some(log) = &mut self.event_log {
+            log.push(SceneEvent::LineMaterialAdded(id, material.clone()));
+        }
+        self.line_materials.insert(id, material);
+        id
+    }
+
+    /// Gets a reference to a line material by ID.
+    pub fn get_line_material(&self, id: LineMaterialId) -> Option<&LineMaterial> {
+        self.line_materials.get(&id)
+    }
+
+    /// Gets a mutable reference to a line material by ID.
+    pub fn get_line_material_mut(&mut self, id: LineMaterialId) -> Option<&mut LineMaterial> {
+        self.line_materials.get_mut(&id)
+    }
+
+    /// Returns an iterator over all line materials.
+    pub fn line_materials(&self) -> impl Iterator<Item = &LineMaterial> {
+        self.line_materials.values()
+    }
+
+    /// Returns a mutable iterator over all line materials.
+    pub fn line_materials_mut(&mut self) -> impl Iterator<Item = &mut LineMaterial> {
+        self.line_materials.values_mut()
+    }
+
+    /// Returns the number of line materials in the scene.
+    pub fn line_material_count(&self) -> usize {
+        self.line_materials.len()
+    }
+
+    /// Removes a line material from the scene by ID.
+    pub fn remove_line_material(&mut self, id: LineMaterialId) {
+        self.line_materials.remove(&id);
+        if let Some(log) = &mut self.event_log {
+            log.push(SceneEvent::LineMaterialRemoved(id));
+        }
+    }
+
+    // ========== Point material API ==========
+
+    /// Adds a point material to the scene.
+    pub fn add_point_material(&mut self, material: PointMaterial) -> PointMaterialId {
+        let id = material.id;
+        if let Some(log) = &mut self.event_log {
+            log.push(SceneEvent::PointMaterialAdded(id, material.clone()));
+        }
+        self.point_materials.insert(id, material);
+        id
+    }
+
+    /// Gets a reference to a point material by ID.
+    pub fn get_point_material(&self, id: PointMaterialId) -> Option<&PointMaterial> {
+        self.point_materials.get(&id)
+    }
+
+    /// Gets a mutable reference to a point material by ID.
+    pub fn get_point_material_mut(&mut self, id: PointMaterialId) -> Option<&mut PointMaterial> {
+        self.point_materials.get_mut(&id)
+    }
+
+    /// Returns an iterator over all point materials.
+    pub fn point_materials(&self) -> impl Iterator<Item = &PointMaterial> {
+        self.point_materials.values()
+    }
+
+    /// Returns a mutable iterator over all point materials.
+    pub fn point_materials_mut(&mut self) -> impl Iterator<Item = &mut PointMaterial> {
+        self.point_materials.values_mut()
+    }
+
+    /// Returns the number of point materials in the scene.
+    pub fn point_material_count(&self) -> usize {
+        self.point_materials.len()
+    }
+
+    /// Removes a point material from the scene by ID.
+    pub fn remove_point_material(&mut self, id: PointMaterialId) {
+        self.point_materials.remove(&id);
+        if let Some(log) = &mut self.event_log {
+            log.push(SceneEvent::PointMaterialRemoved(id));
         }
     }
 
@@ -691,14 +796,13 @@ impl Scene {
     pub fn add_instance_node(
         &mut self,
         parent: Option<NodeId>,
-        mesh: MeshId,
-        material: MaterialId,
+        instance: Instance,
         name: Option<String>,
         transform: common::Transform,
         flags: NodeFlags
     ) -> anyhow::Result<NodeId> {
         // Create the instance
-        let instance_id = self.add_instance(Instance::new(mesh, material));
+        let instance_id = self.add_instance(instance);
 
         // Create the node (validates parent exists)
         let node_id = self.add_node(parent, name, transform, flags)?;
@@ -792,7 +896,9 @@ impl Scene {
         self.root_nodes.clear();
         self.instances.clear();
         self.meshes.clear();
-        self.materials.clear();
+        self.face_materials.clear();
+        self.line_materials.clear();
+        self.point_materials.clear();
         self.textures.clear();
         self.environment_maps.clear();
         self.active_environment_map = None;
@@ -821,18 +927,28 @@ impl Scene {
 
         // Collect mesh and material IDs referenced by retained instances
         let mut referenced_meshes = HashSet::new();
-        let mut referenced_materials = HashSet::new();
+        let mut referenced_face_materials = HashSet::new();
+        let mut referenced_line_materials = HashSet::new();
+        let mut referenced_point_materials = HashSet::new();
         for &inst_id in &referenced_instances {
             if let Some(inst) = self.instances.get(&inst_id) {
                 referenced_meshes.insert(inst.mesh());
-                referenced_materials.insert(inst.material());
+                if let Some(id) = inst.face_material() {
+                    referenced_face_materials.insert(id);
+                }
+                if let Some(id) = inst.line_material() {
+                    referenced_line_materials.insert(id);
+                }
+                if let Some(id) = inst.point_material() {
+                    referenced_point_materials.insert(id);
+                }
             }
         }
 
-        // Collect texture IDs referenced by retained materials
+        // Collect texture IDs referenced by retained face materials
         let mut referenced_textures = HashSet::new();
-        for &mat_id in &referenced_materials {
-            if let Some(mat) = self.materials.get(&mat_id) {
+        for &mat_id in &referenced_face_materials {
+            if let Some(mat) = self.face_materials.get(&mat_id) {
                 if let Some(tex) = mat.base_color_texture() {
                     referenced_textures.insert(tex);
                 }
@@ -848,7 +964,9 @@ impl Scene {
         // Remove unreferenced resources
         self.instances.retain(|id, _| referenced_instances.contains(id));
         self.meshes.retain(|id, _| referenced_meshes.contains(id));
-        self.materials.retain(|id, _| referenced_materials.contains(id));
+        self.face_materials.retain(|id, _| referenced_face_materials.contains(id));
+        self.line_materials.retain(|id, _| referenced_line_materials.contains(id));
+        self.point_materials.retain(|id, _| referenced_point_materials.contains(id));
         self.textures.retain(|id, _| referenced_textures.contains(id));
     }
 
@@ -1215,7 +1333,19 @@ impl Scene {
                 if !self.meshes.contains_key(&instance.mesh()) {
                     return false;
                 }
-                if !self.materials.contains_key(&instance.material()) {
+                if let Some(id) = instance.face_material()
+                    && !self.face_materials.contains_key(&id)
+                {
+                    return false;
+                }
+                if let Some(id) = instance.line_material()
+                    && !self.line_materials.contains_key(&id)
+                {
+                    return false;
+                }
+                if let Some(id) = instance.point_material()
+                    && !self.point_materials.contains_key(&id)
+                {
                     return false;
                 }
             }

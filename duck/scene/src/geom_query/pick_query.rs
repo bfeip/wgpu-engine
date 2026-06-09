@@ -154,8 +154,8 @@ mod tests {
             vec![MeshPrimitive { primitive_type: PrimitiveType::TriangleList, indices: vec![0, 1, 2] }],
         );
         let mesh_id = scene.add_mesh(mesh);
-        let mat_id = crate::Id::new();
-        scene.add_instance_node(parent, mesh_id, mat_id, None, Transform::IDENTITY, flags).unwrap()
+        let instance = crate::Instance::new(mesh_id).with_face_material(crate::FaceMaterialId::new());
+        scene.add_instance_node(parent, instance, None, Transform::IDENTITY, flags).unwrap()
     }
 
     #[test]

@@ -13,7 +13,7 @@ use duck_engine_common::{Matrix4, Point3, Quaternion, Vector3};
 use std::cell::Cell;
 
 /// Unique identifier for a Node in the scene tree.
-pub type NodeId = crate::Id;
+pub type NodeId = crate::Id<Node>;
 
 /// Trait for custom, user-defined node payloads.
 ///

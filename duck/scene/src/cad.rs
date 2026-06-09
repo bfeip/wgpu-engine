@@ -3,7 +3,7 @@ use opencascade::primitives::{EdgeType, Shape};
 
 use crate::common::{RgbaColor, Transform};
 use crate::{
-    Instance, Material, Mesh, MeshPrimitive, NodeFlags, NodeId, NodePayload,
+    FaceMaterial, Instance, LineMaterial, Mesh, MeshPrimitive, NodeFlags, NodeId, NodePayload,
     PrimitiveType, Scene, SubMeshRange, Topology, Vertex,
 };
 
@@ -152,13 +152,15 @@ pub fn tessellate_into(
         options.scale_factor,
         options.include_edges,
     )?;
-    let mat = scene.add_material(
-        Material::new()
-            .with_base_color_factor(options.face_color)
-            .with_line_color(options.edge_color),
-    );
+    let face_mat =
+        scene.add_face_material(FaceMaterial::new().with_base_color_factor(options.face_color));
+    let line_mat = scene.add_line_material(LineMaterial::new(options.edge_color));
     let mesh_id = scene.add_mesh(mesh);
-    let instance_id = scene.add_instance(Instance::new(mesh_id, mat));
+    let instance_id = scene.add_instance(
+        Instance::new(mesh_id)
+            .with_face_material(face_mat)
+            .with_line_material(line_mat),
+    );
 
     let node_name = name.map(|s| s.to_string());
     let node = scene

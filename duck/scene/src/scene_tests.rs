@@ -15,24 +15,24 @@ fn test_scene_new() {
 #[test]
 fn test_add_instance() {
     let mut scene = Scene::new();
-    let mesh_id = crate::Id::new();
-    let mat_id = crate::Id::new();
+    let mesh_id = MeshId::new();
+    let mat_id = FaceMaterialId::new();
 
-    let instance_id = scene.add_instance(Instance::new(mesh_id, mat_id));
+    let instance_id = scene.add_instance(Instance::new(mesh_id).with_face_material(mat_id));
     assert_eq!(scene.instance_count(), 1);
 
     let instance = scene.get_instance(instance_id).unwrap();
     assert_eq!(instance.mesh(), mesh_id);
-    assert_eq!(instance.material(), mat_id);
+    assert_eq!(instance.face_material(), Some(mat_id));
 }
 
 #[test]
 fn test_add_multiple_instances() {
     let mut scene = Scene::new();
 
-    let id1 = scene.add_instance(Instance::new(crate::Id::new(), crate::Id::new()));
-    let id2 = scene.add_instance(Instance::new(crate::Id::new(), crate::Id::new()));
-    let id3 = scene.add_instance(Instance::new(crate::Id::new(), crate::Id::new()));
+    let id1 = scene.add_instance(Instance::new(MeshId::new()));
+    let id2 = scene.add_instance(Instance::new(MeshId::new()));
+    let id3 = scene.add_instance(Instance::new(MeshId::new()));
 
     assert_ne!(id1, id2);
     assert_ne!(id1, id3);
@@ -177,13 +177,12 @@ fn test_complex_tree_structure() {
 #[test]
 fn test_add_instance_node() {
     let mut scene = Scene::new();
-    let mesh_id = crate::Id::new();
-    let mat_id = crate::Id::new();
+    let mesh_id = MeshId::new();
+    let mat_id = FaceMaterialId::new();
 
     let node_id = scene.add_instance_node(
         None,
-        mesh_id,
-        mat_id,
+        Instance::new(mesh_id).with_face_material(mat_id),
         None,
         Transform::IDENTITY,
         NodeFlags::NONE,
@@ -199,7 +198,7 @@ fn test_add_instance_node() {
     };
     let instance = scene.get_instance(instance_id).unwrap();
     assert_eq!(instance.mesh(), mesh_id);
-    assert_eq!(instance.material(), mat_id);
+    assert_eq!(instance.face_material(), Some(mat_id));
 }
 
 #[test]
@@ -461,12 +460,11 @@ fn test_add_default_node_with_invalid_parent_fails() {
 #[test]
 fn test_add_instance_node_with_invalid_parent_fails() {
     let mut scene = Scene::new();
-    let nonexistent = crate::Id::new();
+    let nonexistent = NodeId::new();
 
     let result = scene.add_instance_node(
         Some(nonexistent),
-        crate::Id::new(),
-        crate::Id::new(),
+        Instance::new(MeshId::new()).with_face_material(FaceMaterialId::new()),
         None,
         Transform::IDENTITY,
         NodeFlags::NONE,
@@ -816,8 +814,8 @@ fn make_unit_mesh() -> Mesh {
 
 fn add_geometry_node(scene: &mut Scene, parent: Option<NodeId>, flags: NodeFlags) -> NodeId {
     let mesh_id = scene.add_mesh(make_unit_mesh());
-    let mat_id = crate::Id::new();
-    scene.add_instance_node(parent, mesh_id, mat_id, None, Transform::IDENTITY, flags).unwrap()
+    let instance = Instance::new(mesh_id).with_face_material(FaceMaterialId::new());
+    scene.add_instance_node(parent, instance, None, Transform::IDENTITY, flags).unwrap()
 }
 
 #[test]
