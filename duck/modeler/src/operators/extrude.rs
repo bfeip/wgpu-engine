@@ -1,0 +1,265 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::sync::{Arc, Mutex};
+
+use duck_engine_common::{Point3, Ray};
+use duck_engine_scene::{NodeId, Visibility};
+use duck_engine_viewer::{
+    event::{Event, EventContext},
+    input::{ElementState, Key, MouseButton, NamedKey},
+    operator::Operator,
+    selection::{SelectionItem, SelectionManager},
+};
+
+use crate::document::Document;
+use crate::extrude::{execute_extrude, preview_extrude, ExtrudeFrame, ExtrudeTarget};
+use crate::tool::ModelingTool;
+use super::ConstructionOptions;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ExtrudePhase {
+    /// No valid sub-geometry chosen yet — waiting for a face/edge selection.
+    AwaitingSelection,
+    /// A face/edge is chosen; the cursor drives the extrusion length.
+    Extruding,
+    Done,
+    Cancelled,
+}
+
+pub struct ExtrudeOperator {
+    phase: ExtrudePhase,
+
+    /// The sub-geometry being extruded and its fixed axis, set on entering `Extruding`.
+    target: Option<ExtrudeTarget>,
+    frame: Option<ExtrudeFrame>,
+    /// Signed length along `frame.axis`, driven by the cursor.
+    length: f64,
+
+    /// Transient preview geometry, rebuilt as the length changes.
+    preview_node: Option<NodeId>,
+    /// The source node, hidden while its preview is shown.
+    hidden_node: Option<NodeId>,
+
+    cursor_target: Option<Point3>,
+
+    document: Arc<Mutex<Document>>,
+    construction_options: Rc<RefCell<ConstructionOptions>>,
+}
+
+impl ExtrudeOperator {
+    pub fn new(
+        construction_options: Rc<RefCell<ConstructionOptions>>,
+        document: Arc<Mutex<Document>>,
+    ) -> Self {
+        Self {
+            phase: ExtrudePhase::AwaitingSelection,
+            target: None,
+            frame: None,
+            length: 0.0,
+            preview_node: None,
+            hidden_node: None,
+            cursor_target: None,
+            document,
+            construction_options,
+        }
+    }
+
+    /// The face/edge currently chosen as the primary selection, if any.
+    fn selected_target(selection: &SelectionManager) -> Option<ExtrudeTarget> {
+        match selection.primary()? {
+            SelectionItem::Face { node_id, face_index } => {
+                Some(ExtrudeTarget::Face { node: node_id, face_index })
+            }
+            SelectionItem::Edge { node_id, edge_index } => {
+                Some(ExtrudeTarget::Edge { node: node_id, edge_index })
+            }
+            SelectionItem::Node(_) => None,
+        }
+    }
+
+    /// Lock onto `target` and enter the extruding phase. Fails silently (staying in
+    /// `AwaitingSelection`) if the sub-geometry can't be resolved to a CAD sub-shape.
+    fn begin(&mut self, target: ExtrudeTarget) {
+        // Edges extrude out of the sketch (construction) plane; faces ignore this and
+        // use their own normal.
+        let sketch_normal = self.construction_options.borrow().construction_plane.normal;
+        let frame = {
+            let doc = self.document.lock().unwrap();
+            match ExtrudeFrame::new(&doc, target, sketch_normal) {
+                Ok(frame) => frame,
+                Err(e) => {
+                    log::warn!("Extrude target could not be resolved: {e}");
+                    return;
+                }
+            }
+        };
+        self.target = Some(target);
+        self.frame = Some(frame);
+        self.length = 0.0;
+        self.phase = ExtrudePhase::Extruding;
+        self.cursor_target = Some(frame.origin);
+    }
+
+    /// Project the cursor pick ray onto the fixed axis to get a new length, then
+    /// rebuild the preview.
+    fn update_length(&mut self, cursor: (f32, f32), ctx: &mut EventContext) {
+        let Some(frame) = self.frame else { return };
+        let camera = ctx.camera();
+        let ray: Ray = camera.ray_from_screen_point(cursor.0, cursor.1, ctx.size.0, ctx.size.1);
+        if let Some(t) = ray.closest_param_on_axis(frame.origin, frame.axis) {
+            self.length = t as f64;
+            self.cursor_target = Some(frame.origin + frame.axis * t);
+            self.refresh_preview();
+        }
+    }
+
+    /// Tear down the old preview and rebuild it for the current length, hiding the
+    /// source node while the preview stands in for it.
+    fn refresh_preview(&mut self) {
+        let (Some(target), Some(frame)) = (self.target, self.frame) else { return };
+        let options = self.construction_options.borrow().geometry_preview_options.clone();
+        let doc = self.document.lock().unwrap();
+
+        {
+            let mut scene = doc.scene().lock().unwrap();
+            if let Some(node) = self.preview_node.take() {
+                scene.remove_node(node);
+            }
+            if let Some(node) = self.hidden_node.take() {
+                scene.set_node_visibility(node, Visibility::Visible);
+            }
+        }
+
+        match preview_extrude(&doc, target, &frame, self.length, &options) {
+            Ok(preview) => {
+                self.preview_node = Some(preview.node);
+                // Only hide the source when the result stands in for it, so a degenerate
+                // preview can never make unrelated geometry vanish.
+                if preview.hide_source {
+                    let source = target.node();
+                    doc.scene().lock().unwrap().set_node_visibility(source, Visibility::Invisible);
+                    self.hidden_node = Some(source);
+                }
+            }
+            // A zero/degenerate length simply yields no preview; not worth surfacing.
+            Err(e) => log::debug!("Extrude preview unavailable: {e}"),
+        }
+    }
+
+    /// Commit the extrusion. On success sets phase = Done; the caller clears selection.
+    fn apply(&mut self) -> anyhow::Result<()> {
+        let (Some(target), Some(frame)) = (self.target, self.frame) else { return Ok(()) };
+        let options = self.construction_options.borrow().geometry_preview_options.clone();
+        let mut doc = self.document.lock().unwrap();
+
+        // Drop the preview node; the source stays hidden — execute_extrude may delete it.
+        if let Some(node) = self.preview_node.take() {
+            doc.scene().lock().unwrap().remove_node(node);
+        }
+        self.hidden_node = None;
+
+        execute_extrude(&mut doc, target, &frame, self.length, &options)?;
+        drop(doc);
+
+        self.reset(ExtrudePhase::Done);
+        Ok(())
+    }
+
+    /// Abort, restoring the source node's visibility.
+    fn cancel(&mut self) {
+        let doc = self.document.lock().unwrap();
+        let mut scene = doc.scene().lock().unwrap();
+        if let Some(node) = self.preview_node.take() {
+            scene.remove_node(node);
+        }
+        if let Some(node) = self.hidden_node.take() {
+            scene.set_node_visibility(node, Visibility::Visible);
+        }
+        drop(scene);
+        drop(doc);
+        self.reset(ExtrudePhase::Cancelled);
+    }
+
+    fn reset(&mut self, phase: ExtrudePhase) {
+        self.target = None;
+        self.frame = None;
+        self.length = 0.0;
+        self.cursor_target = None;
+        self.phase = phase;
+    }
+}
+
+impl ModelingTool for ExtrudeOperator {
+    fn deactivate(&mut self) {
+        self.cancel();
+        self.phase = ExtrudePhase::AwaitingSelection;
+    }
+
+    fn is_finished(&self) -> bool {
+        matches!(self.phase, ExtrudePhase::Done | ExtrudePhase::Cancelled)
+    }
+
+    fn cursor_target(&self) -> Option<Point3> {
+        self.cursor_target
+    }
+}
+
+impl Operator for ExtrudeOperator {
+    fn dispatch(&mut self, event: &Event, ctx: &mut EventContext) -> bool {
+        match event {
+            // While awaiting a target, pick up a face/edge selection (made before or
+            // after the tool was activated) and start extruding.
+            Event::Update { .. } => {
+                if self.phase == ExtrudePhase::AwaitingSelection {
+                    if let Some(target) = Self::selected_target(ctx.selection) {
+                        self.begin(target);
+                    }
+                }
+                false
+            }
+            Event::CursorMoved { position } => {
+                if self.phase == ExtrudePhase::Extruding {
+                    self.update_length((position.0 as f32, position.1 as f32), ctx);
+                }
+                false
+            }
+            // Right-click finalizes (matching the Boolean/Line right-click convention).
+            Event::MouseClick { button: MouseButton::Right, .. } => {
+                if self.phase == ExtrudePhase::Extruding {
+                    if let Err(e) = self.apply() {
+                        log::error!("Extrude failed: {e}");
+                    } else {
+                        ctx.selection.clear();
+                    }
+                    return true;
+                }
+                false
+            }
+            Event::KeyboardInput { event: key_event, .. } => {
+                if key_event.state != ElementState::Pressed || key_event.repeat {
+                    return false;
+                }
+                match key_event.logical_key {
+                    Key::Named(NamedKey::Enter) if self.phase == ExtrudePhase::Extruding => {
+                        if let Err(e) = self.apply() {
+                            log::error!("Extrude failed: {e}");
+                        } else {
+                            ctx.selection.clear();
+                        }
+                        true
+                    }
+                    Key::Named(NamedKey::Escape) if self.phase == ExtrudePhase::Extruding => {
+                        self.cancel();
+                        true
+                    }
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
+    }
+
+    fn name(&self) -> &str {
+        "Extrude"
+    }
+}

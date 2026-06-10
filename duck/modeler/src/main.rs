@@ -1,6 +1,7 @@
 mod boolean;
 mod cursor;
 mod document;
+mod extrude;
 mod grid;
 mod operators;
 mod snap;
@@ -31,7 +32,9 @@ use duck_engine_viewer::selection::SelectionItem;
 
 use crate::boolean::BooleanKind;
 use crate::cursor::Cursor3d;
-use crate::operators::{BooleanOperator, ConstructionOptions, LineOperator, SphereOperator};
+use crate::operators::{
+    BooleanOperator, ConstructionOptions, ExtrudeOperator, LineOperator, SphereOperator,
+};
 use crate::tool::ModelingTool;
 
 use document::Document;
@@ -43,6 +46,7 @@ enum OperatorKind {
     Sphere,
     Line,
     Boolean,
+    Extrude,
 }
 
 /// Owns all rendering state: the 3D viewer plus egui context and GPU renderer.
@@ -66,6 +70,7 @@ struct ViewerState<'a> {
     sphere_op: Arc<Mutex<SphereOperator>>,
     line_op: Arc<Mutex<LineOperator>>,
     boolean_op: Arc<Mutex<BooleanOperator>>,
+    extrude_op: Arc<Mutex<ExtrudeOperator>>,
     active_operator: OperatorKind,
 }
 
@@ -99,7 +104,7 @@ impl ViewerState<'static> {
         let construction_options = Rc::new(RefCell::new(ConstructionOptions::new()));
         let document = Arc::new(Mutex::new(Document::new(viewer.scene())));
 
-        let sel_op = Arc::new(Mutex::new(SelectionOperator::with_mode(SelectionMode::Node)));
+        let sel_op = Arc::new(Mutex::new(SelectionOperator::with_mode(SelectionMode::SubGeometry)));
         viewer.dispatcher_mut().push_back(sel_op.clone());
         viewer.dispatcher_mut().push_back(Arc::new(Mutex::new(NavigationOperator::new())));
 
@@ -118,6 +123,11 @@ impl ViewerState<'static> {
             Arc::clone(&document),
         )));
 
+        let extrude_op = Arc::new(Mutex::new(ExtrudeOperator::new(
+            Rc::clone(&construction_options),
+            Arc::clone(&document),
+        )));
+
         Self {
             egui_renderer,
             egui_winit,
@@ -131,6 +141,7 @@ impl ViewerState<'static> {
             sphere_op,
             line_op,
             boolean_op,
+            extrude_op,
             active_operator: OperatorKind::Selection,
         }
     }
@@ -223,6 +234,13 @@ impl<'a> ViewerState<'a> {
             self.switch_tool(OperatorKind::Selection);
         }
 
+        // Cede back to selection once the extrude tool has committed or cancelled.
+        if self.active_operator == OperatorKind::Extrude
+            && self.extrude_op.lock().unwrap().is_finished()
+        {
+            self.switch_tool(OperatorKind::Selection);
+        }
+
         match self.viewer.render_scene() {
             Ok((output, view, mut encoder)) => {
                 self.render_egui_overlay(&full_output, &mut encoder, &view);
@@ -240,6 +258,7 @@ impl<'a> ViewerState<'a> {
         let target = match self.active_operator {
             OperatorKind::Sphere => self.sphere_op.lock().unwrap().cursor_target(),
             OperatorKind::Line => self.line_op.lock().unwrap().cursor_target(),
+            OperatorKind::Extrude => self.extrude_op.lock().unwrap().cursor_target(),
             _ => None,
         };
         let scene_arc = self.viewer.scene();
@@ -251,14 +270,25 @@ impl<'a> ViewerState<'a> {
         self.sphere_op.lock().unwrap().deactivate();
         self.line_op.lock().unwrap().deactivate();
         self.boolean_op.lock().unwrap().deactivate();
+        self.extrude_op.lock().unwrap().deactivate();
         self.viewer.dispatcher_mut().remove(&self.sphere_op);
         self.viewer.dispatcher_mut().remove(&self.line_op);
         self.viewer.dispatcher_mut().remove(&self.boolean_op);
+        self.viewer.dispatcher_mut().remove(&self.extrude_op);
+
+        // Select faces/edges by default; only the Boolean tool, which operates on
+        // whole parts, drops the always-on selection operator to node granularity.
+        self.sel_op.lock().unwrap().mode = match kind {
+            OperatorKind::Boolean => SelectionMode::Node,
+            _ => SelectionMode::SubGeometry,
+        };
+
         match kind {
             OperatorKind::Selection => { self.viewer.dispatcher_mut().move_to_front(&self.sel_op); }
             OperatorKind::Sphere    => { self.viewer.dispatcher_mut().push_front(self.sphere_op.clone()); }
             OperatorKind::Line      => { self.viewer.dispatcher_mut().push_front(self.line_op.clone()); }
             OperatorKind::Boolean   => { self.viewer.dispatcher_mut().push_front(self.boolean_op.clone()); }
+            OperatorKind::Extrude   => { self.viewer.dispatcher_mut().push_front(self.extrude_op.clone()); }
         }
         self.active_operator = kind;
     }
@@ -272,6 +302,8 @@ impl<'a> ViewerState<'a> {
             include_bytes!("../../../assets/svg/line-tool-svgrepo-com.svg");
         const BOOLEAN_SVG: &[u8] =
             include_bytes!("../../../assets/svg/boolean-and.svg");
+        const EXTRUDE_SVG: &[u8] =
+            include_bytes!("../../../assets/svg/expand-up-svgrepo-com.svg");
 
         egui::SidePanel::left("operator_palette")
             .resizable(false)
@@ -327,6 +359,19 @@ impl<'a> ViewerState<'a> {
                 );
                 if boolean_btn.clicked() && self.active_operator != OperatorKind::Boolean {
                     self.switch_tool(OperatorKind::Boolean);
+                }
+
+                ui.add_space(4.0);
+
+                let extrude_btn = ui.add(
+                    egui::Button::image(
+                        egui::Image::from_bytes("bytes://expand-up.svg", EXTRUDE_SVG)
+                            .fit_to_exact_size(egui::vec2(32.0, 32.0)),
+                    )
+                    .selected(self.active_operator == OperatorKind::Extrude),
+                );
+                if extrude_btn.clicked() && self.active_operator != OperatorKind::Extrude {
+                    self.switch_tool(OperatorKind::Extrude);
                 }
             });
     }

@@ -81,6 +81,11 @@ pub fn tessellate_occ_shape(
     // --- Edges ---
     // Edge vertices are appended after face vertices; absolute vertex indices are used
     // so the LineList primitive correctly references into the combined vertex buffer.
+    //
+    // One `edge_range` is emitted per `shape.edges()` entry, in iteration order —
+    // including a zero-length range for any degenerate edge that produces no segments.
+    // This keeps `edge_ranges` index-aligned 1:1 with `Shape::edges()` (mirroring how
+    // faces work), so an `edge_index` resolves back to its OCCT edge by plain position.
     let mut edge_indices: Vec<u32> = Vec::new();
     let mut edge_ranges: Vec<SubMeshRange> = Vec::new();
 
@@ -90,10 +95,6 @@ pub fn tessellate_occ_shape(
                 EdgeType::Line => vec![edge.start_point(), edge.end_point()],
                 _ => edge.approximation_segments().collect(),
             };
-
-            if points.len() < 2 {
-                continue;
-            }
 
             let seg_start = (edge_indices.len() / 2) as u32;
             let mut seg_count = 0u32;
@@ -112,9 +113,7 @@ pub fn tessellate_occ_shape(
                 seg_count += 1;
             }
 
-            if seg_count > 0 {
-                edge_ranges.push(SubMeshRange { start: seg_start, count: seg_count });
-            }
+            edge_ranges.push(SubMeshRange { start: seg_start, count: seg_count });
         }
     }
 

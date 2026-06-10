@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::{Context, Result};
 use duck_engine_scene::{Id, NodeId, Scene};
 use duck_engine_scene::cad::{CadTessellationOptions, tessellate_into};
-use opencascade::primitives::Shape;
+use opencascade::primitives::{Edge, Face, Shape};
 
 pub type PartId = Id;
 
@@ -83,5 +83,19 @@ impl Document {
 
     pub fn node_for_part(&self, part: PartId) -> Option<NodeId> {
         self.part_to_node.get(&part).copied()
+    }
+
+    /// Resolve a picked face — identified by its tessellation order (`face_index`,
+    /// as carried by `SelectionItem::Face`) — back to its OCCT [`Face`] sub-shape.
+    pub fn face_subshape(&self, node: NodeId, face_index: u32) -> Option<Face> {
+        let part = self.part_for_node(node).and_then(|id| self.get_part(id))?;
+        part.shape.faces().nth(face_index as usize)
+    }
+
+    /// Resolve a picked edge — identified by its tessellation order (`edge_index`,
+    /// as carried by `SelectionItem::Edge`) — back to its OCCT [`Edge`] sub-shape.
+    pub fn edge_subshape(&self, node: NodeId, edge_index: u32) -> Option<Edge> {
+        let part = self.part_for_node(node).and_then(|id| self.get_part(id))?;
+        part.shape.edges().nth(edge_index as usize)
     }
 }
