@@ -117,6 +117,30 @@ impl Ray {
         Some(SegmentApproach { t: ray_t, closest_on_segment, distance })
     }
 
+    /// Finds the signed parameter `t` such that `origin + t * dir.normalize()` is
+    /// the point on the infinite axis line closest to this ray.
+    ///
+    /// `t` is in world-space units and may be negative (the closest point lies
+    /// behind `origin` along `dir`). Useful for turning a cursor pick ray into an
+    /// extrusion length along a fixed axis.
+    ///
+    /// Returns `None` if the ray and the axis are (near-)parallel.
+    pub fn closest_param_on_axis(&self, origin: Point3, dir: Vector3) -> Option<f32> {
+        let v = dir.normalize();
+        let u = self.direction; // unit
+        let w0 = self.origin - origin;
+
+        let b = u.dot(v);
+        let denom = 1.0 - b * b; // a*c - b² with a = c = 1 (both unit)
+        if denom < EPSILON {
+            return None; // parallel: no unique closest point
+        }
+
+        let d = u.dot(w0);
+        let e = v.dot(w0);
+        Some((e - b * d) / denom)
+    }
+
     /// Finds the intersection of the ray with a plane.
     /// Returns `Some((t, point))` where `t` is the distance along the ray.
     /// Returns `None` if the ray is parallel to the plane or points away from it.
@@ -212,6 +236,36 @@ mod tests {
     fn test_ray_creation_normalizes_direction() {
         let ray = Ray::new(Point3::new(0.0, 0.0, 0.0), Vector3::new(3.0, 4.0, 0.0));
         assert!((ray.direction.magnitude() - 1.0).abs() < EPSILON);
+    }
+
+    #[test]
+    fn test_closest_param_on_axis_perpendicular() {
+        // Ray points straight down at x = 3; axis is the world X line through origin.
+        // The closest point on the axis is (3, 0, 0), i.e. t = 3.
+        let ray = Ray::new(Point3::new(3.0, 5.0, 0.0), Vector3::new(0.0, -1.0, 0.0));
+        let t = ray
+            .closest_param_on_axis(Point3::new(0.0, 0.0, 0.0), Vector3::new(1.0, 0.0, 0.0))
+            .expect("ray is perpendicular to axis");
+        assert!((t - 3.0).abs() < 1e-4, "expected t≈3, got {t}");
+    }
+
+    #[test]
+    fn test_closest_param_on_axis_is_signed_and_scale_independent() {
+        // Closest point is behind the axis origin → negative t; magnitude in world units
+        // regardless of the (non-unit) axis vector length.
+        let ray = Ray::new(Point3::new(-2.0, 4.0, 0.0), Vector3::new(0.0, -1.0, 0.0));
+        let t = ray
+            .closest_param_on_axis(Point3::new(0.0, 0.0, 0.0), Vector3::new(10.0, 0.0, 0.0))
+            .expect("ray is perpendicular to axis");
+        assert!((t - -2.0).abs() < 1e-4, "expected t≈-2, got {t}");
+    }
+
+    #[test]
+    fn test_closest_param_on_axis_parallel_is_none() {
+        let ray = Ray::new(Point3::new(0.0, 1.0, 0.0), Vector3::new(1.0, 0.0, 0.0));
+        assert!(ray
+            .closest_param_on_axis(Point3::new(0.0, 0.0, 0.0), Vector3::new(1.0, 0.0, 0.0))
+            .is_none());
     }
 
     #[test]
