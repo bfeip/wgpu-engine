@@ -17,7 +17,7 @@ use opencascade::primitives::Shape;
 
 use crate::document::Document;
 use crate::snap::SnapKind;
-use crate::tool::ModelingTool;
+use crate::tool::{ModelingTool, ToolInfo};
 use super::ConstructionOptions;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -183,6 +183,14 @@ impl SphereOperator {
 }
 
 impl ModelingTool for SphereOperator {
+    fn info(&self) -> ToolInfo {
+        ToolInfo {
+            id: "sphere",
+            icon_uri: "bytes://sphere.svg",
+            icon: include_bytes!("../../../../assets/svg/sphere-svgrepo-com.svg"),
+        }
+    }
+
     fn deactivate(&mut self) {
         self.cancel();
         // The modeler hides the cursor for the (now inactive) tool, but clear our

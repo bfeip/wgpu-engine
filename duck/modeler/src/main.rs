@@ -6,6 +6,7 @@ mod grid;
 mod operators;
 mod snap;
 mod tool;
+mod tool_manager;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -28,28 +29,14 @@ use duck_engine_viewer::common::{
 use duck_engine_viewer::scene::{
     Scene, NodeFlags, NodePayload, PositionedCamera,
 };
-use duck_engine_viewer::selection::SelectionItem;
 
-use crate::boolean::BooleanKind;
-use crate::cursor::Cursor3d;
 use crate::operators::{
     BooleanOperator, ConstructionOptions, CurveOperator, ExtrudeOperator, LineOperator,
     SphereOperator,
 };
-use crate::tool::ModelingTool;
+use crate::tool_manager::ToolManager;
 
 use document::Document;
-
-#[derive(Default, PartialEq, Eq)]
-enum OperatorKind {
-    #[default]
-    Selection,
-    Sphere,
-    Line,
-    Curve,
-    Boolean,
-    Extrude,
-}
 
 /// Owns all rendering state: the 3D viewer plus egui context and GPU renderer.
 ///
@@ -65,16 +52,7 @@ struct ViewerState<'a> {
 
     construction_options: Rc<RefCell<ConstructionOptions>>,
     document: Arc<Mutex<Document>>,
-    /// The modeler-owned 3D cursor, driven each frame from the active tool.
-    cursor: Cursor3d,
-
-    sel_op: Arc<Mutex<SelectionOperator>>,
-    sphere_op: Arc<Mutex<SphereOperator>>,
-    line_op: Arc<Mutex<LineOperator>>,
-    curve_op: Arc<Mutex<CurveOperator>>,
-    boolean_op: Arc<Mutex<BooleanOperator>>,
-    extrude_op: Arc<Mutex<ExtrudeOperator>>,
-    active_operator: OperatorKind,
+    tools: ToolManager,
 }
 
 impl ViewerState<'static> {
@@ -111,30 +89,13 @@ impl ViewerState<'static> {
         viewer.dispatcher_mut().push_back(sel_op.clone());
         viewer.dispatcher_mut().push_back(Arc::new(Mutex::new(NavigationOperator::new())));
 
-        let sphere_op = Arc::new(Mutex::new(SphereOperator::new(
-            Rc::clone(&construction_options),
-            Arc::clone(&document),
-        )));
-
-        let line_op = Arc::new(Mutex::new(LineOperator::new(
-            Rc::clone(&construction_options),
-            Arc::clone(&document),
-        )));
-
-        let curve_op = Arc::new(Mutex::new(CurveOperator::new(
-            Rc::clone(&construction_options),
-            Arc::clone(&document),
-        )));
-
-        let boolean_op = Arc::new(Mutex::new(BooleanOperator::new(
-            Rc::clone(&construction_options),
-            Arc::clone(&document),
-        )));
-
-        let extrude_op = Arc::new(Mutex::new(ExtrudeOperator::new(
-            Rc::clone(&construction_options),
-            Arc::clone(&document),
-        )));
+        let mut tools = ToolManager::new(sel_op);
+        tools.install(viewer.dispatcher_mut());
+        tools.register(SphereOperator::new(Rc::clone(&construction_options), Arc::clone(&document)));
+        tools.register(LineOperator::new(Rc::clone(&construction_options), Arc::clone(&document)));
+        tools.register(CurveOperator::new(Rc::clone(&construction_options), Arc::clone(&document)));
+        tools.register(BooleanOperator::new(Rc::clone(&construction_options), Arc::clone(&document)));
+        tools.register(ExtrudeOperator::new(Rc::clone(&construction_options), Arc::clone(&document)));
 
         Self {
             egui_renderer,
@@ -144,14 +105,7 @@ impl ViewerState<'static> {
             window,
             construction_options,
             document,
-            cursor: Cursor3d::default(),
-            sel_op,
-            sphere_op,
-            line_op,
-            curve_op,
-            boolean_op,
-            extrude_op,
-            active_operator: OperatorKind::Selection,
+            tools,
         }
     }
 
@@ -217,45 +171,18 @@ impl<'a> ViewerState<'a> {
 
     fn handle_redraw(&mut self) {
         self.viewer.update();
-        self.update_cursor();
 
         let raw_input = self.egui_winit.take_egui_input(&self.window);
         let egui_ctx = self.egui_ctx.clone();
         let full_output = egui_ctx.run(raw_input, |ctx| {
-            self.render_operator_palette(ctx);
-            if self.active_operator == OperatorKind::Boolean {
-                self.render_boolean_panel(ctx);
-            }
+            self.tools.palette_ui(ctx);
+            self.tools.panel_ui(ctx, self.viewer.selection_mut());
         });
         self.egui_winit.handle_platform_output(&self.window, full_output.platform_output.clone());
 
-        // Exit boolean mode if the operator has finished (via keyboard or panel buttons).
-        if self.active_operator == OperatorKind::Boolean
-            && self.boolean_op.lock().unwrap().is_finished()
-        {
-            self.switch_tool(OperatorKind::Selection);
-        }
-
-        // Cede back to selection once the line tool has committed a line.
-        if self.active_operator == OperatorKind::Line
-            && self.line_op.lock().unwrap().is_finished()
-        {
-            self.switch_tool(OperatorKind::Selection);
-        }
-
-        // Cede back to selection once the curve tool has committed a curve.
-        if self.active_operator == OperatorKind::Curve
-            && self.curve_op.lock().unwrap().is_finished()
-        {
-            self.switch_tool(OperatorKind::Selection);
-        }
-
-        // Cede back to selection once the extrude tool has committed or cancelled.
-        if self.active_operator == OperatorKind::Extrude
-            && self.extrude_op.lock().unwrap().is_finished()
-        {
-            self.switch_tool(OperatorKind::Selection);
-        }
+        // After egui so a panel-driven finish (e.g. boolean Apply) cedes back
+        // to selection in the same frame.
+        self.tools.update(&self.viewer.scene());
 
         match self.viewer.render_scene() {
             Ok((output, view, mut encoder)) => {
@@ -266,246 +193,6 @@ impl<'a> ViewerState<'a> {
         }
 
         self.window.request_redraw();
-    }
-
-    /// Updates the modeler's 3D cursor from the active tool's reported target.
-    /// Runs every frame so the marker also rescales as the camera moves.
-    fn update_cursor(&mut self) {
-        let target = match self.active_operator {
-            OperatorKind::Sphere => self.sphere_op.lock().unwrap().cursor_target(),
-            OperatorKind::Line => self.line_op.lock().unwrap().cursor_target(),
-            OperatorKind::Curve => self.curve_op.lock().unwrap().cursor_target(),
-            OperatorKind::Extrude => self.extrude_op.lock().unwrap().cursor_target(),
-            _ => None,
-        };
-        let scene_arc = self.viewer.scene();
-        let mut scene = scene_arc.lock().unwrap();
-        self.cursor.update(target, &mut scene);
-    }
-
-    fn switch_tool(&mut self, kind: OperatorKind) {
-        self.sphere_op.lock().unwrap().deactivate();
-        self.line_op.lock().unwrap().deactivate();
-        self.curve_op.lock().unwrap().deactivate();
-        self.boolean_op.lock().unwrap().deactivate();
-        self.extrude_op.lock().unwrap().deactivate();
-        self.viewer.dispatcher_mut().remove(&self.sphere_op);
-        self.viewer.dispatcher_mut().remove(&self.line_op);
-        self.viewer.dispatcher_mut().remove(&self.curve_op);
-        self.viewer.dispatcher_mut().remove(&self.boolean_op);
-        self.viewer.dispatcher_mut().remove(&self.extrude_op);
-
-        // Select faces/edges by default; only the Boolean tool, which operates on
-        // whole parts, drops the always-on selection operator to node granularity.
-        self.sel_op.lock().unwrap().mode = match kind {
-            OperatorKind::Boolean => SelectionMode::Node,
-            _ => SelectionMode::SubGeometry,
-        };
-
-        match kind {
-            OperatorKind::Selection => { self.viewer.dispatcher_mut().move_to_front(&self.sel_op); }
-            OperatorKind::Sphere    => { self.viewer.dispatcher_mut().push_front(self.sphere_op.clone()); }
-            OperatorKind::Line      => { self.viewer.dispatcher_mut().push_front(self.line_op.clone()); }
-            OperatorKind::Curve     => { self.viewer.dispatcher_mut().push_front(self.curve_op.clone()); }
-            OperatorKind::Boolean   => { self.viewer.dispatcher_mut().push_front(self.boolean_op.clone()); }
-            OperatorKind::Extrude   => { self.viewer.dispatcher_mut().push_front(self.extrude_op.clone()); }
-        }
-        self.active_operator = kind;
-    }
-
-    fn render_operator_palette(&mut self, ctx: &egui::Context) {
-        const CURSOR_SVG: &[u8] =
-            include_bytes!("../../../assets/svg/cursor-svgrepo-com.svg");
-        const SPHERE_SVG: &[u8] =
-            include_bytes!("../../../assets/svg/sphere-svgrepo-com.svg");
-        const LINE_SVG: &[u8] =
-            include_bytes!("../../../assets/svg/line-tool-svgrepo-com.svg");
-        const CURVE_SVG: &[u8] =
-            include_bytes!("../../../assets/svg/spline-svgrepo-com.svg");
-        const BOOLEAN_SVG: &[u8] =
-            include_bytes!("../../../assets/svg/boolean-and.svg");
-        const EXTRUDE_SVG: &[u8] =
-            include_bytes!("../../../assets/svg/expand-up-svgrepo-com.svg");
-
-        egui::SidePanel::left("operator_palette")
-            .resizable(false)
-            .exact_width(56.0)
-            .show(ctx, |ui| {
-                ui.add_space(8.0);
-
-                let sel_btn = ui.add(
-                    egui::Button::image(
-                        egui::Image::from_bytes("bytes://cursor.svg", CURSOR_SVG)
-                            .fit_to_exact_size(egui::vec2(32.0, 32.0)),
-                    )
-                    .selected(self.active_operator == OperatorKind::Selection),
-                );
-                if sel_btn.clicked() {
-                    self.switch_tool(OperatorKind::Selection);
-                }
-
-                ui.add_space(4.0);
-
-                let sphere_btn = ui.add(
-                    egui::Button::image(
-                        egui::Image::from_bytes("bytes://sphere.svg", SPHERE_SVG)
-                            .fit_to_exact_size(egui::vec2(32.0, 32.0)),
-                    )
-                    .selected(self.active_operator == OperatorKind::Sphere),
-                );
-                if sphere_btn.clicked() {
-                    self.switch_tool(OperatorKind::Sphere);
-                }
-
-                ui.add_space(4.0);
-
-                let line_btn = ui.add(
-                    egui::Button::image(
-                        egui::Image::from_bytes("bytes://line.svg", LINE_SVG)
-                            .fit_to_exact_size(egui::vec2(32.0, 32.0)),
-                    )
-                    .selected(self.active_operator == OperatorKind::Line),
-                );
-                if line_btn.clicked() {
-                    self.switch_tool(OperatorKind::Line);
-                }
-
-                ui.add_space(4.0);
-
-                let curve_btn = ui.add(
-                    egui::Button::image(
-                        egui::Image::from_bytes("bytes://spline.svg", CURVE_SVG)
-                            .fit_to_exact_size(egui::vec2(32.0, 32.0)),
-                    )
-                    .selected(self.active_operator == OperatorKind::Curve),
-                );
-                if curve_btn.clicked() {
-                    self.switch_tool(OperatorKind::Curve);
-                }
-
-                ui.add_space(4.0);
-
-                let boolean_btn = ui.add(
-                    egui::Button::image(
-                        egui::Image::from_bytes("bytes://boolean-and.svg", BOOLEAN_SVG)
-                            .fit_to_exact_size(egui::vec2(32.0, 32.0)),
-                    )
-                    .selected(self.active_operator == OperatorKind::Boolean),
-                );
-                if boolean_btn.clicked() && self.active_operator != OperatorKind::Boolean {
-                    self.switch_tool(OperatorKind::Boolean);
-                }
-
-                ui.add_space(4.0);
-
-                let extrude_btn = ui.add(
-                    egui::Button::image(
-                        egui::Image::from_bytes("bytes://expand-up.svg", EXTRUDE_SVG)
-                            .fit_to_exact_size(egui::vec2(32.0, 32.0)),
-                    )
-                    .selected(self.active_operator == OperatorKind::Extrude),
-                );
-                if extrude_btn.clicked() && self.active_operator != OperatorKind::Extrude {
-                    self.switch_tool(OperatorKind::Extrude);
-                }
-            });
-    }
-
-    fn render_boolean_panel(&mut self, ctx: &egui::Context) {
-        // Collect deselections and action requests; apply them after the egui closure
-        // to avoid holding borrows across mutable viewer calls.
-        let mut deselect: Vec<SelectionItem> = Vec::new();
-        let mut apply_clicked = false;
-        let mut cancel_clicked = false;
-
-        egui::Window::new("Boolean Operation")
-            .anchor(egui::Align2::RIGHT_TOP, [-8.0, 8.0])
-            .resizable(false)
-            .collapsible(false)
-            .show(ctx, |ui| {
-                // --- Operation type ---
-                ui.label("Operation");
-                ui.horizontal(|ui| {
-                    let mut op = self.boolean_op.lock().unwrap();
-                    ui.selectable_value(&mut op.kind, BooleanKind::Subtract, "Subtract");
-                    ui.selectable_value(&mut op.kind, BooleanKind::Union, "Union");
-                    ui.selectable_value(&mut op.kind, BooleanKind::Intersect, "Intersect");
-                });
-
-                ui.separator();
-
-                // --- Target (primary selection) ---
-                ui.label("Target");
-                let primary = self.viewer.selection().primary();
-                let target_node = primary.and_then(|item| match item {
-                    SelectionItem::Node(id) => Some(id),
-                    _ => None,
-                });
-                let doc = self.document.lock().unwrap();
-                let target_name = target_node
-                    .and_then(|n| doc.part_for_node(n))
-                    .and_then(|p| doc.get_part(p).map(|part| part.name.clone()))
-                    .unwrap_or_else(|| "(none — click a part)".to_owned());
-                drop(doc);
-                ui.label(&target_name);
-
-                ui.separator();
-
-                // --- Tool parts (all non-primary selections) ---
-                ui.label("Tools");
-                let tool_items: Vec<SelectionItem> = self.viewer.selection().iter()
-                    .filter(|&&item| Some(item) != primary)
-                    .copied()
-                    .collect();
-                if tool_items.is_empty() {
-                    ui.label("(shift-click parts to add tools)");
-                } else {
-                    let doc = self.document.lock().unwrap();
-                    for &item in &tool_items {
-                        let node_id = match item { SelectionItem::Node(id) => Some(id), _ => None };
-                        let name = node_id
-                            .and_then(|n| doc.part_for_node(n))
-                            .and_then(|p| doc.get_part(p).map(|part| part.name.clone()))
-                            .unwrap_or_else(|| "Unknown".to_owned());
-                        ui.horizontal(|ui| {
-                            ui.label(&name);
-                            if ui.small_button("×").clicked() {
-                                deselect.push(item);
-                            }
-                        });
-                    }
-                }
-
-                ui.separator();
-
-                // --- Action buttons ---
-                ui.horizontal(|ui| {
-                    if ui.button("Cancel").clicked() {
-                        cancel_clicked = true;
-                    }
-                    if ui.button("Apply  ⏎").clicked() {
-                        apply_clicked = true;
-                    }
-                });
-            });
-
-        // Apply × deselections outside the closure.
-        for item in deselect {
-            self.viewer.selection_mut().remove(&item);
-        }
-
-        // Dispatch panel Apply / Cancel through the operator so all cleanup is co-located.
-        if apply_clicked {
-            let mut op = self.boolean_op.lock().unwrap();
-            if let Err(e) = op.apply() {
-                log::error!("Boolean failed: {e}");
-            } else {
-                drop(op);
-                self.viewer.selection_mut().clear();
-            }
-        } else if cancel_clicked {
-            self.boolean_op.lock().unwrap().cancel();
-        }
     }
 
     fn render_egui_overlay(

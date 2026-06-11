@@ -7,13 +7,13 @@ use duck_engine_scene::Visibility;
 use duck_engine_viewer::{
     event::{Event, EventContext},
     input::{ElementState, Key, NamedKey},
-    operator::Operator,
+    operator::{Operator, SelectionMode},
     selection::{SelectionItem, SelectionManager},
 };
 
 use crate::boolean::{execute_boolean, preview_boolean, BooleanKind};
 use crate::document::Document;
-use crate::tool::ModelingTool;
+use crate::tool::{ModelingTool, PanelContext, ToolInfo};
 use super::ConstructionOptions;
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -60,7 +60,7 @@ impl BooleanOperator {
     /// Execute the boolean operation and clean up preview state.
     /// On success sets phase = Done; on failure stays in Configuring so the user can retry.
     /// Call `selection.clear()` yourself on success.
-    pub fn apply(&mut self) -> anyhow::Result<()> {
+    fn apply(&mut self) -> anyhow::Result<()> {
         let Some(target) = self.preview_target else {
             return Ok(());
         };
@@ -81,6 +81,16 @@ impl BooleanOperator {
         self.preview_tools.clear();
         self.phase = BooleanPhase::Done;
         Ok(())
+    }
+
+    /// Apply and, on success, clear the selection. Shared by the Enter key
+    /// handler and the panel's Apply button.
+    pub fn apply_and_clear(&mut self, selection: &mut SelectionManager) {
+        if let Err(e) = self.apply() {
+            log::error!("Boolean failed: {e}");
+        } else {
+            selection.clear();
+        }
     }
 
     /// Abort the operation, restoring the visibility of all hidden original parts.
@@ -154,9 +164,111 @@ impl BooleanOperator {
             Err(e) => log::warn!("Boolean preview failed: {e}"),
         }
     }
+
+    /// The boolean configuration window (operation kind, target/tool parts,
+    /// Apply/Cancel). Part names are snapshotted under the document lock before
+    /// rendering so the egui closure holds no locks.
+    fn render_panel(&mut self, ctx: &egui::Context, panel: &mut PanelContext) {
+        let mut apply_clicked = false;
+        let mut cancel_clicked = false;
+
+        let primary = panel.selection.primary();
+        let target_node = primary.and_then(|item| match item {
+            SelectionItem::Node(id) => Some(id),
+            _ => None,
+        });
+        let tool_items: Vec<SelectionItem> = panel.selection.iter()
+            .filter(|&&item| Some(item) != primary)
+            .copied()
+            .collect();
+
+        let (target_name, tool_entries) = {
+            let doc = self.document.lock().unwrap();
+            let name_for = |node: NodeId| {
+                doc.part_for_node(node)
+                    .and_then(|p| doc.get_part(p).map(|part| part.name.clone()))
+            };
+            let target_name = target_node
+                .and_then(name_for)
+                .unwrap_or_else(|| "(none — click a part)".to_owned());
+            let tool_entries: Vec<(SelectionItem, String)> = tool_items
+                .into_iter()
+                .map(|item| {
+                    let name = match item {
+                        SelectionItem::Node(id) => name_for(id),
+                        _ => None,
+                    }
+                    .unwrap_or_else(|| "Unknown".to_owned());
+                    (item, name)
+                })
+                .collect();
+            (target_name, tool_entries)
+        };
+
+        egui::Window::new("Boolean Operation")
+            .anchor(egui::Align2::RIGHT_TOP, [-8.0, 8.0])
+            .resizable(false)
+            .collapsible(false)
+            .show(ctx, |ui| {
+                ui.label("Operation");
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut self.kind, BooleanKind::Subtract, "Subtract");
+                    ui.selectable_value(&mut self.kind, BooleanKind::Union, "Union");
+                    ui.selectable_value(&mut self.kind, BooleanKind::Intersect, "Intersect");
+                });
+
+                ui.separator();
+
+                ui.label("Target");
+                ui.label(&target_name);
+
+                ui.separator();
+
+                ui.label("Tools");
+                if tool_entries.is_empty() {
+                    ui.label("(shift-click parts to add tools)");
+                } else {
+                    for (item, name) in &tool_entries {
+                        ui.horizontal(|ui| {
+                            ui.label(name);
+                            if ui.small_button("×").clicked() {
+                                panel.selection.remove(item);
+                            }
+                        });
+                    }
+                }
+
+                ui.separator();
+
+                ui.horizontal(|ui| {
+                    if ui.button("Cancel").clicked() {
+                        cancel_clicked = true;
+                    }
+                    if ui.button("Apply  ⏎").clicked() {
+                        apply_clicked = true;
+                    }
+                });
+            });
+
+        // Act after the window closure so we don't call &mut self methods
+        // while it still borrows self.
+        if apply_clicked {
+            self.apply_and_clear(panel.selection);
+        } else if cancel_clicked {
+            self.cancel();
+        }
+    }
 }
 
 impl ModelingTool for BooleanOperator {
+    fn info(&self) -> ToolInfo {
+        ToolInfo {
+            id: "boolean",
+            icon_uri: "bytes://boolean-and.svg",
+            icon: include_bytes!("../../../../assets/svg/boolean-and.svg"),
+        }
+    }
+
     fn deactivate(&mut self) {
         self.cancel();
         self.phase = BooleanPhase::Configuring;
@@ -164,6 +276,16 @@ impl ModelingTool for BooleanOperator {
 
     fn is_finished(&self) -> bool {
         matches!(self.phase, BooleanPhase::Done | BooleanPhase::Cancelled)
+    }
+
+    // Boolean operates on whole parts, so drop the always-on selection
+    // operator to node granularity while active.
+    fn selection_mode(&self) -> SelectionMode {
+        SelectionMode::Node
+    }
+
+    fn panel_ui(&mut self, ctx: &egui::Context, panel: &mut PanelContext) {
+        self.render_panel(ctx, panel);
     }
 }
 
@@ -186,11 +308,7 @@ impl Operator for BooleanOperator {
                 }
                 match key_event.logical_key {
                     Key::Named(NamedKey::Enter) => {
-                        if let Err(e) = self.apply() {
-                            log::error!("Boolean failed: {e}");
-                        } else {
-                            ctx.selection.clear();
-                        }
+                        self.apply_and_clear(ctx.selection);
                         true
                     }
                     Key::Named(NamedKey::Escape) => {

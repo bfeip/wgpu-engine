@@ -18,7 +18,7 @@ use opencascade::primitives::{Edge, Shape, Wire};
 
 use crate::document::Document;
 use crate::snap::{Snap, SnapKind, SnapProvider, WireStartSnap};
-use crate::tool::ModelingTool;
+use crate::tool::{ModelingTool, ToolInfo};
 use super::ConstructionOptions;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -321,6 +321,14 @@ impl CurveOperator {
 }
 
 impl ModelingTool for CurveOperator {
+    fn info(&self) -> ToolInfo {
+        ToolInfo {
+            id: "curve",
+            icon_uri: "bytes://spline.svg",
+            icon: include_bytes!("../../../../assets/svg/spline-svgrepo-com.svg"),
+        }
+    }
+
     fn deactivate(&mut self) {
         self.cancel();
         self.cursor_target = None;

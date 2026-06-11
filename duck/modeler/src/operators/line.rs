@@ -18,7 +18,7 @@ use opencascade::primitives::{Edge, Shape, Wire};
 
 use crate::document::Document;
 use crate::snap::{Snap, SnapKind, SnapProvider, WireStartSnap};
-use crate::tool::ModelingTool;
+use crate::tool::{ModelingTool, ToolInfo};
 use super::ConstructionOptions;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -317,6 +317,14 @@ impl LineOperator {
 }
 
 impl ModelingTool for LineOperator {
+    fn info(&self) -> ToolInfo {
+        ToolInfo {
+            id: "line",
+            icon_uri: "bytes://line.svg",
+            icon: include_bytes!("../../../../assets/svg/line-tool-svgrepo-com.svg"),
+        }
+    }
+
     fn deactivate(&mut self) {
         self.cancel();
         self.cursor_target = None;

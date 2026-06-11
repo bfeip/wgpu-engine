@@ -13,7 +13,7 @@ use duck_engine_viewer::{
 
 use crate::document::Document;
 use crate::extrude::{execute_extrude, preview_extrude, ExtrudeFrame, ExtrudeTarget};
-use crate::tool::ModelingTool;
+use crate::tool::{ModelingTool, ToolInfo};
 use super::ConstructionOptions;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -190,6 +190,14 @@ impl ExtrudeOperator {
 }
 
 impl ModelingTool for ExtrudeOperator {
+    fn info(&self) -> ToolInfo {
+        ToolInfo {
+            id: "extrude",
+            icon_uri: "bytes://expand-up.svg",
+            icon: include_bytes!("../../../../assets/svg/expand-up-svgrepo-com.svg"),
+        }
+    }
+
     fn deactivate(&mut self) {
         self.cancel();
         self.phase = ExtrudePhase::AwaitingSelection;
