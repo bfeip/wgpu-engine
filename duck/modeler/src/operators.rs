@@ -1,9 +1,11 @@
 mod boolean;
+mod curve;
 mod extrude;
 mod line;
 mod sphere;
 
 pub use boolean::BooleanOperator;
+pub use curve::CurveOperator;
 pub use extrude::ExtrudeOperator;
 pub use line::LineOperator;
 pub use sphere::SphereOperator;

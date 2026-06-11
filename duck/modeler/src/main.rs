@@ -33,7 +33,8 @@ use duck_engine_viewer::selection::SelectionItem;
 use crate::boolean::BooleanKind;
 use crate::cursor::Cursor3d;
 use crate::operators::{
-    BooleanOperator, ConstructionOptions, ExtrudeOperator, LineOperator, SphereOperator,
+    BooleanOperator, ConstructionOptions, CurveOperator, ExtrudeOperator, LineOperator,
+    SphereOperator,
 };
 use crate::tool::ModelingTool;
 
@@ -45,6 +46,7 @@ enum OperatorKind {
     Selection,
     Sphere,
     Line,
+    Curve,
     Boolean,
     Extrude,
 }
@@ -69,6 +71,7 @@ struct ViewerState<'a> {
     sel_op: Arc<Mutex<SelectionOperator>>,
     sphere_op: Arc<Mutex<SphereOperator>>,
     line_op: Arc<Mutex<LineOperator>>,
+    curve_op: Arc<Mutex<CurveOperator>>,
     boolean_op: Arc<Mutex<BooleanOperator>>,
     extrude_op: Arc<Mutex<ExtrudeOperator>>,
     active_operator: OperatorKind,
@@ -118,6 +121,11 @@ impl ViewerState<'static> {
             Arc::clone(&document),
         )));
 
+        let curve_op = Arc::new(Mutex::new(CurveOperator::new(
+            Rc::clone(&construction_options),
+            Arc::clone(&document),
+        )));
+
         let boolean_op = Arc::new(Mutex::new(BooleanOperator::new(
             Rc::clone(&construction_options),
             Arc::clone(&document),
@@ -140,6 +148,7 @@ impl ViewerState<'static> {
             sel_op,
             sphere_op,
             line_op,
+            curve_op,
             boolean_op,
             extrude_op,
             active_operator: OperatorKind::Selection,
@@ -234,6 +243,13 @@ impl<'a> ViewerState<'a> {
             self.switch_tool(OperatorKind::Selection);
         }
 
+        // Cede back to selection once the curve tool has committed a curve.
+        if self.active_operator == OperatorKind::Curve
+            && self.curve_op.lock().unwrap().is_finished()
+        {
+            self.switch_tool(OperatorKind::Selection);
+        }
+
         // Cede back to selection once the extrude tool has committed or cancelled.
         if self.active_operator == OperatorKind::Extrude
             && self.extrude_op.lock().unwrap().is_finished()
@@ -258,6 +274,7 @@ impl<'a> ViewerState<'a> {
         let target = match self.active_operator {
             OperatorKind::Sphere => self.sphere_op.lock().unwrap().cursor_target(),
             OperatorKind::Line => self.line_op.lock().unwrap().cursor_target(),
+            OperatorKind::Curve => self.curve_op.lock().unwrap().cursor_target(),
             OperatorKind::Extrude => self.extrude_op.lock().unwrap().cursor_target(),
             _ => None,
         };
@@ -269,10 +286,12 @@ impl<'a> ViewerState<'a> {
     fn switch_tool(&mut self, kind: OperatorKind) {
         self.sphere_op.lock().unwrap().deactivate();
         self.line_op.lock().unwrap().deactivate();
+        self.curve_op.lock().unwrap().deactivate();
         self.boolean_op.lock().unwrap().deactivate();
         self.extrude_op.lock().unwrap().deactivate();
         self.viewer.dispatcher_mut().remove(&self.sphere_op);
         self.viewer.dispatcher_mut().remove(&self.line_op);
+        self.viewer.dispatcher_mut().remove(&self.curve_op);
         self.viewer.dispatcher_mut().remove(&self.boolean_op);
         self.viewer.dispatcher_mut().remove(&self.extrude_op);
 
@@ -287,6 +306,7 @@ impl<'a> ViewerState<'a> {
             OperatorKind::Selection => { self.viewer.dispatcher_mut().move_to_front(&self.sel_op); }
             OperatorKind::Sphere    => { self.viewer.dispatcher_mut().push_front(self.sphere_op.clone()); }
             OperatorKind::Line      => { self.viewer.dispatcher_mut().push_front(self.line_op.clone()); }
+            OperatorKind::Curve     => { self.viewer.dispatcher_mut().push_front(self.curve_op.clone()); }
             OperatorKind::Boolean   => { self.viewer.dispatcher_mut().push_front(self.boolean_op.clone()); }
             OperatorKind::Extrude   => { self.viewer.dispatcher_mut().push_front(self.extrude_op.clone()); }
         }
@@ -300,6 +320,8 @@ impl<'a> ViewerState<'a> {
             include_bytes!("../../../assets/svg/sphere-svgrepo-com.svg");
         const LINE_SVG: &[u8] =
             include_bytes!("../../../assets/svg/line-tool-svgrepo-com.svg");
+        const CURVE_SVG: &[u8] =
+            include_bytes!("../../../assets/svg/spline-svgrepo-com.svg");
         const BOOLEAN_SVG: &[u8] =
             include_bytes!("../../../assets/svg/boolean-and.svg");
         const EXTRUDE_SVG: &[u8] =
@@ -346,6 +368,19 @@ impl<'a> ViewerState<'a> {
                 );
                 if line_btn.clicked() {
                     self.switch_tool(OperatorKind::Line);
+                }
+
+                ui.add_space(4.0);
+
+                let curve_btn = ui.add(
+                    egui::Button::image(
+                        egui::Image::from_bytes("bytes://spline.svg", CURVE_SVG)
+                            .fit_to_exact_size(egui::vec2(32.0, 32.0)),
+                    )
+                    .selected(self.active_operator == OperatorKind::Curve),
+                );
+                if curve_btn.clicked() {
+                    self.switch_tool(OperatorKind::Curve);
                 }
 
                 ui.add_space(4.0);
