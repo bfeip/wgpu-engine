@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-
+use crate::render_core::PipelineCache;
 use crate::scene::{AlphaMode, MaterialProperties, PrimitiveType};
 use crate::shaders::ShaderGenerator;
 
@@ -15,7 +14,7 @@ use super::gpu_resources::{
 /// Technique-specific pipelines with a fixed configuration (outline, silhouette,
 /// hidden-line solid) are owned directly by their respective passes.
 pub struct MaterialPipelineCache {
-    cache: HashMap<PipelineCacheKey, wgpu::RenderPipeline>,
+    cache: PipelineCache<PipelineCacheKey>,
     pipelines: MaterialPipelineLayouts,
     shader_generator: ShaderGenerator,
     sample_count: u32,
@@ -30,7 +29,7 @@ impl MaterialPipelineCache {
         surface_format: wgpu::TextureFormat,
     ) -> Self {
         Self {
-            cache: HashMap::new(),
+            cache: PipelineCache::new(),
             pipelines,
             shader_generator,
             sample_count,
@@ -48,7 +47,7 @@ impl MaterialPipelineCache {
     /// are recreated with the new parameters on the next frame.
     #[allow(dead_code)]
     pub(super) fn invalidate(&mut self) {
-        self.cache.clear();
+        self.cache.invalidate();
     }
 
     pub(super) fn get_or_create(
@@ -60,7 +59,7 @@ impl MaterialPipelineCache {
         let scene_props = cache_key.scene_props.clone();
         let primitive_type = cache_key.primitive_type;
         let depth_prepass = cache_key.depth_prepass;
-        self.cache.entry(cache_key).or_insert_with(|| {
+        self.cache.get_or_create(cache_key, || {
             // Select pipeline layout based on material type and scene properties
             let use_ibl = scene_props.has_ibl && material_props.has_lighting;
             let pipeline_layout = if use_ibl {

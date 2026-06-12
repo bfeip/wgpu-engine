@@ -4,6 +4,7 @@ use anyhow::Result;
 use image::{imageops::FilterType, GenericImageView};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
+use crate::render_core::GpuTexture;
 use crate::renderer::batching::InstanceTransform;
 use crate::scene::{
     GenericId, Mesh, MeshId, MeshIndex, PrimitiveType, Texture, TextureId,
@@ -23,13 +24,6 @@ pub(crate) struct MeshGpuResources {
 pub(crate) struct MeshGpuState {
     pub resources: MeshGpuResources,
     pub synced_generation: u64,
-}
-
-/// GPU resources for a texture.
-pub(crate) struct GpuTexture {
-    pub _texture: wgpu::Texture,
-    pub view: wgpu::TextureView,
-    pub sampler: wgpu::Sampler,
 }
 
 /// GPU state for a texture, including resources and sync tracking.
@@ -425,7 +419,7 @@ fn create_texture_gpu_resources(
     });
 
     Ok(GpuTexture {
-        _texture: wgpu_texture,
+        texture: wgpu_texture,
         view,
         sampler,
     })

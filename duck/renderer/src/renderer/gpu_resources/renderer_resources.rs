@@ -1,9 +1,9 @@
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
 use crate::ibl::ibl_bind_group_layout;
+use crate::render_core::GpuTexture;
 use crate::scene::{MaterialProperties, PrimitiveType, SceneProperties};
 
-use super::state::GpuTexture;
 use super::uniforms::{CameraUniform, LightsArrayUniform};
 
 /// GPU instance data for one camera: a uniform buffer plus its bind group.
@@ -259,7 +259,7 @@ impl RendererTextures {
         config: &wgpu::SurfaceConfiguration,
         sample_count: u32,
     ) -> RendererTextures {
-        let depth = GpuTexture::depth(device, config, sample_count, "depth_texture");
+        let depth = GpuTexture::depth(device, config.width, config.height, sample_count, "depth_texture");
         let white = GpuTexture::solid_color(
             device,
             queue,
@@ -273,7 +273,10 @@ impl RendererTextures {
             "default_normal_texture",
         );
         let msaa_color_attachment = if sample_count > 1 {
-            Some(GpuTexture::color_attachment(device, config, sample_count, "msaa_color_attachment"))
+            Some(GpuTexture::color_attachment(
+                device, config.width, config.height, config.format, sample_count,
+                "msaa_color_attachment",
+            ))
         } else {
             None
         };
@@ -293,63 +296,6 @@ impl RendererTextures {
         match &self.msaa_color_attachment {
             Some(msaa) => (&msaa.view, Some(target)),
             None => (target, None),
-        }
-    }
-}
-
-/// Cached GPU resources for headless rendering, reused across frames at the same size.
-pub(crate) struct HeadlessResources {
-    pub texture: wgpu::Texture,
-    pub view: wgpu::TextureView,
-    pub staging_buffer: wgpu::Buffer,
-    pub padded_bytes_per_row: u32,
-    pub size: (u32, u32),
-}
-
-impl HeadlessResources {
-    pub fn new(
-        device: &wgpu::Device,
-        width: u32,
-        height: u32,
-        surface_format: wgpu::TextureFormat,
-    ) -> Self {
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Headless Render Target"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: surface_format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        // wgpu requires buffer copy rows to be aligned to COPY_BYTES_PER_ROW_ALIGNMENT (256).
-        // We pad each row to meet this alignment, then strip the padding when reading back.
-        let bytes_per_pixel = 4u32; // RGBA8
-        let unpadded_bytes_per_row = width * bytes_per_pixel;
-        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        let padded_bytes_per_row = unpadded_bytes_per_row.div_ceil(align) * align;
-        let buffer_size = (padded_bytes_per_row * height) as u64;
-
-        let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Headless Staging Buffer"),
-            size: buffer_size,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-
-        Self {
-            texture,
-            view,
-            staging_buffer,
-            padded_bytes_per_row,
-            size: (width, height),
         }
     }
 }

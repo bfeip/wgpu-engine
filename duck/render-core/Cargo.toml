@@ -1,0 +1,15 @@
+[package]
+name = "duck-engine-render-core"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "duck_engine_render_core"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow = "1.0"
+bytemuck = { version = "1.16", features = ["derive"] }
+log = "0.4"
+wesl = "0.3.2"
+wgpu = "27.0"

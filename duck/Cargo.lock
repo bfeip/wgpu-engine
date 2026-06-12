@@ -1100,18 +1100,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "duck-engine-render-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytemuck",
+ "log",
+ "wesl",
+ "wgpu",
+]
+
+[[package]]
 name = "duck-engine-renderer"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "bytemuck",
  "duck-engine-common",
+ "duck-engine-render-core",
  "duck-engine-scene",
  "half",
  "image",
  "log",
  "pollster 0.3.0",
- "wesl",
  "wgpu",
 ]
 

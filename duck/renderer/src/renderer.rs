@@ -19,6 +19,7 @@ use anyhow::Result;
 use crate::{
     highlight_query::HighlightQuery,
     ibl::IblResources,
+    render_core::ReadbackTarget,
     rgba_to_wgpu_color,
     scene::{
         PositionedCamera,
@@ -31,7 +32,7 @@ use crate::{
 
 use gpu_resources::{
     BindGroupLayouts, CameraResources, CameraUniform, GpuResourceManager, GpuTexture,
-    HeadlessResources, LightResources, MaterialPipelineLayouts, RendererTextures,
+    LightResources, MaterialPipelineLayouts, RendererTextures,
 };
 
 pub struct Renderer {
@@ -62,7 +63,7 @@ pub struct Renderer {
     sample_count: u32,
 
     /// Cached GPU resources for headless rendering, reused across frames at the same size.
-    headless_resources: Option<HeadlessResources>,
+    headless_resources: Option<ReadbackTarget>,
 
     /// Active rendering workflow executed each frame.
     workflow: Box<dyn RenderWorkflow>,
@@ -318,10 +319,13 @@ impl Renderer {
             self.config.height = height;
 
             self.renderer_textures.depth =
-                GpuTexture::depth(&self.device, &self.config, self.sample_count, "depth_texture");
+                GpuTexture::depth(&self.device, width, height, self.sample_count, "depth_texture");
 
             self.renderer_textures.msaa_color_attachment = if self.sample_count > 1 {
-                Some(GpuTexture::color_attachment(&self.device, &self.config, self.sample_count, "msaa_color_attachment"))
+                Some(GpuTexture::color_attachment(
+                    &self.device, width, height, self.config.format, self.sample_count,
+                    "msaa_color_attachment",
+                ))
             } else {
                 None
             };
@@ -351,17 +355,15 @@ impl Renderer {
         if self
             .headless_resources
             .as_ref()
-            .is_none_or(|r| r.size != (width, height))
+            .is_none_or(|r| r.size() != (width, height))
         {
-            self.headless_resources = Some(HeadlessResources::new(
+            self.headless_resources = Some(ReadbackTarget::new(
                 &self.device,
                 width,
                 height,
                 self.surface_format,
             ));
         }
-
-        let padded_bytes_per_row = self.headless_resources.as_ref().unwrap().padded_bytes_per_row;
 
         // Prepare and render — temporarily take resources out of self to avoid
         // borrow conflict with render_scene_to_view(&mut self)
@@ -371,58 +373,15 @@ impl Renderer {
                 label: Some("Headless Render Encoder"),
             },
         );
-        let resources = self.headless_resources.take().unwrap();
-        self.render_scene_to_view(&resources.view, &mut encoder, Some(camera), scene, highlight)?;
+        let target = self.headless_resources.take().unwrap();
+        self.render_scene_to_view(target.view(), &mut encoder, Some(camera), scene, highlight)?;
 
-        // Copy texture to staging buffer
-        encoder.copy_texture_to_buffer(
-            wgpu::TexelCopyTextureInfo {
-                texture: &resources.texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::TexelCopyBufferInfo {
-                buffer: &resources.staging_buffer,
-                layout: wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(padded_bytes_per_row),
-                    rows_per_image: Some(height),
-                },
-            },
-            wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-        );
-
+        target.encode_copy(&mut encoder);
         self.queue.submit(std::iter::once(encoder.finish()));
-
-        // Map the staging buffer and read the data
-        let buffer_slice = resources.staging_buffer.slice(..);
-        let (sender, receiver) = std::sync::mpsc::channel();
-        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            sender.send(result).unwrap();
-        });
-        self.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None }).unwrap();
-        receiver.recv().unwrap()?;
-
-        // Copy data, removing row padding
-        let bytes_per_pixel = 4u32;
-        let unpadded_bytes_per_row = width * bytes_per_pixel;
-        let data = buffer_slice.get_mapped_range();
-        let mut image_data = Vec::with_capacity((width * height * bytes_per_pixel) as usize);
-        for row in 0..height {
-            let start = (row * padded_bytes_per_row) as usize;
-            let end = start + (unpadded_bytes_per_row) as usize;
-            image_data.extend_from_slice(&data[start..end]);
-        }
-        drop(data);
-        resources.staging_buffer.unmap();
+        let image_data = target.read(&self.device)?;
 
         // Put resources back for reuse
-        self.headless_resources = Some(resources);
+        self.headless_resources = Some(target);
 
         image::RgbaImage::from_raw(width, height, image_data)
             .ok_or_else(|| anyhow::anyhow!("Failed to create image from rendered data"))

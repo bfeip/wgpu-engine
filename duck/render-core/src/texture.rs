@@ -1,4 +1,9 @@
-use super::state::GpuTexture;
+/// A GPU texture bundled with its view and sampler.
+pub struct GpuTexture {
+    pub texture: wgpu::Texture,
+    pub view: wgpu::TextureView,
+    pub sampler: wgpu::Sampler,
+}
 
 impl GpuTexture {
     /// Depth-stencil texture format used for depth and stencil buffers.
@@ -10,7 +15,7 @@ impl GpuTexture {
     /// Create a 1x1 solid color texture for use as a default texture.
     ///
     /// This is used for materials when a specific texture is not provided.
-    pub(crate) fn solid_color(
+    pub fn solid_color(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         color: [u8; 4],
@@ -60,21 +65,11 @@ impl GpuTexture {
             ..Default::default()
         });
 
-        GpuTexture { _texture: texture, view, sampler }
-    }
-
-    /// Create a depth texture for use as a depth buffer.
-    pub(crate) fn depth(
-        device: &wgpu::Device,
-        config: &wgpu::SurfaceConfiguration,
-        sample_count: u32,
-        label: &str,
-    ) -> GpuTexture {
-        Self::depth_sized(device, config.width, config.height, sample_count, label)
+        GpuTexture { texture, view, sampler }
     }
 
     /// Create a depth texture at the given pixel dimensions.
-    pub(crate) fn depth_sized(
+    pub fn depth(
         device: &wgpu::Device,
         width: u32,
         height: u32,
@@ -109,11 +104,11 @@ impl GpuTexture {
             lod_max_clamp: 100.0,
             ..Default::default()
         });
-        GpuTexture { _texture: texture, view, sampler }
+        GpuTexture { texture, view, sampler }
     }
 
     /// Create a single-channel mask texture at the given dimensions.
-    pub(crate) fn mask(
+    pub fn mask(
         device: &wgpu::Device,
         width: u32,
         height: u32,
@@ -147,30 +142,32 @@ impl GpuTexture {
             ..Default::default()
         });
 
-        GpuTexture { _texture: texture, view, sampler }
+        GpuTexture { texture, view, sampler }
     }
 
-    /// Create a color attachment texture matching the surface format.
+    /// Create a color attachment texture in the given format.
     ///
     /// Used as the multisampled color render target that resolves to the
     /// swapchain surface texture.
-    pub(crate) fn color_attachment(
+    pub fn color_attachment(
         device: &wgpu::Device,
-        config: &wgpu::SurfaceConfiguration,
+        width: u32,
+        height: u32,
+        format: wgpu::TextureFormat,
         sample_count: u32,
         label: &str,
     ) -> GpuTexture {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some(label),
             size: wgpu::Extent3d {
-                width: config.width.max(1),
-                height: config.height.max(1),
+                width: width.max(1),
+                height: height.max(1),
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count,
             dimension: wgpu::TextureDimension::D2,
-            format: config.format,
+            format,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[],
         });
@@ -178,6 +175,6 @@ impl GpuTexture {
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor::default());
 
-        GpuTexture { _texture: texture, view, sampler }
+        GpuTexture { texture, view, sampler }
     }
 }
