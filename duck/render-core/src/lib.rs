@@ -10,13 +10,21 @@
 //! and re-exports it as `render_core`.
 
 mod gen_cache;
+mod gpu;
+mod host;
 mod pipeline_cache;
 mod readback;
 mod shader;
+mod targets;
 mod texture;
+mod workflow;
 
 pub use gen_cache::GenCache;
+pub use gpu::{Gpu, GpuCapabilities};
+pub use host::{RenderHost, RgbaPixels};
 pub use pipeline_cache::PipelineCache;
 pub use readback::ReadbackTarget;
 pub use shader::ShaderLibrary;
+pub use targets::{FrameTargets, TargetConfig, TargetFeatures};
 pub use texture::GpuTexture;
+pub use workflow::{FrameFamily, RenderWorkflow};

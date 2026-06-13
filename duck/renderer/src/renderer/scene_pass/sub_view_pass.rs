@@ -1,7 +1,8 @@
-use super::super::batching::DrawData;
+use crate::abi;
+use crate::render_core::{FrameTargets, Gpu};
+
 use super::super::gpu_resources::{CameraResources, CameraUniform, GpuTexture};
-use super::super::pass_context::{FrameContext, SceneRenderPass};
-use super::super::pipeline::MaterialPipelineCache;
+use super::super::pass_context::{SceneFrame, SceneRenderPass};
 use super::main_pass::draw_batches;
 
 /// Draws each sub-view in its own region of the surface, after the main view.
@@ -52,33 +53,35 @@ impl SubViewPass {
 }
 
 impl SceneRenderPass for SubViewPass {
-    fn is_active(&self, draw_data: &DrawData) -> bool {
-        draw_data.has_sub_views()
+    fn is_active(&self, frame: &SceneFrame<'_>) -> bool {
+        frame.draw.has_sub_views()
     }
 
-    fn resize(&mut self, device: &wgpu::Device, size: (u32, u32), sample_count: u32) {
-        self.depth = GpuTexture::depth(device, size.0, size.1, sample_count, "sub_view_depth_texture");
+    fn resize(&mut self, gpu: &Gpu, targets: &FrameTargets) {
+        let (w, h) = targets.size();
+        self.depth = GpuTexture::depth(&gpu.device, w, h, targets.sample_count(), "sub_view_depth_texture");
     }
 
     fn execute(
         &mut self,
+        gpu: &Gpu,
+        targets: &FrameTargets,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
-        ctx: &FrameContext<'_>,
-        pipeline_cache: &mut MaterialPipelineCache,
-        draw_data: &DrawData,
+        frame: &mut SceneFrame<'_>,
     ) {
-        let sub_views = draw_data.sub_views();
-        self.ensure_cameras(ctx.device, sub_views.len());
+        let sub_views = frame.draw.sub_views();
+        self.ensure_cameras(&gpu.device, sub_views.len());
 
+        let (surface_w, surface_h) = targets.size();
         for (i, sv) in sub_views.iter().enumerate() {
             // Write this sub-view's camera into its dedicated slot buffer.
             let uniform = CameraUniform::from_positioned_camera(&sv.camera);
-            ctx.queue
+            gpu.queue
                 .write_buffer(&self.cameras[i].buffer, 0, bytemuck::cast_slice(&[uniform]));
 
-            let (x, y, w, h) = sv.rect.to_pixels(ctx.size.0, ctx.size.1);
-            let (color_view, resolve_target) = ctx.renderer_textures.msaa_views(view);
+            let (x, y, w, h) = sv.rect.to_pixels(surface_w, surface_h);
+            let (color_view, resolve_target) = targets.color_views(view);
 
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Sub-View Render Pass"),
@@ -110,13 +113,13 @@ impl SceneRenderPass for SubViewPass {
             render_pass.set_scissor_rect(x, y, w, h);
 
             // Bind this sub-view's camera at group 0; share lights/IBL with the scene.
-            render_pass.set_bind_group(0, &self.cameras[i].bind_group, &[]);
-            render_pass.set_bind_group(1, ctx.lights_bind_group, &[]);
-            if let Some(ibl) = ctx.ibl_bind_group {
-                render_pass.set_bind_group(3, ibl, &[]);
+            render_pass.set_bind_group(abi::GROUP_CAMERA, &self.cameras[i].bind_group, &[]);
+            render_pass.set_bind_group(abi::GROUP_LIGHTS, frame.lights_bind_group, &[]);
+            if let Some(ibl) = frame.ibl_bind_group {
+                render_pass.set_bind_group(abi::GROUP_IBL, ibl, &[]);
             }
 
-            draw_batches(&mut render_pass, &sv.batches, ctx, pipeline_cache, true);
+            draw_batches(gpu, &mut render_pass, &sv.batches, frame, true);
         }
     }
 }

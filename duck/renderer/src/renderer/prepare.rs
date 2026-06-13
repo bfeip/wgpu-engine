@@ -22,7 +22,7 @@ impl Renderer {
     pub fn prepare_scene(&mut self, scene: &mut Scene) -> Result<()> {
         // 1. Prepare all textures first (materials depend on them)
         for texture in scene.textures() {
-            self.gpu_resources.ensure_texture(texture, &self.device, &self.queue)?;
+            self.gpu_resources.ensure_texture(texture, &self.host.gpu().device, &self.host.gpu().queue)?;
         }
 
         // 2. Prepare all materials, one collection per primitive kind.
@@ -60,7 +60,7 @@ impl Renderer {
         // wireframe flag and ensuring meshes have line primitives derived from their
         // triangle data before uploading to the GPU.
         for mesh in scene.meshes() {
-            self.gpu_resources.ensure_mesh(mesh, &self.device);
+            self.gpu_resources.ensure_mesh(mesh, &self.host.gpu().device);
         }
 
         // 4. Prepare lights
@@ -68,7 +68,7 @@ impl Renderer {
         if self.lights.synced_generation != node_gen {
             let frame_data = collect_main_scene_data(scene, &super::batching::sub_view_root_set(scene));
             let lights_uniform = LightsArrayUniform::from_resolved_lights(&frame_data.lights);
-            self.queue
+            self.host.gpu().queue
                 .write_buffer(&self.lights.buffer, 0, bytes_of(&lights_uniform));
             self.lights.synced_generation = node_gen;
         }
@@ -78,7 +78,7 @@ impl Renderer {
             && let Some(env_map) = scene.get_environment_map(env_id)
         {
             self.ibl_resources
-                .process_environment(&self.device, &self.queue, env_map)?;
+                .process_environment(&self.host.gpu().device, &self.host.gpu().queue, env_map)?;
         }
 
         Ok(())
@@ -108,6 +108,7 @@ impl Renderer {
         label: &str,
     ) -> MaterialGpuResources {
         let buffer = self
+            .host.gpu()
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some(label),
@@ -115,7 +116,7 @@ impl Renderer {
                 usage: wgpu::BufferUsages::UNIFORM,
             });
 
-        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = self.host.gpu().device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some(label),
             layout: &self.layouts.color,
             entries: &[wgpu::BindGroupEntry {
@@ -148,6 +149,7 @@ impl Renderer {
 
         let pbr_uniform = PbrUniform::from_face_material(material);
         let buffer = self
+            .host.gpu()
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("PBR Uniform Buffer"),
@@ -157,21 +159,21 @@ impl Renderer {
 
         let (base_color_view, base_color_sampler) = self.resolve_texture_or_default(
             material.base_color_texture(),
-            &self.renderer_textures.white,
+            &self.fallback_textures.white,
             "Base color",
         )?;
         let (normal_view, normal_sampler) = self.resolve_texture_or_default(
             material.normal_texture(),
-            &self.renderer_textures.default_normal,
+            &self.fallback_textures.default_normal,
             "Normal",
         )?;
         let (mr_view, mr_sampler) = self.resolve_texture_or_default(
             material.metallic_roughness_texture(),
-            &self.renderer_textures.white,
+            &self.fallback_textures.white,
             "Metallic-roughness",
         )?;
 
-        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = self.host.gpu().device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("PBR Material Bind Group"),
             layout: &self.layouts.pbr,
             entries: &[

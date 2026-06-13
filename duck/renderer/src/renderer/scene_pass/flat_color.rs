@@ -1,10 +1,10 @@
+use crate::abi;
+use crate::render_core::{FrameTargets, Gpu};
 use crate::scene::PrimitiveType;
 use crate::scene::common::RgbaColor;
 
-use super::super::batching::DrawData;
 use super::super::gpu_resources::{GpuTexture, instance_buffer_layout, vertex_buffer_layout};
-use super::super::pass_context::{FrameContext, SceneRenderPass};
-use super::super::pipeline::MaterialPipelineCache;
+use super::super::pass_context::{SceneFrame, SceneRenderPass};
 
 /// Per-instance configuration for [`FlatColorPass`].
 ///
@@ -129,26 +129,27 @@ impl FlatColorPass {
 }
 
 impl SceneRenderPass for FlatColorPass {
-    fn resize(&mut self, device: &wgpu::Device, _size: (u32, u32), sample_count: u32) {
+    fn resize(&mut self, gpu: &Gpu, targets: &FrameTargets) {
+        let sample_count = targets.sample_count();
         if self.sample_count != sample_count {
             self.sample_count = sample_count;
-            self.pipeline = build_flat_color_pipeline(device, &self.pipeline_layout, &self.shader, self.surface_format, sample_count, &self.desc);
+            self.pipeline = build_flat_color_pipeline(&gpu.device, &self.pipeline_layout, &self.shader, self.surface_format, sample_count, &self.desc);
         }
     }
 
     fn execute(
         &mut self,
+        gpu: &Gpu,
+        targets: &FrameTargets,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
-        ctx: &FrameContext<'_>,
-        _pipeline_cache: &mut MaterialPipelineCache,
-        draw_data: &DrawData,
+        frame: &mut SceneFrame<'_>,
     ) {
         let load_op = match self.desc.clear_color {
             Some(color) => wgpu::LoadOp::Clear(color),
             None => wgpu::LoadOp::Load,
         };
-        let (color_view, resolve_target) = ctx.renderer_textures.msaa_views(view);
+        let (color_view, resolve_target) = targets.color_views(view);
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some(self.desc.label),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -158,7 +159,7 @@ impl SceneRenderPass for FlatColorPass {
                 depth_slice: None,
             })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: ctx.depth_view(),
+                view: targets.depth_view(),
                 depth_ops: Some(wgpu::Operations {
                     load: if self.desc.clear_color.is_some() { wgpu::LoadOp::Clear(1.0) } else { wgpu::LoadOp::Load },
                     store: wgpu::StoreOp::Store,
@@ -170,14 +171,14 @@ impl SceneRenderPass for FlatColorPass {
         });
 
         render_pass.set_pipeline(&self.pipeline);
-        render_pass.set_bind_group(0, ctx.camera_bind_group, &[]);
-        render_pass.set_bind_group(1, ctx.lights_bind_group, &[]);
-        render_pass.set_bind_group(2, &self.color_bind_group, &[]);
+        render_pass.set_bind_group(abi::GROUP_CAMERA, frame.camera_bind_group, &[]);
+        render_pass.set_bind_group(abi::GROUP_LIGHTS, frame.lights_bind_group, &[]);
+        render_pass.set_bind_group(abi::GROUP_MATERIAL, &self.color_bind_group, &[]);
 
         let filter = self.desc.primitive_filter;
-        for batch in draw_data.all_batches() {
+        for batch in frame.draw.all_batches() {
             if batch.primitive_type != filter { continue; }
-            ctx.draw_batch(&mut render_pass, batch);
+            frame.draw_batch(gpu, &mut render_pass, batch);
         }
     }
 }

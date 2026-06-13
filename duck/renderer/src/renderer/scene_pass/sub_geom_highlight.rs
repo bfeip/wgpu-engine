@@ -1,10 +1,11 @@
+use crate::abi;
+use crate::render_core::{FrameTargets, Gpu};
 use crate::scene::PrimitiveType;
 use crate::scene::common::RgbaColor;
 
-use super::super::batching::{DrawData, SubGeomBatch};
+use super::super::batching::SubGeomBatch;
 use super::super::gpu_resources::{self, ColorResources, instance_buffer_layout, vertex_buffer_layout};
-use super::super::pass_context::{FrameContext, SceneRenderPass};
-use super::super::pipeline::MaterialPipelineCache;
+use super::super::pass_context::{SceneFrame, SceneRenderPass};
 
 /// The two color resources for one selection tier: the translucent face overlay
 /// and the solid edge/point recolor.
@@ -135,8 +136,9 @@ impl SubGeomHighlightPass {
     /// must already be set; this sets the pipeline and color (2) per batch.
     fn draw_tier(
         &self,
+        gpu: &Gpu,
         render_pass: &mut wgpu::RenderPass<'_>,
-        ctx: &FrameContext<'_>,
+        frame: &SceneFrame<'_>,
         batches: &[SubGeomBatch],
         colors: &TierColors,
     ) {
@@ -146,11 +148,11 @@ impl SubGeomHighlightPass {
                 PrimitiveType::LineList => (&self.line_pipeline, &colors.solid),
                 PrimitiveType::PointList => (&self.point_pipeline, &colors.solid),
             };
-            let Some(gpu_mesh) = ctx.gpu_resources.get_mesh(batch.mesh_id) else { continue };
+            let Some(gpu_mesh) = frame.gpu_resources.get_mesh(batch.mesh_id) else { continue };
             render_pass.set_pipeline(pipeline);
-            render_pass.set_bind_group(2, &color.bind_group, &[]);
+            render_pass.set_bind_group(abi::GROUP_MATERIAL, &color.bind_group, &[]);
             gpu_resources::draw_mesh_subgeom(
-                ctx.device,
+                &gpu.device,
                 render_pass,
                 gpu_mesh,
                 batch.primitive_type,
@@ -163,16 +165,17 @@ impl SubGeomHighlightPass {
 }
 
 impl SceneRenderPass for SubGeomHighlightPass {
-    fn is_active(&self, draw_data: &DrawData) -> bool {
-        draw_data.has_sub_geom_highlights()
+    fn is_active(&self, frame: &SceneFrame<'_>) -> bool {
+        frame.draw.has_sub_geom_highlights()
     }
 
-    fn resize(&mut self, device: &wgpu::Device, _size: (u32, u32), sample_count: u32) {
+    fn resize(&mut self, gpu: &Gpu, targets: &FrameTargets) {
+        let sample_count = targets.sample_count();
         if self.sample_count == sample_count {
             return;
         }
         self.sample_count = sample_count;
-        let make = |topology, label| build_pipeline(device, &self.pipeline_layout, &self.shader, self.surface_format, sample_count, topology, label);
+        let make = |topology, label| build_pipeline(&gpu.device, &self.pipeline_layout, &self.shader, self.surface_format, sample_count, topology, label);
         self.triangle_pipeline = make(wgpu::PrimitiveTopology::TriangleList, "SubGeom Highlight Triangle Pipeline");
         self.line_pipeline = make(wgpu::PrimitiveTopology::LineList, "SubGeom Highlight Line Pipeline");
         self.point_pipeline = make(wgpu::PrimitiveTopology::PointList, "SubGeom Highlight Point Pipeline");
@@ -180,21 +183,21 @@ impl SceneRenderPass for SubGeomHighlightPass {
 
     fn execute(
         &mut self,
+        gpu: &Gpu,
+        targets: &FrameTargets,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
-        ctx: &FrameContext<'_>,
-        _pipeline_cache: &mut MaterialPipelineCache,
-        draw_data: &DrawData,
+        frame: &mut SceneFrame<'_>,
     ) {
         // Resolve the per-tier colors for this frame before recording draws.
-        if let Some(cfg) = draw_data.highlight_config() {
-            self.primary.write(ctx.queue, cfg);
+        if let Some(cfg) = frame.draw.highlight_config() {
+            self.primary.write(&gpu.queue, cfg);
         }
-        if let Some(cfg) = draw_data.secondary_highlight_config() {
-            self.secondary.write(ctx.queue, cfg);
+        if let Some(cfg) = frame.draw.secondary_highlight_config() {
+            self.secondary.write(&gpu.queue, cfg);
         }
 
-        let (color_view, resolve_target) = ctx.renderer_textures.msaa_views(view);
+        let (color_view, resolve_target) = targets.color_views(view);
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("SubGeom Highlight Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -210,10 +213,10 @@ impl SceneRenderPass for SubGeomHighlightPass {
 
         // Camera (0) and lights (1) are shared across every pipeline (same layout),
         // so bind them once; only pipeline + color (2) vary per batch.
-        render_pass.set_bind_group(0, ctx.camera_bind_group, &[]);
-        render_pass.set_bind_group(1, ctx.lights_bind_group, &[]);
+        render_pass.set_bind_group(abi::GROUP_CAMERA, frame.camera_bind_group, &[]);
+        render_pass.set_bind_group(abi::GROUP_LIGHTS, frame.lights_bind_group, &[]);
 
-        self.draw_tier(&mut render_pass, ctx, draw_data.highlight_sub_geom_batches(), &self.primary);
-        self.draw_tier(&mut render_pass, ctx, draw_data.secondary_highlight_sub_geom_batches(), &self.secondary);
+        self.draw_tier(gpu, &mut render_pass, frame, frame.draw.highlight_sub_geom_batches(), &self.primary);
+        self.draw_tier(gpu, &mut render_pass, frame, frame.draw.secondary_highlight_sub_geom_batches(), &self.secondary);
     }
 }

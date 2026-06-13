@@ -1,9 +1,9 @@
+use crate::abi;
+use crate::render_core::{FrameTargets, Gpu};
 use crate::scene::PrimitiveType;
 
-use super::super::batching::DrawData;
 use super::super::gpu_resources::{self, GpuTexture, OutlineUniform, instance_buffer_layout, vertex_buffer_layout};
-use super::super::pass_context::{FrameContext, SceneRenderPass};
-use super::super::pipeline::MaterialPipelineCache;
+use super::super::pass_context::{SceneFrame, SceneRenderPass};
 
 /// Creates the pipeline that renders highlighted geometry into the R8Unorm mask texture.
 fn build_mask_pipeline(
@@ -189,18 +189,20 @@ pub(crate) struct OutlinePass {
 impl OutlinePass {
     pub(crate) fn new(
         device: &wgpu::Device,
-        config: &wgpu::SurfaceConfiguration,
+        config: crate::render_core::TargetConfig,
         camera_bgl: &wgpu::BindGroupLayout,
         shader_generator: &mut crate::shaders::ShaderGenerator,
-        sample_count: u32,
     ) -> Self {
         use wgpu::util::DeviceExt;
+
+        let (width, height) = config.size;
+        let sample_count = config.sample_count;
 
         let default_uniform = OutlineUniform {
             color: [1.0, 0.6, 0.0, 1.0],
             width_pixels: 3.0,
-            screen_width: config.width as f32,
-            screen_height: config.height as f32,
+            screen_width: width as f32,
+            screen_height: height as f32,
             _padding: 0.0,
         };
         let primary_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -218,7 +220,7 @@ impl OutlinePass {
 
         let multisampled = sample_count > 1;
         let mask_label = if multisampled { "Outline Mask Color Attachment" } else { "Outline Mask Texture" };
-        let mask_texture = GpuTexture::mask(device, config.width, config.height, sample_count, mask_label);
+        let mask_texture = GpuTexture::mask(device, width, height, sample_count, mask_label);
 
         let screenspace = ScreenspaceResources::new(
             device, config.format, shader_generator, sample_count,
@@ -235,15 +237,17 @@ impl OutlinePass {
     /// pass uses `LoadOp::Load` so each cycle composites on top of previous output.
     fn run_cycle(
         &self,
+        gpu: &Gpu,
+        targets: &FrameTargets,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
-        ctx: &FrameContext<'_>,
+        frame: &SceneFrame<'_>,
         screenspace_bind_group: &wgpu::BindGroup,
         uniform_buffer: &wgpu::Buffer,
         cfg: &OutlineUniform,
         highlighted_batches: &[super::super::batching::DrawBatch],
     ) {
-        ctx.queue.write_buffer(uniform_buffer, 0, bytemuck::cast_slice(&[*cfg]));
+        gpu.queue.write_buffer(uniform_buffer, 0, bytemuck::cast_slice(&[*cfg]));
 
         // Mask pass — render highlighted triangles into the R8Unorm mask texture.
         {
@@ -259,7 +263,7 @@ impl OutlinePass {
                     depth_slice: None,
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &ctx.renderer_textures.depth.view,
+                    view: targets.depth_view(),
                     depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store }),
                     stencil_ops: None,
                 }),
@@ -267,13 +271,13 @@ impl OutlinePass {
                 timestamp_writes: None,
             });
             rp.set_pipeline(&self.mask_pipeline);
-            rp.set_bind_group(0, ctx.camera_bind_group, &[]);
+            rp.set_bind_group(abi::GROUP_CAMERA, frame.camera_bind_group, &[]);
             for batch in highlighted_batches {
                 if batch.primitive_type != PrimitiveType::TriangleList { continue; }
-                let mesh = ctx.scene.get_mesh(batch.mesh_id).unwrap();
-                let gpu_mesh = ctx.gpu_resources.get_mesh(batch.mesh_id).expect("Mesh GPU resources not initialized");
+                let mesh = frame.scene.get_mesh(batch.mesh_id).unwrap();
+                let gpu_mesh = frame.gpu_resources.get_mesh(batch.mesh_id).expect("Mesh GPU resources not initialized");
                 gpu_resources::draw_mesh_instances(
-                    ctx.device,
+                    &gpu.device,
                     &mut rp,
                     gpu_mesh,
                     batch.primitive_type,
@@ -285,7 +289,7 @@ impl OutlinePass {
 
         // Screenspace pass — composite outline color over scene.
         {
-            let (color_view, resolve_target) = ctx.renderer_textures.msaa_views(view);
+            let (color_view, resolve_target) = targets.color_views(view);
             let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Outline Screenspace Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -306,22 +310,24 @@ impl OutlinePass {
 }
 
 impl SceneRenderPass for OutlinePass {
-    fn is_active(&self, draw_data: &DrawData) -> bool {
-        draw_data.has_node_highlights()
+    fn is_active(&self, frame: &SceneFrame<'_>) -> bool {
+        frame.draw.has_node_highlights()
     }
 
-    fn resize(&mut self, device: &wgpu::Device, size: (u32, u32), sample_count: u32) {
+    fn resize(&mut self, gpu: &Gpu, targets: &FrameTargets) {
+        let (w, h) = targets.size();
+        let sample_count = targets.sample_count();
         let multisampled = sample_count > 1;
         let label = if multisampled { "Outline Mask Color Attachment" } else { "Outline Mask Texture" };
-        self.mask_texture = GpuTexture::mask(device, size.0, size.1, sample_count, label);
+        self.mask_texture = GpuTexture::mask(&gpu.device, w, h, sample_count, label);
         self.screenspace.primary_bind_group = make_screenspace_bind_group(
-            device,
+            &gpu.device,
             &self.screenspace.bind_group_layout,
             &self.mask_texture.view,
             &self.primary_uniform_buffer,
         );
         self.screenspace.secondary_bind_group = make_screenspace_bind_group(
-            device,
+            &gpu.device,
             &self.screenspace.bind_group_layout,
             &self.mask_texture.view,
             &self.secondary_uniform_buffer,
@@ -330,38 +336,39 @@ impl SceneRenderPass for OutlinePass {
 
     fn execute(
         &mut self,
+        gpu: &Gpu,
+        targets: &FrameTargets,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
-        ctx: &FrameContext<'_>,
-        _pipeline_cache: &mut MaterialPipelineCache,
-        draw_data: &DrawData,
+        frame: &mut SceneFrame<'_>,
     ) {
+        let (sw, sh) = targets.size();
         let make_uniform = |cfg: &crate::highlight_query::HighlightConfig| gpu_resources::OutlineUniform {
             color: cfg.color,
             width_pixels: cfg.width_pixels,
-            screen_width: ctx.size.0 as f32,
-            screen_height: ctx.size.1 as f32,
+            screen_width: sw as f32,
+            screen_height: sh as f32,
             _padding: 0.0,
         };
 
-        if !draw_data.highlighted_batches().is_empty() {
-            if let Some(cfg) = draw_data.highlight_config() {
+        if !frame.draw.highlighted_batches().is_empty() {
+            if let Some(cfg) = frame.draw.highlight_config() {
                 self.run_cycle(
-                    encoder, view, ctx,
+                    gpu, targets, encoder, view, frame,
                     &self.screenspace.primary_bind_group,
                     &self.primary_uniform_buffer, &make_uniform(cfg),
-                    draw_data.highlighted_batches(),
+                    frame.draw.highlighted_batches(),
                 );
             }
         }
 
-        if !draw_data.secondary_highlighted_batches().is_empty() {
-            if let Some(cfg) = draw_data.secondary_highlight_config() {
+        if !frame.draw.secondary_highlighted_batches().is_empty() {
+            if let Some(cfg) = frame.draw.secondary_highlight_config() {
                 self.run_cycle(
-                    encoder, view, ctx,
+                    gpu, targets, encoder, view, frame,
                     &self.screenspace.secondary_bind_group,
                     &self.secondary_uniform_buffer, &make_uniform(cfg),
-                    draw_data.secondary_highlighted_batches(),
+                    frame.draw.secondary_highlighted_batches(),
                 );
             }
         }

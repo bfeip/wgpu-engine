@@ -1,19 +1,51 @@
+use crate::render_core::{FrameFamily, FrameTargets, Gpu};
 use crate::scene::{Scene, SceneProperties};
 
 use super::batching::{DrawBatch, DrawData};
-use super::gpu_resources::{self, GpuResourceManager, RendererTextures};
+use super::gpu_resources::{self, GpuResourceManager};
 use super::pipeline::MaterialPipelineCache;
 
-/// Per-frame read-only snapshot of all renderer state a pass needs.
+/// Frame family for the standard scene renderer.
 ///
-/// Constructed once at the top of `render_scene_to_view` from named field borrows
-/// of `Renderer`. Because it does not borrow `pipeline_cache`, the caller can hold
-/// a `&FrameContext` while separately passing `&mut pipeline_cache` to pass functions
-/// — a disjoint named-field borrow the borrow checker accepts without conflict.
-pub struct FrameContext<'a> {
-    pub device: &'a wgpu::Device,
-    pub queue: &'a wgpu::Queue,
+/// A type-level tag that ties the core dispatch machinery
+/// ([`RenderHost`](crate::render_core::RenderHost),
+/// [`RenderWorkflow`](crate::render_core::RenderWorkflow)) to [`SceneFrame`] as
+/// its per-frame data type. Uninhabited because it is never constructed — it
+/// exists only to name `SceneFrame<'_>` at the type level. See [`FrameFamily`]
+/// for why this indirection is needed.
+pub enum SceneFrames {}
+
+impl FrameFamily for SceneFrames {
+    type Frame<'a> = SceneFrame<'a>;
+}
+
+/// A workflow over the standard scene frame.
+///
+/// Convenience alias so consumers write `Box<dyn SceneWorkflow>` rather than
+/// spelling out the core trait + frame family. Implement
+/// [`RenderWorkflow<SceneFrames>`](crate::render_core::RenderWorkflow) for a
+/// custom workflow; the blanket coercion to this trait object is automatic.
+pub type SceneWorkflow = dyn crate::render_core::RenderWorkflow<SceneFrames>;
+
+/// Per-frame data for the standard scene renderer.
+///
+/// Built once per frame by the renderer from disjoint field borrows of itself,
+/// then handed to the active workflow. Holds everything a scene pass reads —
+/// the scene, the collected draw batches, the scene-level bind groups, and the
+/// material pipeline cache.
+///
+/// Bind groups follow the standard shader ABI (see [`crate::abi`]): the renderer
+/// fills them but passes choose whether and at which slot to bind them, so a
+/// workflow that needs no lights or IBL simply ignores those fields.
+///
+/// `gpu` and `targets` are *not* fields here: the [`RenderHost`](crate::render_core::RenderHost)
+/// lends them to `execute` as separate arguments. Keeping them out of the frame
+/// is what lets the renderer hold `&mut host` while the frame borrows the
+/// renderer's other fields.
+pub struct SceneFrame<'a> {
     pub scene: &'a Scene,
+    /// Collected, sorted, partitioned draw batches for this frame.
+    pub draw: &'a DrawData,
     pub(crate) gpu_resources: &'a GpuResourceManager,
     pub camera_bind_group: &'a wgpu::BindGroup,
     pub lights_bind_group: &'a wgpu::BindGroup,
@@ -21,23 +53,21 @@ pub struct FrameContext<'a> {
     pub ibl_bind_group: Option<&'a wgpu::BindGroup>,
     /// Derived from `ibl_bind_group` — `has_ibl` is true iff `ibl_bind_group` is `Some`.
     pub scene_props: SceneProperties,
-    pub(in crate::renderer) renderer_textures: &'a RendererTextures,
-    pub sample_count: u32,
-    pub surface_format: wgpu::TextureFormat,
-    pub size: (u32, u32),
+    /// Material-variant pipeline cache, shared across passes this frame.
+    pub pipeline_cache: &'a mut MaterialPipelineCache,
     pub background_color: wgpu::Color,
 }
 
-impl<'a> FrameContext<'a> {
+impl SceneFrame<'_> {
     /// Draw a [`DrawBatch`] into `render_pass`.
     ///
     /// Looks up the mesh's GPU vertex/index buffers and issues the instanced draw
     /// call. Silently skips batches whose GPU resources haven't been uploaded yet.
-    pub fn draw_batch(&self, render_pass: &mut wgpu::RenderPass<'_>, batch: &DrawBatch) {
+    pub fn draw_batch(&self, gpu: &Gpu, render_pass: &mut wgpu::RenderPass<'_>, batch: &DrawBatch) {
         let Some(mesh) = self.scene.get_mesh(batch.mesh_id) else { return };
         let Some(gpu_mesh) = self.gpu_resources.get_mesh(batch.mesh_id) else { return };
         gpu_resources::draw_mesh_instances(
-            self.device,
+            &gpu.device,
             render_pass,
             gpu_mesh,
             batch.primitive_type,
@@ -45,41 +75,35 @@ impl<'a> FrameContext<'a> {
             mesh.index_count(batch.primitive_type),
         );
     }
-
-    /// The shared depth buffer view for this frame.
-    ///
-    /// Pass this as the `depth_stencil_attachment` view in your render pass
-    /// descriptor to depth-test against scene geometry drawn by earlier passes.
-    pub fn depth_view(&self) -> &wgpu::TextureView {
-        &self.renderer_textures.depth.view
-    }
 }
 
 /// Extension point for user-defined render passes.
 ///
-/// Each pass receives [`FrameContext`] for read-only renderer state and a mutable
-/// [`MaterialPipelineCache`] for material-variant pipeline creation/lookup. The
-/// [`DrawData`] provides access to the sorted, partitioned batch lists for the current frame.
+/// Each pass receives the [`Gpu`] handles, the shared [`FrameTargets`]
+/// (depth/MSAA attachments), and a mutable [`SceneFrame`] for all per-frame
+/// scene state including the material pipeline cache.
 ///
-/// Passes may be stateless (zero-size structs) or stateful (holding owned GPU resources
-/// such as textures or pipelines). Stateful passes implement [`resize`](Self::resize)
-/// to recreate size-dependent resources when the viewport changes.
+/// Passes may be stateless (zero-size structs) or stateful (holding owned GPU
+/// resources such as textures or pipelines). Stateful passes implement
+/// [`resize`](Self::resize) to recreate size-dependent resources when the
+/// viewport changes.
 pub trait SceneRenderPass {
-    fn is_active(&self, _draw_data: &DrawData) -> bool {
+    fn is_active(&self, _frame: &SceneFrame<'_>) -> bool {
         true
     }
 
-    /// Called after a viewport resize. Passes that own size-dependent GPU resources
-    /// (textures, bind groups, or pipelines with baked sample counts) should recreate
-    /// them here. The default is a no-op.
-    fn resize(&mut self, _device: &wgpu::Device, _size: (u32, u32), _sample_count: u32) {}
+    /// Called after a viewport resize. Passes that own size-dependent resources
+    /// (textures, bind groups, or pipelines with baked sample counts) should
+    /// recreate them here, reading the new size/sample count from `targets`.
+    /// The default is a no-op.
+    fn resize(&mut self, _gpu: &Gpu, _targets: &FrameTargets) {}
 
     fn execute(
         &mut self,
+        gpu: &Gpu,
+        targets: &FrameTargets,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
-        ctx: &FrameContext<'_>,
-        pipeline_cache: &mut MaterialPipelineCache,
-        draw_data: &DrawData,
+        frame: &mut SceneFrame<'_>,
     );
 }

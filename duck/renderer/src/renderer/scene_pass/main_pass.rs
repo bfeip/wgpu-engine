@@ -1,22 +1,22 @@
 use duck_engine_scene::{AlphaMode, MaterialProperties, SceneProperties};
 
 use crate::DrawBatch;
+use crate::abi;
+use crate::render_core::{FrameTargets, Gpu};
 use crate::renderer::gpu_resources::{self, PipelineCacheKey};
 
-use super::super::batching::DrawData;
 use super::super::gpu_resources::GpuTexture;
-use super::super::pass_context::{FrameContext, SceneRenderPass};
-use super::super::pipeline::MaterialPipelineCache;
+use super::super::pass_context::{SceneFrame, SceneRenderPass};
 
 /// Bind the scene-level bind groups shared by all geometry passes:
 /// - Group 0: Camera (view/proj + eye position)
 /// - Group 1: Lights
 /// - Group 3: IBL environment (when active)
-pub(crate) fn bind_scene_groups<'r>(render_pass: &mut wgpu::RenderPass<'r>, ctx: &'r FrameContext<'r>) {
-    render_pass.set_bind_group(0, ctx.camera_bind_group, &[]);
-    render_pass.set_bind_group(1, ctx.lights_bind_group, &[]);
-    if let Some(ibl) = ctx.ibl_bind_group {
-        render_pass.set_bind_group(3, ibl, &[]);
+pub(crate) fn bind_scene_groups<'p>(render_pass: &mut wgpu::RenderPass<'p>, frame: &SceneFrame<'p>) {
+    render_pass.set_bind_group(abi::GROUP_CAMERA, frame.camera_bind_group, &[]);
+    render_pass.set_bind_group(abi::GROUP_LIGHTS, frame.lights_bind_group, &[]);
+    if let Some(ibl) = frame.ibl_bind_group {
+        render_pass.set_bind_group(abi::GROUP_IBL, ibl, &[]);
     }
 }
 
@@ -26,12 +26,17 @@ pub(crate) fn bind_scene_groups<'r>(render_pass: &mut wgpu::RenderPass<'r>, ctx:
 /// is executed first so their opaque portions establish correct depth occlusion before
 /// the main draw loop renders them with blending.
 pub(crate) fn draw_batches(
+    gpu: &Gpu,
     render_pass: &mut wgpu::RenderPass<'_>,
     batches: &[DrawBatch],
-    ctx: &FrameContext<'_>,
-    pipeline_cache: &mut MaterialPipelineCache,
+    frame: &mut SceneFrame<'_>,
     with_depth_prepass: bool,
 ) {
+    let scene = frame.scene;
+    let gpu_resources = frame.gpu_resources;
+    let scene_props = frame.scene_props.clone();
+    let pipeline_cache = &mut *frame.pipeline_cache;
+
     if with_depth_prepass {
         // Depth pre-pass for transparent objects: render depth-only with alpha test
         // so opaque portions of blend materials establish correct depth occlusion.
@@ -43,13 +48,12 @@ pub(crate) fn draw_batches(
                 continue;
             }
 
-            let Some(material_gpu) = ctx
-                .gpu_resources
-                .get_material(batch.material_id, batch.primitive_type)
+            let Some(material_gpu) =
+                gpu_resources.get_material(batch.material_id, batch.primitive_type)
             else {
                 continue;
             };
-            render_pass.set_bind_group(2, &material_gpu.bind_group, &[]);
+            render_pass.set_bind_group(abi::GROUP_MATERIAL, &material_gpu.bind_group, &[]);
 
             // Normalize key: only has_lighting (pipeline layout), double_sided
             // (cull mode), and primitive_type matter for depth-only output.
@@ -65,19 +69,19 @@ pub(crate) fn draw_batches(
                 depth_prepass: true,
             };
             if prepass_pipeline_key.as_ref() != Some(&pipeline_key) {
-                let pipeline = pipeline_cache.get_or_create(ctx.device, pipeline_key.clone());
+                let pipeline = pipeline_cache.get_or_create(&gpu.device, pipeline_key.clone());
                 render_pass.set_pipeline(pipeline);
                 prepass_pipeline_key = Some(pipeline_key);
             }
 
-            let Some(mesh) = ctx.scene.get_mesh(batch.mesh_id) else {
+            let Some(mesh) = scene.get_mesh(batch.mesh_id) else {
                 continue;
             };
-            let Some(gpu_mesh) = ctx.gpu_resources.get_mesh(batch.mesh_id) else {
+            let Some(gpu_mesh) = gpu_resources.get_mesh(batch.mesh_id) else {
                 continue;
             };
             gpu_resources::draw_mesh_instances(
-                ctx.device,
+                &gpu.device,
                 render_pass,
                 gpu_mesh,
                 batch.primitive_type,
@@ -90,37 +94,36 @@ pub(crate) fn draw_batches(
     // Main draw loop
     let mut current_pipeline_key: Option<PipelineCacheKey> = None;
     for batch in batches {
-        let Some(mesh) = ctx.scene.get_mesh(batch.mesh_id) else {
+        let Some(mesh) = scene.get_mesh(batch.mesh_id) else {
             continue;
         };
         let material_props = &batch.material_props;
 
-        let Some(material_gpu) = ctx
-            .gpu_resources
-            .get_material(batch.material_id, batch.primitive_type)
+        let Some(material_gpu) =
+            gpu_resources.get_material(batch.material_id, batch.primitive_type)
         else {
             continue;
         };
-        render_pass.set_bind_group(2, &material_gpu.bind_group, &[]);
+        render_pass.set_bind_group(abi::GROUP_MATERIAL, &material_gpu.bind_group, &[]);
 
         // Only change pipeline if material properties, scene properties, or primitive type changes
         let pipeline_key = PipelineCacheKey {
             material_props: material_props.clone(),
-            scene_props: ctx.scene_props.clone(),
+            scene_props: scene_props.clone(),
             primitive_type: batch.primitive_type,
             depth_prepass: false,
         };
         if current_pipeline_key.as_ref() != Some(&pipeline_key) {
-            let pipeline = pipeline_cache.get_or_create(ctx.device, pipeline_key.clone());
+            let pipeline = pipeline_cache.get_or_create(&gpu.device, pipeline_key.clone());
             render_pass.set_pipeline(pipeline);
             current_pipeline_key = Some(pipeline_key);
         }
 
-        let Some(gpu_mesh) = ctx.gpu_resources.get_mesh(batch.mesh_id) else {
+        let Some(gpu_mesh) = gpu_resources.get_mesh(batch.mesh_id) else {
             continue;
         };
         gpu_resources::draw_mesh_instances(
-            ctx.device,
+            &gpu.device,
             render_pass,
             gpu_mesh,
             batch.primitive_type,
@@ -137,13 +140,13 @@ pub(crate) struct MainPass;
 impl SceneRenderPass for MainPass {
     fn execute(
         &mut self,
+        gpu: &Gpu,
+        targets: &FrameTargets,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
-        ctx: &FrameContext<'_>,
-        pipeline_cache: &mut MaterialPipelineCache,
-        draw_data: &DrawData,
+        frame: &mut SceneFrame<'_>,
     ) {
-        let (color_view, resolve_target) = ctx.renderer_textures.msaa_views(view);
+        let (color_view, resolve_target) = targets.color_views(view);
 
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("3D Scene Render Pass"),
@@ -151,13 +154,13 @@ impl SceneRenderPass for MainPass {
                 view: color_view,
                 resolve_target,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(ctx.background_color),
+                    load: wgpu::LoadOp::Clear(frame.background_color),
                     store: wgpu::StoreOp::Store,
                 },
                 depth_slice: None,
             })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &ctx.renderer_textures.depth.view,
+                view: targets.depth_view(),
                 depth_ops: Some(wgpu::Operations {
                     load: wgpu::LoadOp::Clear(1.0),
                     store: wgpu::StoreOp::Store,
@@ -171,8 +174,9 @@ impl SceneRenderPass for MainPass {
             timestamp_writes: None,
         });
 
-        bind_scene_groups(&mut render_pass, ctx);
-        draw_batches(&mut render_pass, draw_data.all_batches(), ctx, pipeline_cache, true);
+        bind_scene_groups(&mut render_pass, frame);
+        let batches = frame.draw.all_batches();
+        draw_batches(gpu, &mut render_pass, batches, frame, true);
     }
 }
 
@@ -197,23 +201,24 @@ impl OverlayPass {
 }
 
 impl SceneRenderPass for OverlayPass {
-    fn is_active(&self, draw_data: &DrawData) -> bool {
-        draw_data.has_overlay()
+    fn is_active(&self, frame: &SceneFrame<'_>) -> bool {
+        frame.draw.has_overlay()
     }
 
-    fn resize(&mut self, device: &wgpu::Device, size: (u32, u32), sample_count: u32) {
-        self.depth = GpuTexture::depth(device, size.0, size.1, sample_count, "overlay_depth_texture");
+    fn resize(&mut self, gpu: &Gpu, targets: &FrameTargets) {
+        let (w, h) = targets.size();
+        self.depth = GpuTexture::depth(&gpu.device, w, h, targets.sample_count(), "overlay_depth_texture");
     }
 
     fn execute(
         &mut self,
+        gpu: &Gpu,
+        targets: &FrameTargets,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
-        ctx: &FrameContext<'_>,
-        pipeline_cache: &mut MaterialPipelineCache,
-        draw_data: &DrawData,
+        frame: &mut SceneFrame<'_>,
     ) {
-        let (color_view, resolve_target) = ctx.renderer_textures.msaa_views(view);
+        let (color_view, resolve_target) = targets.color_views(view);
 
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Overlay Render Pass"),
@@ -241,7 +246,8 @@ impl SceneRenderPass for OverlayPass {
             timestamp_writes: None,
         });
 
-        bind_scene_groups(&mut render_pass, ctx);
-        draw_batches(&mut render_pass, draw_data.overlay_batches(), ctx, pipeline_cache, false);
+        bind_scene_groups(&mut render_pass, frame);
+        let batches = frame.draw.overlay_batches();
+        draw_batches(gpu, &mut render_pass, batches, frame, false);
     }
 }

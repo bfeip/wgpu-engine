@@ -289,7 +289,7 @@ impl<'a> Viewer<'a> {
     }
 
     /// Replace the active rendering workflow.
-    pub fn set_workflow(&mut self, workflow: Box<dyn crate::renderer::RenderWorkflow>) {
+    pub fn set_workflow(&mut self, workflow: Box<crate::renderer::SceneWorkflow>) {
         self.renderer.set_workflow(workflow);
     }
 

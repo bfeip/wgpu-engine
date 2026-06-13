@@ -1,40 +1,13 @@
+use crate::render_core::{FrameTargets, Gpu, RenderWorkflow, TargetConfig};
 use crate::scene::PrimitiveType;
 use crate::scene::common::RgbaColor;
 
-use super::batching::DrawData;
-use super::pass_context::{FrameContext, SceneRenderPass};
-use super::pipeline::MaterialPipelineCache;
+use super::pass_context::{SceneFrame, SceneFrames, SceneRenderPass};
 use super::scene_pass::{
     FlatColorPass, FlatColorPassDesc,
     MainPass, OverlayPass, OutlinePass, SilhouetteEdgesPass, SubGeomHighlightPass, SubViewPass,
 };
 use crate::shaders::ShaderGenerator;
-
-/// A named rendering strategy that owns all passes and GPU resources for one frame style.
-///
-/// Workflows are the top-level unit of render customization. The renderer runs exactly
-/// one workflow per frame, and workflows can be swapped at runtime via
-/// [`Renderer::set_workflow`](super::super::Renderer::set_workflow).
-///
-/// Built-in workflows: [`ShadedWorkflow`], [`HiddenLineWorkflow`].
-/// Custom workflows implement this trait directly.
-pub trait RenderWorkflow: 'static {
-    fn name(&self) -> &'static str;
-
-    /// Called after a viewport resize. Implementations must forward to any passes
-    /// that own size-dependent GPU resources.
-    fn resize(&mut self, device: &wgpu::Device, size: (u32, u32), sample_count: u32);
-
-    /// Execute all passes for this frame.
-    fn execute(
-        &mut self,
-        encoder: &mut wgpu::CommandEncoder,
-        view: &wgpu::TextureView,
-        ctx: &FrameContext<'_>,
-        pipeline_cache: &mut MaterialPipelineCache,
-        draw_data: &DrawData,
-    );
-}
 
 /// The default shaded rendering workflow.
 ///
@@ -48,25 +21,26 @@ pub struct ShadedWorkflow {
 impl ShadedWorkflow {
     pub(super) fn new(
         device: &wgpu::Device,
-        config: &wgpu::SurfaceConfiguration,
+        config: TargetConfig,
         camera_bgl: &wgpu::BindGroupLayout,
         lights_bgl: &wgpu::BindGroupLayout,
         material_color_bgl: &wgpu::BindGroupLayout,
         shader_generator: &mut ShaderGenerator,
-        sample_count: u32,
     ) -> Self {
+        let (width, height) = config.size;
+        let sample_count = config.sample_count;
         Self {
             passes: vec![
                 Box::new(MainPass),
-                Box::new(OverlayPass::new(device, config.width, config.height, sample_count)),
-                Box::new(OutlinePass::new(device, config, camera_bgl, shader_generator, sample_count)),
+                Box::new(OverlayPass::new(device, width, height, sample_count)),
+                Box::new(OutlinePass::new(device, config, camera_bgl, shader_generator)),
                 // Sub-geometry highlights draw on top of the node outlines.
                 Box::new(SubGeomHighlightPass::new(
                     device, config.format, sample_count,
                     camera_bgl, lights_bgl, material_color_bgl, shader_generator,
                 )),
                 // Drawn last so each sub-view composites on top of the finished main view.
-                Box::new(SubViewPass::new(device, config.width, config.height, sample_count, camera_bgl)),
+                Box::new(SubViewPass::new(device, width, height, sample_count, camera_bgl)),
             ],
         }
     }
@@ -79,26 +53,26 @@ impl ShadedWorkflow {
     }
 }
 
-impl RenderWorkflow for ShadedWorkflow {
+impl RenderWorkflow<SceneFrames> for ShadedWorkflow {
     fn name(&self) -> &'static str { "Shaded" }
 
-    fn resize(&mut self, device: &wgpu::Device, size: (u32, u32), sample_count: u32) {
+    fn resize(&mut self, gpu: &Gpu, targets: &FrameTargets) {
         for pass in &mut self.passes {
-            pass.resize(device, size, sample_count);
+            pass.resize(gpu, targets);
         }
     }
 
     fn execute(
         &mut self,
+        gpu: &Gpu,
+        targets: &FrameTargets,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
-        ctx: &FrameContext<'_>,
-        pipeline_cache: &mut MaterialPipelineCache,
-        draw_data: &DrawData,
+        frame: &mut SceneFrame<'_>,
     ) {
         for pass in &mut self.passes {
-            if pass.is_active(draw_data) {
-                pass.execute(encoder, view, ctx, pipeline_cache, draw_data);
+            if pass.is_active(frame) {
+                pass.execute(gpu, targets, encoder, view, frame);
             }
         }
     }
@@ -201,30 +175,30 @@ impl HiddenLineWorkflow {
     }
 }
 
-impl RenderWorkflow for HiddenLineWorkflow {
+impl RenderWorkflow<SceneFrames> for HiddenLineWorkflow {
     fn name(&self) -> &'static str { "Hidden Line" }
 
-    fn resize(&mut self, device: &wgpu::Device, size: (u32, u32), sample_count: u32) {
-        self.solid_pass.resize(device, size, sample_count);
-        self.silhouette_pass.resize(device, size, sample_count);
-        self.occluded_pass.resize(device, size, sample_count);
-        self.visible_pass.resize(device, size, sample_count);
+    fn resize(&mut self, gpu: &Gpu, targets: &FrameTargets) {
+        self.solid_pass.resize(gpu, targets);
+        self.silhouette_pass.resize(gpu, targets);
+        self.occluded_pass.resize(gpu, targets);
+        self.visible_pass.resize(gpu, targets);
     }
 
     fn execute(
         &mut self,
+        gpu: &Gpu,
+        targets: &FrameTargets,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
-        ctx: &FrameContext<'_>,
-        pipeline_cache: &mut MaterialPipelineCache,
-        draw_data: &DrawData,
+        frame: &mut SceneFrame<'_>,
     ) {
-        self.solid_pass.execute(encoder, view, ctx, pipeline_cache, draw_data);
-        self.silhouette_pass.execute(encoder, view, ctx, pipeline_cache, draw_data);
-        let has_lines = draw_data.all_batches().iter().any(|b| b.primitive_type == PrimitiveType::LineList);
+        self.solid_pass.execute(gpu, targets, encoder, view, frame);
+        self.silhouette_pass.execute(gpu, targets, encoder, view, frame);
+        let has_lines = frame.draw.all_batches().iter().any(|b| b.primitive_type == PrimitiveType::LineList);
         if has_lines {
-            self.occluded_pass.execute(encoder, view, ctx, pipeline_cache, draw_data);
-            self.visible_pass.execute(encoder, view, ctx, pipeline_cache, draw_data);
+            self.occluded_pass.execute(gpu, targets, encoder, view, frame);
+            self.visible_pass.execute(gpu, targets, encoder, view, frame);
         }
     }
 }

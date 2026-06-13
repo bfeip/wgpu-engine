@@ -1,5 +1,5 @@
 use duck_engine_renderer::{
-    DrawData, FrameContext, MaterialPipelineCache, Renderer, RenderWorkflow, SceneRenderPass,
+    FrameTargets, Gpu, Renderer, RenderWorkflow, SceneFrame, SceneFrames, SceneRenderPass, abi,
 };
 use duck_engine_renderer::scene::{
     FaceMaterial, Instance, Light, Mesh, NodePayload, PositionedCamera, PrimitiveType, Scene,
@@ -30,11 +30,11 @@ impl GoochPass {
 impl SceneRenderPass for GoochPass {
     fn execute(
         &mut self,
+        gpu: &Gpu,
+        targets: &FrameTargets,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
-        ctx: &FrameContext<'_>,
-        _pipeline_cache: &mut MaterialPipelineCache,
-        draw_data: &DrawData,
+        frame: &mut SceneFrame<'_>,
     ) {
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Gooch Pass"),
@@ -42,13 +42,13 @@ impl SceneRenderPass for GoochPass {
                 view,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(ctx.background_color),
+                    load: wgpu::LoadOp::Clear(frame.background_color),
                     store: wgpu::StoreOp::Store,
                 },
                 depth_slice: None,
             })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: ctx.depth_view(),
+                view: targets.depth_view(),
                 depth_ops: Some(wgpu::Operations {
                     load: wgpu::LoadOp::Clear(1.0),
                     store: wgpu::StoreOp::Store,
@@ -60,12 +60,12 @@ impl SceneRenderPass for GoochPass {
         });
 
         render_pass.set_pipeline(&self.pipeline);
-        render_pass.set_bind_group(0, ctx.camera_bind_group, &[]);
-        render_pass.set_bind_group(1, ctx.lights_bind_group, &[]);
+        render_pass.set_bind_group(abi::GROUP_CAMERA, frame.camera_bind_group, &[]);
+        render_pass.set_bind_group(abi::GROUP_LIGHTS, frame.lights_bind_group, &[]);
 
-        for batch in draw_data.all_batches() {
+        for batch in frame.draw.all_batches() {
             if batch.primitive_type == PrimitiveType::TriangleList {
-                ctx.draw_batch(&mut render_pass, batch);
+                frame.draw_batch(gpu, &mut render_pass, batch);
             }
         }
     }
@@ -81,20 +81,18 @@ impl GoochWorkflow {
     }
 }
 
-impl RenderWorkflow for GoochWorkflow {
+impl RenderWorkflow<SceneFrames> for GoochWorkflow {
     fn name(&self) -> &'static str { "Gooch" }
-
-    fn resize(&mut self, _device: &wgpu::Device, _size: (u32, u32), _sample_count: u32) {}
 
     fn execute(
         &mut self,
+        gpu: &Gpu,
+        targets: &FrameTargets,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
-        ctx: &FrameContext<'_>,
-        pipeline_cache: &mut MaterialPipelineCache,
-        draw_data: &DrawData,
+        frame: &mut SceneFrame<'_>,
     ) {
-        self.pass.execute(encoder, view, ctx, pipeline_cache, draw_data);
+        self.pass.execute(gpu, targets, encoder, view, frame);
     }
 }
 

@@ -10,16 +10,16 @@ mod workflow;
 pub use batching::{DrawBatch, DrawData};
 pub use custom_pipeline::CustomPipelineBuilder;
 pub use gpu_resources::{instance_buffer_layout, vertex_buffer_layout};
-pub use pass_context::{FrameContext, SceneRenderPass};
+pub use pass_context::{SceneFrame, SceneFrames, SceneRenderPass, SceneWorkflow};
 pub use pipeline::MaterialPipelineCache;
-pub use workflow::{HiddenLineConfig, HiddenLineWorkflow, RenderWorkflow, ShadedWorkflow};
+pub use workflow::{HiddenLineConfig, HiddenLineWorkflow, ShadedWorkflow};
 
 use anyhow::Result;
 
 use crate::{
     highlight_query::HighlightQuery,
     ibl::IblResources,
-    render_core::ReadbackTarget,
+    render_core::{Gpu, RenderHost, TargetConfig, TargetFeatures},
     rgba_to_wgpu_color,
     scene::{
         PositionedCamera,
@@ -31,26 +31,22 @@ use crate::{
 };
 
 use gpu_resources::{
-    BindGroupLayouts, CameraResources, CameraUniform, GpuResourceManager, GpuTexture,
-    LightResources, MaterialPipelineLayouts, RendererTextures,
+    BindGroupLayouts, CameraResources, CameraUniform, FallbackTextures, GpuResourceManager,
+    LightResources, MaterialPipelineLayouts,
 };
 
 pub struct Renderer {
-    // Core GPU resources
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    size: (u32, u32),
-    surface_format: wgpu::TextureFormat,
+    /// Core dispatch: owns the GPU handles, shared frame targets, the active
+    /// workflow, and headless readback. The scene subsystems below are reached
+    /// alongside `&mut host` via disjoint field borrows when building a frame.
+    host: RenderHost<SceneFrames>,
     background_color: wgpu::Color,
-
-    // Internal config used by texture helpers (width/height/format)
-    config: wgpu::SurfaceConfiguration,
 
     // Grouped resources
     layouts: BindGroupLayouts,
     camera_resources: CameraResources,
     lights: LightResources,
-    renderer_textures: RendererTextures,
+    fallback_textures: FallbackTextures,
 
     // Other
     pipeline_cache: MaterialPipelineCache,
@@ -58,15 +54,6 @@ pub struct Renderer {
 
     // Scene GPU resource tracking
     gpu_resources: GpuResourceManager,
-
-    /// MSAA sample count (1 = no MSAA).
-    sample_count: u32,
-
-    /// Cached GPU resources for headless rendering, reused across frames at the same size.
-    headless_resources: Option<ReadbackTarget>,
-
-    /// Active rendering workflow executed each frame.
-    workflow: Box<dyn RenderWorkflow>,
 }
 
 impl Renderer {
@@ -84,59 +71,53 @@ impl Renderer {
         sample_count: u32,
         has_compute: bool,
     ) -> Self {
-        // Build an internal config for texture helpers
-        let config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        let gpu = Gpu::new(device, queue);
+        let config = TargetConfig {
+            size: (width, height),
             format: surface_format,
-            width,
-            height,
-            present_mode: wgpu::PresentMode::Fifo,
-            alpha_mode: wgpu::CompositeAlphaMode::Auto,
-            view_formats: vec![],
-            desired_maximum_frame_latency: 2,
+            sample_count,
         };
 
         // Create grouped resources
-        let layouts = BindGroupLayouts::new(&device);
-        let camera_resources = CameraResources::new(&device, &layouts.camera);
-        let lights = LightResources::new(&device, &layouts.light);
-        let ibl_resources = IblResources::new(&device, &queue, &layouts.ibl, has_compute);
-        let pipelines = MaterialPipelineLayouts::new(&device, &layouts);
+        let layouts = BindGroupLayouts::new(&gpu.device);
+        let camera_resources = CameraResources::new(&gpu.device, &layouts.camera);
+        let lights = LightResources::new(&gpu.device, &layouts.light);
+        let ibl_resources = IblResources::new(&gpu.device, &gpu.queue, &layouts.ibl, has_compute);
+        let pipelines = MaterialPipelineLayouts::new(&gpu.device, &layouts);
 
-        let renderer_textures = RendererTextures::new(&device, &queue, &config, sample_count);
+        let fallback_textures = FallbackTextures::new(&gpu.device, &gpu.queue);
 
         // ShaderGenerator is shared between the workflow (for pass-specific shaders)
         // and MaterialPipelineCache (for material shaders). Build the workflow first,
         // then hand the generator to MaterialPipelineCache.
         let mut shader_generator = ShaderGenerator::new();
         let shaded_workflow = ShadedWorkflow::new(
-            &device,
-            &config,
+            &gpu.device,
+            config,
             &layouts.camera,
             &layouts.light,
             &layouts.color,
             &mut shader_generator,
-            sample_count,
         );
 
         let pipeline_cache = MaterialPipelineCache::new(pipelines, shader_generator, sample_count, surface_format);
 
-        Self {
-            device,
-            queue,
-            size: (width, height),
-            surface_format,
+        let host = RenderHost::new(
+            gpu,
             config,
+            TargetFeatures { depth: true },
+            Box::new(shaded_workflow),
+        );
+
+        Self {
+            host,
             layouts,
             camera_resources,
             lights,
-            renderer_textures,
+            fallback_textures,
             pipeline_cache,
             ibl_resources,
             gpu_resources: GpuResourceManager::new(),
-            sample_count,
-            headless_resources: None,
-            workflow: Box::new(shaded_workflow),
             background_color: wgpu::Color { r: 0.02, g: 0.02, b: 0.02, a: 1.0 },
         }
     }
@@ -149,63 +130,39 @@ impl Renderer {
     ///
     /// Uses `Rgba8UnormSrgb` format and disables MSAA for simplicity.
     pub async fn new_headless(width: u32, height: u32) -> Self {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::PRIMARY,
-            ..Default::default()
-        });
-
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::default(),
-                compatible_surface: None,
-                force_fallback_adapter: false,
-            })
+        let (gpu, caps) = Gpu::headless()
             .await
-            .expect("Failed to find a suitable GPU adapter for headless rendering");
-
-        let has_compute = adapter.get_info().backend != wgpu::Backend::Gl;
-
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
-                label: Some("Headless Renderer"),
-                memory_hints: Default::default(),
-                trace: wgpu::Trace::Off,
-                experimental_features: Default::default(),
-            })
-            .await
-            .expect("Failed to create GPU device for headless rendering");
+            .expect("Failed to create GPU for headless rendering");
 
         let surface_format = wgpu::TextureFormat::Rgba8UnormSrgb;
         let sample_count = 1; // No MSAA for headless
 
-        Self::new(device, queue, surface_format, width, height, sample_count, has_compute)
+        Self::new(gpu.device, gpu.queue, surface_format, width, height, sample_count, caps.has_compute)
     }
 
     /// Get a reference to the wgpu device.
     pub fn device(&self) -> &wgpu::Device {
-        &self.device
+        &self.host.gpu().device
     }
 
     /// Get a reference to the wgpu queue.
     pub fn queue(&self) -> &wgpu::Queue {
-        &self.queue
+        &self.host.gpu().queue
     }
 
     /// Get the current viewport size as (width, height).
     pub fn size(&self) -> (u32, u32) {
-        self.size
+        self.host.targets().size()
     }
 
     /// Get the surface texture format.
     pub fn surface_format(&self) -> wgpu::TextureFormat {
-        self.surface_format
+        self.host.targets().format()
     }
 
     /// Get the MSAA sample count (1 = no MSAA, 4 = 4× MSAA).
     pub fn sample_count(&self) -> u32 {
-        self.sample_count
+        self.host.targets().sample_count()
     }
 
     /// Compile a user-supplied WESL shader with access to all engine shader modules.
@@ -214,7 +171,7 @@ impl Renderer {
     /// `package::lighting`, `package::constants`, `package::vertex`, `package::pbr`.
     /// See `docs/custom-passes.md` for the full module reference.
     pub fn compile_user_wesl(&self, source: &str) -> anyhow::Result<wgpu::ShaderModule> {
-        crate::shaders::compile_user_wesl(&self.device, source)
+        crate::shaders::compile_user_wesl(&self.host.gpu().device, source)
     }
 
     /// Create a pipeline builder pre-configured with the engine's standard vertex
@@ -224,9 +181,9 @@ impl Renderer {
     /// default. See [`CustomPipelineBuilder`] for the full configuration API.
     pub fn custom_pipeline_builder(&self) -> CustomPipelineBuilder<'_> {
         CustomPipelineBuilder::new(
-            &self.device,
-            self.surface_format,
-            self.sample_count,
+            &self.host.gpu().device,
+            self.host.targets().format(),
+            self.host.targets().sample_count(),
             &self.layouts.camera,
             &self.layouts.light,
         )
@@ -257,21 +214,20 @@ impl Renderer {
     /// The new workflow takes effect immediately on the next frame. The previous
     /// workflow and all its GPU resources are dropped. The [`MaterialPipelineCache`] is
     /// retained across workflow swaps.
-    pub fn set_workflow(&mut self, workflow: Box<dyn RenderWorkflow>) {
-        self.workflow = workflow;
+    pub fn set_workflow(&mut self, workflow: Box<SceneWorkflow>) {
+        self.host.set_workflow(workflow);
     }
 
     /// Create a new [`ShadedWorkflow`] configured for this renderer's device, format,
     /// and MSAA settings. Pass to [`set_workflow`](Self::set_workflow) to activate it.
     pub fn shaded_workflow(&mut self) -> ShadedWorkflow {
         ShadedWorkflow::new(
-            &self.device,
-            &self.config,
+            &self.host.gpu().device,
+            self.host.targets().config(),
             &self.layouts.camera,
             &self.layouts.light,
             &self.layouts.color,
             self.pipeline_cache.shader_generator_mut(),
-            self.sample_count,
         )
     }
 
@@ -279,9 +235,9 @@ impl Renderer {
     /// and MSAA settings. Pass to [`set_workflow`](Self::set_workflow) to activate it.
     pub fn hidden_line_workflow(&mut self, config: HiddenLineConfig) -> HiddenLineWorkflow {
         HiddenLineWorkflow::new(
-            &self.device,
-            self.surface_format,
-            self.sample_count,
+            &self.host.gpu().device,
+            self.host.targets().format(),
+            self.host.targets().sample_count(),
             &self.layouts.camera,
             &self.layouts.light,
             &self.layouts.color,
@@ -299,7 +255,7 @@ impl Renderer {
         env_map: &crate::scene::EnvironmentMap,
     ) -> anyhow::Result<crate::scene::PreprocessedIbl> {
         self.ibl_resources
-            .preprocess_ibl(&self.device, &self.queue, env_map)
+            .preprocess_ibl(&self.host.gpu().device, &self.host.gpu().queue, env_map)
     }
 
     /// Clear all scene-specific GPU resources.
@@ -312,28 +268,7 @@ impl Renderer {
     }
 
     pub fn resize(&mut self, new_size: (u32, u32)) {
-        let (width, height) = new_size;
-        if width > 0 && height > 0 {
-            self.size = (width, height);
-            self.config.width = width;
-            self.config.height = height;
-
-            self.renderer_textures.depth =
-                GpuTexture::depth(&self.device, width, height, self.sample_count, "depth_texture");
-
-            self.renderer_textures.msaa_color_attachment = if self.sample_count > 1 {
-                Some(GpuTexture::color_attachment(
-                    &self.device, width, height, self.config.format, self.sample_count,
-                    "msaa_color_attachment",
-                ))
-            } else {
-                None
-            };
-
-            self.workflow.resize(&self.device, new_size, self.sample_count);
-
-            self.headless_resources = None;
-        }
+        self.host.resize(new_size);
     }
 
     /// Render the scene to an image buffer.
@@ -349,41 +284,34 @@ impl Renderer {
         scene: &mut Scene,
         highlight: Option<&dyn HighlightQuery>,
     ) -> Result<image::RgbaImage> {
-        let (width, height) = self.size;
-
-        // Ensure cached headless resources exist and match the current size
-        if self
-            .headless_resources
-            .as_ref()
-            .is_none_or(|r| r.size() != (width, height))
-        {
-            self.headless_resources = Some(ReadbackTarget::new(
-                &self.device,
-                width,
-                height,
-                self.surface_format,
-            ));
-        }
-
-        // Prepare and render — temporarily take resources out of self to avoid
-        // borrow conflict with render_scene_to_view(&mut self)
         self.prepare_scene(scene)?;
-        let mut encoder = self.device.create_command_encoder(
-            &wgpu::CommandEncoderDescriptor {
-                label: Some("Headless Render Encoder"),
-            },
-        );
-        let target = self.headless_resources.take().unwrap();
-        self.render_scene_to_view(target.view(), &mut encoder, Some(camera), scene, highlight)?;
 
-        target.encode_copy(&mut encoder);
-        self.queue.submit(std::iter::once(encoder.finish()));
-        let image_data = target.read(&self.device)?;
+        let size = self.host.targets().size();
+        self.write_camera(camera);
+        let draw_data = DrawData::new(scene, camera, size, highlight);
 
-        // Put resources back for reuse
-        self.headless_resources = Some(target);
+        // Build the frame from disjoint field borrows, then hand it to the host's
+        // readback path, which owns the offscreen target and the encoder/submit.
+        // IBL resolution is inlined (not a `&self` helper) so the borrow is of the
+        // `ibl_resources` field alone, leaving `pipeline_cache`/`host` borrowable.
+        let ibl_bind_group = scene
+            .active_environment_map()
+            .and_then(|env_id| self.ibl_resources.get_processed(env_id))
+            .map(|processed| &processed.bind_group);
+        let mut frame = SceneFrame {
+            scene,
+            draw: &draw_data,
+            gpu_resources: &self.gpu_resources,
+            camera_bind_group: &self.camera_resources.bind_group,
+            lights_bind_group: &self.lights.bind_group,
+            ibl_bind_group,
+            scene_props: SceneProperties { has_ibl: ibl_bind_group.is_some() },
+            pipeline_cache: &mut self.pipeline_cache,
+            background_color: self.background_color,
+        };
+        let pixels = self.host.render_to_rgba(&mut frame)?;
 
-        image::RgbaImage::from_raw(width, height, image_data)
+        image::RgbaImage::from_raw(pixels.width, pixels.height, pixels.data)
             .ok_or_else(|| anyhow::anyhow!("Failed to create image from rendered data"))
     }
 
@@ -398,12 +326,12 @@ impl Renderer {
         scene: &Scene,
         highlight: Option<&dyn HighlightQuery>,
     ) -> Result<()> {
+        let size = self.host.targets().size();
         let owned: PositionedCamera;
         let camera: &PositionedCamera = match camera_override {
             Some(c) => c,
             None => {
-                let (width, height) = self.size;
-                let aspect = width as f32 / height as f32;
+                let aspect = size.0 as f32 / size.1 as f32;
                 owned = scene
                     .active_camera_positioned(aspect)
                     .ok_or_else(|| anyhow::anyhow!("No camera_override provided and scene has no active camera"))?;
@@ -411,45 +339,43 @@ impl Renderer {
             }
         };
 
-        // Update camera uniform
-        // TODO: only when needed
-        let camera_uniform_slice = &[CameraUniform::from_positioned_camera(camera)];
-        let camera_buffer_contents: &[u8] = bytemuck::cast_slice(camera_uniform_slice);
-        self.queue
-            .write_buffer(&self.camera_resources.buffer, 0, camera_buffer_contents);
+        self.write_camera(camera);
 
         // Collect, sort, and partition draw batches for this frame
-        let draw_data = DrawData::new(scene, camera, self.size, highlight);
+        let draw_data = DrawData::new(scene, camera, size, highlight);
 
-        // Resolve IBL bind group once — shared by all geometry passes this frame.
+        // Build the frame from disjoint field borrows. Because the frame borrows
+        // only the scene subsystems (not `host`), `&mut self.host` in `render`
+        // coexists with the frame's `&mut self.pipeline_cache` and shared borrows.
+        // IBL resolution is inlined so the borrow is of the `ibl_resources` field
+        // alone, leaving `pipeline_cache`/`host` borrowable.
         let ibl_bind_group = scene
             .active_environment_map()
             .and_then(|env_id| self.ibl_resources.get_processed(env_id))
             .map(|processed| &processed.bind_group);
-
-        // Build a frame context from named field borrows. Because `pipeline_cache`
-        // and `workflow` are not included here, the borrow checker allows
-        // `&mut self.pipeline_cache` and `&mut self.workflow` to coexist with `&ctx`.
-        let ctx = FrameContext {
-            device: &self.device,
-            queue: &self.queue,
+        let mut frame = SceneFrame {
             scene,
+            draw: &draw_data,
             gpu_resources: &self.gpu_resources,
             camera_bind_group: &self.camera_resources.bind_group,
             lights_bind_group: &self.lights.bind_group,
             ibl_bind_group,
             scene_props: SceneProperties { has_ibl: ibl_bind_group.is_some() },
-            renderer_textures: &self.renderer_textures,
-            sample_count: self.sample_count,
-            surface_format: self.surface_format,
-            size: self.size,
+            pipeline_cache: &mut self.pipeline_cache,
             background_color: self.background_color,
         };
-
-        let workflow = &mut self.workflow;
-        let pipeline_cache = &mut self.pipeline_cache;
-        workflow.execute(encoder, view, &ctx, pipeline_cache, &draw_data);
+        self.host.render(encoder, view, &mut frame);
 
         Ok(())
+    }
+
+    /// Write `camera` into the shared camera uniform buffer.
+    // TODO: only when needed
+    fn write_camera(&self, camera: &PositionedCamera) {
+        let uniform = [CameraUniform::from_positioned_camera(camera)];
+        self.host
+            .gpu()
+            .queue
+            .write_buffer(&self.camera_resources.buffer, 0, bytemuck::cast_slice(&uniform));
     }
 }

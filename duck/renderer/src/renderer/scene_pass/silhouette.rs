@@ -1,7 +1,7 @@
-use super::super::batching::DrawData;
+use crate::render_core::{FrameTargets, Gpu};
+
 use super::super::gpu_resources::SilhouetteUniform;
-use super::super::pass_context::{FrameContext, SceneRenderPass};
-use super::super::pipeline::MaterialPipelineCache;
+use super::super::pass_context::{SceneFrame, SceneRenderPass};
 
 /// Silhouette edge detection pass.
 ///
@@ -131,23 +131,23 @@ impl SilhouetteEdgesPass {
 }
 
 impl SceneRenderPass for SilhouetteEdgesPass {
-    fn resize(&mut self, _device: &wgpu::Device, _size: (u32, u32), _sample_count: u32) {
+    fn resize(&mut self, _gpu: &Gpu, _targets: &FrameTargets) {
         self.bind_group = None;
     }
 
     fn execute(
         &mut self,
+        gpu: &Gpu,
+        targets: &FrameTargets,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
-        ctx: &FrameContext<'_>,
-        _pipeline_cache: &mut MaterialPipelineCache,
-        _draw_data: &DrawData,
+        _frame: &mut SceneFrame<'_>,
     ) {
         if self.bind_group.is_none() {
-            self.bind_group = Some(self.make_bind_group(ctx.device, ctx.depth_view()));
+            self.bind_group = Some(self.make_bind_group(&gpu.device, targets.depth_view()));
         }
 
-        let (color_view, resolve_target) = ctx.renderer_textures.msaa_views(view);
+        let (color_view, resolve_target) = targets.color_views(view);
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Silhouette Edges Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {

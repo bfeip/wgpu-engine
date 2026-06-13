@@ -374,10 +374,10 @@ impl<'a> App<'a> {
     }
 
     fn cycle_workflow(&mut self) {
-        use duck_engine_viewer::renderer::RenderWorkflow;
+        use duck_engine_viewer::renderer::{RenderWorkflow, SceneWorkflow};
         let Some(state) = self.state.as_mut() else { return };
         self.workflow_index = (self.workflow_index + 1) % 2;
-        let workflow: Box<dyn RenderWorkflow> = match self.workflow_index {
+        let workflow: Box<SceneWorkflow> = match self.workflow_index {
             0 => Box::new(state.viewer.shaded_workflow()),
             _ => Box::new(state.viewer.hidden_line_workflow(Default::default())),
         };

@@ -242,24 +242,19 @@ impl MaterialPipelineLayouts {
     }
 }
 
-/// Textures used as part of the rendering process.
-pub(crate) struct RendererTextures {
-    pub depth: GpuTexture,
+/// Fallback textures bound when a material has no texture of its own.
+///
+// NOTE: this struct existing as a Renderer-owned grab bag is a symptom of ownership
+// confusion — fallback bindings are a concern of the material system, not the
+// renderer. It should be dissolved into the material system as soon as that
+// owner exists; do not add to it.
+pub(crate) struct FallbackTextures {
     pub white: GpuTexture,
     pub default_normal: GpuTexture,
-    /// Multisampled color attachment for MSAA rendering. None when sample_count == 1.
-    pub msaa_color_attachment: Option<GpuTexture>,
 }
 
-impl RendererTextures {
-    /// Create textures for rendering.
-    pub fn new(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        config: &wgpu::SurfaceConfiguration,
-        sample_count: u32,
-    ) -> RendererTextures {
-        let depth = GpuTexture::depth(device, config.width, config.height, sample_count, "depth_texture");
+impl FallbackTextures {
+    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> FallbackTextures {
         let white = GpuTexture::solid_color(
             device,
             queue,
@@ -272,31 +267,8 @@ impl RendererTextures {
             [128, 128, 255, 255], // Neutral normal (0.5, 0.5, 1.0) in tangent space
             "default_normal_texture",
         );
-        let msaa_color_attachment = if sample_count > 1 {
-            Some(GpuTexture::color_attachment(
-                device, config.width, config.height, config.format, sample_count,
-                "msaa_color_attachment",
-            ))
-        } else {
-            None
-        };
 
-        RendererTextures { depth, white, default_normal: normal, msaa_color_attachment }
-    }
-
-    /// Returns `(render_view, resolve_target)` for a render pass that may use MSAA.
-    ///
-    /// When MSAA is active, the pass should render into `render_view` (the multisampled
-    /// attachment) and resolve into `target` (typically the swapchain). When MSAA is
-    /// inactive, renders directly into `target` with no resolve step.
-    pub fn msaa_views<'a>(
-        &'a self,
-        target: &'a wgpu::TextureView,
-    ) -> (&'a wgpu::TextureView, Option<&'a wgpu::TextureView>) {
-        match &self.msaa_color_attachment {
-            Some(msaa) => (&msaa.view, Some(target)),
-            None => (target, None),
-        }
+        FallbackTextures { white, default_normal: normal }
     }
 }
 
