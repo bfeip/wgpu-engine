@@ -271,11 +271,11 @@ impl OutlinePass {
                 timestamp_writes: None,
             });
             rp.set_pipeline(&self.mask_pipeline);
-            rp.set_bind_group(abi::GROUP_CAMERA, frame.camera_bind_group, &[]);
+            rp.set_bind_group(abi::GROUP_CAMERA, frame.bindings.camera, &[]);
             for batch in highlighted_batches {
                 if batch.primitive_type != PrimitiveType::TriangleList { continue; }
                 let mesh = frame.scene.get_mesh(batch.mesh_id).unwrap();
-                let gpu_mesh = frame.gpu_resources.get_mesh(batch.mesh_id).expect("Mesh GPU resources not initialized");
+                let gpu_mesh = frame.gpu_meshes.get(batch.mesh_id).expect("Mesh GPU resources not initialized");
                 gpu_resources::draw_mesh_instances(
                     &gpu.device,
                     &mut rp,

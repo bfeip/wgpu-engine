@@ -13,9 +13,9 @@ use super::super::pass_context::{SceneFrame, SceneRenderPass};
 /// - Group 1: Lights
 /// - Group 3: IBL environment (when active)
 pub(crate) fn bind_scene_groups<'p>(render_pass: &mut wgpu::RenderPass<'p>, frame: &SceneFrame<'p>) {
-    render_pass.set_bind_group(abi::GROUP_CAMERA, frame.camera_bind_group, &[]);
-    render_pass.set_bind_group(abi::GROUP_LIGHTS, frame.lights_bind_group, &[]);
-    if let Some(ibl) = frame.ibl_bind_group {
+    render_pass.set_bind_group(abi::GROUP_CAMERA, frame.bindings.camera, &[]);
+    render_pass.set_bind_group(abi::GROUP_LIGHTS, frame.bindings.lights, &[]);
+    if let Some(ibl) = frame.bindings.ibl {
         render_pass.set_bind_group(abi::GROUP_IBL, ibl, &[]);
     }
 }
@@ -33,9 +33,9 @@ pub(crate) fn draw_batches(
     with_depth_prepass: bool,
 ) {
     let scene = frame.scene;
-    let gpu_resources = frame.gpu_resources;
+    let gpu_meshes = frame.gpu_meshes;
     let scene_props = frame.scene_props.clone();
-    let pipeline_cache = &mut *frame.pipeline_cache;
+    let materials = &mut *frame.materials;
 
     if with_depth_prepass {
         // Depth pre-pass for transparent objects: render depth-only with alpha test
@@ -48,13 +48,17 @@ pub(crate) fn draw_batches(
                 continue;
             }
 
-            let Some(material_gpu) =
-                gpu_resources.get_material(batch.material_id, batch.primitive_type)
-            else {
+            let Some(mesh) = scene.get_mesh(batch.mesh_id) else {
                 continue;
             };
-            render_pass.set_bind_group(abi::GROUP_MATERIAL, &material_gpu.bind_group, &[]);
+            let Some(gpu_mesh) = gpu_meshes.get(batch.mesh_id) else {
+                continue;
+            };
 
+            // Pipeline (mutable phase) before the material bind group (shared
+            // phase): both borrow `materials`, and wgpu does not retain either
+            // borrow past the set call, so they must not overlap.
+            //
             // Normalize key: only has_lighting (pipeline layout), double_sided
             // (cull mode), and primitive_type matter for depth-only output.
             // alpha_mode is always Mask, IBL is unused.
@@ -69,17 +73,16 @@ pub(crate) fn draw_batches(
                 depth_prepass: true,
             };
             if prepass_pipeline_key.as_ref() != Some(&pipeline_key) {
-                let pipeline = pipeline_cache.get_or_create(&gpu.device, pipeline_key.clone());
+                let pipeline = materials.pipeline(&gpu.device, pipeline_key.clone());
                 render_pass.set_pipeline(pipeline);
                 prepass_pipeline_key = Some(pipeline_key);
             }
 
-            let Some(mesh) = scene.get_mesh(batch.mesh_id) else {
+            let Some(material_gpu) = materials.bind_group(batch.material) else {
                 continue;
             };
-            let Some(gpu_mesh) = gpu_resources.get_mesh(batch.mesh_id) else {
-                continue;
-            };
+            render_pass.set_bind_group(abi::GROUP_MATERIAL, &material_gpu.bind_group, &[]);
+
             gpu_resources::draw_mesh_instances(
                 &gpu.device,
                 render_pass,
@@ -97,31 +100,29 @@ pub(crate) fn draw_batches(
         let Some(mesh) = scene.get_mesh(batch.mesh_id) else {
             continue;
         };
-        let material_props = &batch.material_props;
-
-        let Some(material_gpu) =
-            gpu_resources.get_material(batch.material_id, batch.primitive_type)
-        else {
+        let Some(gpu_mesh) = gpu_meshes.get(batch.mesh_id) else {
             continue;
         };
-        render_pass.set_bind_group(abi::GROUP_MATERIAL, &material_gpu.bind_group, &[]);
 
-        // Only change pipeline if material properties, scene properties, or primitive type changes
+        // Pipeline (mutable phase) before material bind group (shared phase); see
+        // the prepass note above on the borrow ordering.
         let pipeline_key = PipelineCacheKey {
-            material_props: material_props.clone(),
+            material_props: batch.material_props.clone(),
             scene_props: scene_props.clone(),
             primitive_type: batch.primitive_type,
             depth_prepass: false,
         };
         if current_pipeline_key.as_ref() != Some(&pipeline_key) {
-            let pipeline = pipeline_cache.get_or_create(&gpu.device, pipeline_key.clone());
+            let pipeline = materials.pipeline(&gpu.device, pipeline_key.clone());
             render_pass.set_pipeline(pipeline);
             current_pipeline_key = Some(pipeline_key);
         }
 
-        let Some(gpu_mesh) = gpu_resources.get_mesh(batch.mesh_id) else {
+        let Some(material_gpu) = materials.bind_group(batch.material) else {
             continue;
         };
+        render_pass.set_bind_group(abi::GROUP_MATERIAL, &material_gpu.bind_group, &[]);
+
         gpu_resources::draw_mesh_instances(
             &gpu.device,
             render_pass,

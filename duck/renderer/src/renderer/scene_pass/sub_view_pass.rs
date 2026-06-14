@@ -114,8 +114,8 @@ impl SceneRenderPass for SubViewPass {
 
             // Bind this sub-view's camera at group 0; share lights/IBL with the scene.
             render_pass.set_bind_group(abi::GROUP_CAMERA, &self.cameras[i].bind_group, &[]);
-            render_pass.set_bind_group(abi::GROUP_LIGHTS, frame.lights_bind_group, &[]);
-            if let Some(ibl) = frame.ibl_bind_group {
+            render_pass.set_bind_group(abi::GROUP_LIGHTS, frame.bindings.lights, &[]);
+            if let Some(ibl) = frame.bindings.ibl {
                 render_pass.set_bind_group(abi::GROUP_IBL, ibl, &[]);
             }
 

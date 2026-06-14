@@ -1,14 +1,10 @@
-use std::collections::HashMap;
-
 use anyhow::Result;
 use image::{imageops::FilterType, GenericImageView};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
 use crate::render_core::GpuTexture;
 use crate::renderer::batching::InstanceTransform;
-use crate::scene::{
-    GenericId, Mesh, MeshId, MeshIndex, PrimitiveType, Texture, TextureId,
-};
+use crate::scene::{Mesh, MeshIndex, PrimitiveType, Texture};
 
 use super::uniforms::GpuInstance;
 
@@ -18,18 +14,6 @@ pub(crate) struct MeshGpuResources {
     pub triangle_index_buffer: wgpu::Buffer,
     pub line_index_buffer: wgpu::Buffer,
     pub point_index_buffer: wgpu::Buffer,
-}
-
-/// GPU state for a mesh, including resources and sync tracking.
-pub(crate) struct MeshGpuState {
-    pub resources: MeshGpuResources,
-    pub synced_generation: u64,
-}
-
-/// GPU state for a texture, including resources and sync tracking.
-pub(crate) struct TextureGpuState {
-    pub gpu_texture: GpuTexture,
-    pub synced_generation: u64,
 }
 
 /// GPU resources for a material primitive type (bind group).
@@ -75,222 +59,9 @@ impl ColorResources {
     }
 }
 
-/// GPU state for a single material (bind group + sync tracking).
-pub(crate) struct MaterialGpuState {
-    pub resources: MaterialGpuResources,
-    pub synced_generation: u64,
-}
-
-/// Centralized manager for GPU resources associated with scene objects.
-///
-/// This tracks all GPU resources (buffers, textures, bind groups) and their
-/// synchronization state using generation numbers. The renderer uses this
-/// to know when to upload new data to the GPU.
-///
-// Material handling (refactor debt)
-//
-// Materials are stored in three maps, one per primitive kind, mirroring the
-// scene's `FaceMaterial` / `LineMaterial` / `PointMaterial` collections. The
-// scene gives each kind a distinct id type, but here the keys are erased to
-// [`GenericId`]: the public `get_material` / `set_material` /
-// `material_needs_upload` interface takes a `(GenericId, PrimitiveType)` pair,
-// where `primitive_type` selects the map and the id is just the UUID. This
-// trades the scene's compile-time kind safety for a uniform interface that the
-// batching/draw path (which carries a `GenericId` + `PrimitiveType`) can call
-// without knowing the concrete material type.
-//
-// This is deliberately minimal: the GPU material/shader path is slated for a
-// dedicated rework where each primitive kind gets its own resource + pipeline
-// handling. At that point these three maps should become typed (keyed by
-// `FaceMaterialId` etc.) and the `PrimitiveType` dispatch parameter removed.
-pub(crate) struct GpuResourceManager {
-    pub meshes: HashMap<MeshId, MeshGpuState>,
-    pub textures: HashMap<TextureId, TextureGpuState>,
-    pub face_materials: HashMap<GenericId, MaterialGpuState>,
-    pub line_materials: HashMap<GenericId, MaterialGpuState>,
-    pub point_materials: HashMap<GenericId, MaterialGpuState>,
-}
-
-impl GpuResourceManager {
-    pub fn new() -> Self {
-        Self {
-            meshes: HashMap::new(),
-            textures: HashMap::new(),
-            face_materials: HashMap::new(),
-            line_materials: HashMap::new(),
-            point_materials: HashMap::new(),
-        }
-    }
-
-    /// Clear all scene-specific GPU resources.
-    ///
-    /// This must be called when the scene is cleared or replaced to prevent
-    /// stale GPU buffers from being reused when new scene objects reuse the
-    /// same IDs with matching generation numbers.
-    pub fn clear_scene_resources(&mut self) {
-        self.meshes.clear();
-        self.textures.clear();
-        self.face_materials.clear();
-        self.line_materials.clear();
-        self.point_materials.clear();
-    }
-
-    /// The material map for a given primitive kind.
-    fn material_map(&self, primitive_type: PrimitiveType) -> &HashMap<GenericId, MaterialGpuState> {
-        match primitive_type {
-            PrimitiveType::TriangleList => &self.face_materials,
-            PrimitiveType::LineList => &self.line_materials,
-            PrimitiveType::PointList => &self.point_materials,
-        }
-    }
-
-    /// The mutable material map for a given primitive kind.
-    fn material_map_mut(
-        &mut self,
-        primitive_type: PrimitiveType,
-    ) -> &mut HashMap<GenericId, MaterialGpuState> {
-        match primitive_type {
-            PrimitiveType::TriangleList => &mut self.face_materials,
-            PrimitiveType::LineList => &mut self.line_materials,
-            PrimitiveType::PointList => &mut self.point_materials,
-        }
-    }
-
-    /// Check if a mesh needs GPU resource upload.
-    pub fn mesh_needs_upload(&self, mesh_id: MeshId, current_generation: u64) -> bool {
-        match self.meshes.get(&mesh_id) {
-            None => true,
-            Some(state) => state.synced_generation != current_generation,
-        }
-    }
-
-    /// Check if a texture needs GPU resource upload.
-    pub fn texture_needs_upload(&self, texture_id: TextureId, current_generation: u64) -> bool {
-        match self.textures.get(&texture_id) {
-            None => true,
-            Some(state) => state.synced_generation != current_generation,
-        }
-    }
-
-    /// Check if a material primitive needs GPU resource upload.
-    pub fn material_needs_upload(
-        &self,
-        material_id: GenericId,
-        primitive_type: PrimitiveType,
-        current_generation: u64,
-    ) -> bool {
-        match self.material_map(primitive_type).get(&material_id) {
-            None => true,
-            Some(state) => state.synced_generation != current_generation,
-        }
-    }
-
-    /// Get mesh GPU resources.
-    pub fn get_mesh(&self, mesh_id: MeshId) -> Option<&MeshGpuResources> {
-        self.meshes.get(&mesh_id).map(|s| &s.resources)
-    }
-
-    /// Get texture GPU resources.
-    pub fn get_texture(&self, texture_id: TextureId) -> Option<&GpuTexture> {
-        self.textures.get(&texture_id).map(|s| &s.gpu_texture)
-    }
-
-    /// Get material GPU resources for a primitive type.
-    pub fn get_material(
-        &self,
-        material_id: GenericId,
-        primitive_type: PrimitiveType,
-    ) -> Option<&MaterialGpuResources> {
-        self.material_map(primitive_type)
-            .get(&material_id)
-            .map(|s| &s.resources)
-    }
-
-    /// Store mesh GPU resources.
-    pub fn set_mesh(&mut self, mesh_id: MeshId, resources: MeshGpuResources, generation: u64) {
-        self.meshes.insert(
-            mesh_id,
-            MeshGpuState {
-                resources,
-                synced_generation: generation,
-            },
-        );
-    }
-
-    /// Store texture GPU resources.
-    pub fn set_texture(
-        &mut self,
-        texture_id: TextureId,
-        gpu_texture: GpuTexture,
-        generation: u64,
-    ) {
-        self.textures.insert(
-            texture_id,
-            TextureGpuState {
-                gpu_texture,
-                synced_generation: generation,
-            },
-        );
-    }
-
-    /// Store material GPU resources for a primitive type.
-    pub fn set_material(
-        &mut self,
-        material_id: GenericId,
-        primitive_type: PrimitiveType,
-        resources: MaterialGpuResources,
-        generation: u64,
-    ) {
-        self.material_map_mut(primitive_type).insert(
-            material_id,
-            MaterialGpuState {
-                resources,
-                synced_generation: generation,
-            },
-        );
-    }
-
-    /// Ensure mesh GPU resources are created and up-to-date.
-    ///
-    /// If the mesh's generation doesn't match the stored synced_generation,
-    /// new GPU resources are created.
-    pub fn ensure_mesh(&mut self, mesh: &Mesh, device: &wgpu::Device) {
-        let mesh_id = mesh.id;
-        let generation = mesh.generation();
-
-        if !self.mesh_needs_upload(mesh_id, generation) {
-            return;
-        }
-
-        let resources = create_mesh_gpu_resources(mesh, device);
-        self.set_mesh(mesh_id, resources, generation);
-    }
-
-    /// Ensure texture GPU resources are created and up-to-date.
-    ///
-    /// If the texture's generation doesn't match the stored synced_generation,
-    /// new GPU resources are created.
-    pub fn ensure_texture(
-        &mut self,
-        texture: &Texture,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-    ) -> Result<()> {
-        let texture_id = texture.id();
-        let generation = texture.generation();
-
-        if !self.texture_needs_upload(texture_id, generation) {
-            return Ok(());
-        }
-
-        let gpu_texture = create_texture_gpu_resources(texture, device, queue)?;
-        self.set_texture(texture_id, gpu_texture, generation);
-        Ok(())
-    }
-}
 
 /// Create GPU resources for a mesh.
-fn create_mesh_gpu_resources(mesh: &Mesh, device: &wgpu::Device) -> MeshGpuResources {
+pub(crate) fn create_mesh_gpu_resources(mesh: &Mesh, device: &wgpu::Device) -> MeshGpuResources {
     let vertices = mesh.vertices();
     let primitives = mesh.primitives();
 
@@ -347,7 +118,7 @@ fn create_mesh_gpu_resources(mesh: &Mesh, device: &wgpu::Device) -> MeshGpuResou
 }
 
 /// Create GPU resources for a texture.
-fn create_texture_gpu_resources(
+pub(crate) fn create_texture_gpu_resources(
     texture: &Texture,
     device: &wgpu::Device,
     queue: &wgpu::Queue,

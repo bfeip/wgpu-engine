@@ -19,8 +19,8 @@ pub(super) use uniforms::{OutlineUniform, SilhouetteUniform};
 
 // From state
 pub(crate) use state::{
-    draw_mesh_instances, draw_mesh_subgeom, ColorResources, GpuResourceManager,
-    MaterialGpuResources,
+    create_mesh_gpu_resources, create_texture_gpu_resources, draw_mesh_instances,
+    draw_mesh_subgeom, ColorResources, MaterialGpuResources, MeshGpuResources,
 };
 
 // From buffer_layouts

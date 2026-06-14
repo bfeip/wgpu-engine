@@ -1,9 +1,10 @@
-use crate::render_core::{FrameFamily, FrameTargets, Gpu};
-use crate::scene::{Scene, SceneProperties};
+use crate::render_core::{FrameFamily, FrameTargets, GenCache, Gpu};
+use crate::scene::{MeshId, Scene, SceneProperties};
 
 use super::batching::{DrawBatch, DrawData};
-use super::gpu_resources::{self, GpuResourceManager};
-use super::pipeline::MaterialPipelineCache;
+use super::gpu_resources::{self, MeshGpuResources};
+use super::material_system::MaterialSystem;
+use super::scene_bindings::SceneBindingRefs;
 
 /// Frame family for the standard scene renderer.
 ///
@@ -46,15 +47,14 @@ pub struct SceneFrame<'a> {
     pub scene: &'a Scene,
     /// Collected, sorted, partitioned draw batches for this frame.
     pub draw: &'a DrawData,
-    pub(crate) gpu_resources: &'a GpuResourceManager,
-    pub camera_bind_group: &'a wgpu::BindGroup,
-    pub lights_bind_group: &'a wgpu::BindGroup,
-    /// `Some` if there is an active, fully-processed environment map for IBL.
-    pub ibl_bind_group: Option<&'a wgpu::BindGroup>,
-    /// Derived from `ibl_bind_group` — `has_ibl` is true iff `ibl_bind_group` is `Some`.
+    /// Uploaded mesh vertex/index buffers, keyed by mesh id.
+    pub(crate) gpu_meshes: &'a GenCache<MeshId, MeshGpuResources>,
+    /// The scene-level bind groups for this frame (camera, lights, IBL).
+    pub bindings: SceneBindingRefs<'a>,
+    /// Derived from `bindings.ibl` — `has_ibl` is true iff `bindings.ibl` is `Some`.
     pub scene_props: SceneProperties,
-    /// Material-variant pipeline cache, shared across passes this frame.
-    pub pipeline_cache: &'a mut MaterialPipelineCache,
+    /// Material subsystem: pipelines, shaders, and per-material bind groups.
+    pub(crate) materials: &'a mut MaterialSystem,
     pub background_color: wgpu::Color,
 }
 
@@ -65,7 +65,7 @@ impl SceneFrame<'_> {
     /// call. Silently skips batches whose GPU resources haven't been uploaded yet.
     pub fn draw_batch(&self, gpu: &Gpu, render_pass: &mut wgpu::RenderPass<'_>, batch: &DrawBatch) {
         let Some(mesh) = self.scene.get_mesh(batch.mesh_id) else { return };
-        let Some(gpu_mesh) = self.gpu_resources.get_mesh(batch.mesh_id) else { return };
+        let Some(gpu_mesh) = self.gpu_meshes.get(batch.mesh_id) else { return };
         gpu_resources::draw_mesh_instances(
             &gpu.device,
             render_pass,

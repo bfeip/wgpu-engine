@@ -148,7 +148,7 @@ impl SubGeomHighlightPass {
                 PrimitiveType::LineList => (&self.line_pipeline, &colors.solid),
                 PrimitiveType::PointList => (&self.point_pipeline, &colors.solid),
             };
-            let Some(gpu_mesh) = frame.gpu_resources.get_mesh(batch.mesh_id) else { continue };
+            let Some(gpu_mesh) = frame.gpu_meshes.get(batch.mesh_id) else { continue };
             render_pass.set_pipeline(pipeline);
             render_pass.set_bind_group(abi::GROUP_MATERIAL, &color.bind_group, &[]);
             gpu_resources::draw_mesh_subgeom(
@@ -213,8 +213,8 @@ impl SceneRenderPass for SubGeomHighlightPass {
 
         // Camera (0) and lights (1) are shared across every pipeline (same layout),
         // so bind them once; only pipeline + color (2) vary per batch.
-        render_pass.set_bind_group(abi::GROUP_CAMERA, frame.camera_bind_group, &[]);
-        render_pass.set_bind_group(abi::GROUP_LIGHTS, frame.lights_bind_group, &[]);
+        render_pass.set_bind_group(abi::GROUP_CAMERA, frame.bindings.camera, &[]);
+        render_pass.set_bind_group(abi::GROUP_LIGHTS, frame.bindings.lights, &[]);
 
         self.draw_tier(gpu, &mut render_pass, frame, frame.draw.highlight_sub_geom_batches(), &self.primary);
         self.draw_tier(gpu, &mut render_pass, frame, frame.draw.secondary_highlight_sub_geom_batches(), &self.secondary);

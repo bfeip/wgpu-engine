@@ -60,8 +60,8 @@ impl SceneRenderPass for GoochPass {
         });
 
         render_pass.set_pipeline(&self.pipeline);
-        render_pass.set_bind_group(abi::GROUP_CAMERA, frame.camera_bind_group, &[]);
-        render_pass.set_bind_group(abi::GROUP_LIGHTS, frame.lights_bind_group, &[]);
+        render_pass.set_bind_group(abi::GROUP_CAMERA, frame.bindings.camera, &[]);
+        render_pass.set_bind_group(abi::GROUP_LIGHTS, frame.bindings.lights, &[]);
 
         for batch in frame.draw.all_batches() {
             if batch.primitive_type == PrimitiveType::TriangleList {

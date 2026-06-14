@@ -1,9 +1,11 @@
 mod batching;
 mod custom_pipeline;
 mod gpu_resources;
+mod material_system;
 mod pass_context;
 mod pipeline;
 mod prepare;
+mod scene_bindings;
 mod scene_pass;
 mod workflow;
 
@@ -19,21 +21,22 @@ use anyhow::Result;
 use crate::{
     highlight_query::HighlightQuery,
     ibl::IblResources,
-    render_core::{Gpu, RenderHost, TargetConfig, TargetFeatures},
+    render_core::{GenCache, GpuTexture, Gpu, RenderHost, TargetConfig, TargetFeatures},
     rgba_to_wgpu_color,
     scene::{
+        MeshId,
         PositionedCamera,
         Scene,
         SceneProperties,
+        TextureId,
         common::RgbaColor
     },
     shaders::ShaderGenerator
 };
 
-use gpu_resources::{
-    BindGroupLayouts, CameraResources, CameraUniform, FallbackTextures, GpuResourceManager,
-    LightResources, MaterialPipelineLayouts,
-};
+use gpu_resources::{BindGroupLayouts, FallbackTextures, MeshGpuResources};
+use material_system::MaterialSystem;
+use scene_bindings::SceneBindings;
 
 pub struct Renderer {
     /// Core dispatch: owns the GPU handles, shared frame targets, the active
@@ -44,16 +47,17 @@ pub struct Renderer {
 
     // Grouped resources
     layouts: BindGroupLayouts,
-    camera_resources: CameraResources,
-    lights: LightResources,
-    fallback_textures: FallbackTextures,
+    /// Scene-level camera + lights uniforms and bind groups.
+    bindings: SceneBindings,
 
-    // Other
-    pipeline_cache: MaterialPipelineCache,
+    // Subsystems
+    /// Materials: pipelines, shader generator, per-material bind groups, fallbacks.
+    materials: MaterialSystem,
     ibl_resources: IblResources,
 
-    // Scene GPU resource tracking
-    gpu_resources: GpuResourceManager,
+    // Per-object geometry GPU resources, generation-synced to the scene.
+    gpu_meshes: GenCache<MeshId, MeshGpuResources>,
+    gpu_textures: GenCache<TextureId, GpuTexture>,
 }
 
 impl Renderer {
@@ -80,16 +84,13 @@ impl Renderer {
 
         // Create grouped resources
         let layouts = BindGroupLayouts::new(&gpu.device);
-        let camera_resources = CameraResources::new(&gpu.device, &layouts.camera);
-        let lights = LightResources::new(&gpu.device, &layouts.light);
+        let bindings = SceneBindings::new(&gpu.device, &layouts);
         let ibl_resources = IblResources::new(&gpu.device, &gpu.queue, &layouts.ibl, has_compute);
-        let pipelines = MaterialPipelineLayouts::new(&gpu.device, &layouts);
-
         let fallback_textures = FallbackTextures::new(&gpu.device, &gpu.queue);
 
-        // ShaderGenerator is shared between the workflow (for pass-specific shaders)
-        // and MaterialPipelineCache (for material shaders). Build the workflow first,
-        // then hand the generator to MaterialPipelineCache.
+        // The shader generator is shared between the workflow (for pass-specific
+        // shaders) and the material system (for material shaders). Build the
+        // workflow first, then hand the generator to the material system.
         let mut shader_generator = ShaderGenerator::new();
         let shaded_workflow = ShadedWorkflow::new(
             &gpu.device,
@@ -100,7 +101,14 @@ impl Renderer {
             &mut shader_generator,
         );
 
-        let pipeline_cache = MaterialPipelineCache::new(pipelines, shader_generator, sample_count, surface_format);
+        let materials = MaterialSystem::new(
+            &gpu.device,
+            &layouts,
+            fallback_textures,
+            shader_generator,
+            sample_count,
+            surface_format,
+        );
 
         let host = RenderHost::new(
             gpu,
@@ -112,12 +120,11 @@ impl Renderer {
         Self {
             host,
             layouts,
-            camera_resources,
-            lights,
-            fallback_textures,
-            pipeline_cache,
+            bindings,
+            materials,
             ibl_resources,
-            gpu_resources: GpuResourceManager::new(),
+            gpu_meshes: GenCache::new(),
+            gpu_textures: GenCache::new(),
             background_color: wgpu::Color { r: 0.02, g: 0.02, b: 0.02, a: 1.0 },
         }
     }
@@ -227,7 +234,7 @@ impl Renderer {
             &self.layouts.camera,
             &self.layouts.light,
             &self.layouts.color,
-            self.pipeline_cache.shader_generator_mut(),
+            self.materials.shader_generator_mut(),
         )
     }
 
@@ -241,7 +248,7 @@ impl Renderer {
             &self.layouts.camera,
             &self.layouts.light,
             &self.layouts.color,
-            self.pipeline_cache.shader_generator_mut(),
+            self.materials.shader_generator_mut(),
             config,
         )
     }
@@ -263,8 +270,10 @@ impl Renderer {
     /// Call this when the scene is cleared or replaced to ensure stale GPU
     /// buffers (vertex data, textures, material bind groups) are not reused.
     pub fn clear_gpu_resources(&mut self) {
-        self.gpu_resources.clear_scene_resources();
-        self.lights.synced_generation = 0;
+        self.gpu_meshes.clear();
+        self.gpu_textures.clear();
+        self.materials.clear();
+        self.bindings.invalidate_lights();
     }
 
     pub fn resize(&mut self, new_size: (u32, u32)) {
@@ -287,13 +296,13 @@ impl Renderer {
         self.prepare_scene(scene)?;
 
         let size = self.host.targets().size();
-        self.write_camera(camera);
+        self.bindings.write_camera(&self.host.gpu().queue, camera);
         let draw_data = DrawData::new(scene, camera, size, highlight);
 
         // Build the frame from disjoint field borrows, then hand it to the host's
         // readback path, which owns the offscreen target and the encoder/submit.
         // IBL resolution is inlined (not a `&self` helper) so the borrow is of the
-        // `ibl_resources` field alone, leaving `pipeline_cache`/`host` borrowable.
+        // `ibl_resources` field alone, leaving `materials`/`host` borrowable.
         let ibl_bind_group = scene
             .active_environment_map()
             .and_then(|env_id| self.ibl_resources.get_processed(env_id))
@@ -301,12 +310,10 @@ impl Renderer {
         let mut frame = SceneFrame {
             scene,
             draw: &draw_data,
-            gpu_resources: &self.gpu_resources,
-            camera_bind_group: &self.camera_resources.bind_group,
-            lights_bind_group: &self.lights.bind_group,
-            ibl_bind_group,
+            gpu_meshes: &self.gpu_meshes,
+            bindings: self.bindings.refs(ibl_bind_group),
             scene_props: SceneProperties { has_ibl: ibl_bind_group.is_some() },
-            pipeline_cache: &mut self.pipeline_cache,
+            materials: &mut self.materials,
             background_color: self.background_color,
         };
         let pixels = self.host.render_to_rgba(&mut frame)?;
@@ -339,16 +346,16 @@ impl Renderer {
             }
         };
 
-        self.write_camera(camera);
+        self.bindings.write_camera(&self.host.gpu().queue, camera);
 
         // Collect, sort, and partition draw batches for this frame
         let draw_data = DrawData::new(scene, camera, size, highlight);
 
         // Build the frame from disjoint field borrows. Because the frame borrows
         // only the scene subsystems (not `host`), `&mut self.host` in `render`
-        // coexists with the frame's `&mut self.pipeline_cache` and shared borrows.
+        // coexists with the frame's `&mut self.materials` and shared borrows.
         // IBL resolution is inlined so the borrow is of the `ibl_resources` field
-        // alone, leaving `pipeline_cache`/`host` borrowable.
+        // alone, leaving `materials`/`host` borrowable.
         let ibl_bind_group = scene
             .active_environment_map()
             .and_then(|env_id| self.ibl_resources.get_processed(env_id))
@@ -356,12 +363,10 @@ impl Renderer {
         let mut frame = SceneFrame {
             scene,
             draw: &draw_data,
-            gpu_resources: &self.gpu_resources,
-            camera_bind_group: &self.camera_resources.bind_group,
-            lights_bind_group: &self.lights.bind_group,
-            ibl_bind_group,
+            gpu_meshes: &self.gpu_meshes,
+            bindings: self.bindings.refs(ibl_bind_group),
             scene_props: SceneProperties { has_ibl: ibl_bind_group.is_some() },
-            pipeline_cache: &mut self.pipeline_cache,
+            materials: &mut self.materials,
             background_color: self.background_color,
         };
         self.host.render(encoder, view, &mut frame);
@@ -369,13 +374,4 @@ impl Renderer {
         Ok(())
     }
 
-    /// Write `camera` into the shared camera uniform buffer.
-    // TODO: only when needed
-    fn write_camera(&self, camera: &PositionedCamera) {
-        let uniform = [CameraUniform::from_positioned_camera(camera)];
-        self.host
-            .gpu()
-            .queue
-            .write_buffer(&self.camera_resources.buffer, 0, bytemuck::cast_slice(&uniform));
-    }
 }
