@@ -1,7 +1,9 @@
 use crate::abi;
 use crate::render_core::{FrameTargets, Gpu};
 
-use super::super::gpu_resources::{CameraResources, CameraUniform, GpuTexture};
+use crate::render_core::GpuTexture;
+
+use super::super::scene_bindings::{CameraBinding, CameraUniform};
 use super::super::pass_context::{SceneFrame, SceneRenderPass};
 use super::main_pass::draw_batches;
 
@@ -26,7 +28,7 @@ use super::main_pass::draw_batches;
 pub(crate) struct SubViewPass {
     depth: GpuTexture,
     camera_layout: wgpu::BindGroupLayout,
-    cameras: Vec<CameraResources>,
+    cameras: Vec<CameraBinding>,
 }
 
 impl SubViewPass {
@@ -47,7 +49,7 @@ impl SubViewPass {
     /// Ensures at least `count` camera slots exist.
     fn ensure_cameras(&mut self, device: &wgpu::Device, count: usize) {
         while self.cameras.len() < count {
-            self.cameras.push(CameraResources::new(device, &self.camera_layout));
+            self.cameras.push(CameraBinding::new(device, &self.camera_layout));
         }
     }
 }

@@ -1,11 +1,50 @@
+use wgpu::util::{BufferInitDescriptor, DeviceExt};
+
 use crate::abi;
 use crate::render_core::{FrameTargets, Gpu};
 use crate::scene::PrimitiveType;
 use crate::scene::common::RgbaColor;
 
 use super::super::batching::SubGeomBatch;
-use super::super::gpu_resources::{self, ColorResources, instance_buffer_layout, vertex_buffer_layout};
+use super::super::mesh::{instance_buffer_layout, vertex_buffer_layout};
 use super::super::pass_context::{SceneFrame, SceneRenderPass};
+
+/// A writable flat-color GPU resource: a `vec4<f32>` uniform buffer plus its
+/// bind group against the shared color material layout (group 2 /
+/// `material_color.wesl`).
+///
+/// Wraps the buffer+bind-group pair otherwise re-created inline wherever a flat
+/// color is pushed to the GPU. The buffer is `COPY_DST` so [`write`](Self::write)
+/// can update the color per frame.
+pub(crate) struct ColorResources {
+    pub buffer: wgpu::Buffer,
+    pub bind_group: wgpu::BindGroup,
+}
+
+impl ColorResources {
+    pub fn new(
+        device: &wgpu::Device,
+        color_bgl: &wgpu::BindGroupLayout,
+        color: RgbaColor,
+        label: &str,
+    ) -> Self {
+        let buffer = device.create_buffer_init(&BufferInitDescriptor {
+            label: Some(label),
+            contents: bytemuck::bytes_of(&color),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(label),
+            layout: color_bgl,
+            entries: &[wgpu::BindGroupEntry { binding: 0, resource: buffer.as_entire_binding() }],
+        });
+        Self { buffer, bind_group }
+    }
+
+    pub fn write(&self, queue: &wgpu::Queue, color: RgbaColor) {
+        queue.write_buffer(&self.buffer, 0, bytemuck::bytes_of(&color));
+    }
+}
 
 /// The two color resources for one selection tier: the translucent face overlay
 /// and the solid edge/point recolor.
@@ -82,7 +121,7 @@ fn build_pipeline(
 /// mirrors [`FlatColorPass`](super::flat_color::FlatColorPass): it reuses the
 /// `flat_color.wesl` shader (camera at group 0, `material_color` at group 2; the
 /// lights group is an unused filler so the color stays at group 2) and
-/// [`draw_mesh_subgeom`](crate::renderer::gpu_resources::draw_mesh_subgeom).
+/// [`MeshGpuResources::draw_subgeom`](crate::renderer::mesh::MeshGpuResources::draw_subgeom).
 pub(crate) struct SubGeomHighlightPass {
     triangle_pipeline: wgpu::RenderPipeline,
     line_pipeline: wgpu::RenderPipeline,
@@ -151,10 +190,9 @@ impl SubGeomHighlightPass {
             let Some(gpu_mesh) = frame.gpu_meshes.get(batch.mesh_id) else { continue };
             render_pass.set_pipeline(pipeline);
             render_pass.set_bind_group(abi::GROUP_MATERIAL, &color.bind_group, &[]);
-            gpu_resources::draw_mesh_subgeom(
+            gpu_mesh.draw_subgeom(
                 &gpu.device,
                 render_pass,
-                gpu_mesh,
                 batch.primitive_type,
                 &batch.instance_transform,
                 batch.first_index,

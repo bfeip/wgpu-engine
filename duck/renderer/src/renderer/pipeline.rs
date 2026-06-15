@@ -1,11 +1,12 @@
-use crate::render_core::PipelineCache;
+use std::collections::HashMap;
+
+use crate::render_core::{GpuTexture, PipelineCache};
 use crate::scene::{AlphaMode, PrimitiveType};
 use crate::shaders::ShaderGenerator;
 
-use super::gpu_resources::{
-    instance_buffer_layout, vertex_buffer_layout, GpuTexture, MaterialLayoutCache,
-    PipelineCacheKey,
-};
+use super::bind_group_layouts::BindGroupLayouts;
+use super::mesh::{instance_buffer_layout, vertex_buffer_layout};
+use super::surface_config::{SurfaceConfig, TexturePresence};
 
 /// Cached render pipelines keyed by surface variant + primitive topology.
 ///
@@ -193,4 +194,133 @@ impl MaterialPipelineCache {
             })
         })
     }
+}
+
+/// Lazily-built, cached layouts for surface materials.
+///
+/// Both the group-2 material bind-group layout and the full pipeline layout are
+/// derived from a material's [`TexturePresence`] (and, for the pipeline layout,
+/// whether IBL is active) — the same value that drives the shader's `@if`
+/// bindings. Deriving layout and shader from one source is what guarantees they
+/// always agree, so a variant binds exactly the textures it declares.
+pub(crate) struct MaterialLayoutCache {
+    camera: wgpu::BindGroupLayout,
+    light: wgpu::BindGroupLayout,
+    ibl: wgpu::BindGroupLayout,
+    bind_group_layouts: HashMap<TexturePresence, wgpu::BindGroupLayout>,
+    pipeline_layouts: HashMap<(TexturePresence, bool), wgpu::PipelineLayout>,
+}
+
+impl MaterialLayoutCache {
+    pub fn new(layouts: &BindGroupLayouts) -> MaterialLayoutCache {
+        MaterialLayoutCache {
+            camera: layouts.camera.clone(),
+            light: layouts.light.clone(),
+            ibl: layouts.ibl.clone(),
+            bind_group_layouts: HashMap::new(),
+            pipeline_layouts: HashMap::new(),
+        }
+    }
+
+    /// The group-2 bind-group layout for a material with the given textures:
+    /// the params uniform at binding 0 plus a texture+sampler pair at the fixed
+    /// slot of each present texture (absent slots are simply omitted).
+    pub fn bind_group_layout(
+        &mut self,
+        device: &wgpu::Device,
+        presence: TexturePresence,
+    ) -> &wgpu::BindGroupLayout {
+        self.bind_group_layouts
+            .entry(presence)
+            .or_insert_with(|| build_material_bind_group_layout(device, presence))
+    }
+
+    /// The pipeline layout for a variant: `[camera, lights, material]`, plus the
+    /// IBL group when `has_ibl`.
+    pub fn pipeline_layout(
+        &mut self,
+        device: &wgpu::Device,
+        presence: TexturePresence,
+        has_ibl: bool,
+    ) -> &wgpu::PipelineLayout {
+        // Materialize the bind-group layout first so the borrow ends before we
+        // touch `pipeline_layouts`; the clone is a cheap Arc bump.
+        let material = self.bind_group_layout(device, presence).clone();
+        let camera = &self.camera;
+        let light = &self.light;
+        let ibl = &self.ibl;
+        self.pipeline_layouts
+            .entry((presence, has_ibl))
+            .or_insert_with(|| {
+                let mut bgls: Vec<&wgpu::BindGroupLayout> = vec![camera, light, &material];
+                if has_ibl {
+                    bgls.push(ibl);
+                }
+                device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("Surface Material Pipeline Layout"),
+                    bind_group_layouts: &bgls,
+                    push_constant_ranges: &[],
+                })
+            })
+    }
+}
+
+/// Build the group-2 bind-group layout for the given texture presence.
+///
+/// Binding 0 is always the material params uniform; each present channel adds a
+/// texture+sampler pair at its fixed slot (from [`MaterialTextureSlot`](super::surface_config::MaterialTextureSlot)).
+/// Binding numbers are explicit, so gaps left by absent textures are legal and
+/// keep every texture at a stable slot.
+fn build_material_bind_group_layout(
+    device: &wgpu::Device,
+    presence: TexturePresence,
+) -> wgpu::BindGroupLayout {
+    fn texture_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+        wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                multisampled: false,
+                view_dimension: wgpu::TextureViewDimension::D2,
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            },
+            count: None,
+        }
+    }
+    fn sampler_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+        wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
+        }
+    }
+
+    // Binding 0: material params uniform (always present).
+    let mut entries = vec![wgpu::BindGroupLayoutEntry {
+        binding: 0,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    }];
+    for slot in presence.slots() {
+        entries.push(texture_entry(slot.texture_binding()));
+        entries.push(sampler_entry(slot.sampler_binding()));
+    }
+
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("Surface Material Bind Group Layout"),
+        entries: &entries,
+    })
+}
+
+/// Cache key for render pipelines: the surface variant plus its primitive topology.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct PipelineCacheKey {
+    pub surface: SurfaceConfig,
+    pub primitive_type: PrimitiveType,
 }

@@ -1,18 +1,20 @@
 mod batching;
+mod bind_group_layouts;
 mod custom_pipeline;
-mod gpu_resources;
 mod material_system;
+mod mesh;
 mod pass_context;
 mod pipeline;
 mod prepare;
 mod scene_bindings;
 mod scene_pass;
 mod surface_config;
+mod texture;
 mod workflow;
 
 pub use batching::{DrawBatch, DrawData};
 pub use custom_pipeline::CustomPipelineBuilder;
-pub use gpu_resources::{instance_buffer_layout, vertex_buffer_layout};
+pub use mesh::{instance_buffer_layout, vertex_buffer_layout};
 pub use pass_context::{SceneFrame, SceneFrames, SceneRenderPass, SceneWorkflow};
 pub use pipeline::MaterialPipelineCache;
 pub use workflow::{HiddenLineConfig, HiddenLineWorkflow, ShadedWorkflow};
@@ -35,8 +37,9 @@ use crate::{
     shaders::ShaderGenerator
 };
 
-use gpu_resources::{BindGroupLayouts, MeshGpuResources};
+use bind_group_layouts::BindGroupLayouts;
 use material_system::MaterialSystem;
+use mesh::MeshGpuResources;
 use scene_bindings::SceneBindings;
 
 pub struct Renderer {

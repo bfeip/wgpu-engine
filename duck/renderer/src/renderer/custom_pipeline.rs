@@ -1,4 +1,6 @@
-use super::gpu_resources::{instance_buffer_layout, vertex_buffer_layout, GpuTexture};
+use crate::render_core::GpuTexture;
+
+use super::mesh::{instance_buffer_layout, vertex_buffer_layout};
 
 /// Builder for creating a `wgpu::RenderPipeline` that uses the engine's standard
 /// vertex and instance buffer layouts.

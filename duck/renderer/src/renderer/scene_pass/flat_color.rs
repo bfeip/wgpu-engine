@@ -1,9 +1,9 @@
 use crate::abi;
-use crate::render_core::{FrameTargets, Gpu};
+use crate::render_core::{FrameTargets, Gpu, GpuTexture};
 use crate::scene::PrimitiveType;
 use crate::scene::common::RgbaColor;
 
-use super::super::gpu_resources::{GpuTexture, instance_buffer_layout, vertex_buffer_layout};
+use super::super::mesh::{instance_buffer_layout, vertex_buffer_layout};
 use super::super::pass_context::{SceneFrame, SceneRenderPass};
 
 /// Per-instance configuration for [`FlatColorPass`].

@@ -3,9 +3,9 @@ use anyhow::Result;
 use crate::scene::Scene;
 
 use super::batching::collect_main_scene_data;
-use super::gpu_resources::{
-    create_mesh_gpu_resources, create_texture_gpu_resources, LightsArrayUniform,
-};
+use super::mesh::MeshGpuResources;
+use super::scene_bindings::LightsArrayUniform;
+use super::texture::create_texture_gpu_resources;
 use super::Renderer;
 
 impl Renderer {
@@ -35,7 +35,7 @@ impl Renderer {
         // using MeshPrimitive::to_line_list(), gated on a wireframe flag, before upload.
         for mesh in scene.meshes() {
             self.gpu_meshes.ensure(mesh.id, mesh.generation(), || {
-                create_mesh_gpu_resources(mesh, &self.host.gpu().device)
+                MeshGpuResources::new(mesh, &self.host.gpu().device)
             });
         }
 

@@ -1,9 +1,21 @@
 use crate::abi;
-use crate::render_core::{FrameTargets, Gpu};
+use crate::render_core::{FrameTargets, Gpu, GpuTexture};
 use crate::scene::PrimitiveType;
 
-use super::super::gpu_resources::{self, GpuTexture, OutlineUniform, instance_buffer_layout, vertex_buffer_layout};
+use super::super::mesh::{instance_buffer_layout, vertex_buffer_layout};
 use super::super::pass_context::{SceneFrame, SceneRenderPass};
+
+/// GPU uniform for screen-space highlight outline rendering.
+/// Must match the layout in `outline_screenspace.wesl`.
+#[repr(C)]
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct OutlineUniform {
+    pub color: [f32; 4],
+    pub width_pixels: f32,
+    pub screen_width: f32,
+    pub screen_height: f32,
+    pub _padding: f32,
+}
 
 /// Creates the pipeline that renders highlighted geometry into the R8Unorm mask texture.
 fn build_mask_pipeline(
@@ -276,10 +288,9 @@ impl OutlinePass {
                 if batch.primitive_type != PrimitiveType::TriangleList { continue; }
                 let mesh = frame.scene.get_mesh(batch.mesh_id).unwrap();
                 let gpu_mesh = frame.gpu_meshes.get(batch.mesh_id).expect("Mesh GPU resources not initialized");
-                gpu_resources::draw_mesh_instances(
+                gpu_mesh.draw_instances(
                     &gpu.device,
                     &mut rp,
-                    gpu_mesh,
                     batch.primitive_type,
                     &batch.instances,
                     mesh.index_count(batch.primitive_type),
@@ -343,7 +354,7 @@ impl SceneRenderPass for OutlinePass {
         frame: &mut SceneFrame<'_>,
     ) {
         let (sw, sh) = targets.size();
-        let make_uniform = |cfg: &crate::highlight_query::HighlightConfig| gpu_resources::OutlineUniform {
+        let make_uniform = |cfg: &crate::highlight_query::HighlightConfig| OutlineUniform {
             color: cfg.color,
             width_pixels: cfg.width_pixels,
             screen_width: sw as f32,

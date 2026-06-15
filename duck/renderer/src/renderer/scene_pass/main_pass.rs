@@ -2,11 +2,10 @@ use duck_engine_scene::AlphaMode;
 
 use crate::DrawBatch;
 use crate::abi;
-use crate::render_core::{FrameTargets, Gpu};
-use crate::renderer::gpu_resources::{self, PipelineCacheKey};
+use crate::render_core::{FrameTargets, Gpu, GpuTexture};
+use crate::renderer::pipeline::PipelineCacheKey;
 use crate::renderer::surface_config::SurfaceConfig;
 
-use super::super::gpu_resources::GpuTexture;
 use super::super::pass_context::{SceneFrame, SceneRenderPass};
 
 /// Bind the scene-level bind groups shared by all geometry passes:
@@ -79,10 +78,9 @@ pub(crate) fn draw_batches(
             };
             render_pass.set_bind_group(abi::GROUP_MATERIAL, &material_gpu.bind_group, &[]);
 
-            gpu_resources::draw_mesh_instances(
+            gpu_mesh.draw_instances(
                 &gpu.device,
                 render_pass,
-                gpu_mesh,
                 batch.primitive_type,
                 &batch.instances,
                 mesh.index_count(batch.primitive_type),
@@ -117,10 +115,9 @@ pub(crate) fn draw_batches(
         };
         render_pass.set_bind_group(abi::GROUP_MATERIAL, &material_gpu.bind_group, &[]);
 
-        gpu_resources::draw_mesh_instances(
+        gpu_mesh.draw_instances(
             &gpu.device,
             render_pass,
-            gpu_mesh,
             batch.primitive_type,
             &batch.instances,
             mesh.index_count(batch.primitive_type),

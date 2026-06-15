@@ -2,7 +2,7 @@ use crate::render_core::{FrameFamily, FrameTargets, GenCache, Gpu};
 use crate::scene::{MeshId, Scene, SceneProperties};
 
 use super::batching::{DrawBatch, DrawData};
-use super::gpu_resources::{self, MeshGpuResources};
+use super::mesh::MeshGpuResources;
 use super::material_system::MaterialSystem;
 use super::scene_bindings::SceneBindingRefs;
 
@@ -66,10 +66,9 @@ impl SceneFrame<'_> {
     pub fn draw_batch(&self, gpu: &Gpu, render_pass: &mut wgpu::RenderPass<'_>, batch: &DrawBatch) {
         let Some(mesh) = self.scene.get_mesh(batch.mesh_id) else { return };
         let Some(gpu_mesh) = self.gpu_meshes.get(batch.mesh_id) else { return };
-        gpu_resources::draw_mesh_instances(
+        gpu_mesh.draw_instances(
             &gpu.device,
             render_pass,
-            gpu_mesh,
             batch.primitive_type,
             &batch.instances,
             mesh.index_count(batch.primitive_type),

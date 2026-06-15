@@ -1,7 +1,16 @@
 use crate::render_core::{FrameTargets, Gpu};
 
-use super::super::gpu_resources::SilhouetteUniform;
 use super::super::pass_context::{SceneFrame, SceneRenderPass};
+
+/// GPU uniform for silhouette edge rendering.
+/// Must match the layout in `silhouette_edges.wesl`.
+#[repr(C)]
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct SilhouetteUniform {
+    pub edge_color: [f32; 4],
+    pub threshold: f32,
+    pub _pad: [f32; 3], // removable?
+}
 
 /// Silhouette edge detection pass.
 ///

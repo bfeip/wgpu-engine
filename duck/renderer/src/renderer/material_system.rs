@@ -14,17 +14,76 @@ use anyhow::{anyhow, Result};
 use bytemuck::bytes_of;
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
-use crate::render_core::GenCache;
-use crate::scene::{FaceMaterialId, LineMaterialId, PointMaterialId, Scene, TextureId};
+use crate::render_core::{GenCache, GpuTexture};
+use crate::scene::{
+    common::RgbaColor, FaceMaterial, FaceMaterialId, LineMaterial, LineMaterialId, PointMaterial,
+    PointMaterialId, Scene, TextureId,
+};
 use crate::shaders::ShaderGenerator;
 
 use super::batching::BatchMaterial;
-use super::gpu_resources::{
-    BindGroupLayouts, GpuTexture, MaterialGpuResources, MaterialLayoutCache, MaterialUniform,
-    PipelineCacheKey,
-};
-use super::pipeline::MaterialPipelineCache;
+use super::bind_group_layouts::BindGroupLayouts;
+use super::pipeline::{MaterialLayoutCache, MaterialPipelineCache, PipelineCacheKey};
 use super::surface_config::{MaterialTextureSlot, SurfaceConfig, TexturePresence};
+
+/// Material parameters for the surface shader's group-2 uniform.
+///
+/// One layout serves every variant (lit and unlit). Which textures are bound is
+/// decided by the variant's bind-group layout, not by this uniform — there are
+/// no texture-presence flags. Unlit materials simply ignore the lighting-only
+/// factors. Must match `MaterialParams` in `material.wesl` (32 bytes: a `vec4`
+/// followed by four `f32`, already 16-byte aligned).
+#[repr(C)]
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct MaterialUniform {
+    pub base_color_factor: [f32; 4],
+    pub metallic_factor: f32,
+    pub roughness_factor: f32,
+    pub normal_scale: f32,
+    pub alpha_cutoff: f32,
+}
+
+impl MaterialUniform {
+    /// Build from a (lit or unlit) `FaceMaterial`.
+    pub fn from_face_material(material: &FaceMaterial) -> Self {
+        let base_color = material.base_color_factor();
+        MaterialUniform {
+            base_color_factor: [base_color.r, base_color.g, base_color.b, base_color.a],
+            metallic_factor: material.metallic_factor(),
+            roughness_factor: material.roughness_factor(),
+            normal_scale: material.normal_scale(),
+            alpha_cutoff: material.alpha_cutoff(),
+        }
+    }
+
+    /// Build from a `LineMaterial` (unlit: only the color is used).
+    pub fn from_line_material(material: &LineMaterial) -> Self {
+        Self::unlit(material.color())
+    }
+
+    /// Build from a `PointMaterial` (unlit: only the color is used).
+    pub fn from_point_material(material: &PointMaterial) -> Self {
+        Self::unlit(material.color())
+    }
+
+    /// Shared constructor for unlit color materials. The lighting-only factors
+    /// are unused by the unlit path.
+    fn unlit(color: RgbaColor) -> Self {
+        MaterialUniform {
+            base_color_factor: [color.r, color.g, color.b, color.a],
+            metallic_factor: 0.0,
+            roughness_factor: 1.0,
+            normal_scale: 1.0,
+            alpha_cutoff: 0.0,
+        }
+    }
+}
+
+/// GPU resources for a material primitive type (bind group).
+pub(crate) struct MaterialGpuResources {
+    pub bind_group: wgpu::BindGroup,
+    pub _buffer: Option<wgpu::Buffer>,
+}
 
 /// Owns material → GPU translation: the pipeline cache (which holds the shader
 /// generator and per-variant layouts) and the per-material bind-group caches.
