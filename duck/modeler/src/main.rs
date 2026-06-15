@@ -59,8 +59,10 @@ impl ViewerState<'static> {
     async fn new(event_loop: &ActiveEventLoop) -> Self {
         let window = Arc::new(
             event_loop
-                .create_window(Window::default_attributes().with_title("Modeler"))
-                .expect("Failed to create window"),
+                .create_window(Window::default_attributes()
+                    .with_title("Modeler")
+                    .with_inner_size(winit::dpi::LogicalSize::new(1200, 1000))
+                ).expect("Failed to create window"),
         );
 
         let mut viewer = Viewer::from_window(Arc::clone(&window)).await;
