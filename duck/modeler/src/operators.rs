@@ -20,7 +20,14 @@ use crate::grid::GridConfig;
 use crate::snap::{Snap, SnapEngine, SnapFlags, SnapInput, SnapProvider};
 
 pub struct ConstructionOptions {
-    pub geometry_preview_options: CadTessellationOptions,
+    /// Canonical (fine) tessellation options for committed geometry. Previews
+    /// reuse these via [`preview_options`](ConstructionOptions::preview_options)
+    /// with a coarser tolerance.
+    pub geometry_options: CadTessellationOptions,
+    /// Coarser deflection used for transient previews, which are re-tessellated
+    /// on every cursor move. Larger than `geometry_options.tessellation_tolerance`
+    /// to keep dragging cheap on complex shapes.
+    pub preview_tolerance: f64,
     pub construction_plane: Plane,
     pub grid: GridConfig,
     /// Shared snap engine (providers + user settings) consulted by every operator.
@@ -29,7 +36,7 @@ pub struct ConstructionOptions {
 
 impl ConstructionOptions {
     pub fn new() -> Self {
-        let geometry_preview_options = CadTessellationOptions {
+        let geometry_options = CadTessellationOptions {
             tessellation_tolerance: 0.01,
             scale_factor: 1.0,
             face_material: FaceMaterial::new()
@@ -43,11 +50,19 @@ impl ConstructionOptions {
         let grid = GridConfig::default();
         let snap = SnapEngine::with_defaults();
         Self {
-            geometry_preview_options,
+            geometry_options,
+            preview_tolerance: 0.1,
             construction_plane,
             grid,
             snap
         }
+    }
+
+    /// Coarser clone of the canonical options for transient previews.
+    pub fn preview_options(&self) -> CadTessellationOptions {
+        let mut o = self.geometry_options.clone();
+        o.tessellation_tolerance = self.preview_tolerance;
+        o
     }
 
     /// Resolves a cursor position to a snapped world location via the shared snap

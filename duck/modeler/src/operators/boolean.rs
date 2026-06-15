@@ -66,7 +66,7 @@ impl BooleanOperator {
         };
         let tools = self.preview_tools.clone();
 
-        let options = self.construction_options.borrow().geometry_preview_options.clone();
+        let options = self.construction_options.borrow().geometry_options.clone();
         let mut doc = self.document.lock().unwrap();
 
         // Remove preview node; originals stay hidden — execute_boolean will delete them.
@@ -149,7 +149,7 @@ impl BooleanOperator {
 
         let Some(target_node) = target else { return };
 
-        let options = self.construction_options.borrow().geometry_preview_options.clone();
+        let options = self.construction_options.borrow().preview_options();
 
         match preview_boolean(self.kind, target_node, &tools, &*doc, &options) {
             Ok(preview) => {

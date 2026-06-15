@@ -86,10 +86,12 @@ impl SphereOperator {
         let preview_node = {
             let coptions = self.construction_options.borrow();
             let mut scene = ctx.scene.lock().unwrap();
+            // Does not need preview tesselation detail because we only make the
+            // sphere once, and then scale it.
             let Ok(node) = tessellate_into(
                 &preview_shape,
                 &mut *scene,
-                &coptions.geometry_preview_options,
+                &coptions.geometry_options,
                 None,
                 Some("sphere"),
             ) else {
@@ -132,7 +134,7 @@ impl SphereOperator {
             doc.add_part(
                 "Sphere".to_owned(),
                 world_shape,
-                &coptions.geometry_preview_options,
+                &coptions.geometry_options,
             )
             .is_ok()
         };

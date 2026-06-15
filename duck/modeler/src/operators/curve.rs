@@ -185,8 +185,9 @@ impl CurveOperator {
 
         let new_node = shape.and_then(|s| {
             let coptions = self.construction_options.borrow();
+            let preview = coptions.preview_options();
             let mut scene = ctx.scene.lock().unwrap();
-            tessellate_into(&s, &mut *scene, &coptions.geometry_preview_options, None, Some("curve")).ok()
+            tessellate_into(&s, &mut *scene, &preview, None, Some("curve")).ok()
         });
 
         if let Phase::Building { preview_node, closing: c, .. } = &mut self.phase {
@@ -245,7 +246,7 @@ impl CurveOperator {
                 .add_part(
                     "Region".to_owned(),
                     shape,
-                    &coptions.geometry_preview_options,
+                    &coptions.geometry_options,
                 )
                 .is_ok()
             {
@@ -275,7 +276,7 @@ impl CurveOperator {
                 .add_part(
                     "Curve".to_owned(),
                     shape,
-                    &coptions.geometry_preview_options,
+                    &coptions.geometry_options,
                 )
                 .is_ok();
         }

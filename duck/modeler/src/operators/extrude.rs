@@ -117,7 +117,7 @@ impl ExtrudeOperator {
     /// source node while the preview stands in for it.
     fn refresh_preview(&mut self) {
         let (Some(target), Some(frame)) = (self.target, self.frame) else { return };
-        let options = self.construction_options.borrow().geometry_preview_options.clone();
+        let options = self.construction_options.borrow().preview_options();
         let doc = self.document.lock().unwrap();
 
         {
@@ -149,7 +149,7 @@ impl ExtrudeOperator {
     /// Commit the extrusion. On success sets phase = Done; the caller clears selection.
     fn apply(&mut self) -> anyhow::Result<()> {
         let (Some(target), Some(frame)) = (self.target, self.frame) else { return Ok(()) };
-        let options = self.construction_options.borrow().geometry_preview_options.clone();
+        let options = self.construction_options.borrow().geometry_options.clone();
         let mut doc = self.document.lock().unwrap();
 
         // Drop the preview node; the source stays hidden — execute_extrude may delete it.
