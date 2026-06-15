@@ -16,7 +16,6 @@ use glam::dvec3;
 use opencascade::primitives::Shape;
 
 use crate::document::Document;
-use crate::snap::SnapKind;
 use crate::tool::{ModelingTool, ToolInfo};
 use super::ConstructionOptions;
 
