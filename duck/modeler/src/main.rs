@@ -127,8 +127,8 @@ impl ViewerState<'static> {
             up,
             aspect: size.0 as f32 / size.1 as f32,
             fovy: 35.0,
-            znear: 0.01,
-            zfar: 10_000f32,
+            znear: 1.0,
+            zfar: 5_000f32,
             ortho: false
         };
         let camera_transform = camera.to_node_transform();
