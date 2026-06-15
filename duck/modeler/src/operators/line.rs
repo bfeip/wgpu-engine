@@ -167,7 +167,6 @@ impl LineOperator {
             Phase::Building { points, .. } => points.clone(),
             Phase::Idle => return,
         };
-        self.remove_preview(ctx);
 
         let shape = if closing {
             // Non-coplanar points can't form a face; fall back to the closed wire.
@@ -187,9 +186,15 @@ impl LineOperator {
             tessellate_into(&s, &mut *scene, &preview, None, Some("line")).ok()
         });
 
-        if let Phase::Building { preview_node, closing: c, .. } = &mut self.phase {
-            *preview_node = new_node;
-            *c = closing;
+        // Only swap out the existing preview once we have new geometry. If
+        // construction failed (e.g. a snap produced a degenerate point), keep the
+        // last valid preview so the line doesn't momentarily disappear.
+        if new_node.is_some() {
+            self.remove_preview(ctx);
+            if let Phase::Building { preview_node, closing: c, .. } = &mut self.phase {
+                *preview_node = new_node;
+                *c = closing;
+            }
         }
     }
 
