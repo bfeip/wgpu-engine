@@ -38,17 +38,17 @@ impl<F: FrameFamily> RenderHost<F> {
     }
 
     #[must_use] 
-    pub fn gpu(&self) -> &Gpu {
+    pub const fn gpu(&self) -> &Gpu {
         &self.gpu
     }
 
     #[must_use] 
-    pub fn targets(&self) -> &FrameTargets {
+    pub const fn targets(&self) -> &FrameTargets {
         &self.targets
     }
 
     #[must_use] 
-    pub fn config(&self) -> TargetConfig {
+    pub const fn config(&self) -> TargetConfig {
         self.targets.config()
     }
 

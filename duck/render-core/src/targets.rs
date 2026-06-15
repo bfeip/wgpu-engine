@@ -58,22 +58,22 @@ impl FrameTargets {
     }
 
     #[must_use] 
-    pub fn config(&self) -> TargetConfig {
+    pub const fn config(&self) -> TargetConfig {
         self.config
     }
 
     #[must_use] 
-    pub fn size(&self) -> (u32, u32) {
+    pub const fn size(&self) -> (u32, u32) {
         self.config.size
     }
 
     #[must_use] 
-    pub fn format(&self) -> wgpu::TextureFormat {
+    pub const fn format(&self) -> wgpu::TextureFormat {
         self.config.format
     }
 
     #[must_use] 
-    pub fn sample_count(&self) -> u32 {
+    pub const fn sample_count(&self) -> u32 {
         self.config.sample_count
     }
 
@@ -86,7 +86,7 @@ impl FrameTargets {
     ///
     /// Panics if depth was not requested in [`TargetFeatures`] at creation.
     #[must_use] 
-    pub fn depth_view(&self) -> &wgpu::TextureView {
+    pub const fn depth_view(&self) -> &wgpu::TextureView {
         &self
             .depth
             .as_ref()
@@ -101,7 +101,7 @@ impl FrameTargets {
     /// swapchain). When MSAA is inactive, renders directly into `target` with
     /// no resolve step.
     #[must_use] 
-    pub fn color_views<'a>(
+    pub const fn color_views<'a>(
         &'a self,
         target: &'a wgpu::TextureView,
     ) -> (&'a wgpu::TextureView, Option<&'a wgpu::TextureView>) {

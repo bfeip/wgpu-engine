@@ -20,7 +20,7 @@ impl GpuTexture {
         height: u32,
         sample_count: u32,
         label: &str,
-    ) -> GpuTexture {
+    ) -> Self {
         let size = wgpu::Extent3d {
             width: width.max(1),
             height: height.max(1),
@@ -49,7 +49,7 @@ impl GpuTexture {
             lod_max_clamp: 100.0,
             ..Default::default()
         });
-        GpuTexture { texture, view, sampler }
+        Self { texture, view, sampler }
     }
 
     /// Create a single-channel mask texture at the given dimensions.
@@ -60,7 +60,7 @@ impl GpuTexture {
         height: u32,
         sample_count: u32,
         label: &str,
-    ) -> GpuTexture {
+    ) -> Self {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some(label),
             size: wgpu::Extent3d {
@@ -88,7 +88,7 @@ impl GpuTexture {
             ..Default::default()
         });
 
-        GpuTexture { texture, view, sampler }
+        Self { texture, view, sampler }
     }
 
     /// Create a color attachment texture in the given format.
@@ -103,7 +103,7 @@ impl GpuTexture {
         format: wgpu::TextureFormat,
         sample_count: u32,
         label: &str,
-    ) -> GpuTexture {
+    ) -> Self {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some(label),
             size: wgpu::Extent3d {
@@ -122,6 +122,6 @@ impl GpuTexture {
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor::default());
 
-        GpuTexture { texture, view, sampler }
+        Self { texture, view, sampler }
     }
 }

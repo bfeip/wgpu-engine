@@ -84,13 +84,13 @@ impl ReadbackTarget {
 
     /// The render target view to draw into.
     #[must_use] 
-    pub fn view(&self) -> &wgpu::TextureView {
+    pub const fn view(&self) -> &wgpu::TextureView {
         &self.view
     }
 
     /// The target dimensions as (width, height).
     #[must_use] 
-    pub fn size(&self) -> (u32, u32) {
+    pub const fn size(&self) -> (u32, u32) {
         self.size
     }
 

@@ -17,7 +17,7 @@ pub struct GpuCapabilities {
 impl Gpu {
     /// Wrap pre-created device and queue (e.g. created alongside a surface).
     #[must_use] 
-    pub fn new(device: wgpu::Device, queue: wgpu::Queue) -> Self {
+    pub const fn new(device: wgpu::Device, queue: wgpu::Queue) -> Self {
         Self { device, queue }
     }
 
@@ -29,7 +29,7 @@ impl Gpu {
     /// # Errors
     /// 
     /// Will return `Err` if initialization of WGPU fails.
-    pub async fn headless() -> anyhow::Result<(Gpu, GpuCapabilities)> {
+    pub async fn headless() -> anyhow::Result<(Self, GpuCapabilities)> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::PRIMARY,
             ..Default::default()
@@ -58,6 +58,6 @@ impl Gpu {
             })
             .await?;
 
-        Ok((Gpu { device, queue }, GpuCapabilities { has_compute, backend }))
+        Ok((Self { device, queue }, GpuCapabilities { has_compute, backend }))
     }
 }
