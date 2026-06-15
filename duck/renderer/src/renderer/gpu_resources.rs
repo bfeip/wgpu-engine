@@ -14,7 +14,7 @@ mod uniforms;
 pub(crate) use crate::render_core::GpuTexture;
 
 // From uniforms
-pub use uniforms::{CameraUniform, LightsArrayUniform, PbrUniform};
+pub use uniforms::{CameraUniform, LightsArrayUniform, MaterialUniform};
 pub(super) use uniforms::{OutlineUniform, SilhouetteUniform};
 
 // From state
@@ -28,6 +28,5 @@ pub use buffer_layouts::{instance_buffer_layout, vertex_buffer_layout};
 
 // From renderer_resources
 pub(super) use renderer_resources::{
-    BindGroupLayouts, CameraResources, FallbackTextures, LightResources,
-    MaterialPipelineLayouts, PipelineCacheKey,
+    BindGroupLayouts, CameraResources, LightResources, MaterialLayoutCache, PipelineCacheKey,
 };

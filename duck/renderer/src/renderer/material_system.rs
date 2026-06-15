@@ -2,43 +2,37 @@
 //! pipelines and bind groups.
 //!
 //! This is the single owner of the material/shader machinery: the [`MaterialPipelineCache`]
-//! (which owns the WESL [`ShaderGenerator`]), the per-material bind-group caches,
-//! the material bind group layouts, and the fallback textures bound when a
-//! material has no texture of its own. Passes reach it through
+//! (which owns the WESL [`ShaderGenerator`] and the per-variant material layouts)
+//! and the per-material bind-group caches. Passes reach it through
 //! [`SceneFrame::materials`](super::pass_context::SceneFrame).
+//!
+//! A material binds exactly the textures it has: the bind-group layout is derived
+//! from the same [`SurfaceConfig`] that drives the shader, so there are no
+//! fallback textures and no texture-presence flags.
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use bytemuck::bytes_of;
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
 use crate::render_core::GenCache;
-use crate::scene::{
-    FaceMaterialId, LineMaterialId, MaterialFlags, PointMaterialId, Scene, TextureId,
-    common::RgbaColor,
-};
+use crate::scene::{FaceMaterialId, LineMaterialId, PointMaterialId, Scene, TextureId};
 use crate::shaders::ShaderGenerator;
 
 use super::batching::BatchMaterial;
 use super::gpu_resources::{
-    BindGroupLayouts, FallbackTextures, GpuTexture, MaterialGpuResources, MaterialPipelineLayouts,
-    PbrUniform, PipelineCacheKey,
+    BindGroupLayouts, GpuTexture, MaterialGpuResources, MaterialLayoutCache, MaterialUniform,
+    PipelineCacheKey,
 };
 use super::pipeline::MaterialPipelineCache;
+use super::surface_config::{MaterialTextureSlot, SurfaceConfig, TexturePresence};
 
-/// Owns material → GPU translation: pipeline cache, shader generator, material
-/// bind-group caches, material bind group layouts, and fallback textures.
+/// Owns material → GPU translation: the pipeline cache (which holds the shader
+/// generator and per-variant layouts) and the per-material bind-group caches.
 ///
 /// Each material kind (face/line/point) has its own cache keyed by its typed id.
 /// Callers reach the right cache through the typed accessors.
 pub(crate) struct MaterialSystem {
     pipelines: MaterialPipelineCache,
-    // TODO: These layouts are also owned by [`BindGroupLayouts`]. Probably nbd but
-    // we should check to see if one or the other should drop its ownership. 
-    color_layout: wgpu::BindGroupLayout,
-    pbr_layout: wgpu::BindGroupLayout,
-    // TODO: Fallback textures shouldn't exist. The shaders should handle no texture
-    // more gracefully.
-    fallback: FallbackTextures,
     face: GenCache<FaceMaterialId, MaterialGpuResources>,
     line: GenCache<LineMaterialId, MaterialGpuResources>,
     point: GenCache<PointMaterialId, MaterialGpuResources>,
@@ -46,21 +40,16 @@ pub(crate) struct MaterialSystem {
 
 impl MaterialSystem {
     pub fn new(
-        device: &wgpu::Device,
         layouts: &BindGroupLayouts,
-        fallback: FallbackTextures,
         shader_generator: ShaderGenerator,
         sample_count: u32,
         surface_format: wgpu::TextureFormat,
     ) -> Self {
-        let pipeline_layouts = MaterialPipelineLayouts::new(device, layouts);
+        let layout_cache = MaterialLayoutCache::new(layouts);
         let pipelines =
-            MaterialPipelineCache::new(pipeline_layouts, shader_generator, sample_count, surface_format);
+            MaterialPipelineCache::new(layout_cache, shader_generator, sample_count, surface_format);
         Self {
             pipelines,
-            color_layout: layouts.color.clone(),
-            pbr_layout: layouts.pbr.clone(),
-            fallback,
             face: GenCache::new(),
             line: GenCache::new(),
             point: GenCache::new(),
@@ -136,11 +125,22 @@ impl MaterialSystem {
         for id in face_ids {
             let material = scene.get_face_material(id).unwrap();
             let generation = material.generation();
-            let resources = if material.flags().contains(MaterialFlags::DO_NOT_LIGHT) {
-                self.create_color_material(device, &material.base_color_factor(), "Base Color Factor")
-            } else {
-                self.create_pbr_material(device, scene, id, textures)?
-            };
+            // `props` (and thus texture presence) gates normal/metallic-roughness
+            // to lit materials, matching the shader. IBL/depth-prepass don't
+            // affect the group-2 layout, so any value works here.
+            let cfg = SurfaceConfig::new(material.properties(), false, false);
+            let resources = self.create_material(
+                device,
+                cfg.textures(),
+                MaterialUniform::from_face_material(material),
+                |slot| match slot {
+                    MaterialTextureSlot::BaseColor => material.base_color_texture(),
+                    MaterialTextureSlot::Normal => material.normal_texture(),
+                    MaterialTextureSlot::MetallicRoughness => material.metallic_roughness_texture(),
+                },
+                textures,
+                "Face Material",
+            )?;
             self.face.insert(id, resources, generation);
         }
 
@@ -151,7 +151,18 @@ impl MaterialSystem {
             .collect();
         for id in line_ids {
             let material = scene.get_line_material(id).unwrap();
-            let resources = self.create_color_material(device, &material.color(), "Line Color");
+            let cfg = SurfaceConfig::new(material.properties(), false, false);
+            let resources = self.create_material(
+                device,
+                cfg.textures(),
+                MaterialUniform::from_line_material(material),
+                |slot| match slot {
+                    MaterialTextureSlot::BaseColor => material.base_color_texture(),
+                    _ => None,
+                },
+                textures,
+                "Line Material",
+            )?;
             self.line.insert(id, resources, material.generation());
         }
 
@@ -162,95 +173,71 @@ impl MaterialSystem {
             .collect();
         for id in point_ids {
             let material = scene.get_point_material(id).unwrap();
-            let resources = self.create_color_material(device, &material.color(), "Point Color");
+            let cfg = SurfaceConfig::new(material.properties(), false, false);
+            let resources = self.create_material(
+                device,
+                cfg.textures(),
+                MaterialUniform::from_point_material(material),
+                |slot| match slot {
+                    MaterialTextureSlot::BaseColor => material.base_color_texture(),
+                    _ => None,
+                },
+                textures,
+                "Point Material",
+            )?;
             self.point.insert(id, resources, material.generation());
         }
 
         Ok(())
     }
 
-    /// Build the PBR material bind group (uniform + base color / normal /
-    /// metallic-roughness textures, falling back to defaults where absent).
-    fn create_pbr_material(
-        &self,
+    /// Build a material bind group against the layout for `present`.
+    ///
+    /// `resolve` maps each present channel to the texture id to bind; it is only
+    /// called for channels `present` marks (so it must return `Some` there). Each
+    /// channel's binding slots come from [`MaterialTextureSlot`], the same source
+    /// the layout uses.
+    fn create_material(
+        &mut self,
         device: &wgpu::Device,
-        scene: &Scene,
-        material_id: FaceMaterialId,
+        present: TexturePresence,
+        uniform: MaterialUniform,
+        resolve: impl Fn(MaterialTextureSlot) -> Option<TextureId>,
         textures: &GenCache<TextureId, GpuTexture>,
+        label: &str,
     ) -> Result<MaterialGpuResources> {
-        let material = scene.get_face_material(material_id).unwrap();
+        let layout = self.pipelines.material_bind_group_layout(device, present).clone();
 
-        let pbr_uniform = PbrUniform::from_face_material(material);
         let buffer = device.create_buffer_init(&BufferInitDescriptor {
-            label: Some("PBR Uniform Buffer"),
-            contents: bytes_of(&pbr_uniform),
+            label: Some(label),
+            contents: bytes_of(&uniform),
             usage: wgpu::BufferUsages::UNIFORM,
         });
 
-        let (base_color_view, base_color_sampler) =
-            self.resolve_texture(textures, material.base_color_texture(), &self.fallback.white, "Base color")?;
-        let (normal_view, normal_sampler) =
-            self.resolve_texture(textures, material.normal_texture(), &self.fallback.default_normal, "Normal")?;
-        let (mr_view, mr_sampler) = self.resolve_texture(
-            textures,
-            material.metallic_roughness_texture(),
-            &self.fallback.white,
-            "Metallic-roughness",
-        )?;
+        let mut entries =
+            vec![wgpu::BindGroupEntry { binding: 0, resource: buffer.as_entire_binding() }];
+        for slot in present.slots() {
+            let id = resolve(slot)
+                .ok_or_else(|| anyhow!("{slot:?} texture marked present but unset"))?;
+            let gpu = textures
+                .get(id)
+                .ok_or_else(|| anyhow!("{slot:?} texture {id} not found in GPU resources"))?;
+            entries.push(wgpu::BindGroupEntry {
+                binding: slot.texture_binding(),
+                resource: wgpu::BindingResource::TextureView(&gpu.view),
+            });
+            entries.push(wgpu::BindGroupEntry {
+                binding: slot.sampler_binding(),
+                resource: wgpu::BindingResource::Sampler(&gpu.sampler),
+            });
+        }
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("PBR Material Bind Group"),
-            layout: &self.pbr_layout,
-            entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(base_color_view) },
-                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(base_color_sampler) },
-                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(normal_view) },
-                wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::Sampler(normal_sampler) },
-                wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(mr_view) },
-                wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::Sampler(mr_sampler) },
-            ],
+            label: Some(label),
+            layout: &layout,
+            entries: &entries,
         });
 
         Ok(MaterialGpuResources { bind_group, _buffer: Some(buffer) })
-    }
-
-    /// Build a flat-color material bind group (a single `vec4` uniform).
-    fn create_color_material(
-        &self,
-        device: &wgpu::Device,
-        color: &RgbaColor,
-        label: &str,
-    ) -> MaterialGpuResources {
-        let buffer = device.create_buffer_init(&BufferInitDescriptor {
-            label: Some(label),
-            contents: bytes_of(color),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some(label),
-            layout: &self.color_layout,
-            entries: &[wgpu::BindGroupEntry { binding: 0, resource: buffer.as_entire_binding() }],
-        });
-        MaterialGpuResources { bind_group, _buffer: Some(buffer) }
-    }
-
-    /// Resolve an optional texture id to its GPU view+sampler, falling back to
-    /// `default` when the material does not reference a texture.
-    fn resolve_texture<'b>(
-        &self,
-        textures: &'b GenCache<TextureId, GpuTexture>,
-        texture_id: Option<TextureId>,
-        default: &'b GpuTexture,
-        name: &str,
-    ) -> Result<(&'b wgpu::TextureView, &'b wgpu::Sampler)> {
-        if let Some(tex_id) = texture_id {
-            let gpu = textures
-                .get(tex_id)
-                .ok_or_else(|| anyhow::anyhow!("{} texture {} not found in GPU resources", name, tex_id))?;
-            Ok((&gpu.view, &gpu.sampler))
-        } else {
-            Ok((&default.view, &default.sampler))
-        }
     }
 }

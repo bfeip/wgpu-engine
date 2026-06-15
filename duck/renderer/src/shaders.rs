@@ -1,24 +1,23 @@
 use crate::render_core::ShaderLibrary;
-use crate::scene::{AlphaMode, MaterialProperties, SceneProperties};
 
 // Embed shader sources at compile time for WASM compatibility
-const ENGINE_MODULES: [(&str, &str); 17] = [
-    ("package::main", include_str!("shaders/main.wesl")),
+const ENGINE_MODULES: [(&str, &str); 16] = [
+    // Unified configurable surface shader (entry point) + its modules
+    ("package::surface", include_str!("shaders/surface.wesl")),
+    ("package::material", include_str!("shaders/material.wesl")),
+    ("package::lit_surface", include_str!("shaders/lit_surface.wesl")),
     ("package::common", include_str!("shaders/common.wesl")),
     ("package::camera", include_str!("shaders/camera.wesl")),
     ("package::constants", include_str!("shaders/constants.wesl")),
     ("package::lighting", include_str!("shaders/lighting.wesl")),
     ("package::vertex", include_str!("shaders/vertex.wesl")),
-    ("package::material_color", include_str!("shaders/material_color.wesl")),
-    ("package::fragment_color_unlit", include_str!("shaders/fragment_color_unlit.wesl")),
-    ("package::flat_color", include_str!("shaders/flat_color.wesl")),
-    // PBR modules
     ("package::pbr", include_str!("shaders/pbr.wesl")),
-    ("package::material_pbr", include_str!("shaders/material_pbr.wesl")),
     ("package::normal_mapping", include_str!("shaders/normal_mapping.wesl")),
-    ("package::fragment_pbr_lit", include_str!("shaders/fragment_pbr_lit.wesl")),
     // IBL module
     ("package::ibl", include_str!("shaders/ibl.wesl")),
+    // Standalone flat-color overlay shader (camera + color uniform)
+    ("package::material_color", include_str!("shaders/material_color.wesl")),
+    ("package::flat_color", include_str!("shaders/flat_color.wesl")),
     // Screen-space outline modules
     ("package::outline_mask", include_str!("shaders/outline_mask.wesl")),
     ("package::outline_screenspace", include_str!("shaders/outline_screenspace.wesl")),
@@ -68,34 +67,17 @@ impl ShaderGenerator {
         Self { library: engine_library() }
     }
 
-    /// Generate a shader module for the given material and scene properties
-    pub fn generate_shader(
+    /// Compile a variant of the unified surface shader from its feature flags.
+    ///
+    /// Features come from `SurfaceConfig::features`; the caller owns the config
+    /// so this stays a thin module/feature mapping.
+    pub fn generate_surface_shader(
         &mut self,
         device: &wgpu::Device,
-        material_props: &MaterialProperties,
-        scene_props: &SceneProperties,
-        depth_prepass: bool,
+        features: &[(&str, bool)],
+        label: &str,
     ) -> anyhow::Result<wgpu::ShaderModule> {
-        // Build feature map for WESL conditional compilation
-        let features = [
-            ("has_lighting", material_props.has_lighting),
-            ("has_ibl", scene_props.has_ibl && material_props.has_lighting),
-            ("double_sided", material_props.double_sided),
-            ("alpha_mask", material_props.alpha_mode == AlphaMode::Mask),
-            ("depth_prepass", depth_prepass),
-        ];
-
-        let label = if material_props.has_lighting {
-            if scene_props.has_ibl {
-                "PBR Lit IBL Shader"
-            } else {
-                "PBR Lit Shader"
-            }
-        } else {
-            "Unlit Color Shader"
-        };
-
-        self.library.compile(device, "package::main", &features, label)
+        self.library.compile(device, "package::surface", features, label)
     }
 
     /// Generate the outline mask shader module.

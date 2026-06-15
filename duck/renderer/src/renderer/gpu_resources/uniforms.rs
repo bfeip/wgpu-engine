@@ -1,4 +1,7 @@
-use crate::scene::{FaceMaterial, Light, LightType, PositionedCamera, MAX_LIGHTS};
+use crate::scene::{
+    FaceMaterial, Light, LightType, LineMaterial, PointMaterial, PositionedCamera, MAX_LIGHTS,
+    common::RgbaColor,
+};
 use super::super::batching::ResolvedLight;
 
 /// GPU uniform buffer layout for camera data.
@@ -157,49 +160,55 @@ impl LightsArrayUniform {
     }
 }
 
-/// PBR material parameters for GPU uniform buffer.
+/// Material parameters for the surface shader's group-2 uniform.
 ///
-/// This struct is sent to the shader and contains all scalar factors
-/// plus flags indicating which textures are present.
+/// One layout serves every variant (lit and unlit). Which textures are bound is
+/// decided by the variant's bind-group layout, not by this uniform — there are
+/// no texture-presence flags. Unlit materials simply ignore the lighting-only
+/// factors. Must match `MaterialParams` in `material.wesl` (32 bytes: a `vec4`
+/// followed by four `f32`, already 16-byte aligned).
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct PbrUniform {
+pub struct MaterialUniform {
     pub base_color_factor: [f32; 4],
     pub metallic_factor: f32,
     pub roughness_factor: f32,
     pub normal_scale: f32,
-    pub texture_flags: u32,
     pub alpha_cutoff: f32,
-    pub _padding: [u32; 3],
 }
 
-impl PbrUniform {
-    pub const FLAG_HAS_BASE_COLOR_TEXTURE: u32 = 1 << 0;
-    pub const FLAG_HAS_NORMAL_TEXTURE: u32 = 1 << 1;
-    pub const FLAG_HAS_METALLIC_ROUGHNESS_TEXTURE: u32 = 1 << 2;
-
-    /// Creates a `PbrUniform` from a scene `FaceMaterial`.
+impl MaterialUniform {
+    /// Build from a (lit or unlit) `FaceMaterial`.
     pub fn from_face_material(material: &FaceMaterial) -> Self {
-        let mut texture_flags = 0u32;
-        if material.base_color_texture().is_some() {
-            texture_flags |= Self::FLAG_HAS_BASE_COLOR_TEXTURE;
-        }
-        if material.normal_texture().is_some() {
-            texture_flags |= Self::FLAG_HAS_NORMAL_TEXTURE;
-        }
-        if material.metallic_roughness_texture().is_some() {
-            texture_flags |= Self::FLAG_HAS_METALLIC_ROUGHNESS_TEXTURE;
-        }
-
         let base_color = material.base_color_factor();
-        PbrUniform {
+        MaterialUniform {
             base_color_factor: [base_color.r, base_color.g, base_color.b, base_color.a],
             metallic_factor: material.metallic_factor(),
             roughness_factor: material.roughness_factor(),
             normal_scale: material.normal_scale(),
-            texture_flags,
             alpha_cutoff: material.alpha_cutoff(),
-            _padding: [0; 3],
+        }
+    }
+
+    /// Build from a `LineMaterial` (unlit: only the color is used).
+    pub fn from_line_material(material: &LineMaterial) -> Self {
+        Self::unlit(material.color())
+    }
+
+    /// Build from a `PointMaterial` (unlit: only the color is used).
+    pub fn from_point_material(material: &PointMaterial) -> Self {
+        Self::unlit(material.color())
+    }
+
+    /// Shared constructor for unlit color materials. The lighting-only factors
+    /// are unused by the unlit path.
+    fn unlit(color: RgbaColor) -> Self {
+        MaterialUniform {
+            base_color_factor: [color.r, color.g, color.b, color.a],
+            metallic_factor: 0.0,
+            roughness_factor: 1.0,
+            normal_scale: 1.0,
+            alpha_cutoff: 0.0,
         }
     }
 }

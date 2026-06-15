@@ -1,9 +1,10 @@
-use duck_engine_scene::{AlphaMode, MaterialProperties, SceneProperties};
+use duck_engine_scene::AlphaMode;
 
 use crate::DrawBatch;
 use crate::abi;
 use crate::render_core::{FrameTargets, Gpu};
 use crate::renderer::gpu_resources::{self, PipelineCacheKey};
+use crate::renderer::surface_config::SurfaceConfig;
 
 use super::super::gpu_resources::GpuTexture;
 use super::super::pass_context::{SceneFrame, SceneRenderPass};
@@ -59,18 +60,13 @@ pub(crate) fn draw_batches(
             // phase): both borrow `materials`, and wgpu does not retain either
             // borrow past the set call, so they must not overlap.
             //
-            // Normalize key: only has_lighting (pipeline layout), double_sided
-            // (cull mode), and primitive_type matter for depth-only output.
-            // alpha_mode is always Mask, IBL is unused.
+            // depth_prepass=true compiles in the alpha-test discard and masks
+            // color writes; IBL is irrelevant for depth-only output (scene IBL
+            // passed as false). Texture presence still matches the material so
+            // its bind group stays compatible with this pipeline's layout.
             let pipeline_key = PipelineCacheKey {
-                material_props: MaterialProperties {
-                    alpha_mode: AlphaMode::Mask,
-                    has_lighting: material_props.has_lighting,
-                    double_sided: material_props.double_sided,
-                },
-                scene_props: SceneProperties { has_ibl: false },
+                surface: SurfaceConfig::new(material_props.clone(), false, true),
                 primitive_type: batch.primitive_type,
-                depth_prepass: true,
             };
             if prepass_pipeline_key.as_ref() != Some(&pipeline_key) {
                 let pipeline = materials.pipeline(&gpu.device, pipeline_key.clone());
@@ -107,10 +103,8 @@ pub(crate) fn draw_batches(
         // Pipeline (mutable phase) before material bind group (shared phase); see
         // the prepass note above on the borrow ordering.
         let pipeline_key = PipelineCacheKey {
-            material_props: batch.material_props.clone(),
-            scene_props: scene_props.clone(),
+            surface: SurfaceConfig::new(batch.material_props.clone(), scene_props.has_ibl, false),
             primitive_type: batch.primitive_type,
-            depth_prepass: false,
         };
         if current_pipeline_key.as_ref() != Some(&pipeline_key) {
             let pipeline = materials.pipeline(&gpu.device, pipeline_key.clone());

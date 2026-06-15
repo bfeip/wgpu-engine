@@ -1,5 +1,6 @@
-// fragment_pbr_lit.wesl
-// PBR fragment shader with Cook-Torrance BRDF and multi-light support
+// lit_surface.wesl
+// PBR shading (Cook-Torrance BRDF, multi-light, optional IBL) for the lit
+// surface path. Imported by `surface.wesl` only when the `lit` feature is set.
 
 import package::common::{
     VertexOutput, LightUniform,
@@ -7,7 +8,7 @@ import package::common::{
 };
 import package::camera::camera;
 import package::lighting::{lights, calculate_attenuation, calculate_spot_cone_falloff};
-import package::material_pbr::{get_base_color, get_metallic_roughness, pbr_params};
+import package::material::get_metallic_roughness;
 import package::normal_mapping::get_normal;
 import package::pbr::calculate_pbr_direct_light;
 
@@ -54,26 +55,9 @@ fn get_spot_light_params(
     return array<vec3<f32>, 2>(light_dir, radiance);
 }
 
-fn fragment_pbr_lit(in: VertexOutput, front_facing: bool) -> vec4<f32> {
-    // Get base color (texture * factor, or just factor)
-    let base_color = get_base_color(in.tex_coords);
-    // Alpha mask: discard fragments below cutoff threshold.
-    // Depth prepass uses a high cutoff so only nearly-opaque fragments
-    // of blend materials establish depth; the material's own cutoff is
-    // used for regular alpha-mask rendering.
-    @if(alpha_mask) {
-        @if(depth_prepass) {
-            if (base_color.a < 0.95) {
-                discard;
-            }
-        }
-        @if(!depth_prepass) {
-            if (base_color.a < pbr_params.alpha_cutoff) {
-                discard;
-            }
-        }
-    }
-
+// Shade a fragment with the full PBR pipeline. `base_color` is precomputed by
+// the caller (texture * factor) and already alpha-tested.
+fn shade_lit(in: VertexOutput, front_facing: bool, base_color: vec4<f32>) -> vec4<f32> {
     let albedo = base_color.rgb;
     let alpha = base_color.a;
 

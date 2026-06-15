@@ -3,7 +3,20 @@
 
 import package::common::{VertexInput, InstanceInput, VertexOutput};
 import package::camera::camera;
-import package::lighting::lights;
+
+// Position-only transform: reconstruct the instance model matrix and project to
+// clip space. Shared by passes that need only a clip position (flat color,
+// outline mask) and don't expand normals or texcoords.
+fn vertex_position_only(model: VertexInput, instance: InstanceInput) -> vec4<f32> {
+    let transform = mat4x4<f32>(
+        instance.model_matrix_0,
+        instance.model_matrix_1,
+        instance.model_matrix_2,
+        instance.model_matrix_3
+    );
+    let world_position = transform * vec4<f32>(model.position, 1.0);
+    return camera.view_proj * world_position;
+}
 
 // Standard vertex transformation
 fn vertex_standard(

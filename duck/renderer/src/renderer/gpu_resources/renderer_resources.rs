@@ -1,8 +1,10 @@
+use std::collections::HashMap;
+
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
 use crate::ibl::ibl_bind_group_layout;
-use crate::render_core::GpuTexture;
-use crate::scene::{MaterialProperties, PrimitiveType, SceneProperties};
+use crate::renderer::surface_config::{SurfaceConfig, TexturePresence};
+use crate::scene::PrimitiveType;
 
 use super::uniforms::{CameraUniform, LightsArrayUniform};
 
@@ -79,10 +81,10 @@ impl LightResources {
 pub(crate) struct BindGroupLayouts {
     pub camera: wgpu::BindGroupLayout,
     pub light: wgpu::BindGroupLayout,
-    /// Color material layout.
+    /// Color material layout for the standalone flat-color overlay shader
+    /// (a single `vec4` uniform). Surface materials use the dynamically-derived
+    /// layouts in [`MaterialLayoutCache`] instead.
     pub color: wgpu::BindGroupLayout,
-    /// PBR material layout.
-    pub pbr: wgpu::BindGroupLayout,
     pub ibl: wgpu::BindGroupLayout,
 }
 
@@ -132,152 +134,137 @@ impl BindGroupLayouts {
             }],
         });
 
-        let pbr = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("PBR Material Bind Group Layout"),
-            entries: &[
-                // Binding 0: PbrUniform (factors + flags)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // Binding 1: Base color texture
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        multisampled: false,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    },
-                    count: None,
-                },
-                // Binding 2: Base color sampler
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                // Binding 3: Normal texture
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        multisampled: false,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    },
-                    count: None,
-                },
-                // Binding 4: Normal sampler
-                wgpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                // Binding 5: Metallic-roughness texture
-                wgpu::BindGroupLayoutEntry {
-                    binding: 5,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        multisampled: false,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    },
-                    count: None,
-                },
-                // Binding 6: Metallic-roughness sampler
-                wgpu::BindGroupLayoutEntry {
-                    binding: 6,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
-
         let ibl = ibl_bind_group_layout(device);
 
-        BindGroupLayouts { camera, light, color, pbr, ibl }
+        BindGroupLayouts { camera, light, color, ibl }
     }
 }
 
-/// Pipeline layouts for different material types.
-pub(crate) struct MaterialPipelineLayouts {
-    pub color: wgpu::PipelineLayout,
-    pub pbr: wgpu::PipelineLayout,
-    /// PBR with IBL (includes environment bind group)
-    pub pbr_ibl: wgpu::PipelineLayout,
-}
-
-impl MaterialPipelineLayouts {
-    /// Create pipeline layouts for all material types.
-    pub fn new(device: &wgpu::Device, layouts: &BindGroupLayouts) -> MaterialPipelineLayouts {
-        let color = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Color Material Pipeline Layout"),
-            bind_group_layouts: &[&layouts.camera, &layouts.light, &layouts.color],
-            push_constant_ranges: &[],
-        });
-
-        let pbr = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("PBR Material Pipeline Layout"),
-            bind_group_layouts: &[&layouts.camera, &layouts.light, &layouts.pbr],
-            push_constant_ranges: &[],
-        });
-
-        let pbr_ibl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("PBR IBL Material Pipeline Layout"),
-            bind_group_layouts: &[&layouts.camera, &layouts.light, &layouts.pbr, &layouts.ibl],
-            push_constant_ranges: &[],
-        });
-
-        MaterialPipelineLayouts { color, pbr, pbr_ibl }
-    }
-}
-
-/// Fallback textures bound when a material has no texture of its own.
+/// Lazily-built, cached layouts for surface materials.
 ///
-// NOTE: this struct existing as a Renderer-owned grab bag is a symptom of ownership
-// confusion — fallback bindings are a concern of the material system, not the
-// renderer. It should be dissolved into the material system as soon as that
-// owner exists; do not add to it.
-pub(crate) struct FallbackTextures {
-    pub white: GpuTexture,
-    pub default_normal: GpuTexture,
+/// Both the group-2 material bind-group layout and the full pipeline layout are
+/// derived from a material's [`TexturePresence`] (and, for the pipeline layout,
+/// whether IBL is active) — the same value that drives the shader's `@if`
+/// bindings. Deriving layout and shader from one source is what guarantees they
+/// always agree, so a variant binds exactly the textures it declares.
+pub(crate) struct MaterialLayoutCache {
+    camera: wgpu::BindGroupLayout,
+    light: wgpu::BindGroupLayout,
+    ibl: wgpu::BindGroupLayout,
+    bind_group_layouts: HashMap<TexturePresence, wgpu::BindGroupLayout>,
+    pipeline_layouts: HashMap<(TexturePresence, bool), wgpu::PipelineLayout>,
 }
 
-impl FallbackTextures {
-    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> FallbackTextures {
-        let white = GpuTexture::solid_color(
-            device,
-            queue,
-            [255, 255, 255, 255],
-            "default_white_texture",
-        );
-        let normal = GpuTexture::solid_color(
-            device,
-            queue,
-            [128, 128, 255, 255], // Neutral normal (0.5, 0.5, 1.0) in tangent space
-            "default_normal_texture",
-        );
+impl MaterialLayoutCache {
+    pub fn new(layouts: &BindGroupLayouts) -> MaterialLayoutCache {
+        MaterialLayoutCache {
+            camera: layouts.camera.clone(),
+            light: layouts.light.clone(),
+            ibl: layouts.ibl.clone(),
+            bind_group_layouts: HashMap::new(),
+            pipeline_layouts: HashMap::new(),
+        }
+    }
 
-        FallbackTextures { white, default_normal: normal }
+    /// The group-2 bind-group layout for a material with the given textures:
+    /// the params uniform at binding 0 plus a texture+sampler pair at the fixed
+    /// slot of each present texture (absent slots are simply omitted).
+    pub fn bind_group_layout(
+        &mut self,
+        device: &wgpu::Device,
+        presence: TexturePresence,
+    ) -> &wgpu::BindGroupLayout {
+        self.bind_group_layouts
+            .entry(presence)
+            .or_insert_with(|| build_material_bind_group_layout(device, presence))
+    }
+
+    /// The pipeline layout for a variant: `[camera, lights, material]`, plus the
+    /// IBL group when `has_ibl`.
+    pub fn pipeline_layout(
+        &mut self,
+        device: &wgpu::Device,
+        presence: TexturePresence,
+        has_ibl: bool,
+    ) -> &wgpu::PipelineLayout {
+        // Materialize the bind-group layout first so the borrow ends before we
+        // touch `pipeline_layouts`; the clone is a cheap Arc bump.
+        let material = self.bind_group_layout(device, presence).clone();
+        let camera = &self.camera;
+        let light = &self.light;
+        let ibl = &self.ibl;
+        self.pipeline_layouts
+            .entry((presence, has_ibl))
+            .or_insert_with(|| {
+                let mut bgls: Vec<&wgpu::BindGroupLayout> = vec![camera, light, &material];
+                if has_ibl {
+                    bgls.push(ibl);
+                }
+                device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("Surface Material Pipeline Layout"),
+                    bind_group_layouts: &bgls,
+                    push_constant_ranges: &[],
+                })
+            })
     }
 }
 
-/// Cache key for render pipelines, combining all properties that require
-/// a distinct compiled pipeline.
+/// Build the group-2 bind-group layout for the given texture presence.
+///
+/// Binding 0 is always the material params uniform; each present channel adds a
+/// texture+sampler pair at its fixed slot (from [`MaterialTextureSlot`]). Binding
+/// numbers are explicit, so gaps left by absent textures are legal and keep every
+/// texture at a stable slot.
+fn build_material_bind_group_layout(
+    device: &wgpu::Device,
+    presence: TexturePresence,
+) -> wgpu::BindGroupLayout {
+    fn texture_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+        wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                multisampled: false,
+                view_dimension: wgpu::TextureViewDimension::D2,
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            },
+            count: None,
+        }
+    }
+    fn sampler_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+        wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
+        }
+    }
+
+    // Binding 0: material params uniform (always present).
+    let mut entries = vec![wgpu::BindGroupLayoutEntry {
+        binding: 0,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    }];
+    for slot in presence.slots() {
+        entries.push(texture_entry(slot.texture_binding()));
+        entries.push(sampler_entry(slot.sampler_binding()));
+    }
+
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("Surface Material Bind Group Layout"),
+        entries: &entries,
+    })
+}
+
+/// Cache key for render pipelines: the surface variant plus its primitive topology.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct PipelineCacheKey {
-    pub material_props: MaterialProperties,
-    pub scene_props: SceneProperties,
+    pub surface: SurfaceConfig,
     pub primitive_type: PrimitiveType,
-    pub depth_prepass: bool,
 }

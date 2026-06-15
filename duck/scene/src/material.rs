@@ -64,13 +64,23 @@ pub struct MaterialProperties {
     pub double_sided: bool,
     /// Alpha rendering mode
     pub alpha_mode: AlphaMode,
+    /// Whether the material binds a base-color texture
+    pub base_color_texture: bool,
+    /// Whether the material binds a normal-map texture (lit materials only)
+    pub normal_texture: bool,
+    /// Whether the material binds a metallic-roughness texture (lit materials only)
+    pub metallic_roughness_texture: bool,
 }
 
 impl MaterialProperties {
-    /// Fixed properties used for line and point primitives: unlit and opaque.
+    /// Fixed properties used for untextured line and point primitives: unlit,
+    /// opaque, no textures.
     pub const UNLIT_OPAQUE: MaterialProperties = MaterialProperties {
         has_lighting: false,
         double_sided: false,
         alpha_mode: AlphaMode::Opaque,
+        base_color_texture: false,
+        normal_texture: false,
+        metallic_roughness_texture: false,
     };
 }

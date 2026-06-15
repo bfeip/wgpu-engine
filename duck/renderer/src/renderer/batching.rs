@@ -393,8 +393,8 @@ pub(crate) fn sort_batches_for_transparency(
 
 /// Resolves the typed material and shader properties for one primitive kind of
 /// an instance, or `None` when that kind has no assigned material (so it is not
-/// drawn). Face materials carry real properties; line/point materials are always
-/// unlit and opaque (for now).
+/// drawn). Face materials carry full PBR properties; line/point materials are
+/// unlit but may bind a base-color texture.
 fn resolve_batch_material(
     scene: &Scene,
     instance: &Instance,
@@ -408,13 +408,13 @@ fn resolve_batch_material(
         }
         PrimitiveType::LineList => {
             let id = instance.line_material()?;
-            scene.get_line_material(id)?;
-            Some((BatchMaterial::Line(id), MaterialProperties::UNLIT_OPAQUE))
+            let material = scene.get_line_material(id)?;
+            Some((BatchMaterial::Line(id), material.properties()))
         }
         PrimitiveType::PointList => {
             let id = instance.point_material()?;
-            scene.get_point_material(id)?;
-            Some((BatchMaterial::Point(id), MaterialProperties::UNLIT_OPAQUE))
+            let material = scene.get_point_material(id)?;
+            Some((BatchMaterial::Point(id), material.properties()))
         }
     }
 }

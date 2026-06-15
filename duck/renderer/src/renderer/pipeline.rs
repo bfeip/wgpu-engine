@@ -1,21 +1,22 @@
 use crate::render_core::PipelineCache;
-use crate::scene::{AlphaMode, MaterialProperties, PrimitiveType};
+use crate::scene::{AlphaMode, PrimitiveType};
 use crate::shaders::ShaderGenerator;
 
 use super::gpu_resources::{
-    instance_buffer_layout, vertex_buffer_layout, GpuTexture, MaterialPipelineLayouts,
+    instance_buffer_layout, vertex_buffer_layout, GpuTexture, MaterialLayoutCache,
     PipelineCacheKey,
 };
 
-/// Cached render pipelines keyed by material and scene properties.
+/// Cached render pipelines keyed by surface variant + primitive topology.
 ///
-/// Only stores **material-variant** pipelines — those parameterized by
-/// [`PipelineCacheKey`] (MaterialProperties × SceneProperties × PrimitiveType).
-/// Technique-specific pipelines with a fixed configuration (outline, silhouette,
-/// hidden-line solid) are owned directly by their respective passes.
+/// Owns the [`MaterialLayoutCache`] (group-2 bind-group layouts and pipeline
+/// layouts, derived per [`SurfaceConfig`](super::surface_config::SurfaceConfig))
+/// and the WESL [`ShaderGenerator`]. Technique-specific pipelines with a fixed
+/// configuration (outline, silhouette, hidden-line solid) are owned directly by
+/// their respective passes.
 pub struct MaterialPipelineCache {
     cache: PipelineCache<PipelineCacheKey>,
-    pipelines: MaterialPipelineLayouts,
+    layouts: MaterialLayoutCache,
     shader_generator: ShaderGenerator,
     sample_count: u32,
     surface_format: wgpu::TextureFormat,
@@ -23,14 +24,14 @@ pub struct MaterialPipelineCache {
 
 impl MaterialPipelineCache {
     pub(super) fn new(
-        pipelines: MaterialPipelineLayouts,
+        layouts: MaterialLayoutCache,
         shader_generator: ShaderGenerator,
         sample_count: u32,
         surface_format: wgpu::TextureFormat,
     ) -> Self {
         Self {
             cache: PipelineCache::new(),
-            pipelines,
+            layouts,
             shader_generator,
             sample_count,
             surface_format,
@@ -39,6 +40,17 @@ impl MaterialPipelineCache {
 
     pub(super) fn shader_generator_mut(&mut self) -> &mut ShaderGenerator {
         &mut self.shader_generator
+    }
+
+    /// The group-2 bind-group layout a material with the given textures binds
+    /// against. Used when building per-material bind groups so layout and shader
+    /// stay derived from the same [`TexturePresence`](super::surface_config::TexturePresence).
+    pub(super) fn material_bind_group_layout(
+        &mut self,
+        device: &wgpu::Device,
+        presence: super::surface_config::TexturePresence,
+    ) -> &wgpu::BindGroupLayout {
+        self.layouts.bind_group_layout(device, presence)
     }
 
     /// Discard all cached pipelines.
@@ -55,36 +67,26 @@ impl MaterialPipelineCache {
         device: &wgpu::Device,
         cache_key: PipelineCacheKey,
     ) -> &wgpu::RenderPipeline {
-        let material_props = cache_key.material_props.clone();
-        let scene_props = cache_key.scene_props.clone();
+        let cfg = cache_key.surface.clone();
         let primitive_type = cache_key.primitive_type;
-        let depth_prepass = cache_key.depth_prepass;
         self.cache.get_or_create(cache_key, || {
-            // Select pipeline layout based on material type and scene properties
-            let use_ibl = scene_props.has_ibl && material_props.has_lighting;
-            let pipeline_layout = if use_ibl {
-                &self.pipelines.pbr_ibl
-            } else if material_props.has_lighting {
-                &self.pipelines.pbr
-            } else {
-                &self.pipelines.color
-            };
+            // Layout and shader both derive from `cfg`, so they always agree on
+            // which bindings exist. Clone the layout out so its borrow ends
+            // before we borrow the shader generator (both fields of `self`).
+            let pipeline_layout = self
+                .layouts
+                .pipeline_layout(device, cfg.textures(), cfg.has_ibl())
+                .clone();
 
-            // For depth prepass, force alpha_mask feature so the shader includes
-            // discard logic, reusing the existing alpha_cutoff uniform.
-            let shader_material_props = if depth_prepass {
-                MaterialProperties {
-                    alpha_mode: AlphaMode::Mask,
-                    ..material_props.clone()
-                }
+            let label = if cfg.lit() {
+                if cfg.has_ibl() { "Surface Lit IBL Shader" } else { "Surface Lit Shader" }
             } else {
-                material_props.clone()
+                "Surface Unlit Shader"
             };
-
             let shader = self
                 .shader_generator
-                .generate_shader(device, &shader_material_props, &scene_props, depth_prepass)
-                .expect("Failed to generate shader");
+                .generate_surface_shader(device, &cfg.features(), label)
+                .expect("Failed to generate surface shader");
 
             let topology = match primitive_type {
                 PrimitiveType::TriangleList => wgpu::PrimitiveTopology::TriangleList,
@@ -93,22 +95,22 @@ impl MaterialPipelineCache {
             };
 
             // Depth prepass: write depth only, no color output
-            let (color_write_mask, depth_write_enabled) = if depth_prepass {
+            let (color_write_mask, depth_write_enabled) = if cfg.depth_prepass {
                 (wgpu::ColorWrites::empty(), true)
             } else {
                 (
                     wgpu::ColorWrites::ALL,
-                    material_props.alpha_mode != AlphaMode::Blend,
+                    cfg.props.alpha_mode != AlphaMode::Blend,
                 )
             };
 
             // Lines/points use LessEqual so they render correctly on coplanar triangles
             // (drawn after triangles, same depth buffer value). Blend materials also use
             // LessEqual so the main pass can render at the depth the prepass established.
-            let is_blend = material_props.alpha_mode == AlphaMode::Blend;
+            let is_blend = cfg.props.alpha_mode == AlphaMode::Blend;
             let is_non_triangle =
                 matches!(primitive_type, PrimitiveType::LineList | PrimitiveType::PointList);
-            let depth_compare = if !depth_prepass && (is_blend || is_non_triangle) {
+            let depth_compare = if !cfg.depth_prepass && (is_blend || is_non_triangle) {
                 wgpu::CompareFunction::LessEqual
             } else {
                 wgpu::CompareFunction::Less
@@ -130,12 +132,12 @@ impl MaterialPipelineCache {
             };
 
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(if depth_prepass {
+                label: Some(if cfg.depth_prepass {
                     "Depth Prepass Pipeline"
                 } else {
                     "Render Pipeline"
                 }),
-                layout: Some(pipeline_layout),
+                layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
                     module: &shader,
                     entry_point: Some("vs_main"),
@@ -147,7 +149,7 @@ impl MaterialPipelineCache {
                     entry_point: Some("fs_main"),
                     targets: &[Some(wgpu::ColorTargetState {
                         format: self.surface_format,
-                        blend: Some(match material_props.alpha_mode {
+                        blend: Some(match cfg.props.alpha_mode {
                             AlphaMode::Blend => wgpu::BlendState::ALPHA_BLENDING,
                             _ => wgpu::BlendState::REPLACE,
                         }),
@@ -161,7 +163,7 @@ impl MaterialPipelineCache {
                     front_face: wgpu::FrontFace::Ccw,
                     // Only cull for single-sided triangles, not for lines, points, or double-sided materials
                     cull_mode: if topology == wgpu::PrimitiveTopology::TriangleList
-                        && !material_props.double_sided
+                        && !cfg.double_sided()
                     {
                         Some(wgpu::Face::Back)
                     } else {

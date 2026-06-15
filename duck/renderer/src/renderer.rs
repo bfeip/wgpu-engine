@@ -7,6 +7,7 @@ mod pipeline;
 mod prepare;
 mod scene_bindings;
 mod scene_pass;
+mod surface_config;
 mod workflow;
 
 pub use batching::{DrawBatch, DrawData};
@@ -34,7 +35,7 @@ use crate::{
     shaders::ShaderGenerator
 };
 
-use gpu_resources::{BindGroupLayouts, FallbackTextures, MeshGpuResources};
+use gpu_resources::{BindGroupLayouts, MeshGpuResources};
 use material_system::MaterialSystem;
 use scene_bindings::SceneBindings;
 
@@ -86,7 +87,6 @@ impl Renderer {
         let layouts = BindGroupLayouts::new(&gpu.device);
         let bindings = SceneBindings::new(&gpu.device, &layouts);
         let ibl_resources = IblResources::new(&gpu.device, &gpu.queue, &layouts.ibl, has_compute);
-        let fallback_textures = FallbackTextures::new(&gpu.device, &gpu.queue);
 
         // The shader generator is shared between the workflow (for pass-specific
         // shaders) and the material system (for material shaders). Build the
@@ -102,9 +102,7 @@ impl Renderer {
         );
 
         let materials = MaterialSystem::new(
-            &gpu.device,
             &layouts,
-            fallback_textures,
             shader_generator,
             sample_count,
             surface_format,

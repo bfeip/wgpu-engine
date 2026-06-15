@@ -147,6 +147,9 @@ impl FaceMaterial {
             has_lighting: !self.flags.contains(MaterialFlags::DO_NOT_LIGHT),
             double_sided: self.flags.contains(MaterialFlags::DOUBLE_SIDED),
             alpha_mode: self.alpha_mode,
+            base_color_texture: self.base_color_texture.is_some(),
+            normal_texture: self.normal_texture.is_some(),
+            metallic_roughness_texture: self.metallic_roughness_texture.is_some(),
         }
     }
 
