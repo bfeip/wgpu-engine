@@ -17,7 +17,7 @@ use duck_engine_viewer::scene::{
 
 /// On-screen diameter of the dot, in pixels. The quad's half-width (0.5) is
 /// scaled by `screen_size`, so this is also the screen-space size value.
-const CURSOR_PIXELS: f32 = 16.0;
+const CURSOR_PIXELS: f32 = 8.0;
 
 /// Default marker color (amber), chosen to read against both the grid and parts.
 const MARKER_COLOR: RgbaColor = RgbaColor { r: 1.0, g: 0.78, b: 0.12, a: 1.0 };
