@@ -73,7 +73,7 @@ impl Document {
         self.parts.iter().find(|p| p.id == id)
     }
 
-    pub fn _parts(&self) -> impl Iterator<Item = &CadPart> {
+    pub fn parts(&self) -> impl Iterator<Item = &CadPart> {
         self.parts.iter()
     }
 
@@ -81,7 +81,7 @@ impl Document {
         self.node_to_part.get(&node).copied()
     }
 
-    pub fn _node_for_part(&self, part: PartId) -> Option<NodeId> {
+    pub fn node_for_part(&self, part: PartId) -> Option<NodeId> {
         self.part_to_node.get(&part).copied()
     }
 
