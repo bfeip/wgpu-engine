@@ -28,6 +28,7 @@ pub struct FrameTargets {
 }
 
 impl FrameTargets {
+    #[must_use] 
     pub fn new(gpu: &Gpu, config: TargetConfig, features: TargetFeatures) -> Self {
         let mut targets = Self { config, features, depth: None, msaa_color: None };
         targets.create_attachments(gpu);
@@ -56,18 +57,22 @@ impl FrameTargets {
         self.create_attachments(gpu);
     }
 
+    #[must_use] 
     pub fn config(&self) -> TargetConfig {
         self.config
     }
 
+    #[must_use] 
     pub fn size(&self) -> (u32, u32) {
         self.config.size
     }
 
+    #[must_use] 
     pub fn format(&self) -> wgpu::TextureFormat {
         self.config.format
     }
 
+    #[must_use] 
     pub fn sample_count(&self) -> u32 {
         self.config.sample_count
     }
@@ -80,6 +85,7 @@ impl FrameTargets {
     /// # Panics
     ///
     /// Panics if depth was not requested in [`TargetFeatures`] at creation.
+    #[must_use] 
     pub fn depth_view(&self) -> &wgpu::TextureView {
         &self
             .depth
@@ -94,6 +100,7 @@ impl FrameTargets {
     /// multisampled attachment) and resolve into `target` (typically the
     /// swapchain). When MSAA is inactive, renders directly into `target` with
     /// no resolve step.
+    #[must_use] 
     pub fn color_views<'a>(
         &'a self,
         target: &'a wgpu::TextureView,

@@ -16,6 +16,7 @@ pub struct GpuCapabilities {
 
 impl Gpu {
     /// Wrap pre-created device and queue (e.g. created alongside a surface).
+    #[must_use] 
     pub fn new(device: wgpu::Device, queue: wgpu::Queue) -> Self {
         Self { device, queue }
     }
@@ -24,6 +25,10 @@ impl Gpu {
     ///
     /// Creates its own wgpu instance and adapter. Useful for generating still
     /// images, thumbnails, or server-side rendering.
+    /// 
+    /// # Errors
+    /// 
+    /// Will return `Err` if initialization of WGPU fails.
     pub async fn headless() -> anyhow::Result<(Gpu, GpuCapabilities)> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::PRIMARY,
@@ -47,9 +52,9 @@ impl Gpu {
                 required_features: wgpu::Features::empty(),
                 required_limits: wgpu::Limits::default(),
                 label: Some("Headless Renderer"),
-                memory_hints: Default::default(),
+                memory_hints: wgpu::MemoryHints::default(),
                 trace: wgpu::Trace::Off,
-                experimental_features: Default::default(),
+                experimental_features: wgpu::ExperimentalFeatures::default(),
             })
             .await?;
 

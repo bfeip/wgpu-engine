@@ -13,6 +13,7 @@ impl GpuTexture {
     pub const MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 
     /// Create a depth texture at the given pixel dimensions.
+    #[must_use] 
     pub fn depth(
         device: &wgpu::Device,
         width: u32,
@@ -52,6 +53,7 @@ impl GpuTexture {
     }
 
     /// Create a single-channel mask texture at the given dimensions.
+    #[must_use] 
     pub fn mask(
         device: &wgpu::Device,
         width: u32,
@@ -93,6 +95,7 @@ impl GpuTexture {
     ///
     /// Used as the multisampled color render target that resolves to the
     /// swapchain surface texture.
+    #[must_use] 
     pub fn color_attachment(
         device: &wgpu::Device,
         width: u32,

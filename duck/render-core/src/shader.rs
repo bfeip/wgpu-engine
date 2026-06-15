@@ -55,6 +55,10 @@ impl ShaderLibrary {
 
     /// Compile `root` with the given feature flags into a shader module,
     /// returning the cached module if this variant was compiled before.
+    /// 
+    /// # Errors
+    /// 
+    /// Returns `Err` if compilation fails.
     pub fn compile(
         &mut self,
         device: &wgpu::Device,
@@ -81,6 +85,10 @@ impl ShaderLibrary {
     ///
     /// Used internally by [`compile`](Self::compile); exposed so callers (and
     /// tests) can inspect generated WGSL without a GPU device. Not cached.
+    /// 
+    /// # Errors
+    /// 
+    /// Returns `Err` if compilation fails or if `root` is not a valid path.
     pub fn compile_to_wgsl(
         &mut self,
         root: &str,
@@ -98,7 +106,11 @@ impl ShaderLibrary {
     /// resolve against this library's modules. A fresh resolver is built each
     /// call so the persistent compiler's cached state and feature flags do not
     /// bleed into user compilation; the cost is negligible (a handful of
-    /// HashMap inserts of `&'static str` pointers).
+    /// `HashMap` inserts of `&'static str` pointers).
+    /// 
+    /// # Errors
+    /// 
+    /// Returns `Err` if compilation fails.
     pub fn compile_adhoc(
         &self,
         device: &wgpu::Device,

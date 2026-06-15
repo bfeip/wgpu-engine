@@ -35,6 +35,7 @@ struct Entry<R> {
 }
 
 impl<K: Copy + Eq + Hash, R> GenCache<K, R> {
+    #[must_use] 
     pub fn new() -> Self {
         Self { entries: HashMap::new() }
     }
@@ -69,6 +70,10 @@ impl<K: Copy + Eq + Hash, R> GenCache<K, R> {
 
     /// Fallible variant of [`ensure`](Self::ensure). On build failure the
     /// previous entry (if any) is left untouched.
+    /// 
+    /// # Errors
+    /// 
+    /// Will return `Err` if when a upload is needed, `build` returns `Err`.
     pub fn try_ensure(
         &mut self,
         key: K,

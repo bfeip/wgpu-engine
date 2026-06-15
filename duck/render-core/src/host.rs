@@ -26,6 +26,7 @@ pub struct RenderHost<F: FrameFamily> {
 }
 
 impl<F: FrameFamily> RenderHost<F> {
+    #[must_use] 
     pub fn new(
         gpu: Gpu,
         config: TargetConfig,
@@ -36,14 +37,17 @@ impl<F: FrameFamily> RenderHost<F> {
         Self { gpu, targets, workflow, readback: None }
     }
 
+    #[must_use] 
     pub fn gpu(&self) -> &Gpu {
         &self.gpu
     }
 
+    #[must_use] 
     pub fn targets(&self) -> &FrameTargets {
         &self.targets
     }
 
+    #[must_use] 
     pub fn config(&self) -> TargetConfig {
         self.targets.config()
     }
@@ -84,6 +88,10 @@ impl<F: FrameFamily> RenderHost<F> {
     /// Creates and submits its own encoder, then blocks until the GPU work
     /// completes. The readback target is cached and reused across calls at
     /// the same size. Assumes a 4-byte-per-pixel target format.
+    /// 
+    /// # Errors
+    /// 
+    /// Will return `Err` if readback from the GPU failed (see [`ReadbackTarget::read`])
     pub fn render_to_rgba(&mut self, frame: &mut F::Frame<'_>) -> anyhow::Result<RgbaPixels> {
         let (width, height) = self.targets.size();
 
@@ -99,6 +107,7 @@ impl<F: FrameFamily> RenderHost<F> {
                 self.targets.format(),
             ));
         }
+        #[expect(clippy::missing_panics_doc, reason = "infallible")]
         let target = self.readback.take().unwrap();
 
         let mut encoder = self

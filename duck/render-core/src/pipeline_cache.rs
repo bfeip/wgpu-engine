@@ -11,6 +11,7 @@ pub struct PipelineCache<K: Eq + Hash> {
 }
 
 impl<K: Eq + Hash> PipelineCache<K> {
+    #[must_use] 
     pub fn new() -> Self {
         Self { map: HashMap::new() }
     }

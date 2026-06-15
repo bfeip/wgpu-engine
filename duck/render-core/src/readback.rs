@@ -35,6 +35,7 @@ pub struct ReadbackTarget {
 }
 
 impl ReadbackTarget {
+    #[must_use] 
     pub fn new(
         device: &wgpu::Device,
         width: u32,
@@ -63,7 +64,7 @@ impl ReadbackTarget {
         let unpadded_bytes_per_row = width * bytes_per_pixel;
         let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
         let padded_bytes_per_row = unpadded_bytes_per_row.div_ceil(align) * align;
-        let buffer_size = (padded_bytes_per_row * height) as u64;
+        let buffer_size = u64::from(padded_bytes_per_row * height);
 
         let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Readback Staging Buffer"),
@@ -82,11 +83,13 @@ impl ReadbackTarget {
     }
 
     /// The render target view to draw into.
+    #[must_use] 
     pub fn view(&self) -> &wgpu::TextureView {
         &self.view
     }
 
     /// The target dimensions as (width, height).
+    #[must_use] 
     pub fn size(&self) -> (u32, u32) {
         self.size
     }
@@ -122,12 +125,18 @@ impl ReadbackTarget {
     ///
     /// Blocks until the GPU work feeding the staging buffer has completed.
     /// Returns tightly-packed pixel data (width × height × 4 bytes).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if polling the device fails or the buffer mapping fails.
     pub fn read(&self, device: &wgpu::Device) -> anyhow::Result<Vec<u8>> {
         let (width, height) = self.size;
         let buffer_slice = self.staging_buffer.slice(..);
         let (sender, receiver) = std::sync::mpsc::channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            sender.send(result).unwrap();
+            // it is possible for this send to fail if the poll (below) fails
+            // _before_ this executes. In such a case, do nothing.
+            let _result = sender.send(result);
         });
         device
             .poll(wgpu::PollType::Wait { submission_index: None, timeout: None })
