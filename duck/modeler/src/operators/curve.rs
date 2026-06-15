@@ -311,11 +311,8 @@ impl CurveOperator {
         let camera = ctx.camera();
         let snapped = self.snapped_point(cursor, &exclude, &camera, ctx);
 
-        // Record where the 3D cursor should sit: a real snap, not the free
-        // construction-plane fallback (which sits under the cursor).
-        self.cursor_target = snapped
-            .filter(|s| s.kind != SnapKind::ConstructionPlane)
-            .map(|s| s.position);
+        // Record where the 3D cursor should sit
+        self.cursor_target = snapped.map(|s| s.position);
 
         if matches!(self.phase, Phase::Building { .. }) {
             if let Some(snap) = snapped {

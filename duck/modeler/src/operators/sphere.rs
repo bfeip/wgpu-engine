@@ -165,11 +165,8 @@ impl SphereOperator {
             .borrow()
             .resolve_snap(cursor, &exclude, &camera, ctx, &[]);
 
-        // Record where the modeler should draw the 3D cursor: a real snap, not
-        // the free construction-plane fallback (which sits under the cursor).
-        self.cursor_target = snap
-            .filter(|s| s.kind != SnapKind::ConstructionPlane)
-            .map(|s| s.position);
+        // Record where the modeler should draw the 3D cursor
+        self.cursor_target = snap.map(|s| s.position);
 
         // Drive the preview radius from the snapped point while defining.
         if let Phase::Defining { center, preview_node } = self.phase {
