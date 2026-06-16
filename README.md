@@ -1,24 +1,37 @@
 # Duck Engine
 
-This is my project graphics engine written in Rust with WGPU. It's currently in
-active development as of January 2026.
+Duck Engine is a suite of crates that compose a real-time 3D graphics engine primarily
+targeting CAD applications, written in Rust using [wgpu](https://wgpu.rs/), and
+targeting both native platforms and the web (WebAssembly / WebGL). It is built
+around a strict layering: a GPU-free scene model sits underneath the wgpu renderer,
+so scene data can be created, loaded, and queried without a graphics device.
 
-## Current features
-- Scene from glTF
-- Mouse movement
-- PBR materials and shading
-- Face, line, and point rendering
-- Multiple lights (Point, Spot, Direction)
+On top of the core it provides asset import/export (glTF, USD, Assimp, and CAD via
+OpenCASCADE), a compact compressed `.duck` binary scene format, and an interactive
+CAD modeler in early development. The workspace root is
+`duck/`; run all `cargo` commands from there.
 
-## Next features
-- Image based lighting
-- Transparency
-- Selection and highlighting
+## Crates
 
-## Projects
+The Cargo workspace lives in `duck/`. Crates depend on each other in a chain
+(`common → scene → render-core/renderer → viewer`), and each re-exports its major
+dependency under a short alias.
 
-### Core
-The core graphics library. Application and platform agnostic.
+| Crate | Purpose |
+|---|---|
+| `common` | Math/geometry primitives: `Ray`, `Aabb`, `Plane`, `Transform`, `RgbaColor`, etc. |
+| `scene` | GPU-free scene graph, camera, materials (Face/Line/Point), geometry queries, environment maps.|
+| `render-core` | Agnostic GPU plumbing: device/queue, render targets, headless readback, pipeline & shader caches. Implementation independent|
+| `renderer` | Renderer implimentation using `render-core` and `scene`: PBR/surface shading, lights, IBL, headless rendering. |
+| `import-export` | Configurable I/O: glTF, the native binary format, USD, Assimp, and CAD (STEP/IGES) import. |
+| `viewer` | Windowing, input, operator/event system, selection. Native + WASM. Examples: `winit`, `materials`. |
+| `modeler` | Interactive CAD modeler app (egui + viewer): boolean ops, extrude, snapping, tool manager. |
+| `egui-demo` | Desktop demo application using egui. |
+| `scene-info` | CLI to inspect `.duck` scene files (structure, sizes, compression, statistics). |
+| `scene-converter` | CLI to convert/optimize scenes between formats (e.g. glTF → `.duck`). |
 
-### glTF Viewer
-A glTF viewer for native and web.
+## Requirements
+
+- A recent Rust toolchain (workspace uses edition 2024).
+- For CAD support: initialize the opencascade submodule (`third-part/opencascade-rs`).
+- If building with a C++ dependency (`assimp`, `OCCT`) a C++ compiler is required.
