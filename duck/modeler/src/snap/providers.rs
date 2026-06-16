@@ -1,12 +1,15 @@
 //! The built-in [`SnapProvider`]s. Each is a stateless strategy; all live
 //! context arrives through [`SnapInput`] and the [`Scene`].
 
-use duck_engine_viewer::common::{transform_point, EuclideanSpace, InnerSpace, Matrix4, Point3};
+use duck_engine_viewer::common::{
+    transform_point, Aabb, EuclideanSpace, InnerSpace, Matrix4, Point3, Ray,
+};
+use duck_engine_viewer::scene::geom_query::{pick_all, PickQuery};
 use duck_engine_viewer::scene::{
-    Mesh, NodeFlags, NodePayload, PrimitiveType, Scene, Topology, Visibility,
+    InstanceId, Mesh, NodeId, PositionedCamera, PrimitiveType, Scene, Topology, Visibility,
 };
 
-use super::{Snap, SnapInput, SnapKind, SnapFlags, SnapProvider};
+use super::{Snap, SnapInput, SnapKind, SnapFlags, SnapProvider, SnapSettings};
 
 /// Free point on the active construction plane. The always-present, lowest-tier
 /// fallback so a plane-constrained operator always gets a position.
@@ -17,7 +20,7 @@ impl SnapProvider for ConstructionPlaneSnap {
         SnapFlags::CONSTRUCTION_PLANE
     }
 
-    fn collect(&self, input: &SnapInput, _scene: &Scene) -> Vec<Snap> {
+    fn collect(&self, input: &SnapInput, _scene: &Scene, _settings: &SnapSettings) -> Vec<Snap> {
         if let Some((_, position)) = input.ray.intersect_plane(input.plane) {
             vec![Snap {
                 position,
@@ -39,7 +42,7 @@ impl SnapProvider for OriginSnap {
         SnapFlags::ORIGIN
     }
 
-    fn collect(&self, _input: &SnapInput, _scene: &Scene) -> Vec<Snap> {
+    fn collect(&self, _input: &SnapInput, _scene: &Scene, _settings: &SnapSettings) -> Vec<Snap> {
          return vec![Snap {
             position: Point3::origin(),
             direction: None,
@@ -61,7 +64,7 @@ impl SnapProvider for WireStartSnap {
         SnapFlags::WIRE_START
     }
 
-    fn collect(&self, _input: &SnapInput, _scene: &Scene) -> Vec<Snap> {
+    fn collect(&self, _input: &SnapInput, _scene: &Scene, _settings: &SnapSettings) -> Vec<Snap> {
         vec![Snap {
             position: self.start,
             direction: None,
@@ -79,7 +82,7 @@ impl SnapProvider for GridSnap {
         SnapFlags::GRID_AXIS | SnapFlags::GRID_GUIDE
     }
 
-    fn collect(&self, input: &SnapInput, _scene: &Scene) -> Vec<Snap> {
+    fn collect(&self, input: &SnapInput, _scene: &Scene, _settings: &SnapSettings) -> Vec<Snap> {
         let (u, v) = input.plane.basis();
         let origin = input.plane.project_point(Point3::origin());
         let n = input.plane.normal.normalize();
@@ -121,59 +124,145 @@ impl SnapProvider for GridSnap {
     }
 }
 
-/// B-rep corners (vertices) of existing geometry.
-pub(crate) struct CornerSnap;
+/// Snaps to existing geometry: B-rep corners (vertices, [`SnapKind::Corner`]) and
+/// points along edges/wires ([`SnapKind::Edge`]). Both kinds share one scene walk
+/// — the expensive part — so corner and edge snapping cost a single traversal.
+///
+/// The walk is delegated to the scene's [`PickQuery`] framework ([`pick_all`]),
+/// which traverses the node tree from the roots, prunes `DO_NOT_SELECT` subtrees,
+/// and culls whole nodes by their cached world-space AABB before any per-primitive
+/// work — so meshes nowhere near the cursor are skipped entirely.
+pub(crate) struct GeometrySnap;
 
-impl SnapProvider for CornerSnap {
+impl SnapProvider for GeometrySnap {
     fn produces(&self) -> SnapFlags {
-        SnapFlags::CORNER
+        SnapFlags::CORNER | SnapFlags::EDGE
     }
 
-    fn collect(&self, input: &SnapInput, scene: &Scene) -> Vec<Snap> {
-        // TODO: This is a flat walk over every node. In production this should be
-        // a tree walk: it would be more correct (DO_NOT_SELECT / invisibility
-        // should propagate to descendants, which a per-node flag check misses)
-        // and faster (an excluded or culled parent could prune its whole
-        // subtree). It is fine today because parts are added as top-level nodes;
-        // revisit when parts gain deep hierarchies.
-        let mut snaps = Vec::new();
-        for node in scene.nodes() {
-            // Skip non-pickable geometry (grid, snap marker), hidden nodes, and
-            // anything the caller excluded (e.g. its own in-progress preview).
-            if node.flags().contains(NodeFlags::DO_NOT_SELECT) {
-                continue;
-            }
-            if node.visibility() != Visibility::Visible {
-                continue;
-            }
-            if input.exclude_nodes.contains(&node.id) {
-                continue;
-            }
+    fn collect(&self, input: &SnapInput, scene: &Scene, settings: &SnapSettings) -> Vec<Snap> {
+        let query = GeometrySnapQuery {
+            scene,
+            ray: input.ray,
+            camera: input.camera,
+            cursor: input.cursor,
+            viewport: input.viewport,
+            pixel_tolerance: settings.pixel_tolerance,
+            exclude_nodes: input.exclude_nodes,
+            // Only do the work for kinds the caller actually asked for; the engine
+            // still drops anything globally disabled afterwards.
+            want_corners: input.requested.contains(SnapFlags::CORNER),
+            want_edges: input.requested.contains(SnapFlags::EDGE),
+        };
 
-            let NodePayload::Instance(instance_id) = node.payload() else {
-                continue;
-            };
-            let Some(instance) = scene.get_instance(*instance_id) else {
-                continue;
-            };
-            let Some(mesh) = scene.get_mesh(instance.mesh()) else {
-                continue;
-            };
-            let Some(topology) = mesh.topology() else {
-                continue;
-            };
-            let Some(world) = scene.nodes_transform(node.id) else {
-                continue;
-            };
+        let mut snaps = pick_all(&query, scene);
 
-            snaps.extend(collect_mesh_corners(mesh, topology, &world));
-        }
-
+        // Collapse coincident corners (shared B-rep vertices emitted by the same
+        // mesh). Guard on kind so an edge candidate is never merged into a corner.
         const EPSILON: f32 = 1e-10;
         snaps.dedup_by(|a: &mut Snap, b: &mut Snap| {
-            (a.position - b.position).magnitude() < EPSILON
+            a.kind == SnapKind::Corner
+                && b.kind == SnapKind::Corner
+                && (a.position - b.position).magnitude() < EPSILON
         });
-        return snaps;
+        snaps
+    }
+}
+
+/// The [`PickQuery`] that drives [`GeometrySnap`]'s single scene walk. Broad phase
+/// is a screen-space test (the same metric the ranking uses); the narrow phase runs
+/// in local space and transforms results back to world.
+#[derive(Clone, Copy)]
+struct GeometrySnapQuery<'a> {
+    /// Scene handle, used in the narrow phase to look up per-node visibility.
+    scene: &'a Scene,
+    /// Cursor ray: world space at broad phase, local space after [`Self::transform`].
+    ray: Ray,
+    camera: &'a PositionedCamera,
+    cursor: (f32, f32),
+    viewport: (u32, u32),
+    pixel_tolerance: f32,
+    exclude_nodes: &'a [NodeId],
+    want_corners: bool,
+    want_edges: bool,
+}
+
+impl PickQuery for GeometrySnapQuery<'_> {
+    type Result = Snap;
+
+    fn might_intersect_bounds(&self, bounds: &Aabb) -> bool {
+        let (w, h) = self.viewport;
+        let forward = self.camera.forward();
+        let mut min_x = f32::INFINITY;
+        let mut min_y = f32::INFINITY;
+        let mut max_x = f32::NEG_INFINITY;
+        let mut max_y = f32::NEG_INFINITY;
+
+        for corner in bounds.corners() {
+            // A corner behind the camera has no meaningful screen projection, so
+            // don't risk culling a node straddling the camera plane — keep it.
+            if (corner - self.camera.eye).dot(forward) <= 0.0 {
+                return true;
+            }
+            let s = self.camera.project_point_screen(corner, w, h);
+            min_x = min_x.min(s.x);
+            min_y = min_y.min(s.y);
+            max_x = max_x.max(s.x);
+            max_y = max_y.max(s.y);
+        }
+
+        let tol = self.pixel_tolerance;
+        let (cx, cy) = self.cursor;
+        cx >= min_x - tol && cx <= max_x + tol && cy >= min_y - tol && cy <= max_y + tol
+    }
+
+    fn transform(&self, matrix: &Matrix4) -> Self {
+        Self {
+            ray: self.ray.transform(matrix),
+            ..*self
+        }
+    }
+
+    fn collect_mesh_hits(
+        &self,
+        mesh: &Mesh,
+        node_id: NodeId,
+        _instance_id: InstanceId,
+        world_transform: &Matrix4,
+        results: &mut Vec<Snap>,
+    ) {
+        // Per-node filters the broad phase doesn't apply. Visibility is checked per
+        // node (not propagated to descendants), matching the previous behavior.
+        if self.exclude_nodes.contains(&node_id) {
+            return;
+        }
+        if self.scene.get_node(node_id).map(|n| n.visibility()) != Some(Visibility::Visible) {
+            return;
+        }
+
+        if self.want_corners {
+            if let Some(topology) = mesh.topology() {
+                results.extend(collect_mesh_corners(mesh, topology, world_transform));
+            }
+        }
+
+        if self.want_edges {
+            // The ray is already in this mesh's local space, so test raw local
+            // segments (no per-vertex transform) and lift the result to world.
+            for seg in mesh.segments() {
+                let p0 = Point3::from(seg[0].position);
+                let p1 = Point3::from(seg[1].position);
+                if let Some(approach) = self.ray.closest_approach_to_segment(p0, p1) {
+                    let position = transform_point(world_transform, approach.closest_on_segment);
+                    let w0 = transform_point(world_transform, p0);
+                    let w1 = transform_point(world_transform, p1);
+                    results.push(Snap {
+                        position,
+                        direction: Some((w1 - w0).normalize()),
+                        kind: SnapKind::Edge,
+                    });
+                }
+            }
+        }
     }
 }
 
@@ -247,69 +336,14 @@ fn collect_mesh_corners(mesh: &Mesh, topology: &Topology, world: &Matrix4) -> Ve
     return out;
 }
 
-/// Points lying on existing geometry edges/wires. Snaps smoothly to the closest
-/// point on each line segment to the cursor ray — the same primitive grid-axis
-/// snapping uses — so the snap glides along an edge as the cursor moves, rather
-/// than jumping to its endpoints (which is [`CornerSnap`]'s job).
-pub(crate) struct EdgeSnap;
-
-impl SnapProvider for EdgeSnap {
-    fn produces(&self) -> SnapFlags {
-        SnapFlags::EDGE
-    }
-
-    fn collect(&self, input: &SnapInput, scene: &Scene) -> Vec<Snap> {
-        // Same flat node walk and filtering as CornerSnap; see the TODO there
-        // about promoting this to a pruning tree walk once parts gain deep
-        // hierarchies.
-        let mut snaps = Vec::new();
-        for node in scene.nodes() {
-            if node.flags().contains(NodeFlags::DO_NOT_SELECT) {
-                continue;
-            }
-            if node.visibility() != Visibility::Visible {
-                continue;
-            }
-            if input.exclude_nodes.contains(&node.id) {
-                continue;
-            }
-
-            let NodePayload::Instance(instance_id) = node.payload() else {
-                continue;
-            };
-            let Some(instance) = scene.get_instance(*instance_id) else {
-                continue;
-            };
-            let Some(mesh) = scene.get_mesh(instance.mesh()) else {
-                continue;
-            };
-            let Some(world) = scene.nodes_transform(node.id) else {
-                continue;
-            };
-
-            for seg in mesh.segments() {
-                let p0 = transform_point(&world, Point3::from(seg[0].position));
-                let p1 = transform_point(&world, Point3::from(seg[1].position));
-                if let Some(approach) = input.ray.closest_approach_to_segment(p0, p1) {
-                    snaps.push(Snap {
-                        position: approach.closest_on_segment,
-                        direction: Some((p1 - p0).normalize()),
-                        kind: SnapKind::Edge,
-                    });
-                }
-            }
-        }
-        snaps
-    }
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use duck_engine_viewer::common::{Plane, Ray, Transform, Vector3};
     use duck_engine_viewer::scene::{
-        Instance, Mesh, MeshPrimitive, PositionedCamera, PrimitiveType, SubMeshRange, Topology,
-        Vertex,
+        Instance, Mesh, MeshPrimitive, NodeFlags, PositionedCamera, PrimitiveType, SubMeshRange,
+        Topology, Vertex,
     };
 
     use crate::grid::GridConfig;
@@ -320,17 +354,19 @@ mod tests {
         (a - b).magnitude2() < EPSILON * EPSILON
     }
 
-    /// A `SnapInput` whose ray is supplied directly (grid/corner providers don't
-    /// use the camera in `collect`, only the ray/plane/grid/scene).
+    /// A `SnapInput` with the ray and cursor supplied directly. Grid/wire providers
+    /// ignore the cursor; `GeometrySnap` uses it (and the camera) to cull, so tests
+    /// hitting geometry must pass the cursor where that geometry projects.
     fn input_with_ray<'a>(
         ray: Ray,
+        cursor: (f32, f32),
         cam: &'a PositionedCamera,
         plane: &'a Plane,
         grid: &'a GridConfig,
     ) -> SnapInput<'a> {
         SnapInput {
             ray,
-            cursor: (0.0, 0.0),
+            cursor,
             viewport: (800, 600),
             camera: cam,
             plane,
@@ -338,6 +374,12 @@ mod tests {
             requested: SnapFlags::all(),
             exclude_nodes: &[],
         }
+    }
+
+    /// Screen pixel a world point projects to under the test viewport (800×600).
+    fn screen_of(cam: &PositionedCamera, p: Point3) -> (f32, f32) {
+        let s = cam.project_point_screen(p, 800, 600);
+        (s.x, s.y)
     }
 
     fn dummy_camera() -> PositionedCamera {
@@ -360,9 +402,9 @@ mod tests {
         let grid = GridConfig::default(); // minor_spacing = 5.0
         // Ray straight down hitting the XZ plane at (5.2, 0, -3.1).
         let ray = Ray::new(Point3::new(5.2, 10.0, -3.1), Vector3::new(0.0, -1.0, 0.0));
-        let inp = input_with_ray(ray, &cam, &plane, &grid);
+        let inp = input_with_ray(ray, (0.0, 0.0), &cam, &plane, &grid);
 
-        let snaps = GridSnap.collect(&inp, &Scene::new());
+        let snaps = GridSnap.collect(&inp, &Scene::new(), &SnapSettings::default());
 
         let guide = snaps
             .iter()
@@ -380,9 +422,9 @@ mod tests {
         // Vertical ray near the X axis: the X-axis closest point is directly
         // below the ray's x, on the axis (y = z = 0).
         let ray = Ray::new(Point3::new(7.0, 10.0, -1.5), Vector3::new(0.0, -1.0, 0.0));
-        let inp = input_with_ray(ray, &cam, &plane, &grid);
+        let inp = input_with_ray(ray, (0.0, 0.0), &cam, &plane, &grid);
 
-        let snaps = GridSnap.collect(&inp, &Scene::new());
+        let snaps = GridSnap.collect(&inp, &Scene::new(), &SnapSettings::default());
 
         // Three principal axes (U, V, N) should each yield a candidate.
         let axes: Vec<_> = snaps.iter().filter(|s| s.kind == SnapKind::GridAxis).collect();
@@ -402,10 +444,10 @@ mod tests {
         let plane = Plane::xz();
         let grid = GridConfig::default();
         let ray = Ray::new(Point3::new(0.0, 10.0, 0.0), Vector3::new(0.0, -1.0, 0.0));
-        let inp = input_with_ray(ray, &cam, &plane, &grid);
+        let inp = input_with_ray(ray, (0.0, 0.0), &cam, &plane, &grid);
 
         let start = Point3::new(2.0, 0.0, -3.0);
-        let snaps = WireStartSnap { start }.collect(&inp, &Scene::new());
+        let snaps = WireStartSnap { start }.collect(&inp, &Scene::new(), &SnapSettings::default());
 
         assert_eq!(snaps.len(), 1);
         assert_eq!(snaps[0].kind, SnapKind::WireStart);
@@ -443,10 +485,11 @@ mod tests {
         let plane = Plane::xz();
         let grid = GridConfig::default();
         // Ray straight down at x=3, z=2: closest point on the segment is (3,0,2).
+        let hit = Point3::new(3.0, 0.0, 2.0);
         let ray = Ray::new(Point3::new(3.0, 10.0, 2.0), Vector3::new(0.0, -1.0, 0.0));
-        let inp = input_with_ray(ray, &cam, &plane, &grid);
+        let inp = input_with_ray(ray, screen_of(&cam, hit), &cam, &plane, &grid);
 
-        let snaps = EdgeSnap.collect(&inp, &scene);
+        let snaps = GeometrySnap.collect(&inp, &scene, &SnapSettings::default());
 
         let edge = snaps
             .iter()
@@ -486,5 +529,124 @@ mod tests {
         assert!(snaps.iter().any(|s| close(s.position, Point3::new(11.0, 2.0, 3.0))));
         assert!(snaps.iter().any(|s| close(s.position, Point3::new(14.0, 5.0, 6.0))));
         assert!(snaps.iter().all(|s| s.kind == SnapKind::Corner));
+    }
+
+    /// One identity-placed part: a straight edge (0,0,0)→(10,0,0) with B-rep
+    /// topology, so it yields both corner and edge snaps. Returns its node id.
+    fn scene_with_edge() -> (Scene, NodeId) {
+        let mut mesh = Mesh::from_raw(
+            vec![
+                Vertex { position: [0.0, 0.0, 0.0], tex_coords: [0.0; 3], normal: [0.0; 3] },
+                Vertex { position: [10.0, 0.0, 0.0], tex_coords: [0.0; 3], normal: [0.0; 3] },
+            ],
+            vec![MeshPrimitive {
+                primitive_type: PrimitiveType::LineList,
+                indices: vec![0, 1],
+            }],
+        );
+        mesh.set_topology(Topology {
+            face_ranges: vec![],
+            edge_ranges: vec![SubMeshRange { start: 0, count: 1 }],
+            point_ranges: vec![],
+        });
+        let mut scene = Scene::new();
+        let mesh_id = scene.add_mesh(mesh);
+        let node = scene
+            .add_instance_node(
+                None,
+                Instance::new(mesh_id),
+                Some("edge".to_owned()),
+                Transform::IDENTITY,
+                NodeFlags::NONE,
+            )
+            .expect("instance node");
+        (scene, node)
+    }
+
+    #[test]
+    fn far_cursor_culls_the_node() {
+        let (scene, _node) = scene_with_edge();
+        let cam = dummy_camera();
+        let plane = Plane::xz();
+        let grid = GridConfig::default();
+        // The edge projects around screen center; a top-left cursor is well outside
+        // its (tolerance-inflated) screen bounds, so the broad phase must cull it.
+        let ray = Ray::new(Point3::new(5.0, 10.0, 0.0), Vector3::new(0.0, -1.0, 0.0));
+        let inp = input_with_ray(ray, (0.0, 0.0), &cam, &plane, &grid);
+
+        let snaps = GeometrySnap.collect(&inp, &scene, &SnapSettings::default());
+        assert!(snaps.is_empty(), "far cursor should cull the node: {snaps:?}");
+    }
+
+    #[test]
+    fn might_intersect_bounds_tests_screen_proximity() {
+        let cam = dummy_camera();
+        let scene = Scene::new();
+        let query = GeometrySnapQuery {
+            scene: &scene,
+            ray: Ray::new(Point3::new(0.0, 10.0, 0.0), Vector3::new(0.0, -1.0, 0.0)),
+            camera: &cam,
+            cursor: screen_of(&cam, Point3::origin()),
+            viewport: (800, 600),
+            pixel_tolerance: 12.0,
+            exclude_nodes: &[],
+            want_corners: true,
+            want_edges: true,
+        };
+
+        // An AABB straddling the origin projects under the cursor → kept.
+        let near = Aabb::new(Point3::new(-1.0, -1.0, -1.0), Point3::new(1.0, 1.0, 1.0));
+        assert!(query.might_intersect_bounds(&near));
+
+        // A small AABB off to the side projects far from the cursor → culled.
+        let far = Aabb::new(Point3::new(7.8, -0.2, -0.2), Point3::new(8.2, 0.2, 0.2));
+        assert!(!query.might_intersect_bounds(&far));
+    }
+
+    #[test]
+    fn requested_flags_gate_which_kinds_are_produced() {
+        let (scene, _node) = scene_with_edge();
+        let cam = dummy_camera();
+        let plane = Plane::xz();
+        let grid = GridConfig::default();
+        let mid = Point3::new(5.0, 0.0, 0.0);
+        let ray = Ray::new(Point3::new(5.0, 10.0, 0.0), Vector3::new(0.0, -1.0, 0.0));
+        let mut inp = input_with_ray(ray, screen_of(&cam, mid), &cam, &plane, &grid);
+
+        inp.requested = SnapFlags::CORNER;
+        let corners = GeometrySnap.collect(&inp, &scene, &SnapSettings::default());
+        assert!(!corners.is_empty());
+        assert!(corners.iter().all(|s| s.kind == SnapKind::Corner));
+
+        inp.requested = SnapFlags::EDGE;
+        let edges = GeometrySnap.collect(&inp, &scene, &SnapSettings::default());
+        assert!(!edges.is_empty());
+        assert!(edges.iter().all(|s| s.kind == SnapKind::Edge));
+    }
+
+    #[test]
+    fn excluded_and_invisible_nodes_yield_no_snaps() {
+        let (mut scene, node) = scene_with_edge();
+        let cam = dummy_camera();
+        let plane = Plane::xz();
+        let grid = GridConfig::default();
+        let mid = Point3::new(5.0, 0.0, 0.0);
+        let ray = Ray::new(Point3::new(5.0, 10.0, 0.0), Vector3::new(0.0, -1.0, 0.0));
+        let cursor = screen_of(&cam, mid);
+
+        // Baseline: visible, not excluded → snaps present.
+        let base = input_with_ray(ray, cursor, &cam, &plane, &grid);
+        assert!(!GeometrySnap.collect(&base, &scene, &SnapSettings::default()).is_empty());
+
+        // Excluded node → nothing.
+        let excluded = [node];
+        let mut inp = input_with_ray(ray, cursor, &cam, &plane, &grid);
+        inp.exclude_nodes = &excluded;
+        assert!(GeometrySnap.collect(&inp, &scene, &SnapSettings::default()).is_empty());
+
+        // Invisible node → nothing (per-node visibility check in the narrow phase).
+        scene.set_node_visibility(node, Visibility::Invisible);
+        let inp = input_with_ray(ray, cursor, &cam, &plane, &grid);
+        assert!(GeometrySnap.collect(&inp, &scene, &SnapSettings::default()).is_empty());
     }
 }

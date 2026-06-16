@@ -166,8 +166,8 @@ pub trait SnapProvider {
     /// kinds are disabled or not requested.
     fn produces(&self) -> SnapFlags;
 
-    /// Append any candidate snaps found for `input` to `out`.
-    fn collect(&self, input: &SnapInput, scene: &Scene) -> Vec<Snap>;
+    /// Candidate snaps found for `input`.
+    fn collect(&self, input: &SnapInput, scene: &Scene, settings: &SnapSettings) -> Vec<Snap>;
 }
 
 /// User-facing snap configuration.
@@ -218,8 +218,7 @@ impl SnapEngine {
         engine.add_provider(Box::new(providers::ConstructionPlaneSnap));
         engine.add_provider(Box::new(providers::OriginSnap));
         engine.add_provider(Box::new(providers::GridSnap));
-        engine.add_provider(Box::new(providers::CornerSnap));
-        engine.add_provider(Box::new(providers::EdgeSnap));
+        engine.add_provider(Box::new(providers::GeometrySnap));
         engine
     }
 
@@ -250,7 +249,7 @@ impl SnapEngine {
         let builtin = self.providers.iter().map(|p| p.as_ref());
         for provider in builtin.chain(extra.iter().copied()) {
             if provider.produces().intersects(active) {
-                let provider_candidates = provider.collect(input, scene);
+                let provider_candidates = provider.collect(input, scene, &self.settings);
                 candidates.extend(provider_candidates);
             }
         }
