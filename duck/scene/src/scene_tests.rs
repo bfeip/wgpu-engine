@@ -870,3 +870,69 @@ fn test_normal_node_contributes_bounding() {
     assert!(!result.incomplete);
 }
 
+#[test]
+fn test_is_instance_orphaned() {
+    let mut scene = Scene::new();
+    let mesh_id = scene.add_mesh(make_unit_mesh());
+
+    // Referenced by a node → not orphaned.
+    let referenced = scene.add_instance(Instance::new(mesh_id));
+    scene
+        .add_instance_node(None, Instance::new(mesh_id), None, Transform::IDENTITY, NodeFlags::NONE)
+        .unwrap();
+    let node_instance = match scene.nodes().find_map(|n| match n.payload() {
+        NodePayload::Instance(i) => Some(*i),
+        _ => None,
+    }) {
+        Some(i) => i,
+        None => panic!("expected an instance-bearing node"),
+    };
+    assert!(!scene.is_instance_orphaned(node_instance));
+
+    // Added but never attached to a node → orphaned.
+    assert!(scene.is_instance_orphaned(referenced));
+}
+
+#[test]
+fn test_is_mesh_orphaned_respects_sharing() {
+    let mut scene = Scene::new();
+    let shared_mesh = scene.add_mesh(make_unit_mesh());
+    let lone_mesh = scene.add_mesh(make_unit_mesh());
+
+    // Two instances reference the shared mesh; one references the lone mesh.
+    let a = scene.add_instance(Instance::new(shared_mesh));
+    let _b = scene.add_instance(Instance::new(shared_mesh));
+    let c = scene.add_instance(Instance::new(lone_mesh));
+
+    assert!(!scene.is_mesh_orphaned(shared_mesh));
+    assert!(!scene.is_mesh_orphaned(lone_mesh));
+
+    // Removing one referrer of the shared mesh leaves it referenced; removing the
+    // sole referrer of the lone mesh orphans it.
+    scene.remove_instance(a);
+    assert!(!scene.is_mesh_orphaned(shared_mesh));
+    scene.remove_instance(c);
+    assert!(scene.is_mesh_orphaned(lone_mesh));
+
+    // A mesh no instance ever referenced is orphaned.
+    let unused = scene.add_mesh(make_unit_mesh());
+    assert!(scene.is_mesh_orphaned(unused));
+}
+
+#[test]
+fn test_is_material_orphaned() {
+    let mut scene = Scene::new();
+    let mesh_id = scene.add_mesh(make_unit_mesh());
+    let face = scene.add_face_material(FaceMaterial::new());
+    let line = scene.add_line_material(LineMaterial::new(common::RgbaColor::WHITE));
+
+    scene.add_instance(Instance::new(mesh_id).with_face_material(face));
+
+    assert!(!scene.is_face_material_orphaned(face));
+    // The line material exists but no instance uses it.
+    assert!(scene.is_line_material_orphaned(line));
+    // A point material no one references is orphaned.
+    let point = scene.add_point_material(PointMaterial::new(common::RgbaColor::WHITE));
+    assert!(scene.is_point_material_orphaned(point));
+}
+

@@ -274,6 +274,12 @@ impl Scene {
         }
     }
 
+    /// Returns true if no instance references this mesh, i.e. removing it would
+    /// orphan nothing.
+    pub fn is_mesh_orphaned(&self, id: MeshId) -> bool {
+        !self.instances.values().any(|inst| inst.mesh() == id)
+    }
+
     // ========== Face material API ==========
 
     /// Adds a face material to the scene.
@@ -317,6 +323,11 @@ impl Scene {
         if let Some(log) = &mut self.event_log {
             log.push(SceneEvent::FaceMaterialRemoved(id));
         }
+    }
+
+    /// Returns true if no instance references this face material.
+    pub fn is_face_material_orphaned(&self, id: FaceMaterialId) -> bool {
+        !self.instances.values().any(|inst| inst.face_material() == Some(id))
     }
 
     // ========== Line material API ==========
@@ -364,6 +375,11 @@ impl Scene {
         }
     }
 
+    /// Returns true if no instance references this line material.
+    pub fn is_line_material_orphaned(&self, id: LineMaterialId) -> bool {
+        !self.instances.values().any(|inst| inst.line_material() == Some(id))
+    }
+
     // ========== Point material API ==========
 
     /// Adds a point material to the scene.
@@ -407,6 +423,11 @@ impl Scene {
         if let Some(log) = &mut self.event_log {
             log.push(SceneEvent::PointMaterialRemoved(id));
         }
+    }
+
+    /// Returns true if no instance references this point material.
+    pub fn is_point_material_orphaned(&self, id: PointMaterialId) -> bool {
+        !self.instances.values().any(|inst| inst.point_material() == Some(id))
     }
 
     // ========== Texture API ==========
@@ -456,6 +477,18 @@ impl Scene {
     /// Returns the number of textures in the scene.
     pub fn texture_count(&self) -> usize {
         self.textures.len()
+    }
+
+    /// Returns true if no material references this texture.
+    pub fn is_texture_orphaned(&self, id: TextureId) -> bool {
+        let in_face = self.face_materials.values().any(|m| {
+            m.base_color_texture() == Some(id)
+                || m.normal_texture() == Some(id)
+                || m.metallic_roughness_texture() == Some(id)
+        });
+        let in_line = self.line_materials.values().any(|m| m.base_color_texture() == Some(id));
+        let in_point = self.point_materials.values().any(|m| m.base_color_texture() == Some(id));
+        !(in_face || in_line || in_point)
     }
 
     // ========== Environment Map API (IBL) ==========
@@ -584,6 +617,14 @@ impl Scene {
         if let Some(log) = &mut self.event_log {
             log.push(SceneEvent::InstanceRemoved(id));
         }
+    }
+
+    /// Returns true if no node references this instance.
+    pub fn is_instance_orphaned(&self, id: InstanceId) -> bool {
+        !self
+            .nodes
+            .values()
+            .any(|node| matches!(node.payload(), NodePayload::Instance(i) if *i == id))
     }
 
 

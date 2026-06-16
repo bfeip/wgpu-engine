@@ -3,12 +3,14 @@ mod curve;
 mod extrude;
 mod line;
 mod sphere;
+mod transform;
 
 pub use boolean::BooleanOperator;
 pub use curve::CurveOperator;
 pub use extrude::ExtrudeOperator;
 pub use line::LineOperator;
 pub use sphere::SphereOperator;
+pub use transform::TransformTool;
 
 use duck_engine_common::{Plane, RgbaColor};
 use duck_engine_scene::cad::CadTessellationOptions;

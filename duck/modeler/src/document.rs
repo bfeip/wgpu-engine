@@ -3,7 +3,8 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 use duck_engine_scene::{Id, NodeId, Scene};
-use duck_engine_scene::cad::{CadTessellationOptions, tessellate_into};
+use duck_engine_scene::cad::{CadTessellationOptions, retessellate_node, tessellate_into};
+use duck_engine_scene::common::{Matrix4, Transform};
 use opencascade::primitives::{Edge, Face, Shape};
 
 pub type PartId = Id;
@@ -71,6 +72,48 @@ impl Document {
 
     pub fn get_part(&self, id: PartId) -> Option<&CadPart> {
         self.parts.iter().find(|p| p.id == id)
+    }
+
+    pub fn get_part_mut(&mut self, id: PartId) -> Option<&mut CadPart> {
+        self.parts.iter_mut().find(|p| p.id == id)
+    }
+
+    /// Bake a transform into the part's CAD geometry via an affine GTransform then
+    /// re-tessellate the part in place (preserving its `NodeId`) and reset the node
+    /// transform to identity.
+    pub fn bake_transform(
+        &mut self,
+        part: PartId,
+        transform: Matrix4,
+        options: &CadTessellationOptions,
+    ) -> Result<()> {
+        let node = self
+            .node_for_part(part)
+            .context("bake_transform: no node for part")?;
+
+        // Transpose common's column-major f32 matrix into OCCT's row-major f64 array.
+        let mut mat = [[0.0f64; 4]; 4];
+        for row in 0..4 {
+            for col in 0..4 {
+                mat[row][col] = transform[col][row] as f64;
+            }
+        }
+
+        {
+            let cad_part = self
+                .get_part_mut(part)
+                .context("bake_transform: part not found")?;
+            cad_part.shape = cad_part.shape.gtransform(mat);
+        }
+
+        let cad_part = self
+            .get_part(part)
+            .context("bake_transform: part not found")?;
+        let mut scene = self.scene.lock().unwrap();
+        retessellate_node(&cad_part.shape, &mut scene, options, node)?;
+        scene.set_node_transform(node, Transform::IDENTITY);
+
+        Ok(())
     }
 
     pub fn parts(&self) -> impl Iterator<Item = &CadPart> {

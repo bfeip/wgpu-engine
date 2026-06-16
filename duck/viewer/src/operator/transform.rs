@@ -162,9 +162,10 @@ impl GizmoState {
     /// Handles are parented under the annotation root so they inherit annotation
     /// visibility and stay grouped with other overlay geometry.
     fn show(&mut self, gizmo_type: GizmoType, pivot: Point3, size: f32, ctx: &mut EventContext) {
-        self.hide(ctx);
-
         let mut scene = ctx.scene.lock().unwrap();
+
+        self.hide(&mut scene);
+
         self.root_node.get_or_insert_with(|| {
             let id = scene.add_node(
                 None, Some("Gizmo root".to_owned()), Transform::IDENTITY, NodeFlags::DO_NOT_EXPORT
@@ -199,8 +200,7 @@ impl GizmoState {
     }
 
     /// Remove all gizmo geometry from the scene.
-    fn hide(&mut self, ctx: &mut EventContext) {
-        let mut scene = ctx.scene.lock().unwrap();
+    fn hide(&mut self, scene: &mut Scene) {
         for &node_id in &self.node_ids {
             scene.remove_node(node_id);
         }
@@ -348,6 +348,15 @@ pub struct TransformOperator {
     /// Materials for the colored annotations (So we're not making dozens of copies)
     annotation_axis_materials: HashMap<Axis, LineMaterialId>,
 
+    /// Nodes whose transform was just confirmed, awaiting collection via
+    /// [`Self::take_committed`].
+    ///
+    /// NOTE: this exists solely so the modeler can bake a committed
+    /// transform into its underlying CAD geometry — the viewer itself has no use
+    /// for it. It is a quick-fix; if this operator ever grows
+    /// a proper commit-callback or event mechanism, remove this in favor of that.
+    committed: Option<Vec<NodeId>>,
+
     pub bindings: InputMap<TransformAction>,
 }
 
@@ -424,13 +433,41 @@ impl TransformOperator {
             annotation_root: None,
             annotations: Vec::new(),
             annotation_axis_materials: HashMap::new(),
+            committed: None,
             bindings,
         }
     }
 
     /// Returns true if a transform operation is currently active.
-    fn is_active(&self) -> bool {
+    pub fn is_active(&self) -> bool {
         self.mode.is_some()
+    }
+
+    /// Takes the set of nodes whose transform was confirmed since the last call,
+    /// clearing the internal record. Returns `None` if nothing was confirmed.
+    ///
+    /// NOTE: for the modeler — see the `committed` field. Cancelled
+    /// transforms are *not* reported here (the operator restores the original
+    /// transforms on cancel).
+    pub fn take_committed(&mut self) -> Option<Vec<NodeId>> {
+        self.committed.take()
+    }
+
+    /// Tears down all scene-side visuals owned by this operator (gizmo handles
+    /// and annotation lines) and aborts any in-progress transform, restoring the
+    /// affected nodes to their pre-transform state.
+    pub fn teardown(&mut self, scene: &mut Scene) {
+        if self.is_active() {
+            for original in &self.original_transforms {
+                scene.set_node_transform(original.node_id, original.local_transform);
+            }
+        }
+        for id in self.annotations.drain(..) {
+            scene.remove_node(id);
+        }
+        self.gizmo.hide(scene);
+        self.gizmo_mode = None;
+        self.reset();
     }
 
     /// Cycles the axis constraint for a given axis key.
@@ -730,7 +767,8 @@ impl TransformOperator {
                 }
             }
             _ => {
-                self.gizmo.hide(ctx);
+                let mut scene = ctx.scene.lock().unwrap();
+                self.gizmo.hide(&mut scene);
             }
         }
     }
@@ -810,6 +848,9 @@ impl TransformOperator {
     /// The gizmo remains visible at the new position so the user can
     /// start another drag-based transform immediately.
     fn confirm_transform(&mut self, ctx: &mut EventContext) {
+        // Record the confirmed nodes for downstream consumers (modeler CAD sync)
+        // before `reset()` clears `original_transforms`.
+        self.committed = Some(self.original_transforms.iter().map(|o| o.node_id).collect());
         self.cleanup_annotations(ctx);
         self.gizmo.set_highlight(None, ctx);
         self.reset();

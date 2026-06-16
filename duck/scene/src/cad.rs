@@ -172,6 +172,55 @@ pub fn tessellate_into(
     Ok(node)
 }
 
+/// Re-tessellates `shape` into an existing `node`, preserving its [`NodeId`] and
+/// reusing its material slots. The node must already carry a
+/// [`NodePayload::Instance`]; the previous mesh and instance are removed.
+pub fn retessellate_node(
+    shape: &Shape,
+    scene: &mut Scene,
+    options: &CadTessellationOptions,
+    node: NodeId,
+) -> Result<()> {
+    let NodePayload::Instance(old_instance_id) = *scene
+        .get_node(node)
+        .context("node not found")?
+        .payload()
+    else {
+        anyhow::bail!("node has no instance payload");
+    };
+
+    let (old_mesh_id, face_mat, line_mat) = {
+        let old = scene
+            .get_instance(old_instance_id)
+            .context("instance not found")?;
+        (old.mesh(), old.face_material(), old.line_material())
+    };
+
+    let mesh = tessellate_occ_shape(
+        shape,
+        options.tessellation_tolerance,
+        options.scale_factor,
+        options.include_edges,
+    )?;
+    let mesh_id = scene.add_mesh(mesh);
+
+    let mut instance = Instance::new(mesh_id);
+    instance.set_face_material_unchecked(face_mat);
+    instance.set_line_material_unchecked(line_mat);
+    let instance_id = scene.add_instance(instance);
+
+    scene.set_node_payload(node, NodePayload::Instance(instance_id));
+
+    if scene.is_instance_orphaned(old_instance_id) {
+        scene.remove_instance(old_instance_id);
+    }
+    if scene.is_mesh_orphaned(old_mesh_id) {
+        scene.remove_mesh(old_mesh_id);
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -239,5 +288,90 @@ mod tests {
         }
         assert_eq!(scene.face_material_count(), 3);
         assert_eq!(scene.line_material_count(), 3);
+    }
+
+    #[test]
+    fn gtransform_applies_non_uniform_scale() {
+        // A 2×2×2 box spans [-1, 1] on each axis. A non-uniform scale of 3× in X
+        // (identity elsewhere) must stretch only the X extent.
+        let shape = opencascade::primitives::Shape::box_centered(2.0, 2.0, 2.0);
+        let scaled = shape.gtransform([
+            [3.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]);
+
+        let mut scene = Scene::new();
+        let node = tessellate_into(&scaled, &mut scene, &default_options(), None, None).unwrap();
+        let aabb = scene.nodes_bounding(node).bounds.expect("scaled box has bounds");
+        let (sx, sy, sz) = aabb.size();
+        assert!((sx - 6.0).abs() < 1e-3, "expected X extent ~6, got {sx}");
+        assert!((sy - 2.0).abs() < 1e-3, "expected Y extent ~2, got {sy}");
+        assert!((sz - 2.0).abs() < 1e-3, "expected Z extent ~2, got {sz}");
+    }
+
+    #[test]
+    fn retessellate_node_preserves_node_id_and_updates_geometry() {
+        let options = default_options();
+        let mut scene = Scene::new();
+        let shape = opencascade::primitives::Shape::box_centered(2.0, 2.0, 2.0);
+        let node = tessellate_into(&shape, &mut scene, &options, None, None).unwrap();
+
+        let before = scene.nodes_bounding(node).bounds.expect("box has bounds");
+        let (bx, _, _) = before.size();
+        assert!((bx - 2.0).abs() < 1e-3);
+
+        // Re-tessellate the same node with a stretched copy of the shape.
+        let scaled = shape.gtransform([
+            [3.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]);
+        retessellate_node(&scaled, &mut scene, &options, node).unwrap();
+
+        // Same node id, geometry updated, and no leaked mesh/instance.
+        assert!(scene.get_node(node).is_some(), "node id must be preserved");
+        assert_eq!(scene.mesh_count(), 1, "old mesh should be removed");
+        assert_eq!(scene.instance_count(), 1, "old instance should be removed");
+        let after = scene.nodes_bounding(node).bounds.expect("rescaled box has bounds");
+        let (ax, _, _) = after.size();
+        assert!((ax - 6.0).abs() < 1e-3, "expected X extent ~6 after retess, got {ax}");
+    }
+
+    #[test]
+    fn retessellate_node_keeps_shared_instance_and_mesh() {
+        let options = default_options();
+        let mut scene = Scene::new();
+        let shape = opencascade::primitives::Shape::box_centered(2.0, 2.0, 2.0);
+        let node1 = tessellate_into(&shape, &mut scene, &options, None, None).unwrap();
+
+        // Capture the instance + mesh the part created.
+        let NodePayload::Instance(instance_id) = *scene.get_node(node1).unwrap().payload() else {
+            panic!("expected instance payload");
+        };
+        let mesh_id = scene.get_instance(instance_id).unwrap().mesh();
+
+        // A second node deliberately sharing the same instance.
+        let node2 = scene.add_node(None, None, Transform::IDENTITY, NodeFlags::NONE).unwrap();
+        scene.set_node_payload(node2, NodePayload::Instance(instance_id));
+
+        let scaled = shape.gtransform([
+            [3.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]);
+        retessellate_node(&scaled, &mut scene, &options, node1).unwrap();
+
+        // The shared instance and mesh must survive — node2 still references them.
+        assert!(scene.get_instance(instance_id).is_some(), "shared instance must survive");
+        assert!(scene.get_mesh(mesh_id).is_some(), "shared mesh must survive");
+
+        // node1's geometry was still updated to the stretched shape.
+        let aabb = scene.nodes_bounding(node1).bounds.expect("bounds");
+        let (sx, _, _) = aabb.size();
+        assert!((sx - 6.0).abs() < 1e-3, "expected X extent ~6, got {sx}");
     }
 }
