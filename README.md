@@ -24,7 +24,7 @@ dependency under a short alias.
 | `render-core` | Agnostic GPU plumbing: device/queue, render targets, headless readback, pipeline & shader caches. Implementation independent|
 | `renderer` | Renderer implimentation using `render-core` and `scene`: PBR/surface shading, lights, IBL, headless rendering. |
 | `import-export` | Configurable I/O: glTF, the native binary format, USD, Assimp, and CAD (STEP/IGES) import. |
-| `viewer` | Windowing, input, operator/event system, selection. Native + WASM. Examples: `winit`, `materials`. |
+| `viewer` | Windowing, input, operator/event system, selection. Native + WASM. |
 | `modeler` | Interactive CAD modeler app (egui + viewer): boolean ops, extrude, snapping, tool manager. |
 | `egui-demo` | Desktop demo application using egui. |
 | `scene-info` | CLI to inspect `.duck` scene files (structure, sizes, compression, statistics). |
