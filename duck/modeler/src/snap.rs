@@ -48,6 +48,8 @@ pub enum SnapKind {
     GridAxis,
     /// A B-rep corner / vertex of existing geometry.
     Corner,
+    /// A point on an existing geometry edge/wire (smooth closest-point snap).
+    Edge,
     /// The start point of an in-progress wire, offered so the path can be
     /// closed back onto itself.
     WireStart,
@@ -60,6 +62,7 @@ impl SnapKind {
             ConstructionPlane => SnapTier::Free,
             GridGuide => SnapTier::Guide,
             GridAxis => SnapTier::Axis,
+            Edge => SnapTier::Edge,
             Origin | Corner | WireStart => SnapTier::Feature,
         }
     }
@@ -72,6 +75,7 @@ impl SnapKind {
             GridGuide => SnapFlags::GRID_GUIDE,
             GridAxis => SnapFlags::GRID_AXIS,
             Corner => SnapFlags::CORNER,
+            Edge => SnapFlags::EDGE,
             WireStart => SnapFlags::WIRE_START,
         }
     }
@@ -92,6 +96,9 @@ enum SnapTier {
     Guide,
     /// A construction-frame principal axis.
     Axis,
+    /// A point on an existing geometry edge/wire (real geometry beats the grid,
+    /// but a discrete corner still wins over a mid-edge point).
+    Edge,
     /// A geometry feature or the frame origin (a deliberate, high-value target).
     Feature,
 }
@@ -107,7 +114,8 @@ bitflags! {
         const GRID_GUIDE         = 1 << 2;
         const GRID_AXIS          = 1 << 3;
         const CORNER             = 1 << 4;
-        const WIRE_START         = 1 << 5;
+        const EDGE               = 1 << 5;
+        const WIRE_START         = 1 << 6;
     }
 }
 
@@ -201,7 +209,7 @@ impl Default for SnapEngine {
 
 impl SnapEngine {
     /// An engine pre-populated with the built-in providers: construction plane,
-    /// origin, grid (axes + guides), and geometry corners.
+    /// origin, grid (axes + guides), geometry corners, and geometry edges.
     pub fn with_defaults() -> Self {
         let mut engine = Self {
             providers: Vec::new(),
@@ -211,6 +219,7 @@ impl SnapEngine {
         engine.add_provider(Box::new(providers::OriginSnap));
         engine.add_provider(Box::new(providers::GridSnap));
         engine.add_provider(Box::new(providers::CornerSnap));
+        engine.add_provider(Box::new(providers::EdgeSnap));
         engine
     }
 
@@ -346,7 +355,8 @@ mod tests {
     fn tier_ordering_low_to_high() {
         assert!(SnapTier::Free < SnapTier::Guide);
         assert!(SnapTier::Guide < SnapTier::Axis);
-        assert!(SnapTier::Axis < SnapTier::Feature);
+        assert!(SnapTier::Axis < SnapTier::Edge);
+        assert!(SnapTier::Edge < SnapTier::Feature);
     }
 
     #[test]
@@ -357,6 +367,7 @@ mod tests {
             SnapKind::GridGuide,
             SnapKind::GridAxis,
             SnapKind::Corner,
+            SnapKind::Edge,
         ] {
             assert!(SnapFlags::all().contains(kind.flag()));
         }

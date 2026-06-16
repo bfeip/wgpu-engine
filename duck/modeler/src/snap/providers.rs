@@ -166,7 +166,7 @@ impl SnapProvider for CornerSnap {
                 continue;
             };
 
-            collect_mesh_corners(mesh, topology, &world);
+            snaps.extend(collect_mesh_corners(mesh, topology, &world));
         }
 
         const EPSILON: f32 = 1e-10;
@@ -247,12 +247,69 @@ fn collect_mesh_corners(mesh: &Mesh, topology: &Topology, world: &Matrix4) -> Ve
     return out;
 }
 
+/// Points lying on existing geometry edges/wires. Snaps smoothly to the closest
+/// point on each line segment to the cursor ray — the same primitive grid-axis
+/// snapping uses — so the snap glides along an edge as the cursor moves, rather
+/// than jumping to its endpoints (which is [`CornerSnap`]'s job).
+pub(crate) struct EdgeSnap;
+
+impl SnapProvider for EdgeSnap {
+    fn produces(&self) -> SnapFlags {
+        SnapFlags::EDGE
+    }
+
+    fn collect(&self, input: &SnapInput, scene: &Scene) -> Vec<Snap> {
+        // Same flat node walk and filtering as CornerSnap; see the TODO there
+        // about promoting this to a pruning tree walk once parts gain deep
+        // hierarchies.
+        let mut snaps = Vec::new();
+        for node in scene.nodes() {
+            if node.flags().contains(NodeFlags::DO_NOT_SELECT) {
+                continue;
+            }
+            if node.visibility() != Visibility::Visible {
+                continue;
+            }
+            if input.exclude_nodes.contains(&node.id) {
+                continue;
+            }
+
+            let NodePayload::Instance(instance_id) = node.payload() else {
+                continue;
+            };
+            let Some(instance) = scene.get_instance(*instance_id) else {
+                continue;
+            };
+            let Some(mesh) = scene.get_mesh(instance.mesh()) else {
+                continue;
+            };
+            let Some(world) = scene.nodes_transform(node.id) else {
+                continue;
+            };
+
+            for seg in mesh.segments() {
+                let p0 = transform_point(&world, Point3::from(seg[0].position));
+                let p1 = transform_point(&world, Point3::from(seg[1].position));
+                if let Some(approach) = input.ray.closest_approach_to_segment(p0, p1) {
+                    snaps.push(Snap {
+                        position: approach.closest_on_segment,
+                        direction: Some((p1 - p0).normalize()),
+                        kind: SnapKind::Edge,
+                    });
+                }
+            }
+        }
+        snaps
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use duck_engine_viewer::common::{Plane, Ray, Vector3};
+    use duck_engine_viewer::common::{Plane, Ray, Transform, Vector3};
     use duck_engine_viewer::scene::{
-        Mesh, MeshPrimitive, PositionedCamera, PrimitiveType, SubMeshRange, Topology, Vertex,
+        Instance, Mesh, MeshPrimitive, PositionedCamera, PrimitiveType, SubMeshRange, Topology,
+        Vertex,
     };
 
     use crate::grid::GridConfig;
@@ -353,6 +410,51 @@ mod tests {
         assert_eq!(snaps.len(), 1);
         assert_eq!(snaps[0].kind, SnapKind::WireStart);
         assert!(close(snaps[0].position, start), "{:?}", snaps[0].position);
+    }
+
+    #[test]
+    fn edge_snaps_to_closest_point_on_segment_in_world_space() {
+        // One straight edge along +X in local space, on a node translated +2 in Z,
+        // so the world segment runs (0,0,2) → (10,0,2).
+        let mesh = Mesh::from_raw(
+            vec![
+                Vertex { position: [0.0, 0.0, 0.0], tex_coords: [0.0; 3], normal: [0.0; 3] },
+                Vertex { position: [10.0, 0.0, 0.0], tex_coords: [0.0; 3], normal: [0.0; 3] },
+            ],
+            vec![MeshPrimitive {
+                primitive_type: PrimitiveType::LineList,
+                indices: vec![0, 1],
+            }],
+        );
+
+        let mut scene = Scene::new();
+        let mesh_id = scene.add_mesh(mesh);
+        scene
+            .add_instance_node(
+                None,
+                Instance::new(mesh_id),
+                Some("edge".to_owned()),
+                Transform::from_position(Point3::new(0.0, 0.0, 2.0)),
+                NodeFlags::NONE,
+            )
+            .expect("instance node");
+
+        let cam = dummy_camera();
+        let plane = Plane::xz();
+        let grid = GridConfig::default();
+        // Ray straight down at x=3, z=2: closest point on the segment is (3,0,2).
+        let ray = Ray::new(Point3::new(3.0, 10.0, 2.0), Vector3::new(0.0, -1.0, 0.0));
+        let inp = input_with_ray(ray, &cam, &plane, &grid);
+
+        let snaps = EdgeSnap.collect(&inp, &scene);
+
+        let edge = snaps
+            .iter()
+            .find(|s| s.kind == SnapKind::Edge)
+            .expect("expected an edge candidate");
+        assert!(close(edge.position, Point3::new(3.0, 0.0, 2.0)), "{:?}", edge.position);
+        // Direction is the edge tangent (±X).
+        assert!(edge.direction.map_or(false, |d| d.x.abs() > 0.9), "{:?}", edge.direction);
     }
 
     #[test]
