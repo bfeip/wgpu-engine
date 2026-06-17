@@ -7,7 +7,7 @@ use crate::input::{
     TouchPhase,
 };
 use crate::operator::Operator;
-use crate::scene::{NodePayload, PositionedCamera, Scene};
+use crate::scene::{NodeId, NodePayload, PositionedCamera, Scene};
 use crate::selection::SelectionManager;
 
 /// Bridges `Arc<Mutex<T>>` into the dispatcher's type-erased storage.
@@ -53,9 +53,27 @@ pub struct EventContext<'c> {
     // TODO: In the future we might replace this with an input state struct. Containing
     // not just modifiers but the full input state.
     pub modifiers: Modifiers,
+    /// Events emitted by operators during this dispatch, awaiting re-dispatch through
+    /// the operator stack. Push via [`Self::emit`]; the [`EventDispatcher`] drains this
+    /// after the current event finishes propagating.
+    //
+    // NOTE: this only covers events emitted synchronously as a consequence of another
+    // event, the queue lives for the duration of one dispatch. It does not support
+    // autonomous/background emission; that would require a long-lived owner holding an
+    // MPSC channel. `emit`'s signature is forward-compatible with that change.
+    pub(crate) emit_queue: Vec<Event>,
 }
 
 impl<'c> EventContext<'c> {
+    /// Emit a high-level event (or a synthesized device event) to be re-dispatched
+    /// through the operator stack once the current event finishes propagating.
+    ///
+    /// Operators use this to signal that something happened that other operators may need
+    /// to respond to (e.g. [`AppEvent::TransformCommitted`]).
+    pub fn emit(&mut self, event: impl Into<Event>) {
+        self.emit_queue.push(event.into());
+    }
+
     /// Acquire the scene mutex.
     pub fn lock_scene(&self) -> MutexGuard<'_, Scene> {
         self.scene.lock().unwrap()
@@ -92,11 +110,11 @@ impl<'c> EventContext<'c> {
     }
 }
 
-/// Discriminant enum for [`Event`] variants.
+/// Discriminant enum for [`DeviceEvent`] variants.
 ///
 /// Can be used as a fast pre-filter inside [`Operator::dispatch`] implementations.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
-pub enum EventKind {
+pub enum DeviceEventKind {
     #[cfg(test)]
     /// Event kind used for testing
     Test,
@@ -126,8 +144,9 @@ pub enum EventKind {
     Touch,
 }
 
-/// Application events with associated data.
-pub enum Event {
+/// Low-level device/input events with associated data.
+#[derive(Clone)]
+pub enum DeviceEvent {
     #[cfg(test)]
     /// Event used for testing
     Test,
@@ -222,25 +241,61 @@ pub enum Event {
     },
 }
 
-impl Event {
-    /// Returns the [`EventKind`] discriminant for this event.
-    pub fn kind(&self) -> EventKind {
+impl DeviceEvent {
+    /// Returns the [`DeviceEventKind`] discriminant for this event.
+    pub fn kind(&self) -> DeviceEventKind {
         match self {
-            Self::Update { .. } => EventKind::Update,
-            Self::Resized(_) => EventKind::Resized,
-            Self::KeyboardInput { .. } => EventKind::KeyboardInput,
-            Self::MouseMotion { .. } => EventKind::MouseMotion,
-            Self::CursorMoved { .. } => EventKind::CursorMoved,
-            Self::MouseInput { .. } => EventKind::MouseInput,
-            Self::MouseWheel { .. } => EventKind::MouseWheel,
-            Self::MouseDragStart { .. } => EventKind::MouseDragStart,
-            Self::MouseDrag { .. } => EventKind::MouseDrag,
-            Self::MouseDragEnd { .. } => EventKind::MouseDragEnd,
-            Self::MouseClick { .. } => EventKind::MouseClick,
-            Self::Touch { .. } => EventKind::Touch,
+            Self::Update { .. } => DeviceEventKind::Update,
+            Self::Resized(_) => DeviceEventKind::Resized,
+            Self::KeyboardInput { .. } => DeviceEventKind::KeyboardInput,
+            Self::MouseMotion { .. } => DeviceEventKind::MouseMotion,
+            Self::CursorMoved { .. } => DeviceEventKind::CursorMoved,
+            Self::MouseInput { .. } => DeviceEventKind::MouseInput,
+            Self::MouseWheel { .. } => DeviceEventKind::MouseWheel,
+            Self::MouseDragStart { .. } => DeviceEventKind::MouseDragStart,
+            Self::MouseDrag { .. } => DeviceEventKind::MouseDrag,
+            Self::MouseDragEnd { .. } => DeviceEventKind::MouseDragEnd,
+            Self::MouseClick { .. } => DeviceEventKind::MouseClick,
+            Self::Touch { .. } => DeviceEventKind::Touch,
             #[cfg(test)]
-            Self::Test => EventKind::Test,
+            Self::Test => DeviceEventKind::Test,
         }
+    }
+}
+
+/// A semantic, high-level event emitted by an operator to signal that *something
+/// happened* (as opposed to [`DeviceEvent`], which describes raw input).
+/// 
+/// Downstream crates that cannot edit this enum carry their own event types
+/// through [`AppEvent::Custom`] and recover them with [`std::any::Any::downcast_ref`].
+pub enum AppEvent {
+    /// A transform operation was confirmed for the listed nodes. Emitted by the
+    /// transform operator on commit.
+    TransformCommitted {
+        /// Nodes whose transform was just confirmed.
+        nodes: Vec<NodeId>,
+    },
+    /// A downstream-defined event.
+    Custom(Box<dyn std::any::Any + Send>),
+}
+
+/// A single event flowing through the [`EventDispatcher`].
+pub enum Event {
+    /// A low-level input/device event.
+    Device(DeviceEvent),
+    /// A high-level semantic event emitted by an operator.
+    App(AppEvent),
+}
+
+impl From<DeviceEvent> for Event {
+    fn from(e: DeviceEvent) -> Self {
+        Event::Device(e)
+    }
+}
+
+impl From<AppEvent> for Event {
+    fn from(e: AppEvent) -> Self {
+        Event::App(e)
     }
 }
 
@@ -444,11 +499,31 @@ impl EventDispatcher {
         // inside process_event) and the original event see the same modifier state.
         ctx.modifiers = self.current_modifiers;
 
-        // Update state and synthesize high-level events (drag, click, etc.).
-        self.process_event(event, ctx);
+        // Update state and synthesize high-level events (drag, click, etc.). Only
+        // device events drive synthesis; app events flow straight to the operators.
+        if let Event::Device(device_event) = event {
+            self.process_event(device_event, ctx);
+        }
 
-        // Dispatch the original event.
-        self.dispatch_to_operators(event, ctx)
+        // Dispatch the original event, then re-dispatch anything operators emitted.
+        let consumed = self.dispatch_to_operators(event, ctx);
+        self.drain_emitted(ctx);
+        consumed
+    }
+
+    /// Re-dispatches events emitted via [`EventContext::emit`] back through the operator
+    /// stack, draining the queue until empty so cascaded emits (an emitted event causing
+    /// further emits) are also delivered.
+    fn drain_emitted<'c>(&mut self, ctx: &mut EventContext<'c>) {
+        loop {
+            let batch = std::mem::take(&mut ctx.emit_queue);
+            if batch.is_empty() {
+                break;
+            }
+            for event in &batch {
+                self.dispatch_to_operators(event, ctx);
+            }
+        }
     }
 
     /// Dispatches an event to all operators without updating synthesis state.
@@ -463,22 +538,22 @@ impl EventDispatcher {
 
     // ── Synthesis ────────────────────────────────────────────────────────────
 
-    /// Processes an event to update internal state and synthesize high-level events.
-    fn process_event<'c>(&mut self, event: &Event, ctx: &mut EventContext<'c>) {
+    /// Processes a device event to update internal state and synthesize high-level events.
+    fn process_event<'c>(&mut self, event: &DeviceEvent, ctx: &mut EventContext<'c>) {
         match event {
-            Event::CursorMoved { position } => {
+            DeviceEvent::CursorMoved { position } => {
                 self.process_cursor_moved(*position);
             }
-            Event::MouseInput { state, button } => {
+            DeviceEvent::MouseInput { state, button } => {
                 self.process_mouse_input(*state, *button, ctx);
             }
-            Event::MouseMotion { delta } => {
+            DeviceEvent::MouseMotion { delta } => {
                 self.process_mouse_motion(*delta, ctx);
             }
-            Event::Touch { id, phase, position } => {
+            DeviceEvent::Touch { id, phase, position } => {
                 self.process_touch(*id, *phase, *position, ctx);
             }
-            Event::KeyboardInput { event: key_event, .. } => {
+            DeviceEvent::KeyboardInput { event: key_event, .. } => {
                 self.process_modifier_key(key_event);
             }
             _ => {}
@@ -545,12 +620,12 @@ impl EventDispatcher {
         ctx: &mut EventContext<'c>,
     ) {
         if let Some(end_pos) = self.current_cursor_position {
-            let drag_end = Event::MouseDragEnd {
+            let drag_end = DeviceEvent::MouseDragEnd {
                 button,
                 start_pos: button_state.down_position,
                 end_pos,
             };
-            self.dispatch_to_operators(&drag_end, ctx);
+            self.dispatch_to_operators(&Event::Device(drag_end), ctx);
         }
     }
 
@@ -563,12 +638,12 @@ impl EventDispatcher {
     ) {
         let duration = button_state.down_time.elapsed();
         if duration.as_millis() as u64 <= CLICK_TIME_THRESHOLD_MS {
-            let click = Event::MouseClick {
+            let click = DeviceEvent::MouseClick {
                 button,
                 position: button_state.down_position,
                 duration_ms: duration.as_millis() as u64,
             };
-            self.dispatch_to_operators(&click, ctx);
+            self.dispatch_to_operators(&Event::Device(click), ctx);
         }
     }
 
@@ -606,12 +681,12 @@ impl EventDispatcher {
             TouchMode::None => {
                 // First finger: start single-finger mode (maps to left mouse)
                 self.touch_state.mode = TouchMode::SingleFinger { id };
-                self.dispatch_synthetic_mouse(
-                    &Event::CursorMoved { position },
+                self.dispatch_synthetic(
+                    &DeviceEvent::CursorMoved { position },
                     ctx,
                 );
-                self.dispatch_synthetic_mouse(
-                    &Event::MouseInput {
+                self.dispatch_synthetic(
+                    &DeviceEvent::MouseInput {
                         state: ElementState::Pressed,
                         button: MouseButton::Left,
                     },
@@ -623,8 +698,8 @@ impl EventDispatcher {
                 let first_id = *first_id;
 
                 // Release the left button to cancel any single-finger drag
-                self.dispatch_synthetic_mouse(
-                    &Event::MouseInput {
+                self.dispatch_synthetic(
+                    &DeviceEvent::MouseInput {
                         state: ElementState::Released,
                         button: MouseButton::Left,
                     },
@@ -644,12 +719,12 @@ impl EventDispatcher {
                     };
 
                     // Start right-button press at center for pan
-                    self.dispatch_synthetic_mouse(
-                        &Event::CursorMoved { position: center },
+                    self.dispatch_synthetic(
+                        &DeviceEvent::CursorMoved { position: center },
                         ctx,
                     );
-                    self.dispatch_synthetic_mouse(
-                        &Event::MouseInput {
+                    self.dispatch_synthetic(
+                        &DeviceEvent::MouseInput {
                             state: ElementState::Pressed,
                             button: MouseButton::Right,
                         },
@@ -681,12 +756,12 @@ impl EventDispatcher {
                 }
                 if let Some(old_pos) = old_position {
                     let delta = (position.0 - old_pos.0, position.1 - old_pos.1);
-                    self.dispatch_synthetic_mouse(
-                        &Event::CursorMoved { position },
+                    self.dispatch_synthetic(
+                        &DeviceEvent::CursorMoved { position },
                         ctx,
                     );
-                    self.dispatch_synthetic_mouse(
-                        &Event::MouseMotion { delta },
+                    self.dispatch_synthetic(
+                        &DeviceEvent::MouseMotion { delta },
                         ctx,
                     );
                 }
@@ -710,12 +785,12 @@ impl EventDispatcher {
                             (position.0 - old_pos.0) * 0.5,
                             (position.1 - old_pos.1) * 0.5,
                         );
-                        self.dispatch_synthetic_mouse(
-                            &Event::CursorMoved { position: center },
+                        self.dispatch_synthetic(
+                            &DeviceEvent::CursorMoved { position: center },
                             ctx,
                         );
-                        self.dispatch_synthetic_mouse(
-                            &Event::MouseMotion { delta: half_delta },
+                        self.dispatch_synthetic(
+                            &DeviceEvent::MouseMotion { delta: half_delta },
                             ctx,
                         );
                     }
@@ -726,8 +801,8 @@ impl EventDispatcher {
                             let delta = distance - prev_distance;
                             // Scale: positive delta = fingers moving apart = zoom in
                             if delta.abs() > 0.5 {
-                                self.dispatch_synthetic_mouse(
-                                    &Event::MouseWheel {
+                                self.dispatch_synthetic(
+                                    &DeviceEvent::MouseWheel {
                                         delta: MouseScrollDelta::PixelDelta(0.0, delta as f32),
                                     },
                                     ctx,
@@ -755,8 +830,8 @@ impl EventDispatcher {
                     return;
                 }
                 // Release left button
-                self.dispatch_synthetic_mouse(
-                    &Event::MouseInput {
+                self.dispatch_synthetic(
+                    &DeviceEvent::MouseInput {
                         state: ElementState::Released,
                         button: MouseButton::Left,
                     },
@@ -771,8 +846,8 @@ impl EventDispatcher {
                 }
 
                 // Release right button (end pan)
-                self.dispatch_synthetic_mouse(
-                    &Event::MouseInput {
+                self.dispatch_synthetic(
+                    &DeviceEvent::MouseInput {
                         state: ElementState::Released,
                         button: MouseButton::Right,
                     },
@@ -784,14 +859,14 @@ impl EventDispatcher {
                 let remaining_id = if id == id0 { id1 } else { id0 };
                 if let Some(&remaining_pos) = self.touch_state.active_touches.get(&remaining_id) {
                     self.touch_state.mode = TouchMode::SingleFinger { id: remaining_id };
-                    self.dispatch_synthetic_mouse(
-                        &Event::CursorMoved {
+                    self.dispatch_synthetic(
+                        &DeviceEvent::CursorMoved {
                             position: remaining_pos,
                         },
                         ctx,
                     );
-                    self.dispatch_synthetic_mouse(
-                        &Event::MouseInput {
+                    self.dispatch_synthetic(
+                        &DeviceEvent::MouseInput {
                             state: ElementState::Pressed,
                             button: MouseButton::Left,
                         },
@@ -804,17 +879,17 @@ impl EventDispatcher {
         }
     }
 
-    /// Dispatches a synthesized mouse event through the full processing pipeline.
+    /// Dispatches a synthesized event through the full processing pipeline.
     ///
-    /// This calls `process_event` so the synthesized mouse event updates button/cursor
+    /// This calls `process_event` so the synthesized event updates button/cursor
     /// state and triggers further synthesis (e.g., drag and click events).
-    fn dispatch_synthetic_mouse<'c>(
+    fn dispatch_synthetic<'c>(
         &mut self,
-        event: &Event,
+        event: &DeviceEvent,
         ctx: &mut EventContext<'c>,
     ) {
         self.process_event(event, ctx);
-        self.dispatch_to_operators(event, ctx);
+        self.dispatch_to_operators(&Event::Device(event.clone()), ctx);
     }
 
     /// Processes MouseMotion events to track drag distance and synthesize drag events.
@@ -835,7 +910,7 @@ impl EventDispatcher {
                 // Transition to dragging state
                 button_state.is_dragging = true;
                 if let Some(current_pos) = self.current_cursor_position {
-                    drag_events.push(Event::MouseDragStart {
+                    drag_events.push(DeviceEvent::MouseDragStart {
                         button: *button,
                         start_pos: button_state.down_position,
                         current_pos,
@@ -844,7 +919,7 @@ impl EventDispatcher {
             } else if button_state.is_dragging {
                 // Already dragging - queue MouseDrag event
                 if let Some(current_pos) = self.current_cursor_position {
-                    drag_events.push(Event::MouseDrag {
+                    drag_events.push(DeviceEvent::MouseDrag {
                         button: *button,
                         start_pos: button_state.down_position,
                         current_pos,
@@ -856,7 +931,7 @@ impl EventDispatcher {
 
         // Dispatch all queued drag events
         for drag_event in drag_events {
-            self.dispatch_to_operators(&drag_event, ctx);
+            self.dispatch_to_operators(&Event::Device(drag_event), ctx);
         }
     }
 }
@@ -912,6 +987,7 @@ mod tests {
             scene: Arc::clone(&parts.1),
             selection: &mut parts.2,
             modifiers: Default::default(),
+            emit_queue: Vec::new(),
         }
     }
 
@@ -1054,7 +1130,7 @@ mod tests {
 
         let mut parts = create_mock_context_parts();
         let mut ctx = make_context(&mut parts);
-        let consumed = d.dispatch(&Event::Test, &mut ctx);
+        let consumed = d.dispatch(&Event::Device(DeviceEvent::Test), &mut ctx);
 
         assert_eq!(c1.get(), 1);
         assert_eq!(c2.get(), 1);
@@ -1071,7 +1147,7 @@ mod tests {
 
         let mut parts = create_mock_context_parts();
         let mut ctx = make_context(&mut parts);
-        let consumed = d.dispatch(&Event::Test, &mut ctx);
+        let consumed = d.dispatch(&Event::Device(DeviceEvent::Test), &mut ctx);
 
         assert_eq!(c1.get(), 1);
         assert_eq!(c2.get(), 0); // never reached
@@ -1097,7 +1173,7 @@ mod tests {
 
         let mut parts = create_mock_context_parts();
         let mut ctx = make_context(&mut parts);
-        d.dispatch(&Event::Test, &mut ctx);
+        d.dispatch(&Event::Device(DeviceEvent::Test), &mut ctx);
 
         assert_eq!(order.get(), 12); // 1 fired first, then 2
     }
@@ -1107,7 +1183,7 @@ mod tests {
         let mut d = EventDispatcher::new();
         let mut parts = create_mock_context_parts();
         let mut ctx = make_context(&mut parts);
-        assert!(!d.dispatch(&Event::Test, &mut ctx));
+        assert!(!d.dispatch(&Event::Device(DeviceEvent::Test), &mut ctx));
     }
 
     // ── Click synthesis ──────────────────────────────────────────────────────
@@ -1120,7 +1196,7 @@ mod tests {
         struct ClickCounter(Rc<Cell<u32>>);
         impl Operator for ClickCounter {
             fn dispatch(&mut self, event: &Event, _: &mut EventContext) -> bool {
-                if matches!(event, Event::MouseClick { .. }) {
+                if matches!(event, Event::Device(DeviceEvent::MouseClick { .. })) {
                     self.0.set(self.0.get() + 1);
                 }
                 false
@@ -1133,17 +1209,103 @@ mod tests {
         let mut parts = create_mock_context_parts();
 
         // Move cursor so position is known
-        let cursor = Event::CursorMoved { position: (100.0, 100.0) };
+        let cursor = Event::Device(DeviceEvent::CursorMoved { position: (100.0, 100.0) });
         d.dispatch(&cursor, &mut make_context(&mut parts));
 
         // Press
-        let press = Event::MouseInput { state: ElementState::Pressed, button: MouseButton::Left };
+        let press = Event::Device(DeviceEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left });
         d.dispatch(&press, &mut make_context(&mut parts));
 
         // Release immediately (no motion → click)
-        let release = Event::MouseInput { state: ElementState::Released, button: MouseButton::Left };
+        let release = Event::Device(DeviceEvent::MouseInput { state: ElementState::Released, button: MouseButton::Left });
         d.dispatch(&release, &mut make_context(&mut parts));
 
         assert_eq!(click_count.get(), 1);
+    }
+
+    #[test]
+    fn emitted_events_are_redispatched_to_operators() {
+        // Emits a Custom app event the first time it sees the Test device event.
+        struct EmitOp {
+            emitted: Rc<Cell<bool>>,
+        }
+        impl Operator for EmitOp {
+            fn dispatch(&mut self, event: &Event, ctx: &mut EventContext) -> bool {
+                if matches!(event, Event::Device(DeviceEvent::Test)) && !self.emitted.get() {
+                    self.emitted.set(true);
+                    ctx.emit(AppEvent::Custom(Box::new(7u32)));
+                }
+                false
+            }
+            fn name(&self) -> &str {
+                "EmitOp"
+            }
+        }
+        // Records the payload of any Custom app event it receives.
+        struct ObserveOp {
+            seen: Rc<Cell<Option<u32>>>,
+        }
+        impl Operator for ObserveOp {
+            fn dispatch(&mut self, event: &Event, _: &mut EventContext) -> bool {
+                if let Event::App(AppEvent::Custom(payload)) = event
+                    && let Some(v) = payload.downcast_ref::<u32>()
+                {
+                    self.seen.set(Some(*v));
+                }
+                false
+            }
+            fn name(&self) -> &str {
+                "ObserveOp"
+            }
+        }
+
+        let emitted = Rc::new(Cell::new(false));
+        let seen = Rc::new(Cell::new(None));
+        let mut d = EventDispatcher::new();
+        d.push_back(arc_op(EmitOp { emitted: emitted.clone() }));
+        d.push_back(arc_op(ObserveOp { seen: seen.clone() }));
+
+        let mut parts = create_mock_context_parts();
+        d.dispatch(&Event::Device(DeviceEvent::Test), &mut make_context(&mut parts));
+
+        assert_eq!(seen.get(), Some(7));
+    }
+
+    #[test]
+    fn emitted_events_cascade() {
+        // On Test, emits Custom(3); in response to Custom(n) emits Custom(n-1) until 0.
+        struct CascadeOp {
+            count: Rc<Cell<u32>>,
+        }
+        impl Operator for CascadeOp {
+            fn dispatch(&mut self, event: &Event, ctx: &mut EventContext) -> bool {
+                match event {
+                    Event::Device(DeviceEvent::Test) => ctx.emit(AppEvent::Custom(Box::new(3u32))),
+                    Event::App(AppEvent::Custom(payload)) => {
+                        if let Some(&n) = payload.downcast_ref::<u32>() {
+                            self.count.set(self.count.get() + 1);
+                            if n > 0 {
+                                ctx.emit(AppEvent::Custom(Box::new(n - 1)));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+                false
+            }
+            fn name(&self) -> &str {
+                "CascadeOp"
+            }
+        }
+
+        let count = Rc::new(Cell::new(0u32));
+        let mut d = EventDispatcher::new();
+        d.push_back(arc_op(CascadeOp { count: count.clone() }));
+
+        let mut parts = create_mock_context_parts();
+        d.dispatch(&Event::Device(DeviceEvent::Test), &mut make_context(&mut parts));
+
+        // Custom(3) → (2) → (1) → (0): four deliveries.
+        assert_eq!(count.get(), 4);
     }
 }

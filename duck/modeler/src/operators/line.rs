@@ -7,7 +7,7 @@ use duck_engine_scene::NodeId;
 use duck_engine_scene::cad::tessellate_into;
 use duck_engine_viewer::{
     bindings::{InputBinding, InputMap},
-    event::{Event, EventContext},
+    event::{DeviceEvent, Event, EventContext},
     input::{ElementState, Key, Modifiers, MouseButton, NamedKey},
     operator::Operator,
     scene::PositionedCamera,
@@ -345,8 +345,9 @@ impl ModelingTool for LineOperator {
 
 impl Operator for LineOperator {
     fn dispatch(&mut self, event: &Event, ctx: &mut EventContext) -> bool {
+        let Event::Device(event) = event else { return false };
         match event {
-            Event::MouseClick { button, position, .. } => {
+            DeviceEvent::MouseClick { button, position, .. } => {
                 let actions = self.bindings.actions_for_click(*button, ctx.modifiers).to_vec();
                 let mut handled = false;
                 for action in actions {
@@ -357,11 +358,11 @@ impl Operator for LineOperator {
                 }
                 handled
             }
-            Event::CursorMoved { position } => {
+            DeviceEvent::CursorMoved { position } => {
                 self.on_cursor_moved(*position, ctx);
                 false
             }
-            Event::KeyboardInput { event: key_event, .. } => {
+            DeviceEvent::KeyboardInput { event: key_event, .. } => {
                 if key_event.state != ElementState::Pressed || key_event.repeat {
                     return false;
                 }

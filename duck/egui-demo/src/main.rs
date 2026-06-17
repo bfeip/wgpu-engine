@@ -343,7 +343,10 @@ impl<'a> App<'a> {
     }
 
     fn get_debug_key_action(event: &duck_engine_viewer::event::Event) -> Option<DebugAction> {
-        let duck_engine_viewer::event::Event::KeyboardInput { event: key_event, .. } = event else {
+        let duck_engine_viewer::event::Event::Device(
+            duck_engine_viewer::event::DeviceEvent::KeyboardInput { event: key_event, .. },
+        ) = event
+        else {
             return None;
         };
         if key_event.state != ElementState::Pressed || key_event.repeat {

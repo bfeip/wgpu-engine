@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use duck_engine_common::{Point3, Ray};
 use duck_engine_scene::{NodeId, Visibility};
 use duck_engine_viewer::{
-    event::{Event, EventContext},
+    event::{DeviceEvent, Event, EventContext},
     input::{ElementState, Key, MouseButton, NamedKey},
     operator::Operator,
     selection::{SelectionItem, SelectionManager},
@@ -214,10 +214,11 @@ impl ModelingTool for ExtrudeOperator {
 
 impl Operator for ExtrudeOperator {
     fn dispatch(&mut self, event: &Event, ctx: &mut EventContext) -> bool {
+        let Event::Device(event) = event else { return false };
         match event {
             // While awaiting a target, pick up a face/edge selection (made before or
             // after the tool was activated) and start extruding.
-            Event::Update { .. } => {
+            DeviceEvent::Update { .. } => {
                 if self.phase == ExtrudePhase::AwaitingSelection {
                     if let Some(target) = Self::selected_target(ctx.selection) {
                         self.begin(target);
@@ -225,14 +226,14 @@ impl Operator for ExtrudeOperator {
                 }
                 false
             }
-            Event::CursorMoved { position } => {
+            DeviceEvent::CursorMoved { position } => {
                 if self.phase == ExtrudePhase::Extruding {
                     self.update_length((position.0 as f32, position.1 as f32), ctx);
                 }
                 false
             }
             // Right-click finalizes (matching the Boolean/Line right-click convention).
-            Event::MouseClick { button: MouseButton::Right, .. } => {
+            DeviceEvent::MouseClick { button: MouseButton::Right, .. } => {
                 if self.phase == ExtrudePhase::Extruding {
                     if let Err(e) = self.apply() {
                         log::error!("Extrude failed: {e}");
@@ -243,7 +244,7 @@ impl Operator for ExtrudeOperator {
                 }
                 false
             }
-            Event::KeyboardInput { event: key_event, .. } => {
+            DeviceEvent::KeyboardInput { event: key_event, .. } => {
                 if key_event.state != ElementState::Pressed || key_event.repeat {
                     return false;
                 }

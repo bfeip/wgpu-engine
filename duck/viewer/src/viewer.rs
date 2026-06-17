@@ -8,7 +8,7 @@ use web_time::Instant;
 use crate::streaming::ViewerStreamClient;
 
 use crate::{
-    event::{Event, EventContext, EventDispatcher},
+    event::{DeviceEvent, Event, EventContext, EventDispatcher},
     scene::{NodePayload, PositionedCamera, Scene},
     selection::SelectionManager,
     renderer::{Renderer, HighlightQuery},
@@ -165,11 +165,11 @@ impl<'a> Viewer<'a> {
 
     /// Handle a single event by dispatching it to registered handlers
     pub fn handle_event(&mut self, event: &Event) {
-        if let Event::CursorMoved { position } = event {
+        if let Event::Device(DeviceEvent::CursorMoved { position }) = event {
             self.cursor_position = Some((position.0 as f32, position.1 as f32));
         }
         // Handle resize at the viewer level (needs surface, renderer, and camera)
-        if let Event::Resized(physical_size) = event {
+        if let Event::Device(DeviceEvent::Resized(physical_size)) = event {
             let (w, h) = *physical_size;
             if w > 0 && h > 0 {
                 self.surface_config.width = w;
@@ -186,6 +186,7 @@ impl<'a> Viewer<'a> {
             scene: Arc::clone(&self.scene),
             selection: &mut self.selection,
             modifiers: Default::default(), // dispatcher overwrites this in dispatch()
+            emit_queue: Vec::new(),
         };
         self.dispatcher.dispatch(event, &mut ctx);
     }
@@ -205,7 +206,7 @@ impl<'a> Viewer<'a> {
         };
         self.last_update_time = Some(now);
 
-        let event = Event::Update { delta_time };
+        let event = Event::Device(DeviceEvent::Update { delta_time });
         self.handle_event(&event);
 
         #[cfg(feature = "streaming")]

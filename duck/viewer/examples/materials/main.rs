@@ -382,9 +382,9 @@ impl<'a> ApplicationHandler for App<'a> {
         let viewer = self.viewer.as_mut().unwrap();
         viewer.handle_event(&app_event);
 
-        let duck_engine_viewer::event::Event::KeyboardInput {
-            event: key_event, ..
-        } = &app_event
+        let duck_engine_viewer::event::Event::Device(
+            duck_engine_viewer::event::DeviceEvent::KeyboardInput { event: key_event, .. },
+        ) = &app_event
         else {
             return;
         };

@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
-use duck_engine_viewer::event::{Event, EventContext};
+use duck_engine_viewer::event::{AppEvent, Event, EventContext};
 use duck_engine_viewer::operator::{Operator, SelectionMode, TransformOperator};
 
 use crate::document::Document;
@@ -65,11 +65,14 @@ impl TransformTool {
 
 impl Operator for TransformTool {
     fn dispatch(&mut self, event: &Event, ctx: &mut EventContext) -> bool {
-        let consumed = self.transform_op.dispatch(event, ctx);
-        if let Some(nodes) = self.transform_op.take_committed() {
-            self.bake_committed(&nodes, ctx);
+        // The inner operator emits `AppEvent::TransformCommitted` on confirm; the
+        // dispatcher re-dispatches it back to us. Bake the committed nodes when we see
+        // it.
+        if let Event::App(AppEvent::TransformCommitted { nodes }) = event {
+            self.bake_committed(nodes, ctx);
+            return false;
         }
-        consumed
+        self.transform_op.dispatch(event, ctx)
     }
 
     fn name(&self) -> &str {

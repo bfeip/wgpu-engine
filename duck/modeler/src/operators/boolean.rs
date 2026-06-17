@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use duck_engine_scene::NodeId;
 use duck_engine_scene::Visibility;
 use duck_engine_viewer::{
-    event::{Event, EventContext},
+    event::{DeviceEvent, Event, EventContext},
     input::{ElementState, Key, NamedKey},
     operator::{Operator, SelectionMode},
     selection::{SelectionItem, SelectionManager},
@@ -291,8 +291,9 @@ impl ModelingTool for BooleanOperator {
 
 impl Operator for BooleanOperator {
     fn dispatch(&mut self, event: &Event, ctx: &mut EventContext) -> bool {
+        let Event::Device(event) = event else { return false };
         match event {
-            Event::Update { .. } => {
+            DeviceEvent::Update { .. } => {
                 let (current_target, current_tools) = Self::selection_snapshot(ctx.selection);
                 let selection_changed = current_target != self.preview_target
                     || current_tools != self.preview_tools;
@@ -302,7 +303,7 @@ impl Operator for BooleanOperator {
                 }
                 false
             }
-            Event::KeyboardInput { event: key_event, .. } => {
+            DeviceEvent::KeyboardInput { event: key_event, .. } => {
                 if key_event.state != ElementState::Pressed || key_event.repeat {
                     return false;
                 }

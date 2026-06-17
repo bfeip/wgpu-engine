@@ -8,7 +8,7 @@ use duck_engine_scene::cad::tessellate_into;
 use duck_engine_viewer::{
     bindings::{InputBinding, InputMap},
     common::Transform,
-    event::{Event, EventContext},
+    event::{DeviceEvent, Event, EventContext},
     input::{Modifiers, MouseButton},
     operator::Operator,
 };
@@ -203,8 +203,9 @@ impl ModelingTool for SphereOperator {
 
 impl Operator for SphereOperator {
     fn dispatch(&mut self, event: &Event, ctx: &mut EventContext) -> bool {
+        let Event::Device(event) = event else { return false };
         match event {
-            Event::MouseClick { button, position, .. } => {
+            DeviceEvent::MouseClick { button, position, .. } => {
                 let actions = self.bindings.actions_for_click(*button, ctx.modifiers).to_vec();
                 let mut handled = false;
                 for action in actions {
@@ -227,7 +228,7 @@ impl Operator for SphereOperator {
                 }
                 handled
             }
-            Event::CursorMoved { position } => {
+            DeviceEvent::CursorMoved { position } => {
                 self.on_cursor_moved(*position, ctx);
                 false
             }

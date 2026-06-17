@@ -83,7 +83,10 @@ impl<'a> ApplicationHandler for App<'a> {
             viewer.handle_event(&app_event);
 
             // Check for exit on Escape key
-            if let duck_engine_viewer::event::Event::KeyboardInput { event: key_event, .. } = &app_event {
+            if let duck_engine_viewer::event::Event::Device(
+                duck_engine_viewer::event::DeviceEvent::KeyboardInput { event: key_event, .. },
+            ) = &app_event
+            {
                 if matches!(
                     key_event.logical_key,
                     duck_engine_viewer::input::Key::Named(duck_engine_viewer::input::NamedKey::Escape)

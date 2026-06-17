@@ -31,7 +31,7 @@ use crate::common::Axis;
 use serde::{Deserialize, Serialize};
 
 use crate::bindings::{InputBinding, InputMap};
-use crate::event::{Event, EventContext};
+use crate::event::{AppEvent, DeviceEvent, Event, EventContext};
 use crate::geom_query::{pick_all_from_ray, RayPickQuery};
 use crate::input::{ElementState, Key, Modifiers, MouseButton, NamedKey};
 use crate::operator::Operator;
@@ -348,15 +348,6 @@ pub struct TransformOperator {
     /// Materials for the colored annotations (So we're not making dozens of copies)
     annotation_axis_materials: HashMap<Axis, LineMaterialId>,
 
-    /// Nodes whose transform was just confirmed, awaiting collection via
-    /// [`Self::take_committed`].
-    ///
-    /// NOTE: this exists solely so the modeler can bake a committed
-    /// transform into its underlying CAD geometry — the viewer itself has no use
-    /// for it. It is a quick-fix; if this operator ever grows
-    /// a proper commit-callback or event mechanism, remove this in favor of that.
-    committed: Option<Vec<NodeId>>,
-
     pub bindings: InputMap<TransformAction>,
 }
 
@@ -433,7 +424,6 @@ impl TransformOperator {
             annotation_root: None,
             annotations: Vec::new(),
             annotation_axis_materials: HashMap::new(),
-            committed: None,
             bindings,
         }
     }
@@ -441,16 +431,6 @@ impl TransformOperator {
     /// Returns true if a transform operation is currently active.
     pub fn is_active(&self) -> bool {
         self.mode.is_some()
-    }
-
-    /// Takes the set of nodes whose transform was confirmed since the last call,
-    /// clearing the internal record. Returns `None` if nothing was confirmed.
-    ///
-    /// NOTE: for the modeler — see the `committed` field. Cancelled
-    /// transforms are *not* reported here (the operator restores the original
-    /// transforms on cancel).
-    pub fn take_committed(&mut self) -> Option<Vec<NodeId>> {
-        self.committed.take()
     }
 
     /// Tears down all scene-side visuals owned by this operator (gizmo handles
@@ -848,9 +828,9 @@ impl TransformOperator {
     /// The gizmo remains visible at the new position so the user can
     /// start another drag-based transform immediately.
     fn confirm_transform(&mut self, ctx: &mut EventContext) {
-        // Record the confirmed nodes for downstream consumers (modeler CAD sync)
-        // before `reset()` clears `original_transforms`.
-        self.committed = Some(self.original_transforms.iter().map(|o| o.node_id).collect());
+        // Notify downstream consumers of the confirmed nodes
+        let nodes: Vec<NodeId> = self.original_transforms.iter().map(|o| o.node_id).collect();
+        ctx.emit(AppEvent::TransformCommitted { nodes });
         self.cleanup_annotations(ctx);
         self.gizmo.set_highlight(None, ctx);
         self.reset();
@@ -900,8 +880,9 @@ fn world_scale_to_local(scale: Vector3, parent_rotation_inv: Quaternion) -> Vect
 
 impl Operator for TransformOperator {
     fn dispatch(&mut self, event: &Event, ctx: &mut EventContext) -> bool {
+        let Event::Device(event) = event else { return false };
         match event {
-            Event::KeyboardInput { event: key_event, .. } => {
+            DeviceEvent::KeyboardInput { event: key_event, .. } => {
                 if key_event.state != ElementState::Pressed || key_event.repeat {
                     return false;
                 }
@@ -970,7 +951,7 @@ impl Operator for TransformOperator {
                 false
             }
 
-            Event::MouseMotion { delta } => {
+            DeviceEvent::MouseMotion { delta } => {
                 if self.is_active() {
                     self.accumulated_delta.0 += delta.0 as f32;
                     self.accumulated_delta.1 += delta.1 as f32;
@@ -981,7 +962,7 @@ impl Operator for TransformOperator {
                 }
             }
 
-            Event::MouseClick { button, .. } => {
+            DeviceEvent::MouseClick { button, .. } => {
                 if !self.is_active() {
                     return false;
                 }
@@ -1002,7 +983,7 @@ impl Operator for TransformOperator {
                 false
             }
 
-            Event::MouseDragStart { button, start_pos, .. } => {
+            DeviceEvent::MouseDragStart { button, start_pos, .. } => {
                 if !self.bindings
                     .actions_for_drag_start(*button, ctx.modifiers)
                     .contains(&TransformAction::GizmoDrag)
@@ -1035,7 +1016,7 @@ impl Operator for TransformOperator {
                 false
             }
 
-            Event::MouseDrag { button, delta, .. } => {
+            DeviceEvent::MouseDrag { button, delta, .. } => {
                 if !self.bindings
                     .actions_for_drag(*button, ctx.modifiers)
                     .contains(&TransformAction::GizmoDrag)
@@ -1051,7 +1032,7 @@ impl Operator for TransformOperator {
                 false
             }
 
-            Event::MouseDragEnd { button, .. } => {
+            DeviceEvent::MouseDragEnd { button, .. } => {
                 if !self.bindings
                     .actions_for_drag_end(*button, Modifiers::default())
                     .contains(&TransformAction::GizmoDrag)
@@ -1065,7 +1046,7 @@ impl Operator for TransformOperator {
                 false
             }
 
-            Event::CursorMoved { position } => {
+            DeviceEvent::CursorMoved { position } => {
                 // Hover highlight on gizmo handles when gizmo is visible but no transform active
                 if self.gizmo.has_gizmo() && !self.is_active() {
                     let axis = self.gizmo.pick_handle(position.0 as f32, position.1 as f32, ctx);
@@ -1074,7 +1055,7 @@ impl Operator for TransformOperator {
                 false
             }
 
-            Event::Update { .. } => {
+            DeviceEvent::Update { .. } => {
                 if self.gizmo_mode.is_some() && !self.is_active() {
                     self.sync_gizmo(ctx);
                 }

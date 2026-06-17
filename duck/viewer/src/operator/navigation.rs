@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::bindings::{InputBinding, InputMap};
 use crate::common;
 use crate::scene::{PositionedCamera, geom_query::{pick_all_from_ray, RayPickQuery}};
-use crate::event::{Event, EventContext};
+use crate::event::{DeviceEvent, Event, EventContext};
 use crate::input::{Key, Modifiers, MouseButton, MouseScrollDelta};
 use crate::operator::Operator;
 use crate::scene_scale;
@@ -331,8 +331,9 @@ impl NavigationOperator {
 
 impl Operator for NavigationOperator {
     fn dispatch(&mut self, event: &Event, ctx: &mut EventContext) -> bool {
+        let Event::Device(event) = event else { return false };
         match event {
-            Event::MouseDragStart { button, start_pos, .. } => {
+            DeviceEvent::MouseDragStart { button, start_pos, .. } => {
                 let actions = self.bindings.actions_for_drag_start(*button, ctx.modifiers).to_vec();
                 let mut handled = false;
                 for action in actions {
@@ -340,7 +341,7 @@ impl Operator for NavigationOperator {
                 }
                 handled
             }
-            Event::MouseDrag { button, delta, .. } => {
+            DeviceEvent::MouseDrag { button, delta, .. } => {
                 let actions = self.bindings.actions_for_drag(*button, ctx.modifiers).to_vec();
                 let size = ctx.size;
                 let mut handled = false;
@@ -351,7 +352,7 @@ impl Operator for NavigationOperator {
                 });
                 handled
             }
-            Event::MouseDragEnd { button, .. } => {
+            DeviceEvent::MouseDragEnd { button, .. } => {
                 // Modifiers may not be held on release; match with no modifiers.
                 let actions =
                     self.bindings.actions_for_drag_end(*button, Modifiers::default()).to_vec();
@@ -360,7 +361,7 @@ impl Operator for NavigationOperator {
                 }
                 false
             }
-            Event::MouseWheel { delta } => {
+            DeviceEvent::MouseWheel { delta } => {
                 if !self.bindings.actions_for_scroll().contains(&NavigationAction::Zoom) {
                     return false;
                 }
@@ -377,7 +378,7 @@ impl Operator for NavigationOperator {
                 });
                 true
             }
-            Event::KeyboardInput { event: key_event, .. } => {
+            DeviceEvent::KeyboardInput { event: key_event, .. } => {
                 if self.mode != NavigationMode::Walk {
                     return false;
                 }
@@ -390,7 +391,7 @@ impl Operator for NavigationOperator {
                 });
                 handled
             }
-            Event::Update { delta_time } => {
+            DeviceEvent::Update { delta_time } => {
                 let model_radius = {
                     let scene = ctx.scene.lock().unwrap();
                     scene_scale::model_radius_from_bounds(scene.bounding().bounds.as_ref())

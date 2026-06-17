@@ -3,7 +3,7 @@
 /// This module is only compiled when the `winit-support` feature is enabled.
 
 use crate::input::{ElementState, MouseButton, MouseScrollDelta, KeyEvent, PhysicalKey, Key, NamedKey};
-use crate::event::Event;
+use crate::event::{DeviceEvent, Event};
 
 /// Converts a winit PhysicalSize to a (width, height) tuple
 pub fn convert_physical_size(size: winit::dpi::PhysicalSize<u32>) -> (u32, u32) {
@@ -129,21 +129,25 @@ pub fn convert_window_event(wevent: winit::event::WindowEvent) -> Option<Event> 
     use winit::event::WindowEvent as WEvent;
 
     match wevent {
-        WEvent::Resized(size) => Some(Event::Resized(convert_physical_size(size))),
-        WEvent::KeyboardInput { event, is_synthetic, .. } => Some(Event::KeyboardInput {
-            event: convert_key_event(&event),
-            is_synthetic,
-        }),
-        WEvent::CursorMoved { position, .. } => Some(Event::CursorMoved {
+        WEvent::Resized(size) => {
+            Some(Event::Device(DeviceEvent::Resized(convert_physical_size(size))))
+        }
+        WEvent::KeyboardInput { event, is_synthetic, .. } => {
+            Some(Event::Device(DeviceEvent::KeyboardInput {
+                event: convert_key_event(&event),
+                is_synthetic,
+            }))
+        }
+        WEvent::CursorMoved { position, .. } => Some(Event::Device(DeviceEvent::CursorMoved {
             position: convert_physical_position(position),
-        }),
-        WEvent::MouseInput { state, button, .. } => Some(Event::MouseInput {
+        })),
+        WEvent::MouseInput { state, button, .. } => Some(Event::Device(DeviceEvent::MouseInput {
             state: convert_element_state(state),
             button: convert_mouse_button(button),
-        }),
-        WEvent::MouseWheel { delta, .. } => Some(Event::MouseWheel {
+        })),
+        WEvent::MouseWheel { delta, .. } => Some(Event::Device(DeviceEvent::MouseWheel {
             delta: convert_mouse_scroll_delta(delta),
-        }),
+        })),
         _ => None,
     }
 }
@@ -153,7 +157,7 @@ pub fn convert_device_event(wevent: winit::event::DeviceEvent) -> Option<Event> 
     use winit::event::DeviceEvent as DEvent;
 
     match wevent {
-        DEvent::MouseMotion { delta } => Some(Event::MouseMotion { delta }),
+        DEvent::MouseMotion { delta } => Some(Event::Device(DeviceEvent::MouseMotion { delta })),
         _ => None,
     }
 }

@@ -18,7 +18,7 @@
 use wasm_bindgen::prelude::*;
 use web_sys::HtmlCanvasElement;
 
-use crate::event::Event;
+use crate::event::{DeviceEvent, Event};
 use crate::input::{ElementState, Key, KeyEvent, MouseButton, MouseScrollDelta, NamedKey, PhysicalKey, TouchPhase};
 use crate::import_export::LoadHandle;
 use crate::viewer::Viewer;
@@ -69,7 +69,7 @@ impl WebViewer {
     /// Notify the viewer that the canvas was resized.
     /// Pass the canvas pixel dimensions (CSS size * devicePixelRatio).
     pub fn resize(&mut self, width: u32, height: u32) {
-        self.viewer.handle_event(&Event::Resized((width, height)));
+        self.viewer.handle_event(&Event::Device(DeviceEvent::Resized((width, height))));
     }
 
     /// Forward a mousemove event.
@@ -77,32 +77,32 @@ impl WebViewer {
     /// - `dx`, `dy`: movement delta (from MouseEvent.movementX/Y)
     pub fn on_mouse_move(&mut self, x: f64, y: f64, dx: f64, dy: f64) {
         self.viewer
-            .handle_event(&Event::CursorMoved { position: (x, y) });
+            .handle_event(&Event::Device(DeviceEvent::CursorMoved { position: (x, y) }));
         self.viewer
-            .handle_event(&Event::MouseMotion { delta: (dx, dy) });
+            .handle_event(&Event::Device(DeviceEvent::MouseMotion { delta: (dx, dy) }));
     }
 
     /// Forward a mousedown event. `button` is the DOM MouseEvent.button value.
     pub fn on_mouse_down(&mut self, button: i32) {
-        self.viewer.handle_event(&Event::MouseInput {
+        self.viewer.handle_event(&Event::Device(DeviceEvent::MouseInput {
             state: ElementState::Pressed,
             button: dom_button(button),
-        });
+        }));
     }
 
     /// Forward a mouseup event. `button` is the DOM MouseEvent.button value.
     pub fn on_mouse_up(&mut self, button: i32) {
-        self.viewer.handle_event(&Event::MouseInput {
+        self.viewer.handle_event(&Event::Device(DeviceEvent::MouseInput {
             state: ElementState::Released,
             button: dom_button(button),
-        });
+        }));
     }
 
     /// Forward a wheel event. `delta_x` and `delta_y` are in pixels.
     pub fn on_wheel(&mut self, delta_x: f32, delta_y: f32) {
-        self.viewer.handle_event(&Event::MouseWheel {
+        self.viewer.handle_event(&Event::Device(DeviceEvent::MouseWheel {
             delta: MouseScrollDelta::PixelDelta(delta_x, -delta_y),
-        });
+        }));
     }
 
     /// Forward a keydown event.
@@ -110,56 +110,56 @@ impl WebViewer {
     /// - `code`: the KeyboardEvent.keyCode numeric value
     /// - `repeat`: whether this is a repeat event
     pub fn on_key_down(&mut self, key: &str, code: u32, repeat: bool) {
-        self.viewer.handle_event(&Event::KeyboardInput {
+        self.viewer.handle_event(&Event::Device(DeviceEvent::KeyboardInput {
             event: make_key_event(key, code, ElementState::Pressed, repeat),
             is_synthetic: false,
-        });
+        }));
     }
 
     /// Forward a keyup event.
     pub fn on_key_up(&mut self, key: &str, code: u32) {
-        self.viewer.handle_event(&Event::KeyboardInput {
+        self.viewer.handle_event(&Event::Device(DeviceEvent::KeyboardInput {
             event: make_key_event(key, code, ElementState::Released, false),
             is_synthetic: false,
-        });
+        }));
     }
 
     /// Forward a touchstart event for a single touch point.
     /// - `id`: the Touch.identifier value
     /// - `x`, `y`: touch position in canvas pixel coordinates
     pub fn on_touch_start(&mut self, id: i32, x: f64, y: f64) {
-        self.viewer.handle_event(&Event::Touch {
+        self.viewer.handle_event(&Event::Device(DeviceEvent::Touch {
             id,
             phase: TouchPhase::Started,
             position: (x, y),
-        });
+        }));
     }
 
     /// Forward a touchmove event for a single touch point.
     pub fn on_touch_move(&mut self, id: i32, x: f64, y: f64) {
-        self.viewer.handle_event(&Event::Touch {
+        self.viewer.handle_event(&Event::Device(DeviceEvent::Touch {
             id,
             phase: TouchPhase::Moved,
             position: (x, y),
-        });
+        }));
     }
 
     /// Forward a touchend event for a single touch point.
     pub fn on_touch_end(&mut self, id: i32) {
-        self.viewer.handle_event(&Event::Touch {
+        self.viewer.handle_event(&Event::Device(DeviceEvent::Touch {
             id,
             phase: TouchPhase::Ended,
             position: (0.0, 0.0),
-        });
+        }));
     }
 
     /// Forward a touchcancel event for a single touch point.
     pub fn on_touch_cancel(&mut self, id: i32) {
-        self.viewer.handle_event(&Event::Touch {
+        self.viewer.handle_event(&Event::Device(DeviceEvent::Touch {
             id,
             phase: TouchPhase::Cancelled,
             position: (0.0, 0.0),
-        });
+        }));
     }
 
     /// Begin an async scene load. Format is auto-detected from magic bytes.
