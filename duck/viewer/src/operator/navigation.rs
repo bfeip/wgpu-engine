@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::bindings::{InputBinding, InputMap};
 use crate::common;
 use crate::scene::{PositionedCamera, geom_query::{pick_all_from_ray, RayPickQuery}};
-use crate::event::{DeviceEvent, Event, EventContext};
+use crate::event::{AppEvent, DeviceEvent, Event, EventContext};
 use crate::input::{Key, Modifiers, MouseButton, MouseScrollDelta};
 use crate::operator::Operator;
 use crate::scene_scale;
@@ -102,6 +102,8 @@ pub struct NavigationOperator {
     turntable: TurntableState,
     trackball: TrackballState,
     walk: WalkState,
+    /// Whether a drag-based navigation interaction is currently active.
+    interacting: bool,
     /// All navigation bindings: orbit/pan/zoom drags and walk movement keys.
     pub bindings: InputMap<NavigationAction>,
 }
@@ -178,6 +180,7 @@ impl NavigationOperator {
             turntable: TurntableState::new(),
             trackball: TrackballState::new(),
             walk: WalkState::new(),
+            interacting: false,
             bindings,
         }
     }
@@ -339,6 +342,10 @@ impl Operator for NavigationOperator {
                 for action in actions {
                     handled |= self.handle_drag_start(action, *start_pos, ctx);
                 }
+                if handled && !self.interacting {
+                    self.interacting = true;
+                    ctx.emit(AppEvent::CameraInteractionStart);
+                }
                 handled
             }
             DeviceEvent::MouseDrag { button, delta, .. } => {
@@ -358,6 +365,10 @@ impl Operator for NavigationOperator {
                     self.bindings.actions_for_drag_end(*button, Modifiers::default()).to_vec();
                 for action in actions {
                     self.handle_drag_end(action);
+                }
+                if self.interacting {
+                    self.interacting = false;
+                    ctx.emit(AppEvent::CameraInteractionEnd);
                 }
                 false
             }

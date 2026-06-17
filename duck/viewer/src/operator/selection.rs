@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::bindings::{InputBinding, InputMap};
-use crate::event::{DeviceEvent, Event, EventContext};
+use crate::event::{AppEvent, DeviceEvent, Event, EventContext};
 use crate::geom_query::{RayHit, RayPickQuery, RayPickResult, pick_all_from_ray};
 use crate::input::{Modifiers, MouseButton};
 use crate::operator::Operator;
@@ -89,15 +89,21 @@ impl Operator for SelectionOperator {
             return false;
         };
         let actions = self.bindings.actions_for_click(*button, ctx.modifiers);
-        if actions.contains(&SelectionAction::Select) {
-            self.perform_selection(position.0, position.1, ctx);
-            true
-        } else if actions.contains(&SelectionAction::AddToSelection) {
-            self.perform_add_to_selection(position.0, position.1, ctx);
-            true
-        } else {
-            false
+        let select = actions.contains(&SelectionAction::Select);
+        let add = actions.contains(&SelectionAction::AddToSelection);
+        if !select && !add {
+            return false;
         }
+
+        let previous = ctx.selection.as_slice().to_vec();
+        if select {
+            self.perform_selection(position.0, position.1, ctx);
+        } else {
+            self.perform_add_to_selection(position.0, position.1, ctx);
+        }
+        let current = ctx.selection.as_slice().to_vec();
+        ctx.emit(AppEvent::Selection { previous, current });
+        true
     }
 
     fn name(&self) -> &str {
