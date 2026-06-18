@@ -15,6 +15,10 @@ use duck_engine_viewer::operator::{NavigationMode, NavigationOperator};
 use duck_engine_viewer::scene::{LightType, NodeId, PositionedCamera, Visibility};
 use duck_engine_viewer::Viewer;
 
+/// Minimum window width (in logical points) for the GUI to be shown.
+/// Below this the demo renders only the 3D scene.
+const MIN_UI_WIDTH: f32 = 600.0;
+
 /// A visibility change requested by the UI.
 pub struct VisibilityChange {
     pub node_id: NodeId,
@@ -61,6 +65,12 @@ impl UiState {
         nav_op: &Arc<Mutex<NavigationOperator>>,
     ) -> UiActions {
         let mut actions = UiActions::default();
+
+        // On small / mobile windows the panels are unusable; show only the 3D scene.
+        if ctx.content_rect().width() < MIN_UI_WIDTH {
+            return actions;
+        }
+
         let mode_info = ModeInfo { mode: nav_op.lock().unwrap().mode() };
 
         build_performance_panel(ctx, &mode_info);
