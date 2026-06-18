@@ -157,10 +157,7 @@ impl SceneRenderPass for MainPass {
                     load: wgpu::LoadOp::Clear(1.0),
                     store: wgpu::StoreOp::Store,
                 }),
-                stencil_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(0),
-                    store: wgpu::StoreOp::Store,
-                }),
+                stencil_ops: None, // No stencil buffer
             }),
             occlusion_query_set: None,
             timestamp_writes: None,

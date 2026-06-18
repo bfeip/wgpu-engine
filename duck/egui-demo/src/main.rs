@@ -1,23 +1,28 @@
+mod io;
+mod platform;
 mod ui;
 
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+#[cfg(not(target_arch = "wasm32"))]
+use std::path::PathBuf;
+#[cfg(target_arch = "wasm32")]
+use std::{cell::RefCell, rc::Rc};
 
 use egui_wgpu::RendererOptions;
 use winit::{
     application::ApplicationHandler,
     dpi::PhysicalSize,
     event::{DeviceEvent, WindowEvent},
-    event_loop::{ActiveEventLoop, EventLoop},
-    window::{Window, WindowAttributes, WindowId},
+    event_loop::ActiveEventLoop,
+    window::{Window, WindowId},
 };
+#[cfg(target_arch = "wasm32")]
+use winit::event_loop::EventLoopProxy;
 
 use duck_engine_common::Point3;
 use duck_engine_viewer::{common::RgbaColor, scene::NodeFlags};
 use duck_engine_viewer::input::{ElementState, Key};
 use duck_engine_viewer::operator::{NavigationMode, NavigationOperator, SelectionOperator, TransformOperator};
-use duck_engine_viewer::import_export;
-use duck_engine_viewer::import_export::format::{SaveOptions, save_to_file};
 use duck_engine_viewer::common::Transform;
 use duck_engine_viewer::scene::{Light, LightType, NodePayload, Scene};
 use duck_engine_viewer::winit_support;
@@ -28,6 +33,16 @@ enum DebugAction {
     CycleOperator,
     ToggleOrtho,
     CycleWorkflow,
+}
+
+/// Custom event delivered through the winit event loop.
+///
+/// On web, wgpu init is async and cannot block, so the fully-built
+/// [`ViewerState`] is created off the event loop and handed back via the proxy.
+/// On native this enum is uninhabited (init happens synchronously in `resumed`).
+enum UserEvent {
+    #[cfg(target_arch = "wasm32")]
+    Initialized(ViewerState<'static>),
 }
 
 /// Owns all rendering state: the 3D viewer plus egui context and GPU renderer.
@@ -45,15 +60,8 @@ struct ViewerState<'a> {
 }
 
 impl ViewerState<'static> {
-    async fn new(event_loop: &ActiveEventLoop, window_attrs: WindowAttributes) -> Self {
-        let window = Arc::new(
-            event_loop
-                .create_window(window_attrs)
-                .expect("Failed to create window"),
-        );
-        Self::from_window(window, None).await
-    }
-
+    /// Build the viewer + egui state for an existing window. `size` overrides
+    /// the window's reported inner size (used on web, where it can lag).
     async fn from_window(window: Arc<Window>, size: Option<PhysicalSize<u32>>) -> Self {
         let size = size.unwrap_or(window.inner_size());
         let mut viewer = Viewer::new(Arc::clone(&window), size.width, size.height).await;
@@ -101,31 +109,38 @@ impl<'a> ViewerState<'a> {
     }
 }
 
-/// Application state for the winit event loop
+/// Application state for the winit event loop.
 struct App<'a> {
     state: Option<ViewerState<'a>>,
     ui: ui::UiState,
     /// Index of the currently active workflow (cycled by the W debug key).
     workflow_index: usize,
     /// Pending HDR environment path to load
+    #[cfg(not(target_arch = "wasm32"))]
     pending_hdr_path: Option<PathBuf>,
     /// Pending scene file path to load
+    #[cfg(not(target_arch = "wasm32"))]
     pending_scene_load_path: Option<PathBuf>,
     /// Pending scene file path to save
+    #[cfg(not(target_arch = "wasm32"))]
     pending_scene_save_path: Option<PathBuf>,
+    /// Proxy used to hand the asynchronously-built viewer state back to the loop.
+    #[cfg(target_arch = "wasm32")]
+    proxy: EventLoopProxy<UserEvent>,
+    /// Scene bytes picked from the browser file dialog, awaiting load.
+    #[cfg(target_arch = "wasm32")]
+    pending_scene_bytes: Rc<RefCell<Option<Vec<u8>>>>,
+    /// HDR bytes picked from the browser file dialog, awaiting load.
+    #[cfg(target_arch = "wasm32")]
+    pending_hdr_bytes: Rc<RefCell<Option<Vec<u8>>>>,
 }
 
 impl<'a> App<'a> {
     fn handle_redraw_requested(&mut self) {
-        if self.pending_hdr_path.is_some() {
-            self.load_hdr_file();
+        if self.state.is_none() {
+            return;
         }
-        if self.pending_scene_load_path.is_some() {
-            self.load_scene_file();
-        }
-        if self.pending_scene_save_path.is_some() {
-            self.save_scene_file();
-        }
+        self.process_pending_io();
 
         let mut ui_actions = ui::UiActions::default();
         if let Some(state) = self.state.as_mut() {
@@ -190,7 +205,7 @@ impl<'a> App<'a> {
                 scene.set_node_visibility(change.node_id, change.new_visibility);
             }
         }
-        
+
         if let Some(camera) = ui_actions.set_camera {
             self.state.as_mut().unwrap().viewer.set_camera(camera);
         }
@@ -245,92 +260,12 @@ impl<'a> App<'a> {
         log::info!("Added {:?} light", light_type);
     }
 
-    fn open_hdr_file_dialog(&mut self) {
-        if let Some(path) = rfd::FileDialog::new().add_filter("HDR", &["hdr"]).pick_file() {
-            self.pending_hdr_path = Some(path);
-        }
-    }
-
-    fn load_hdr_file(&mut self) {
-        let Some(path) = self.pending_hdr_path.take() else { return };
-        let Some(state) = self.state.as_mut() else { return };
-        let path_str = path.display().to_string();
-        let scene_arc = state.viewer.scene();
-        let mut scene = scene_arc.lock().unwrap();
-        let env_id = scene.add_environment_map_from_hdr_path(&path);
-        scene.set_active_environment_map(Some(env_id));
-        log::info!("Loaded HDR environment: {}", path_str);
-    }
-
     fn clear_environment(&mut self) {
         if let Some(state) = self.state.as_mut() {
             let scene_arc = state.viewer.scene();
             let mut scene = scene_arc.lock().unwrap();
             scene.set_active_environment_map(None);
             log::info!("Environment cleared");
-        }
-    }
-
-    fn open_scene_file_dialog(&mut self) {
-        #[allow(unused_mut)]
-        let mut extensions: Vec<&str> = vec!["glb", "gltf", "duck"];
-
-        #[cfg(feature = "assimp")]
-        extensions.extend_from_slice(import_export::assimp::ASSIMP_EXTENSIONS);
-
-        #[cfg(feature = "usd")]
-        extensions.extend_from_slice(import_export::usd::USD_EXTENSIONS);
-
-        #[cfg(feature = "cad")]
-        extensions.extend_from_slice(import_export::cad::CAD_EXTENSIONS);
-
-        if let Some(path) = rfd::FileDialog::new()
-            .add_filter("3D Scenes", &extensions)
-            .pick_file()
-        {
-            self.pending_scene_load_path = Some(path);
-        }
-    }
-
-    fn load_scene_file(&mut self) {
-        use import_export::{load_sync, SceneSource, LoadOptions};
-        let Some(path) = self.pending_scene_load_path.take() else { return };
-        let Some(state) = self.state.as_mut() else { return };
-        let path_str = path.display().to_string();
-        match load_sync(SceneSource::Path(path), LoadOptions::default()) {
-            Ok(result) => {
-                let bounds = result.scene.bounding().bounds;
-                state.viewer.set_scene(Arc::new(Mutex::new(result.scene)));
-                if let Some(camera) = result.camera {
-                    state.viewer.set_camera(camera);
-                } else if let Some(bounds) = bounds {
-                    state.viewer.with_camera_mut(|c| c.fit_to_bounds(&bounds));
-                }
-                log::info!("Loaded scene: {}", path_str);
-            }
-            Err(e) => log::error!("Failed to load scene {}: {}", path_str, e),
-        }
-    }
-
-    fn save_scene_file_dialog(&mut self) {
-        if let Some(path) = rfd::FileDialog::new()
-            .add_filter("Duck Scene", &["duck"])
-            .set_file_name("scene.duck")
-            .save_file()
-        {
-            self.pending_scene_save_path = Some(path);
-        }
-    }
-
-    fn save_scene_file(&mut self) {
-        let Some(path) = self.pending_scene_save_path.take() else { return };
-        let Some(state) = self.state.as_mut() else { return };
-        let path_str = path.display().to_string();
-        let scene_arc = state.viewer.scene();
-        let scene = scene_arc.lock().unwrap();
-        match save_to_file(&scene, &path, &SaveOptions::default()) {
-            Ok(()) => log::info!("Saved scene: {}", path_str),
-            Err(e) => log::error!("Failed to save scene {}: {}", path_str, e),
         }
     }
 
@@ -389,27 +324,16 @@ impl<'a> App<'a> {
     }
 }
 
-impl<'a> ApplicationHandler for App<'a> {
+impl<'a> ApplicationHandler<UserEvent> for App<'a> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.state.is_none() {
-            let window_attrs = Window::default_attributes()
-                .with_title("Duck Engine - egui Example")
-                .with_inner_size(winit::dpi::LogicalSize::new(1600, 800));
+        platform::resume(self, event_loop);
+    }
 
-            let state =
-                pollster::block_on(ViewerState::new(event_loop, window_attrs));
-
-            state.window.request_redraw();
-            self.state = Some(state);
-
-            let assets_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets");
-            let default_scene = assets_dir.join("default-scene.duck");
-            if default_scene.exists() {
-                self.pending_scene_load_path = Some(default_scene);
-            } else {
-                log::warn!("Default scene not found: {}", default_scene.display());
-            }
-        }
+    #[cfg(target_arch = "wasm32")]
+    fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: UserEvent) {
+        let UserEvent::Initialized(state) = event;
+        state.window.request_redraw();
+        self.state = Some(state);
     }
 
     fn window_event(
@@ -505,18 +429,5 @@ fn render_egui_overlay(
 }
 
 fn main() {
-    env_logger::init();
-
-    let event_loop = EventLoop::new().unwrap();
-
-    let mut app = App {
-        state: None,
-        ui: ui::UiState::default(),
-        workflow_index: 0,
-        pending_hdr_path: None,
-        pending_scene_load_path: None,
-        pending_scene_save_path: None,
-    };
-
-    event_loop.run_app(&mut app).unwrap();
+    platform::run();
 }

@@ -11,18 +11,25 @@ streaming = ["duck-engine-viewer/streaming"]
 
 [dependencies]
 duck-engine-common = { path = "../common" }
-duck-engine-viewer = { path = "../viewer", features = ["winit-support"] }
 egui = "0.33"
 egui-wgpu = "0.33"
-env_logger = "0.11"
 log = "0.4"
-pollster = "0.4"
 rfd = "0.17"
 winit = "0.30"
 wgpu = "27.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+duck-engine-viewer = { path = "../viewer", features = ["winit-support"] }
 egui-winit = "0.33"
+env_logger = "0.11"
+pollster = "0.4"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+duck-engine-viewer = { path = "../viewer", default-features = false, features = ["winit-support"] }
 egui-winit = { version = "0.33", default-features = false, features = ["links"] }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+console_error_panic_hook = "0.1.6"
+console_log = "1.0"
+web-sys = { version = "0.3", features = ["Window", "Document", "HtmlCanvasElement"] }
+wgpu = { version = "27.0", features = ["webgl"] }

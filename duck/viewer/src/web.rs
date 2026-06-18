@@ -22,7 +22,8 @@ use crate::event::{DeviceEvent, Event};
 use crate::input::{ElementState, Key, KeyEvent, MouseButton, MouseScrollDelta, NamedKey, PhysicalKey, TouchPhase};
 use crate::import_export::LoadHandle;
 use crate::viewer::Viewer;
-use crate::import_export as loader;
+
+use std::sync::{Arc, Mutex};
 
 #[wasm_bindgen]
 pub enum LoadStatus {
@@ -186,11 +187,7 @@ impl WebViewer {
         let handle = self.pending_load.take().unwrap();
         match handle.try_get() {
             Some(Ok(result)) => {
-                self.viewer.set_scene(result.scene);
-                let camera = result.camera.unwrap_or_else(|| {
-                    camera_for_scene(self.viewer.scene(), self.viewer.camera().aspect)
-                });
-                self.viewer.set_camera(camera);
+                self.set_loaded_scene(result.scene, result.camera);
                 LoadStatus::Success
             }
             Some(Err(e)) => {
@@ -266,12 +263,24 @@ impl WebViewer {
         )
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
-        self.viewer.set_scene(result.scene);
-        let camera = result.camera.unwrap_or_else(|| {
-            camera_for_scene(self.viewer.scene(), aspect)
-        });
-        self.viewer.set_camera(camera);
+        self.set_loaded_scene(result.scene, result.camera);
         Ok(())
+    }
+
+    /// Install a freshly loaded scene, applying its camera if present or
+    /// otherwise framing the scene bounds.
+    fn set_loaded_scene(
+        &mut self,
+        scene: crate::scene::Scene,
+        camera: Option<crate::scene::PositionedCamera>,
+    ) {
+        let bounds = scene.bounding().bounds;
+        self.viewer.set_scene(Arc::new(Mutex::new(scene)));
+        if let Some(camera) = camera {
+            self.viewer.set_camera(camera);
+        } else if let Some(bounds) = bounds {
+            self.viewer.with_camera_mut(|c| c.fit_to_bounds(&bounds));
+        }
     }
 
     /// Load a glTF/glb model from raw bytes.
@@ -293,12 +302,12 @@ impl WebViewer {
 
     /// Get the number of root nodes in the scene.
     pub fn node_count(&self) -> usize {
-        self.viewer.scene().root_nodes().len()
+        self.viewer.scene().lock().unwrap().root_nodes().len()
     }
 
     /// Get the number of meshes in the scene.
     pub fn mesh_count(&self) -> usize {
-        self.viewer.scene().mesh_count()
+        self.viewer.scene().lock().unwrap().mesh_count()
     }
 }
 
@@ -363,26 +372,4 @@ fn make_key_event(key: &str, code: u32, state: ElementState, repeat: bool) -> Ke
         state,
         repeat,
     }
-}
-
-/// Create a camera that fits the scene bounds (same logic as gltf-viewer).
-fn camera_for_scene(scene: &crate::scene::Scene, aspect: f32) -> crate::scene::PositionedCamera {
-    use duck_engine_common::{Point3, Vector3};
-
-    let mut camera = crate::scene::PositionedCamera {
-        eye: Point3::new(1.0, 1.0, 1.0),
-        target: Point3::new(0.0, 0.0, 0.0),
-        up: Vector3::new(0.0, 1.0, 0.0),
-        aspect,
-        fovy: 45.0,
-        znear: 0.1,
-        zfar: 100.0,
-        ortho: false,
-    };
-
-    if let Some(bounds) = scene.bounding() {
-        camera.fit_to_bounds(&bounds);
-    }
-
-    camera
 }

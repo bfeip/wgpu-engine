@@ -1220,6 +1220,8 @@ dependencies = [
 name = "egui-demo"
 version = "0.1.0"
 dependencies = [
+ "console_error_panic_hook",
+ "console_log",
  "duck-engine-common",
  "duck-engine-viewer",
  "egui",
@@ -1229,6 +1231,9 @@ dependencies = [
  "log",
  "pollster 0.4.0",
  "rfd",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
  "wgpu",
  "winit",
 ]
