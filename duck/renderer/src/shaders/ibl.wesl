@@ -14,8 +14,13 @@ import package::constants::{
 };
 import package::pbr::fresnel_schlick_roughness;
 
+// Padded to 16 bytes (matches Rust `EnvironmentUniform`). WebGL requires
+// uniform buffer bindings to be a multiple of 16 bytes.
 struct EnvironmentParams {
     intensity: f32,
+    _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
 };
 
 // IBL textures and samplers

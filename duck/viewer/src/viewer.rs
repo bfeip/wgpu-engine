@@ -62,7 +62,8 @@ impl<'a> Viewer<'a> {
             .unwrap();
 
         let is_gl_backend = adapter.get_info().backend == wgpu::Backend::Gl;
-        let has_compute = !is_gl_backend;
+        let downlevel_flags = adapter.get_downlevel_capabilities().flags;
+        let has_compute = downlevel_flags.contains(wgpu::DownlevelFlags::COMPUTE_SHADERS);
 
         if cfg!(target_arch = "wasm32") {
             if is_gl_backend {
@@ -72,14 +73,23 @@ impl<'a> Viewer<'a> {
             }
         }
 
+        // Set DUCK_FORCE_WEBGL2_LIMITS to cap any backend to the WebGL2
+        // floor, for testing behavior on minimum supported hardware.
+        let required_limits = if std::env::var("DUCK_FORCE_WEBGL2_LIMITS").is_ok() {
+            log::info!("DUCK_FORCE_WEBGL2_LIMITS set: capping to downlevel WebGL2 limits");
+            wgpu::Limits::downlevel_webgl2_defaults()
+        } else {
+            adapter.limits()
+        };
+        log::info!(
+            "Requested max_texture_dimension_2d: {}",
+            required_limits.max_texture_dimension_2d,
+        );
+
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 required_features: wgpu::Features::empty(),
-                required_limits: if is_gl_backend {
-                    wgpu::Limits::downlevel_webgl2_defaults()
-                } else {
-                    wgpu::Limits::default()
-                },
+                required_limits,
                 label: None,
                 memory_hints: Default::default(),
                 trace: wgpu::Trace::Off,
@@ -116,8 +126,16 @@ impl<'a> Viewer<'a> {
 
         surface.configure(&device, &surface_config);
 
-        // Use 4x MSAA on native backends, disable on GL
-        let sample_count = if is_gl_backend { 1 } else { 4 };
+        let sample_count = if downlevel_flags.contains(wgpu::DownlevelFlags::MULTISAMPLED_SHADING) {
+            let format_flags = adapter.get_texture_format_features(surface_format).flags;
+            [4, 2, 1]
+                .into_iter()
+                .find(|&n| format_flags.sample_count_supported(n))
+                .unwrap_or(1)
+        } else {
+            1
+        };
+        log::info!("Using {sample_count}x MSAA");
 
         let renderer = Renderer::new(device.clone(), queue.clone(), surface_format, width, height, sample_count, has_compute);
         let scene = Arc::new(Mutex::new(Scene::new()));
