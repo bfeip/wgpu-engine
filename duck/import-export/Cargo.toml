@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["assimp", "usd"]
 assimp = ["dep:russimp"]
 usd = ["dep:openusd", "dep:zip"]
 cad = ["dep:opencascade", "duck-engine-scene/cad"]
