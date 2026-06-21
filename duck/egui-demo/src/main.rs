@@ -43,6 +43,11 @@ enum DebugAction {
 enum UserEvent {
     #[cfg(target_arch = "wasm32")]
     Initialized(ViewerState<'static>),
+    /// The browser window was resized. winit's web backend doesn't seem to emit
+    /// `Resized` for browser-window resizes, so we drive it ourselves from a 
+    /// resize` listener.
+    #[cfg(target_arch = "wasm32")]
+    Resized(PhysicalSize<u32>),
 }
 
 /// Owns all rendering state: the 3D viewer plus egui context and GPU renderer.
@@ -331,9 +336,23 @@ impl<'a> ApplicationHandler<UserEvent> for App<'a> {
 
     #[cfg(target_arch = "wasm32")]
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: UserEvent) {
-        let UserEvent::Initialized(state) = event;
-        state.window.request_redraw();
-        self.state = Some(state);
+        use duck_engine_viewer::event::{DeviceEvent, Event};
+        match event {
+            UserEvent::Initialized(state) => {
+                state.window.request_redraw();
+                self.state = Some(state);
+            }
+            UserEvent::Resized(size) => {
+                let Some(state) = self.state.as_mut() else { return };
+                // Update winit's canvas + reported inner size...
+                let _ = state.window.request_inner_size(size);
+                // ...and reconfigure the viewer.
+                state
+                    .viewer
+                    .handle_event(&Event::Device(DeviceEvent::Resized((size.width, size.height))));
+                state.window.request_redraw();
+            }
+        }
     }
 
     fn window_event(

@@ -5,6 +5,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use wasm_bindgen::closure::Closure;
+use wasm_bindgen::JsCast;
 use winit::dpi::PhysicalSize;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::platform::web::{EventLoopExtWebSys, WindowAttributesExtWebSys};
@@ -57,11 +59,28 @@ pub(crate) fn resume(app: &mut App, event_loop: &ActiveEventLoop) {
     ));
     *app.pending_scene_bytes.borrow_mut() = Some(default_scene.to_vec());
 
+    // winit's web backend doesn't emit `Resized` for browser-window resizes, so
+    // listen for them ourselves and feed the new size back through the proxy.
+    register_resize_listener(app.proxy.clone());
+
     let proxy = app.proxy.clone();
     wasm_bindgen_futures::spawn_local(async move {
         let state = ViewerState::from_window(window, Some(size)).await;
         let _ = proxy.send_event(UserEvent::Initialized(state));
     });
+}
+
+/// Forward browser `resize` events into the winit event loop as
+/// [`UserEvent::Resized`], carrying the new canvas size in physical pixels.
+fn register_resize_listener(proxy: winit::event_loop::EventLoopProxy<UserEvent>) {
+    let win = web_sys::window().expect("no window");
+    let closure = Closure::<dyn FnMut()>::new(move || {
+        let _ = proxy.send_event(UserEvent::Resized(web_canvas_size()));
+    });
+    win.add_event_listener_with_callback("resize", closure.as_ref().unchecked_ref())
+        .expect("failed to register resize listener");
+    // Keep the closure alive for the lifetime of the app.
+    closure.forget();
 }
 
 /// Size the canvas to the browser window (in physical pixels).
