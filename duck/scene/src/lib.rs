@@ -898,6 +898,54 @@ impl Scene {
         }
     }
 
+    /// Removes a node along with the resources it owns.
+    /// 
+    /// Removes this Node's instance, that instance's mesh, and its
+    /// face/line/point materials — but only those left orphaned afterwards,
+    /// so resources still shared by other instances survive.
+    ///
+    /// Use this (rather than [`remove_node`](Self::remove_node), which only unlinks
+    /// the node) to fully discard self-contained geometry such as a transient
+    /// preview, avoiding orphaned meshes and materials.
+    pub fn cleanup_node(&mut self, node_id: NodeId) {
+        let instance_id = match self.get_node(node_id).map(|n| n.payload()) {
+            Some(NodePayload::Instance(id)) => Some(*id),
+            _ => None,
+        };
+
+        self.remove_node(node_id);
+
+        let Some(instance_id) = instance_id else { return };
+        let Some((mesh_id, face_mat, line_mat, point_mat)) = self
+            .get_instance(instance_id)
+            .map(|i| (i.mesh(), i.face_material(), i.line_material(), i.point_material()))
+        else {
+            return;
+        };
+
+        if self.is_instance_orphaned(instance_id) {
+            self.remove_instance(instance_id);
+        }
+        if self.is_mesh_orphaned(mesh_id) {
+            self.remove_mesh(mesh_id);
+        }
+        if let Some(id) = face_mat {
+            if self.is_face_material_orphaned(id) {
+                self.remove_face_material(id);
+            }
+        }
+        if let Some(id) = line_mat {
+            if self.is_line_material_orphaned(id) {
+                self.remove_line_material(id);
+            }
+        }
+        if let Some(id) = point_mat {
+            if self.is_point_material_orphaned(id) {
+                self.remove_point_material(id);
+            }
+        }
+    }
+
     /// Recursive helper for removing a node and all its children.
     ///
     /// This does NOT invalidate ancestor bounds. The caller is responsible
