@@ -1,4 +1,5 @@
 mod boolean;
+mod r#box;
 mod curve;
 mod extrude;
 mod line;
@@ -6,6 +7,7 @@ mod sphere;
 mod transform;
 
 pub use boolean::BooleanOperator;
+pub use r#box::BoxOperator;
 pub use curve::CurveOperator;
 pub use extrude::ExtrudeOperator;
 pub use line::LineOperator;
