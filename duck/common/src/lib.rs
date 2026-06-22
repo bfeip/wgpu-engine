@@ -129,6 +129,21 @@ pub fn decompose_matrix(matrix: &Matrix4) -> Transform {
     Transform::new(position, rotation, scale)
 }
 
+/// Converts a [`Matrix4`] (column-major `f32`, this crate's convention) into a
+/// row-major `[[f64; 4]; 4]`, the layout expected by row-major `f64` matrix APIs.
+/// 
+/// This is transparently a convince function opencascade-rs functionality. It
+/// Probably shouldn't exist here.
+pub fn matrix4_to_row_major_f64(matrix: &Matrix4) -> [[f64; 4]; 4] {
+    let mut out = [[0.0f64; 4]; 4];
+    for row in 0..4 {
+        for col in 0..4 {
+            out[row][col] = matrix[col][row] as f64;
+        }
+    }
+    out
+}
+
 pub fn rgba_to_array(c: RgbaColor) -> [f32; 4] {
     [c.r, c.g, c.b, c.a]
 }

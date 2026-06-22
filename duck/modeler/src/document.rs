@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::{Context, Result};
 use duck_engine_scene::{Id, NodeId, Scene};
 use duck_engine_scene::cad::{CadTessellationOptions, retessellate_node, tessellate_into};
-use duck_engine_scene::common::{Matrix4, Transform};
+use duck_engine_scene::common::{matrix4_to_row_major_f64, Matrix4, Transform};
 use opencascade::primitives::{Edge, Face, Shape};
 
 pub type PartId = Id;
@@ -92,12 +92,7 @@ impl Document {
             .context("bake_transform: no node for part")?;
 
         // Transpose common's column-major f32 matrix into OCCT's row-major f64 array.
-        let mut mat = [[0.0f64; 4]; 4];
-        for row in 0..4 {
-            for col in 0..4 {
-                mat[row][col] = transform[col][row] as f64;
-            }
-        }
+        let mat = matrix4_to_row_major_f64(&transform);
 
         {
             let cad_part = self
