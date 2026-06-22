@@ -4,6 +4,7 @@ mod circle;
 mod curve;
 mod extrude;
 mod line;
+mod rectangle;
 mod sphere;
 mod transform;
 
@@ -13,6 +14,7 @@ pub use circle::CircleOperator;
 pub use curve::CurveOperator;
 pub use extrude::ExtrudeOperator;
 pub use line::LineOperator;
+pub use rectangle::RectangleOperator;
 pub use sphere::SphereOperator;
 pub use transform::TransformTool;
 
