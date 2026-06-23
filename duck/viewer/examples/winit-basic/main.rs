@@ -7,7 +7,7 @@ use winit::{
 };
 
 use duck_engine_viewer::{Viewer, winit_support};
-use duck_engine_viewer::operator::{NavigationOperator, SelectionOperator, TransformOperator};
+use duck_engine_viewer::operator::{NavigationOperator, SelectionOperator, TransformMode, TransformOperator};
 
 /// Application state for the winit event loop
 struct App<'a> {
@@ -31,7 +31,9 @@ impl<'a> App<'a> {
             size.height,
         ));
 
-        viewer.dispatcher_mut().push_back(Arc::new(Mutex::new(TransformOperator::new())));
+        viewer.dispatcher_mut().push_back(Arc::new(Mutex::new(TransformOperator::new(TransformMode::Translate))));
+        viewer.dispatcher_mut().push_back(Arc::new(Mutex::new(TransformOperator::new(TransformMode::Rotate))));
+        viewer.dispatcher_mut().push_back(Arc::new(Mutex::new(TransformOperator::new(TransformMode::Scale))));
         viewer.dispatcher_mut().push_back(Arc::new(Mutex::new(SelectionOperator::new())));
         viewer.dispatcher_mut().push_back(Arc::new(Mutex::new(NavigationOperator::new())));
 

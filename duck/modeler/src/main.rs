@@ -22,7 +22,7 @@ use winit::{
 
 use duck_engine_viewer::winit_support;
 use duck_engine_viewer::Viewer;
-use duck_engine_viewer::operator::{NavigationOperator, SelectionOperator, SelectionMode};
+use duck_engine_viewer::operator::{NavigationOperator, SelectionOperator, SelectionMode, TransformMode};
 use duck_engine_viewer::common::{
     Vector3, InnerSpace
 };
@@ -94,7 +94,9 @@ impl ViewerState<'static> {
 
         let mut tools = ToolManager::new(sel_op);
         tools.install(viewer.dispatcher_mut());
-        tools.register(TransformTool::new(Rc::clone(&construction_options), Arc::clone(&document)));
+        tools.register(TransformTool::new(TransformMode::Translate, Rc::clone(&construction_options), Arc::clone(&document)));
+        tools.register(TransformTool::new(TransformMode::Rotate, Rc::clone(&construction_options), Arc::clone(&document)));
+        tools.register(TransformTool::new(TransformMode::Scale, Rc::clone(&construction_options), Arc::clone(&document)));
         tools.register(SphereOperator::new(Rc::clone(&construction_options), Arc::clone(&document)));
         tools.register(BoxOperator::new(Rc::clone(&construction_options), Arc::clone(&document)));
         tools.register(RectangleOperator::new(Rc::clone(&construction_options), Arc::clone(&document)));

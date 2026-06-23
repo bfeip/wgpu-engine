@@ -22,7 +22,7 @@ use winit::event_loop::EventLoopProxy;
 use duck_engine_common::Point3;
 use duck_engine_viewer::{common::RgbaColor, scene::NodeFlags};
 use duck_engine_viewer::input::{ElementState, Key};
-use duck_engine_viewer::operator::{NavigationMode, NavigationOperator, SelectionOperator, TransformOperator};
+use duck_engine_viewer::operator::{NavigationMode, NavigationOperator, SelectionOperator, TransformMode, TransformOperator};
 use duck_engine_viewer::common::Transform;
 use duck_engine_viewer::scene::{Light, LightType, NodePayload, Scene};
 use duck_engine_viewer::winit_support;
@@ -71,7 +71,9 @@ impl ViewerState<'static> {
         let size = size.unwrap_or(window.inner_size());
         let mut viewer = Viewer::new(Arc::clone(&window), size.width, size.height).await;
 
-        viewer.dispatcher_mut().push_back(Arc::new(Mutex::new(TransformOperator::new())));
+        viewer.dispatcher_mut().push_back(Arc::new(Mutex::new(TransformOperator::new(TransformMode::Translate))));
+        viewer.dispatcher_mut().push_back(Arc::new(Mutex::new(TransformOperator::new(TransformMode::Rotate))));
+        viewer.dispatcher_mut().push_back(Arc::new(Mutex::new(TransformOperator::new(TransformMode::Scale))));
         viewer.dispatcher_mut().push_back(Arc::new(Mutex::new(SelectionOperator::new())));
         let nav_op = Arc::new(Mutex::new(NavigationOperator::new()));
         viewer.dispatcher_mut().push_back(nav_op.clone());

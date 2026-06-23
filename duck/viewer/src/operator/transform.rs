@@ -1,19 +1,9 @@
-//! Transform operator for Blender-style grab/rotate/scale operations.
+//! Single-mode transform operator (translate, rotate, or scale).
 //!
-//! Controls:
-//! - G: Start grab/translate mode
-//! - R: Start rotate mode
-//! - S: Start scale mode
-//! - H: Cycle gizmo handles (None → Translate → Rotate → Scale → None)
-//! - X/Y/Z: Constrain to axis (toggle: none → world → local → none)
-//! - Left-click / Enter: Confirm transform
-//! - Right-click / Escape: Cancel transform
-//! - Mouse movement: Adjust transform magnitude
-//!
-//! Two independent interaction flows:
-//! 1. **Keyboard**: G/R/S activates a transform driven by mouse motion.
-//! 2. **Gizmo drag**: H shows persistent handles; drag a handle for an
-//!    axis-constrained transform that confirms on mouse release.
+//! Each operator instance is locked to one [`TransformMode`] chosen at
+//! construction; its gizmo handle reflects that mode. Separate transform
+//! operations are separate operators.
+
 
 use std::collections::HashMap;
 
@@ -45,14 +35,8 @@ use crate::scene_scale;
 /// Semantic actions for the transform operator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TransformAction {
-    /// Begin a grab (translate) operation.
-    StartTranslate,
-    /// Begin a rotate operation.
-    StartRotate,
-    /// Begin a scale operation.
-    StartScale,
-    /// Cycle the persistent gizmo handle (None → Translate → Rotate → Scale → None).
-    CycleGizmo,
+    /// Begin a freeform transform in this operator's mode.
+    StartTransform,
     /// Cycle the axis constraint to X (world then local on repeated press).
     ConstrainX,
     /// Cycle the axis constraint to Y (world then local on repeated press).
@@ -77,6 +61,26 @@ pub enum TransformMode {
     Translate,
     Rotate,
     Scale,
+}
+
+impl TransformMode {
+    /// The gizmo handle set for this mode.
+    fn gizmo_type(self) -> GizmoType {
+        match self {
+            TransformMode::Translate => GizmoType::Translate,
+            TransformMode::Rotate => GizmoType::Rotate,
+            TransformMode::Scale => GizmoType::Scale,
+        }
+    }
+
+    /// The keyboard key that starts a freeform transform in this mode.
+    fn start_key(self) -> char {
+        match self {
+            TransformMode::Translate => 'g',
+            TransformMode::Rotate => 'r',
+            TransformMode::Scale => 's',
+        }
+    }
 }
 
 /// Axis constraint for the transform operation.
@@ -123,9 +127,6 @@ impl AxisConstraint {
 /// Gizmo nodes are parented under the annotation root node so they are grouped
 /// with other overlay content and hidden when annotations are toggled off.
 ///
-// TODO: Once we support multiple overlay types beyond annotations and gizmos,
-// consider introducing a dedicated overlay system with its own root node
-// rather than piggy-backing on the annotation root.
 struct GizmoState {
     /// Root node for all gizmo geometry. Created when first needed.
     root_node: Option<NodeId>,
@@ -308,10 +309,13 @@ struct OriginalTransform {
     parent_world_transform: Transform,
 }
 
-/// Operator for Blender-style transform operations (grab/rotate/scale).
+/// Operator for a single transform operation (translate, rotate, or scale).
 pub struct TransformOperator {
-    /// Current transform mode (None when inactive).
-    mode: Option<TransformMode>,
+    /// The fixed operation this operator performs.
+    mode: TransformMode,
+
+    /// Whether a transform is currently being applied (driven by mouse motion).
+    active: bool,
 
     /// Current axis constraint.
     axis_constraint: AxisConstraint,
@@ -331,13 +335,12 @@ pub struct TransformOperator {
     /// Model radius for scaling sensitivity.
     model_radius: f32,
 
-    /// Gizmo handle state (3D visual handles for the active transform).
+    /// Gizmo handle state (3D visual handles for this operator's mode).
     gizmo: GizmoState,
 
-    /// Which gizmo type to display (persists across transforms, cycled by H key).
-    /// Independent of `mode` — the gizmo is a persistent visual tool, while
-    /// `mode` tracks the active keyboard-driven transform.
-    gizmo_mode: Option<GizmoType>,
+    /// Whether the persistent gizmo should be shown (when a selection exists).
+    /// The handle set is always [`TransformMode::gizmo_type`] for this mode.
+    gizmo_enabled: bool,
 
     /// Root node for transform annotations, created when needed.
     annotation_root: Option<NodeId>,
@@ -352,24 +355,12 @@ pub struct TransformOperator {
 }
 
 impl TransformOperator {
-    /// Creates a new transform operator with default bindings.
-    pub fn new() -> Self {
+    /// Creates a new transform operator locked to the given mode.
+    pub fn new(mode: TransformMode) -> Self {
         let bindings = InputMap::new()
             .bind(
-                InputBinding::Key { key: Key::Character('g'), modifiers: Modifiers::default() },
-                TransformAction::StartTranslate,
-            )
-            .bind(
-                InputBinding::Key { key: Key::Character('r'), modifiers: Modifiers::default() },
-                TransformAction::StartRotate,
-            )
-            .bind(
-                InputBinding::Key { key: Key::Character('s'), modifiers: Modifiers::default() },
-                TransformAction::StartScale,
-            )
-            .bind(
-                InputBinding::Key { key: Key::Character('h'), modifiers: Modifiers::default() },
-                TransformAction::CycleGizmo,
+                InputBinding::Key { key: Key::Character(mode.start_key()), modifiers: Modifiers::default() },
+                TransformAction::StartTransform,
             )
             .bind(
                 InputBinding::Key { key: Key::Character('x'), modifiers: Modifiers::default() },
@@ -412,7 +403,8 @@ impl TransformOperator {
                 TransformAction::GizmoDrag,
             );
         Self {
-            mode: None,
+            mode,
+            active: false,
             axis_constraint: AxisConstraint::None,
             original_transforms: Vec::new(),
             primary_rotation: Quaternion::new(1.0, 0.0, 0.0, 0.0),
@@ -420,7 +412,7 @@ impl TransformOperator {
             pivot_world: Point3::origin(),
             model_radius: 1.0,
             gizmo: GizmoState::new(),
-            gizmo_mode: None,
+            gizmo_enabled: false,
             annotation_root: None,
             annotations: Vec::new(),
             annotation_axis_materials: HashMap::new(),
@@ -430,7 +422,13 @@ impl TransformOperator {
 
     /// Returns true if a transform operation is currently active.
     pub fn is_active(&self) -> bool {
-        self.mode.is_some()
+        self.active
+    }
+
+    /// Show or hide the persistent gizmo handles. When enabled, the handles for
+    /// this operator's mode appear whenever there is a selection.
+    pub fn set_gizmo_enabled(&mut self, on: bool) {
+        self.gizmo_enabled = on;
     }
 
     /// Tears down all scene-side visuals owned by this operator (gizmo handles
@@ -446,7 +444,7 @@ impl TransformOperator {
             scene.remove_node(id);
         }
         self.gizmo.hide(scene);
-        self.gizmo_mode = None;
+        self.gizmo_enabled = false;
         self.reset();
     }
 
@@ -474,6 +472,24 @@ impl TransformOperator {
 
             _ => self.axis_constraint,
         };
+    }
+
+    /// Handle an axis key (X/Y/Z): start the transform constrained to that axis
+    /// if idle, otherwise cycle the existing constraint. Returns whether the key
+    /// was acted on (false only when starting failed, e.g. empty selection).
+    fn constrain_axis(&mut self, axis: char, ctx: &mut EventContext) -> bool {
+        if !self.is_active() {
+            self.start_transform(ctx);
+            if !self.is_active() {
+                return false;
+            }
+        }
+        self.cycle_axis_constraint(axis);
+        self.apply_preview_transform(ctx);
+        self.update_visual_feedback(ctx);
+        let highlight = axis_from_constraint(&self.axis_constraint);
+        self.gizmo.set_highlight(highlight, ctx);
+        true
     }
 
     /// Get the constraint axis direction in world space.
@@ -548,10 +564,10 @@ impl TransformOperator {
 
     /// Apply the current transform preview to all selected nodes.
     fn apply_preview_transform(&self, ctx: &mut EventContext) {
-        let mode = match self.mode {
-            Some(m) => m,
-            None => return,
-        };
+        if !self.active {
+            return;
+        }
+        let mode = self.mode;
 
         // Pre-compute camera-dependent values before locking the scene.
         // ctx.camera() acquires and releases the scene lock internally.
@@ -721,48 +737,47 @@ impl TransformOperator {
         }
     }
 
-    /// Show, reposition, or hide the gizmo based on `gizmo_mode` and selection.
+    /// Show, reposition, or hide the gizmo based on `gizmo_enabled` and selection.
     fn sync_gizmo(&mut self, ctx: &mut EventContext) {
         let selected = ctx.selection.selected_nodes();
-        match (self.gizmo_mode, selected.is_empty()) {
-            (Some(gizmo_type), false) => {
-                let (positions, model_radius) = {
-                    let scene = ctx.scene.lock().unwrap();
-                    let positions: Vec<Point3> = selected
-                        .iter()
-                        .filter_map(|&nid| {
-                            scene.nodes_bounding(nid).bounds.map(|aabb| aabb.center())
-                        })
-                        .collect();
-                    let model_radius =
-                        scene_scale::model_radius_from_bounds(scene.bounding().bounds.as_ref());
-                    (positions, model_radius)
-                };
-                let pivot = centroid_of_slice(&positions).unwrap_or(Point3::origin());
 
-                if self.gizmo.current_type == Some(gizmo_type) {
-                    self.gizmo.update_position(pivot, ctx);
-                } else {
-                    self.gizmo.show(gizmo_type, pivot, model_radius * 0.15, ctx);
-                }
-            }
-            _ => {
-                let mut scene = ctx.scene.lock().unwrap();
-                self.gizmo.hide(&mut scene);
-            }
+        // Hide the gizmo whenever it is disabled or there is nothing selected.
+        if !self.gizmo_enabled || selected.is_empty() {
+            let mut scene = ctx.scene.lock().unwrap();
+            self.gizmo.hide(&mut scene);
+            return;
+        }
+
+        let gizmo_type = self.mode.gizmo_type();
+        let (positions, model_radius) = {
+            let scene = ctx.scene.lock().unwrap();
+            let positions: Vec<Point3> = selected
+                .iter()
+                .filter_map(|&nid| scene.nodes_bounding(nid).bounds.map(|aabb| aabb.center()))
+                .collect();
+            let model_radius =
+                scene_scale::model_radius_from_bounds(scene.bounding().bounds.as_ref());
+            (positions, model_radius)
+        };
+        let pivot = centroid_of_slice(&positions).unwrap_or(Point3::origin());
+
+        if self.gizmo.current_type == Some(gizmo_type) {
+            self.gizmo.update_position(pivot, ctx);
+        } else {
+            self.gizmo.show(gizmo_type, pivot, model_radius * 0.15, ctx);
         }
     }
 
     /// Reset state after transform completes (confirm or cancel).
     fn reset(&mut self) {
-        self.mode = None;
+        self.active = false;
         self.axis_constraint = AxisConstraint::None;
         self.original_transforms.clear();
         self.accumulated_delta = (0.0, 0.0);
     }
 
-    /// Start a transform operation with the given mode.
-    fn start_transform(&mut self, mode: TransformMode, ctx: &mut EventContext) {
+    /// Start a transform operation in this operator's mode.
+    fn start_transform(&mut self, ctx: &mut EventContext) {
         // Get selected nodes
         let selected_nodes = ctx.selection.selected_nodes();
         if selected_nodes.is_empty() {
@@ -818,7 +833,7 @@ impl TransformOperator {
         self.pivot_world = centroid_of_slice(&world_positions).unwrap_or(Point3::origin());
 
         // Activate the transform
-        self.mode = Some(mode);
+        self.active = true;
         self.axis_constraint = AxisConstraint::None;
         self.accumulated_delta = (0.0, 0.0);
     }
@@ -891,51 +906,24 @@ impl Operator for TransformOperator {
                     .to_vec();
                 for action in actions {
                     match action {
-                        TransformAction::StartTranslate if !self.is_active() => {
-                            self.start_transform(TransformMode::Translate, ctx);
+                        TransformAction::StartTransform if !self.is_active() => {
+                            self.start_transform(ctx);
                             return self.is_active();
                         }
-                        TransformAction::StartRotate if !self.is_active() => {
-                            self.start_transform(TransformMode::Rotate, ctx);
-                            return self.is_active();
+                        TransformAction::ConstrainX => {
+                            if self.constrain_axis('x', ctx) {
+                                return true;
+                            }
                         }
-                        TransformAction::StartScale if !self.is_active() => {
-                            self.start_transform(TransformMode::Scale, ctx);
-                            return self.is_active();
+                        TransformAction::ConstrainY => {
+                            if self.constrain_axis('y', ctx) {
+                                return true;
+                            }
                         }
-                        TransformAction::CycleGizmo if !self.is_active() => {
-                            self.gizmo_mode = match self.gizmo_mode {
-                                None => Some(GizmoType::Translate),
-                                Some(GizmoType::Translate) => Some(GizmoType::Rotate),
-                                Some(GizmoType::Rotate) => Some(GizmoType::Scale),
-                                Some(GizmoType::Scale) => None,
-                            };
-                            self.sync_gizmo(ctx);
-                            return true;
-                        }
-                        TransformAction::ConstrainX if self.is_active() => {
-                            self.cycle_axis_constraint('x');
-                            self.apply_preview_transform(ctx);
-                            self.update_visual_feedback(ctx);
-                            let highlight = axis_from_constraint(&self.axis_constraint);
-                            self.gizmo.set_highlight(highlight, ctx);
-                            return true;
-                        }
-                        TransformAction::ConstrainY if self.is_active() => {
-                            self.cycle_axis_constraint('y');
-                            self.apply_preview_transform(ctx);
-                            self.update_visual_feedback(ctx);
-                            let highlight = axis_from_constraint(&self.axis_constraint);
-                            self.gizmo.set_highlight(highlight, ctx);
-                            return true;
-                        }
-                        TransformAction::ConstrainZ if self.is_active() => {
-                            self.cycle_axis_constraint('z');
-                            self.apply_preview_transform(ctx);
-                            self.update_visual_feedback(ctx);
-                            let highlight = axis_from_constraint(&self.axis_constraint);
-                            self.gizmo.set_highlight(highlight, ctx);
-                            return true;
+                        TransformAction::ConstrainZ => {
+                            if self.constrain_axis('z', ctx) {
+                                return true;
+                            }
                         }
                         TransformAction::KeyConfirm if self.is_active() => {
                             self.confirm_transform(ctx);
@@ -994,13 +982,7 @@ impl Operator for TransformOperator {
                     return false;
                 }
                 if let Some(axis) = self.gizmo.pick_handle(start_pos.0, start_pos.1, ctx) {
-                    let mode = match self.gizmo.current_type {
-                        Some(GizmoType::Translate) => TransformMode::Translate,
-                        Some(GizmoType::Rotate) => TransformMode::Rotate,
-                        Some(GizmoType::Scale) => TransformMode::Scale,
-                        None => return false,
-                    };
-                    self.start_transform(mode, ctx);
+                    self.start_transform(ctx);
                     if !self.is_active() {
                         return false;
                     }
@@ -1056,7 +1038,7 @@ impl Operator for TransformOperator {
             }
 
             DeviceEvent::Update { .. } => {
-                if self.gizmo_mode.is_some() && !self.is_active() {
+                if self.gizmo_enabled && !self.is_active() {
                     self.sync_gizmo(ctx);
                 }
                 false
@@ -1067,6 +1049,10 @@ impl Operator for TransformOperator {
     }
 
     fn name(&self) -> &str {
-        "Transform"
+        match self.mode {
+            TransformMode::Translate => "Translate",
+            TransformMode::Rotate => "Rotate",
+            TransformMode::Scale => "Scale",
+        }
     }
 }

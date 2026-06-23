@@ -3,13 +3,14 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use duck_engine_viewer::event::{AppEvent, Event, EventContext};
-use duck_engine_viewer::operator::{Operator, SelectionMode, TransformOperator};
+use duck_engine_viewer::operator::{Operator, SelectionMode, TransformMode, TransformOperator};
 
 use crate::document::Document;
 use crate::tool::{ModelingTool, ToolInfo};
 use super::ConstructionOptions;
 
-/// CAD-aware transform tool: translate / rotate / scale of whole parts.
+/// CAD-aware transform tool for one operation (move, rotate, *or* scale) of
+/// whole parts. Each [`TransformMode`] is registered as its own palette tool.
 ///
 /// This is a thin wrapper around the viewer's [`TransformOperator`], which does
 /// all the interactive work (gizmos, axis constraints, mouse math, preview,
@@ -19,10 +20,12 @@ use super::ConstructionOptions;
 /// geometry via [`Document::bake_transform`], keeping the CAD shape and the
 /// rendered mesh in sync.
 ///
-/// Controls match the viewer operator: G/R/S to grab/rotate/scale, X/Y/Z to
-/// constrain to an axis, left-click or Enter to confirm, right-click or Escape
-/// to cancel.
+/// Selecting the tool shows its handle set immediately; drag a handle to
+/// transform. The mode's key (G/R/S) starts a freeform transform and X/Y/Z
+/// start an axis-constrained one; left-click or Enter confirms, right-click or
+/// Escape cancels.
 pub struct TransformTool {
+    mode: TransformMode,
     transform_op: TransformOperator,
     construction_options: Rc<RefCell<ConstructionOptions>>,
     document: Arc<Mutex<Document>>,
@@ -30,11 +33,13 @@ pub struct TransformTool {
 
 impl TransformTool {
     pub fn new(
+        mode: TransformMode,
         construction_options: Rc<RefCell<ConstructionOptions>>,
         document: Arc<Mutex<Document>>,
     ) -> Self {
         Self {
-            transform_op: TransformOperator::new(),
+            mode,
+            transform_op: TransformOperator::new(mode),
             construction_options,
             document,
         }
@@ -82,11 +87,29 @@ impl Operator for TransformTool {
 
 impl ModelingTool for TransformTool {
     fn info(&self) -> ToolInfo {
-        ToolInfo {
-            id: "transform",
-            icon_uri: "bytes://move-arrows.svg",
-            icon: include_bytes!("../../../../assets/svg/move-arrows-svgrepo-com.svg"),
+        match self.mode {
+            TransformMode::Translate => ToolInfo {
+                id: "move",
+                icon_uri: "bytes://move-arrows.svg",
+                icon: include_bytes!("../../../../assets/svg/move-arrows-svgrepo-com.svg"),
+            },
+            TransformMode::Rotate => ToolInfo {
+                id: "rotate",
+                icon_uri: "bytes://rotate-arrow.svg",
+                icon: include_bytes!("../../../../assets/svg/rotate-arrow.svg"),
+            },
+            TransformMode::Scale => ToolInfo {
+                id: "scale",
+                icon_uri: "bytes://scale-arrows.svg",
+                icon: include_bytes!("../../../../assets/svg/scale-arrows.svg"),
+            },
         }
+    }
+
+    fn activate(&mut self) {
+        // Show this mode's handle set as soon as the tool is selected; the next
+        // frame syncs it onto the current selection.
+        self.transform_op.set_gizmo_enabled(true);
     }
 
     fn deactivate(&mut self) {

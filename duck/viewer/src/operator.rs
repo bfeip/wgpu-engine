@@ -4,7 +4,7 @@ mod transform;
 
 pub use navigation::{NavigationMode, NavigationOperator};
 pub use selection::{SelectionMode, SelectionOperator};
-pub use transform::TransformOperator;
+pub use transform::{TransformMode, TransformOperator};
 
 use crate::event::{Event, EventContext};
 
