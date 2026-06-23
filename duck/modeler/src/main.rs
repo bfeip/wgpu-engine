@@ -32,7 +32,8 @@ use duck_engine_viewer::scene::{
 
 use crate::operators::{
     BooleanOperator, BoxOperator, CircleOperator, ConstructionOptions, CurveOperator,
-    ExtrudeOperator, LineOperator, RectangleOperator, SphereOperator, TransformTool,
+    CylinderOperator, ExtrudeOperator, LineOperator, RectangleOperator, SphereOperator,
+    TransformTool,
 };
 use crate::tool_manager::ToolManager;
 
@@ -100,6 +101,7 @@ impl ViewerState<'static> {
         tools.register(LineOperator::new(Rc::clone(&construction_options), Arc::clone(&document)));
         tools.register(CurveOperator::new(Rc::clone(&construction_options), Arc::clone(&document)));
         tools.register(CircleOperator::new(Rc::clone(&construction_options), Arc::clone(&document)));
+        tools.register(CylinderOperator::new(Rc::clone(&construction_options), Arc::clone(&document)));
         tools.register(BooleanOperator::new(Rc::clone(&construction_options), Arc::clone(&document)));
         tools.register(ExtrudeOperator::new(Rc::clone(&construction_options), Arc::clone(&document)));
 

@@ -2,9 +2,7 @@ use std::sync::{Arc, Mutex};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use duck_engine_common::{
-    matrix4_to_row_major_f64, InnerSpace, Plane, Point3, Ray, Vector3,
-};
+use duck_engine_common::{MetricSpace, Plane, Point3, Ray, Vector3};
 use duck_engine_scene::{NodeId, Visibility};
 use duck_engine_scene::cad::tessellate_into;
 use duck_engine_viewer::{
@@ -14,8 +12,8 @@ use duck_engine_viewer::{
     input::{Modifiers, MouseButton},
     operator::Operator,
 };
-use glam::dvec3;
-use opencascade::primitives::{Face, Shape, Wire};
+use glam::{dvec3, DVec3};
+use opencascade::primitives::Shape;
 
 use crate::document::Document;
 use crate::tool::{ModelingTool, ToolInfo};
@@ -25,29 +23,41 @@ use super::ConstructionOptions;
 /// can't be committed.
 const EPSILON: f32 = 1e-6;
 
+/// Fixed preview height for the radius phase, so the base reads as a thin disk
+/// before the user defines a real height.
+const DISK_PREVIEW_HEIGHT: f32 = 0.01;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum BoxAction {
+enum CylinderAction {
     Place,
     Cancel,
 }
 
 enum Phase {
     Idle,
-    /// Center placed; the cursor drives the footprint. Preview is a flat rectangle face.
-    Base { center: Point3, preview_node: NodeId },
-    /// Footprint fixed; the cursor drives the height. Preview is the 3D box.
-    Height { center: Point3, width: f32, depth: f32, preview_node: NodeId },
+    /// Center placed; the cursor drives the radius. Preview is a thin base disk.
+    Radius { center: Point3, preview_node: NodeId },
+    /// Radius fixed; the cursor drives the height. Preview is the 3D cylinder.
+    Height { center: Point3, radius: f32, preview_node: NodeId },
 }
 
-pub struct BoxOperator {
+pub struct CylinderOperator {
     phase: Phase,
     construction_options: Rc<RefCell<ConstructionOptions>>,
     document: Arc<Mutex<Document>>,
-    bindings: InputMap<BoxAction>,
+    bindings: InputMap<CylinderAction>,
     cursor_target: Option<Point3>,
 }
 
-impl BoxOperator {
+fn to_dvec3(p: Point3) -> DVec3 {
+    dvec3(p.x as f64, p.y as f64, p.z as f64)
+}
+
+fn vec_to_dvec3(v: Vector3) -> DVec3 {
+    dvec3(v.x as f64, v.y as f64, v.z as f64)
+}
+
+impl CylinderOperator {
     pub fn new(
         construction_options: Rc<RefCell<ConstructionOptions>>,
         document: Arc<Mutex<Document>>,
@@ -55,11 +65,11 @@ impl BoxOperator {
         let bindings = InputMap::new()
             .bind(
                 InputBinding::MouseClick { button: MouseButton::Left, modifiers: Modifiers::default() },
-                BoxAction::Place,
+                CylinderAction::Place,
             )
             .bind(
                 InputBinding::MouseClick { button: MouseButton::Right, modifiers: Modifiers::default() },
-                BoxAction::Cancel,
+                CylinderAction::Cancel,
             );
         Self {
             phase: Phase::Idle,
@@ -70,28 +80,13 @@ impl BoxOperator {
         }
     }
 
-    /// Lays the flat unit footprint face (local XY, normal +Z) on `plane`, scaled to
-    /// `width`×`depth`. [`Plane::rotation`] maps the local +Z axis to the plane normal.
-    fn footprint_transform(center: Point3, width: f32, depth: f32, plane: &Plane) -> Transform {
-        Transform {
-            position: center,
-            rotation: plane.rotation(),
-            scale: Vector3::new(width, depth, 1.0),
-        }
-    }
-
-    /// Scales the unit reference box (footprint in local XY, height along local +Z)
-    /// to `width`×`depth`×`height` on `plane`. [`Plane::rotation`] maps the local +Z
-    /// axis (the height axis) to the plane normal.
-    fn box_transform(
-        center: Point3,
-        width: f32,
-        depth: f32,
-        height: f32,
-        plane: &Plane,
-    ) -> Transform {
+    /// Transform scaling the unit reference cylinder (base at origin, axis +Z,
+    /// radius 1, height 1) to a cylinder of `radius`/`height` based at `center`.
+    /// The plane's [`rotation`](Plane::rotation) maps the local +Z axis to the
+    /// plane normal, so the base disk lies in the construction plane.
+    fn cylinder_transform(center: Point3, radius: f32, height: f32, plane: &Plane) -> Transform {
         // Keep every scale component non-negative. A negative scale would make the
-        // baked GTransform a reflection, flipping the box's face normals inward.
+        // baked transform a reflection, flipping the cylinder's face normals inward.
         let (base, height) = if height >= 0.0 {
             (center, height)
         } else {
@@ -100,34 +95,18 @@ impl BoxOperator {
         Transform {
             position: base,
             rotation: plane.rotation(),
-            scale: Vector3::new(width, depth, height),
+            scale: Vector3::new(radius, radius, height),
         }
     }
 
-    /// Unit reference box: footprint centered in local XY, height along local +Z
-    /// (`[0, 1]`). Shared by the preview and the committed shape so the baked
-    /// [`box_transform`](Self::box_transform) matches the preview exactly.
-    fn reference_box() -> Shape {
-        Shape::box_from_corners(dvec3(-0.5, -0.5, 0.0), dvec3(0.5, 0.5, 1.0))
+    /// A radius is valid once it is non-degenerate.
+    fn radius_valid(radius: f32) -> bool {
+        radius > EPSILON
     }
 
-    /// In-plane extents from the center→corner vector, as full (width, depth).
-    fn footprint_dims(center: Point3, corner: Point3, plane: &Plane) -> (f32, f32) {
-        let (u, v) = plane.basis();
-        let d = corner - center;
-        let width = 2.0 * d.dot(u).abs();
-        let depth = 2.0 * d.dot(v).abs();
-        (width, depth)
-    }
-
-    /// A footprint is valid once both in-plane dimensions are non-degenerate.
-    fn footprint_valid(width: f32, depth: f32) -> bool {
-        width > EPSILON && depth > EPSILON
-    }
-
-    /// A box is valid once it has a non-degenerate footprint and a non-zero height
-    fn box_valid(width: f32, depth: f32, height: f32) -> bool {
-        Self::footprint_valid(width, depth) && height.abs() > EPSILON
+    /// A cylinder is valid once it has a non-degenerate radius and a non-zero height.
+    fn cylinder_valid(radius: f32, height: f32) -> bool {
+        Self::radius_valid(radius) && height.abs() > EPSILON
     }
 
     /// Signed height from projecting the cursor pick ray onto the plane normal through `center`.
@@ -148,104 +127,80 @@ impl BoxOperator {
             return false;
         };
 
-        let Ok(preview_shape): Result<Shape, _> =
-            Face::from_wire(&Wire::rect(1.0, 1.0).unwrap()).map(Into::into)
-        else {
-            return false;
-        };
-
+        // A single unit cylinder, scaled each move; preview detail is irrelevant here.
+        let preview_shape = Shape::cylinder_radius_height(1.0, 1.0);
         let preview_node = {
             let coptions = self.construction_options.borrow();
             let mut scene = ctx.scene.lock().unwrap();
-            // A single unit face, scaled each move; preview detail is irrelevant for a flat quad.
             let Ok(node) = tessellate_into(
                 &preview_shape,
                 &mut *scene,
                 &coptions.geometry_options,
                 None,
-                Some("box plane preview"),
+                Some("cylinder preview"),
             ) else {
                 return false;
             };
-            // Hidden until the cursor defines a non-degenerate footprint.
+            // Hidden until the cursor defines a non-degenerate radius.
             scene.set_node_visibility(node, Visibility::Invisible);
             node
         };
-        self.phase = Phase::Base { center, preview_node };
+        self.phase = Phase::Radius { center, preview_node };
         true
     }
 
-    fn on_place_corner(
+    fn on_place_radius(
         &mut self,
         center: Point3,
-        face_node: NodeId,
+        preview_node: NodeId,
         position: (f32, f32),
         ctx: &mut EventContext,
     ) -> bool {
         let camera = ctx.camera();
-        let plane = self.construction_options.borrow().construction_plane;
-        // Exclude the preview so the footprint can snap through it.
-        let Some(corner) = self
+        // Exclude the preview so the radius can snap through a corner, not to the
+        // preview's own geometry.
+        let radius = self
             .construction_options
             .borrow()
-            .resolve_snap(position, &[face_node], &camera, ctx, &[])
-            .map(|s| s.position)
-        else {
-            return false;
-        };
-        let (width, depth) = Self::footprint_dims(center, corner, &plane);
-        // A degenerate footprint can't be committed; stay in the footprint stage.
-        if !Self::footprint_valid(width, depth) {
+            .resolve_snap(position, &[preview_node], &camera, ctx, &[])
+            .map(|s| center.distance(s.position))
+            .unwrap_or(0.0);
+        // A degenerate radius can't be committed; stay in the radius stage.
+        if !Self::radius_valid(radius) {
             return false;
         }
-
-        // Swap the flat footprint preview for the 3D box preview.
-        let preview_shape = Self::reference_box();
-        let preview_node = {
-            let coptions = self.construction_options.borrow();
-            let mut scene = ctx.scene.lock().unwrap();
-            scene.cleanup_node(face_node);
-            let Ok(node) = tessellate_into(
-                &preview_shape,
-                &mut *scene,
-                &coptions.geometry_options,
-                None,
-                Some("box preview"),
-            ) else {
-                return false;
-            };
-            // Hidden until the cursor defines a non-zero height.
-            scene.set_node_visibility(node, Visibility::Invisible);
-            node
-        };
-        self.phase = Phase::Height { center, width, depth, preview_node };
+        self.phase = Phase::Height { center, radius, preview_node };
         true
     }
 
     fn on_place_height(
         &mut self,
         center: Point3,
-        width: f32,
-        depth: f32,
+        radius: f32,
         preview_node: NodeId,
         position: (f32, f32),
         ctx: &mut EventContext,
     ) -> bool {
         let plane = self.construction_options.borrow().construction_plane;
         let height = Self::height_from_cursor(center, &plane, position, ctx);
-        // A zero-height (degenerate) box can't be committed; stay in the height stage.
-        if !Self::box_valid(width, depth, height) {
+        // A zero-height (degenerate) cylinder can't be committed; stay in the height stage.
+        if !Self::cylinder_valid(radius, height) {
             return false;
         }
 
-        // Bake the box transform into a world-space shape via GTransform. The reference
-        // box matches the preview.
-        let world_shape = {
-            let mat = matrix4_to_row_major_f64(
-                &Self::box_transform(center, width, depth, height, &plane).to_matrix(),
-            );
-            Self::reference_box().gtransform(mat)
+        // Build the world-space cylinder directly from the OCCT primitive, keeping
+        // the height positive so the axis stays aligned with the plane normal.
+        let (base, h) = if height >= 0.0 {
+            (center, height)
+        } else {
+            (center + plane.normal * height, -height)
         };
+        let world_shape = Shape::cylinder(
+            to_dvec3(base),
+            radius as f64,
+            vec_to_dvec3(plane.normal),
+            h as f64,
+        );
 
         // Discard the preview, then commit the world-space shape as a registered part.
         ctx.scene.lock().unwrap().cleanup_node(preview_node);
@@ -253,7 +208,7 @@ impl BoxOperator {
         let committed = {
             let coptions = self.construction_options.borrow();
             let mut doc = self.document.lock().unwrap();
-            doc.add_part("Box".to_owned(), world_shape, &coptions.geometry_options)
+            doc.add_part("Cylinder".to_owned(), world_shape, &coptions.geometry_options)
                 .is_ok()
         };
 
@@ -263,7 +218,7 @@ impl BoxOperator {
 
     pub fn cancel(&mut self) {
         let preview = match self.phase {
-            Phase::Base { preview_node, .. } | Phase::Height { preview_node, .. } => Some(preview_node),
+            Phase::Radius { preview_node, .. } | Phase::Height { preview_node, .. } => Some(preview_node),
             Phase::Idle => None,
         };
         if let Some(preview_node) = preview {
@@ -278,7 +233,7 @@ impl BoxOperator {
         let plane = self.construction_options.borrow().construction_plane;
         // While defining, exclude our own preview so snapping doesn't lock onto it.
         let exclude: Vec<NodeId> = match self.phase {
-            Phase::Base { preview_node, .. } | Phase::Height { preview_node, .. } => vec![preview_node],
+            Phase::Radius { preview_node, .. } | Phase::Height { preview_node, .. } => vec![preview_node],
             Phase::Idle => Vec::new(),
         };
 
@@ -292,31 +247,31 @@ impl BoxOperator {
             Phase::Idle => {
                 self.cursor_target = snap.map(|s| s.position);
             }
-            Phase::Base { center, preview_node } => {
+            Phase::Radius { center, preview_node } => {
                 self.cursor_target = snap.map(|s| s.position);
-                let dims = snap.map(|s| Self::footprint_dims(center, s.position, &plane));
+                let radius = snap.map(|s| center.distance(s.position));
                 let mut scene = ctx.scene.lock().unwrap();
-                match dims {
-                    Some((width, depth)) if Self::footprint_valid(width, depth) => {
+                match radius {
+                    Some(radius) if Self::radius_valid(radius) => {
                         scene.set_node_visibility(preview_node, Visibility::Visible);
                         scene.set_node_transform(
                             preview_node,
-                            Self::footprint_transform(center, width, depth, &plane),
+                            Self::cylinder_transform(center, radius, DISK_PREVIEW_HEIGHT, &plane),
                         );
                     }
-                    // No snap, or a degenerate footprint: nothing to draw.
+                    // No snap, or a degenerate radius: nothing to draw.
                     _ => scene.set_node_visibility(preview_node, Visibility::Invisible),
                 }
             }
-            Phase::Height { center, width, depth, preview_node } => {
+            Phase::Height { center, radius, preview_node } => {
                 let height = Self::height_from_cursor(center, &plane, cursor, ctx);
                 self.cursor_target = Some(center + plane.normal * height);
                 let mut scene = ctx.scene.lock().unwrap();
-                if Self::box_valid(width, depth, height) {
+                if Self::cylinder_valid(radius, height) {
                     scene.set_node_visibility(preview_node, Visibility::Visible);
                     scene.set_node_transform(
                         preview_node,
-                        Self::box_transform(center, width, depth, height, &plane),
+                        Self::cylinder_transform(center, radius, height, &plane),
                     );
                 } else {
                     // Degenerate height: nothing to draw.
@@ -327,12 +282,12 @@ impl BoxOperator {
     }
 }
 
-impl ModelingTool for BoxOperator {
+impl ModelingTool for CylinderOperator {
     fn info(&self) -> ToolInfo {
         ToolInfo {
-            id: "box",
-            icon_uri: "bytes://box.svg",
-            icon: include_bytes!("../../../../assets/svg/cube-svgrepo-com.svg"),
+            id: "cylinder",
+            icon_uri: "bytes://cylinder.svg",
+            icon: include_bytes!("../../../../assets/svg/cylinder-svgrepo-com.svg"),
         }
     }
 
@@ -348,7 +303,7 @@ impl ModelingTool for BoxOperator {
     }
 }
 
-impl Operator for BoxOperator {
+impl Operator for CylinderOperator {
     fn dispatch(&mut self, event: &Event, ctx: &mut EventContext) -> bool {
         let Event::Device(event) = event else { return false };
         match event {
@@ -357,16 +312,16 @@ impl Operator for BoxOperator {
                 let mut handled = false;
                 for action in actions {
                     handled |= match action {
-                        BoxAction::Place => match self.phase {
+                        CylinderAction::Place => match self.phase {
                             Phase::Idle => self.on_place_center(*position, ctx),
-                            Phase::Base { center, preview_node } => {
-                                self.on_place_corner(center, preview_node, *position, ctx)
+                            Phase::Radius { center, preview_node } => {
+                                self.on_place_radius(center, preview_node, *position, ctx)
                             }
-                            Phase::Height { center, width, depth, preview_node } => {
-                                self.on_place_height(center, width, depth, preview_node, *position, ctx)
+                            Phase::Height { center, radius, preview_node } => {
+                                self.on_place_height(center, radius, preview_node, *position, ctx)
                             }
                         },
-                        BoxAction::Cancel => {
+                        CylinderAction::Cancel => {
                             let was_defining = !matches!(self.phase, Phase::Idle);
                             if was_defining {
                                 self.cancel();
@@ -386,6 +341,37 @@ impl Operator for BoxOperator {
     }
 
     fn name(&self) -> &str {
-        "Box"
+        "Cylinder"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use duck_engine_common::InnerSpace;
+
+    #[test]
+    fn cylinder_valid_accepts_nondegenerate() {
+        assert!(CylinderOperator::cylinder_valid(1.0, 2.0));
+        assert!(CylinderOperator::cylinder_valid(1.0, -2.0));
+    }
+
+    #[test]
+    fn cylinder_valid_rejects_degenerate() {
+        assert!(!CylinderOperator::cylinder_valid(0.0, 2.0));
+        assert!(!CylinderOperator::cylinder_valid(1.0, 0.0));
+    }
+
+    #[test]
+    fn cylinder_transform_flips_negative_height() {
+        let plane = Plane::xz();
+        let center = Point3::new(0.0, 0.0, 0.0);
+        let t = CylinderOperator::cylinder_transform(center, 2.0, -3.0, &plane);
+        // Scale stays non-negative after the flip.
+        assert!(t.scale.x >= 0.0 && t.scale.y >= 0.0 && t.scale.z >= 0.0);
+        assert!((t.scale.z - 3.0).abs() < EPSILON);
+        // Base shifts by normal * height (XZ plane normal is +Y).
+        let expected = center + plane.normal * -3.0;
+        assert!((t.position - expected).magnitude() < EPSILON);
     }
 }

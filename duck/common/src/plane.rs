@@ -1,4 +1,7 @@
-use crate::{EuclideanSpace, InnerSpace, Matrix, Matrix4, Point3, SquareMatrix, Vector3, Vector4};
+use crate::{
+    EuclideanSpace, InnerSpace, Matrix, Matrix3, Matrix4, Point3, Quaternion, SquareMatrix,
+    Vector3, Vector4,
+};
 
 use crate::EPSILON;
 
@@ -146,12 +149,54 @@ impl Plane {
         let v = u.cross(n);
         (u, v)
     }
+
+    /// Orthonormal right-handed frame for this plane as a [`Matrix3`].
+    /// 
+    /// Provides a rotation matrix whose columns are the world directions of
+    /// the plane's local axes: local +X → the in-plane tangent `u`,
+    /// local +Y → `normal × u`, local +Z → `normal`. Use it to place local-XY
+    /// content with +Z as the up/extrude axis onto an arbitrary plane.
+    ///
+    /// Note this differs from [`basis`](Self::basis), whose right-handed frame is
+    /// `(u, normal, v)`; here the normal is on +Z, the usual surface-frame
+    /// convention.
+    pub fn frame(&self) -> Matrix3 {
+        let (u, _v) = self.basis();
+        Matrix3::from_cols(u, self.normal.cross(u), self.normal)
+    }
+
+    /// This plane's [`frame`](Self::frame) as a rotation quaternion (local +Z maps
+    /// to the plane normal, local XY lies in the plane).
+    pub fn rotation(&self) -> Quaternion {
+        Quaternion::from(self.frame())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{Matrix4, Point3, Vector3, Rad, EPSILON};
+
+    #[test]
+    fn frame_is_proper_rotation_mapping_z_to_normal() {
+        let planes = [
+            Plane::xz(),
+            Plane::xy(),
+            Plane::yz(),
+            Plane::from_point(Vector3::new(1.0, 2.0, 3.0), Point3::new(0.0, 0.0, 0.0)),
+        ];
+        for plane in planes {
+            let f = plane.frame();
+            // Proper rotation: no reflection.
+            assert!((f.determinant() - 1.0).abs() < 1e-5);
+            // Columns are orthonormal.
+            assert!(f.x.dot(f.y).abs() < 1e-5);
+            assert!(f.x.dot(f.z).abs() < 1e-5);
+            assert!(f.y.dot(f.z).abs() < 1e-5);
+            // Local +Z maps onto the plane normal.
+            assert!((plane.rotation() * Vector3::unit_z() - plane.normal).magnitude() < 1e-5);
+        }
+    }
 
     #[test]
     fn test_plane_from_normal_and_point() {

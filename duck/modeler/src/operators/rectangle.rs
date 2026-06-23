@@ -2,9 +2,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
-use duck_engine_common::{
-    matrix4_to_row_major_f64, InnerSpace, Matrix3, Plane, Point3, Quaternion, Vector3,
-};
+use duck_engine_common::{matrix4_to_row_major_f64, InnerSpace, Plane, Point3, Vector3};
 use duck_engine_scene::cad::tessellate_into;
 use duck_engine_scene::{NodeId, Visibility};
 use duck_engine_viewer::{
@@ -68,16 +66,12 @@ impl RectangleOperator {
         }
     }
 
-    /// Rotation laying a local-XY face (normal +Z) flat on `plane`.
-    fn face_rotation(plane: &Plane) -> Quaternion {
-        let (u, _v) = plane.basis();
-        Quaternion::from(Matrix3::from_cols(u, plane.normal.cross(u), plane.normal))
-    }
-
+    /// Lays the unit reference face (local XY, normal +Z) flat on `plane`, scaled to
+    /// the footprint. [`Plane::rotation`] maps the local +Z axis to the plane normal.
     fn footprint_transform(center: Point3, width: f32, depth: f32, plane: &Plane) -> Transform {
         Transform {
             position: center,
-            rotation: Self::face_rotation(plane),
+            rotation: plane.rotation(),
             scale: Vector3::new(width, depth, 1.0),
         }
     }
