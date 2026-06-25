@@ -226,7 +226,7 @@ fn resolve_sub_geometry(
                     .map(|edge_index| SelectionItem::Edge { node_id: hit.node_id, edge_index })
             }
             RayHit::Point { point_index, .. } if sub_kinds.contains(SelectionKinds::POINT) => {
-                mesh.and_then(|m| m.point_for_vertex(point_index as u32))
+                mesh.and_then(|m| m.pointset_for_point(point_index as u32))
                     .map(|point_index| SelectionItem::Pointset { node_id: hit.node_id, pointset_index: point_index })
             }
             _ => None,

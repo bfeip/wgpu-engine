@@ -162,7 +162,7 @@ impl SelectionManager {
 
     /// Returns true if the given pointset is selected.
     pub fn is_pointset_selected(&self, node_id: NodeId, pointset_index: u32) -> bool {
-        self.selected.contains(&SelectionItem::Pointset { node_id, pointset_index: point_index })
+        self.selected.contains(&SelectionItem::Pointset { node_id, pointset_index })
     }
 
     /// Returns an iterator over face indices currently selected on `node_id`.
