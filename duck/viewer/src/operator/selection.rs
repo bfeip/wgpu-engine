@@ -62,7 +62,7 @@ pub enum SelectionMode {
 
 impl Default for SelectionMode {
     fn default() -> Self {
-        SelectionMode::SubGeometry(SelectionKinds::all())
+        SelectionMode::Progressive(SelectionKinds::all())
     }
 }
 
@@ -148,8 +148,9 @@ impl SelectionOperator {
 
             SelectionMode::Progressive(kinds) => {
                 let node = first_node?;
-                // Drill into sub-geometry only once the node is already selected.
-                if ctx.selection.contains(&SelectionItem::Node(node)) {
+                // Drill into sub-geometry once the node is selected — whether the whole
+                // node or any of its sub-geometry is currently the active selection.
+                if ctx.selection.is_node_selected(node) {
                     let sub = kinds & SelectionKinds::sub_geometry();
                     resolve_sub_geometry(&results, &*scene, sub)
                         .or(Some(SelectionItem::Node(node)))

@@ -30,7 +30,9 @@ impl Operator for ToolHost {
 }
 
 /// Owns the registered modeling tools and everything generic about driving
-/// them: activation/deactivation, the always-on selection operator's
+/// them.
+/// 
+/// Handles activation/deactivation, the always-on selection operator's
 /// granularity, auto-return to selection when a tool finishes, the 3D cursor,
 /// and the tool palette. Adding a tool to the modeler is implementing
 /// [`ModelingTool`] plus one [`ToolManager::register`] call.
