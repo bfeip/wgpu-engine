@@ -1,7 +1,7 @@
 //! Selection management for scene elements.
 //!
-//! Supports node-level selection as well as sub-geometry selection (faces, edges) for
-//! meshes that carry [`Topology`](crate::scene::Topology) metadata.
+//! Supports node-level selection as well as sub-geometry selection (faces, edges,
+//! points) for meshes that carry [`Topology`](crate::scene::Topology) metadata.
 
 use std::collections::HashSet;
 
@@ -47,6 +47,8 @@ pub enum SelectionItem {
     Face { node_id: NodeId, face_index: u32 },
     /// A single edge within a node's mesh topology.
     Edge { node_id: NodeId, edge_index: u32 },
+    /// A single point within a node's mesh topology.
+    Pointset { node_id: NodeId, pointset_index: u32 },
 }
 
 impl SelectionItem {
@@ -56,6 +58,7 @@ impl SelectionItem {
             SelectionItem::Node(id) => *id,
             SelectionItem::Face { node_id, .. } => *node_id,
             SelectionItem::Edge { node_id, .. } => *node_id,
+            SelectionItem::Pointset { node_id, .. } => *node_id,
         }
     }
 }
@@ -157,6 +160,11 @@ impl SelectionManager {
         self.selected.contains(&SelectionItem::Edge { node_id, edge_index })
     }
 
+    /// Returns true if the given pointset is selected.
+    pub fn is_pointset_selected(&self, node_id: NodeId, pointset_index: u32) -> bool {
+        self.selected.contains(&SelectionItem::Pointset { node_id, pointset_index: point_index })
+    }
+
     /// Returns an iterator over face indices currently selected on `node_id`.
     pub fn selected_faces_for_node(&self, node_id: NodeId) -> impl Iterator<Item = u32> + '_ {
         self.selection_order.iter().filter_map(move |item| {
@@ -173,6 +181,17 @@ impl SelectionManager {
         self.selection_order.iter().filter_map(move |item| {
             if let SelectionItem::Edge { node_id: nid, edge_index } = item {
                 if *nid == node_id { Some(*edge_index) } else { None }
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Returns an iterator over pointset indices currently selected on `node_id`.
+    pub fn selected_pointsets_for_node(&self, node_id: NodeId) -> impl Iterator<Item = u32> + '_ {
+        self.selection_order.iter().filter_map(move |item| {
+            if let SelectionItem::Pointset { node_id: nid, pointset_index } = item {
+                if *nid == node_id { Some(*pointset_index) } else { None }
             } else {
                 None
             }
@@ -284,6 +303,10 @@ impl HighlightQuery for SelectionManager {
         self.selected_edges_for_node(node_id).collect()
     }
 
+    fn highlighted_pointsets_for_node(&self, node_id: NodeId) -> Vec<u32> {
+        self.selected_pointsets_for_node(node_id).collect()
+    }
+
     fn nodes_with_highlighted_faces(&self) -> Vec<NodeId> {
         let mut nodes: Vec<NodeId> = self
             .selected
@@ -310,6 +333,19 @@ impl HighlightQuery for SelectionManager {
         nodes
     }
 
+    fn nodes_with_highlighted_pointsets(&self) -> Vec<NodeId> {
+        let mut nodes: Vec<NodeId> = self
+            .selected
+            .iter()
+            .filter_map(|item| {
+                if let SelectionItem::Pointset { node_id, .. } = item { Some(*node_id) } else { None }
+            })
+            .collect();
+        nodes.sort_unstable();
+        nodes.dedup();
+        nodes
+    }
+
     fn primary_face(&self) -> Option<(NodeId, u32)> {
         match self.primary {
             Some(SelectionItem::Face { node_id, face_index }) => Some((node_id, face_index)),
@@ -320,6 +356,13 @@ impl HighlightQuery for SelectionManager {
     fn primary_edge(&self) -> Option<(NodeId, u32)> {
         match self.primary {
             Some(SelectionItem::Edge { node_id, edge_index }) => Some((node_id, edge_index)),
+            _ => None,
+        }
+    }
+
+    fn primary_pointset(&self) -> Option<(NodeId, u32)> {
+        match self.primary {
+            Some(SelectionItem::Pointset { node_id, pointset_index: point_index }) => Some((node_id, point_index)),
             _ => None,
         }
     }

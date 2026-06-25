@@ -87,7 +87,7 @@ impl ToolManager {
                 tool.activate();
                 tool.selection_mode()
             }
-            None => SelectionMode::SubGeometry,
+            None => SelectionMode::default(),
         };
         self.sel_op.lock().unwrap().mode = mode;
 

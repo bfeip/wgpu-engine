@@ -284,14 +284,14 @@ fn collect_mesh_corners(mesh: &Mesh, topology: &Topology, world: &Matrix4) -> Ve
         });
     };
 
-    if !topology.point_ranges.is_empty() {
+    if !topology.pointset_ranges.is_empty() {
         // TODO: Only works on first point primitive. Not a big deal right now but...
         if let Some(points) = mesh
             .primitives()
             .iter()
             .find(|p| p.primitive_type == PrimitiveType::PointList)
         {
-            for range in &topology.point_ranges {
+            for range in &topology.pointset_ranges {
                 for i in range.start..range.start + range.count {
                     if let Some(vtx) = points
                         .indices
@@ -518,7 +518,7 @@ mod tests {
         let topology = Topology {
             face_ranges: vec![],
             edge_ranges: vec![SubMeshRange { start: 0, count: 1 }],
-            point_ranges: vec![],
+            pointset_ranges: vec![],
         };
         // Translate the whole part by +10 in X.
         let world = Matrix4::from_translation(Vector3::new(10.0, 0.0, 0.0));
@@ -547,7 +547,7 @@ mod tests {
         mesh.set_topology(Topology {
             face_ranges: vec![],
             edge_ranges: vec![SubMeshRange { start: 0, count: 1 }],
-            point_ranges: vec![],
+            pointset_ranges: vec![],
         });
         let mut scene = Scene::new();
         let mesh_id = scene.add_mesh(mesh);

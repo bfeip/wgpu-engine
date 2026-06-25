@@ -56,11 +56,17 @@ pub trait HighlightQuery {
     /// Returns the edge indices highlighted on `node_id`, if any.
     fn highlighted_edges_for_node(&self, node_id: NodeId) -> Vec<u32>;
 
+    /// Returns the pointset indices highlighted on `node_id`, if any.
+    fn highlighted_pointsets_for_node(&self, node_id: NodeId) -> Vec<u32>;
+
     /// Returns all nodes that have at least one face highlighted.
     fn nodes_with_highlighted_faces(&self) -> Vec<NodeId>;
 
     /// Returns all nodes that have at least one edge highlighted.
     fn nodes_with_highlighted_edges(&self) -> Vec<NodeId>;
+
+    /// Returns all nodes that have at least one pointset highlighted.
+    fn nodes_with_highlighted_pointsets(&self) -> Vec<NodeId>;
 
     /// Returns the `(node, face)` of the primary selection iff it is a face.
     /// Used to color the primary sub-element with the primary tier.
@@ -68,6 +74,9 @@ pub trait HighlightQuery {
 
     /// Returns the `(node, edge)` of the primary selection iff it is an edge.
     fn primary_edge(&self) -> Option<(NodeId, u32)>;
+
+    /// Returns the `(node, pointset)` of the primary selection iff it is a point.
+    fn primary_pointset(&self) -> Option<(NodeId, u32)>;
 
     /// Returns the highlight configuration for the primary selection.
     fn highlight_config(&self) -> HighlightConfig;

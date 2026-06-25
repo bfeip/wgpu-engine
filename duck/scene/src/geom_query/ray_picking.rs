@@ -23,12 +23,20 @@ pub enum RayHit {
         /// World-space perpendicular distance from the ray to the segment
         distance_to_ray: f32,
     },
+    /// A point was hit within the query's tolerance.
+    Point {
+        /// Index of the point (0-based index into the mesh's point list)
+        point_index: usize,
+        /// World-space distance from the ray to the point
+        distance_to_ray: f32,
+    },
 }
 
 /// Result of a ray pick query against a scene instance.
 ///
 /// For `RayHit::Triangle`, `hit_point` is the exact ray-triangle intersection point.
 /// For `RayHit::Segment`, `hit_point` is the closest point on the segment to the ray.
+/// For `RayHit::Point`, `hit_point` is the point's position.
 #[derive(Debug, Clone)]
 pub struct RayPickResult {
     /// The node that was hit
@@ -45,8 +53,12 @@ pub struct RayPickResult {
 
 /// Ray picking query that implements the generic PickQuery trait.
 ///
-/// Construct with [`RayPickQuery::new`] for face-only picking, [`RayPickQuery::lines`]
-/// for line-only picking, or [`RayPickQuery::all`] to pick both faces and lines.
+/// - Construct with:
+/// - [`RayPickQuery::faces`] for face-only picking.
+/// - [`RayPickQuery::lines`] for line-only picking.
+/// - [`RayPickQuery::points`] for point-only picking.
+/// - [`RayPickQuery::all`] to pick all primitive types.
+/// [`RayPickQuery::for_kinds`] allows an arbitrary combination.
 pub struct RayPickQuery {
     /// The ray in current coordinate space (may be transformed to local space)
     ray: Ray,
@@ -54,52 +66,62 @@ pub struct RayPickQuery {
     world_ray: Ray,
     pick_faces: bool,
     pick_lines: bool,
-    /// World-space tolerance for line picking
+    pick_points: bool,
+    /// World-space tolerance for line and point picking
     line_tolerance: f32,
     /// Tolerance scaled to the current (possibly local) coordinate space
     local_line_tolerance: f32,
 }
 
 impl RayPickQuery {
-    /// Creates a face-only query. Lines are ignored.
-    pub fn faces(ray: Ray) -> Self {
-        Self {
-            ray,
-            world_ray: ray,
-            pick_faces: true,
-            pick_lines: false,
-            line_tolerance: 0.0,
-            local_line_tolerance: 0.0,
-        }
-    }
-
-    /// Creates a line-only query. Triangles are ignored.
+    /// Creates a query picking an arbitrary combination of primitive types.
     ///
-    /// `tolerance` is the maximum world-space distance between the ray and a segment
-    /// for the segment to be considered a hit.
-    pub fn lines(ray: Ray, tolerance: f32) -> Self {
+    /// `tolerance` is the maximum world-space distance between the ray and a
+    /// segment/point for it to be considered a hit (ignored for faces).
+    pub fn for_kinds(
+        ray: Ray,
+        tolerance: f32,
+        pick_faces: bool,
+        pick_lines: bool,
+        pick_points: bool,
+    ) -> Self {
         Self {
             ray,
             world_ray: ray,
-            pick_faces: false,
-            pick_lines: true,
+            pick_faces,
+            pick_lines,
+            pick_points,
             line_tolerance: tolerance,
             local_line_tolerance: tolerance,
         }
     }
 
-    /// Creates a query that picks both triangle faces and line segments.
+    /// Creates a face-only query. Lines and points are ignored.
+    pub fn faces(ray: Ray) -> Self {
+        Self::for_kinds(ray, 0.0, true, false, false)
+    }
+
+    /// Creates a line-only query. Triangles and points are ignored.
     ///
-    /// `line_tolerance` is the maximum world-space distance for segment hits.
-    pub fn all(ray: Ray, line_tolerance: f32) -> Self {
-        Self {
-            ray,
-            world_ray: ray,
-            pick_faces: true,
-            pick_lines: true,
-            line_tolerance,
-            local_line_tolerance: line_tolerance,
-        }
+    /// `tolerance` is the maximum world-space distance between the ray and a segment
+    /// for the segment to be considered a hit.
+    pub fn lines(ray: Ray, tolerance: f32) -> Self {
+        Self::for_kinds(ray, tolerance, false, true, false)
+    }
+
+    /// Creates a point-only query. Triangles and lines are ignored.
+    ///
+    /// `tolerance` is the maximum world-space distance between the ray and a point
+    /// for the point to be considered a hit.
+    pub fn points(ray: Ray, tolerance: f32) -> Self {
+        Self::for_kinds(ray, tolerance, false, false, true)
+    }
+
+    /// Creates a query that picks triangle faces, line segments, and points.
+    ///
+    /// `tolerance` is the maximum world-space distance for segment and point hits.
+    pub fn all(ray: Ray, tolerance: f32) -> Self {
+        Self::for_kinds(ray, tolerance, true, true, true)
     }
 }
 
@@ -110,9 +132,9 @@ impl PickQuery for RayPickQuery {
         if self.pick_faces && bounds.intersects_ray(&self.ray).is_some() {
             return true;
         }
-        if self.pick_lines {
-            // Inflate bounds by the line tolerance so segments near-but-outside the
-            // AABB are not incorrectly culled during the broad phase.
+        if self.pick_lines || self.pick_points {
+            // Inflate bounds by the tolerance so segments/points near-but-outside
+            // the AABB are not incorrectly culled during the broad phase.
             let t = self.local_line_tolerance;
             let inflated = Aabb::new(
                 Point3::new(bounds.min.x - t, bounds.min.y - t, bounds.min.z - t),
@@ -138,6 +160,7 @@ impl PickQuery for RayPickQuery {
             world_ray: self.world_ray,
             pick_faces: self.pick_faces,
             pick_lines: self.pick_lines,
+            pick_points: self.pick_points,
             line_tolerance: self.line_tolerance,
             local_line_tolerance: self.line_tolerance * scale,
         }
@@ -197,13 +220,42 @@ impl PickQuery for RayPickQuery {
                 });
             }
         }
+
+        if self.pick_points {
+            for point_hit in
+                mesh_intersection::intersect_ray_with_points(mesh, &self.ray, self.local_line_tolerance)
+            {
+                let world_point =
+                    transform_point(world_transform, point_hit.closest_point);
+                let distance = (world_point - self.world_ray.origin).magnitude();
+
+                // World-space distance to the ray: compare the point against the
+                // local-space ray point at the same t, both transformed to world.
+                let local_ray_point = self.ray.point_at(point_hit.t);
+                let world_ray_point =
+                    transform_point(world_transform, local_ray_point);
+                let distance_to_ray = (world_point - world_ray_point).magnitude();
+
+                results.push(RayPickResult {
+                    node_id,
+                    instance_id,
+                    distance,
+                    hit_point: world_point,
+                    hit: RayHit::Point {
+                        point_index: point_hit.point_index,
+                        distance_to_ray,
+                    },
+                });
+            }
+        }
     }
 }
 
 /// Picks all instances intersected by a ray, sorted by distance (closest first).
 ///
-/// Use [`RayPickQuery::new`] to pick faces only, [`RayPickQuery::lines`] to pick
-/// segments only, or [`RayPickQuery::all`] to pick both.
+/// Use [`RayPickQuery::faces`] to pick faces only, [`RayPickQuery::lines`] /
+/// [`RayPickQuery::points`] to pick segments/points only, or [`RayPickQuery::all`]
+/// to pick all primitive types.
 pub fn pick_all_from_ray(query: &RayPickQuery, scene: &Scene) -> Vec<RayPickResult> {
     let mut results = pick_all(query, scene);
     results.sort_by(|a, b| {

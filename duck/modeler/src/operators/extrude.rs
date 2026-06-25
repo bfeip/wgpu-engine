@@ -7,7 +7,7 @@ use duck_engine_scene::{NodeId, Visibility};
 use duck_engine_viewer::{
     event::{DeviceEvent, Event, EventContext},
     input::{ElementState, Key, MouseButton, NamedKey},
-    operator::Operator,
+    operator::{Operator, SelectionKinds, SelectionMode},
     selection::{SelectionItem, SelectionManager},
 };
 
@@ -73,7 +73,7 @@ impl ExtrudeOperator {
             SelectionItem::Edge { node_id, edge_index } => {
                 Some(ExtrudeTarget::Edge { node: node_id, edge_index })
             }
-            SelectionItem::Node(_) => None,
+            SelectionItem::Node(_) | SelectionItem::Pointset { .. } => None,
         }
     }
 
@@ -201,6 +201,11 @@ impl ModelingTool for ExtrudeOperator {
     fn deactivate(&mut self) {
         self.cancel();
         self.phase = ExtrudePhase::AwaitingSelection;
+    }
+
+    fn selection_mode(&self) -> SelectionMode {
+        // Extrude operates on a face (→ solid pad) or an edge (→ face).
+        SelectionMode::SubGeometry(SelectionKinds::FACE | SelectionKinds::EDGE)
     }
 
     fn is_finished(&self) -> bool {

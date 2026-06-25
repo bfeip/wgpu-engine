@@ -22,7 +22,7 @@ use winit::{
 
 use duck_engine_viewer::winit_support;
 use duck_engine_viewer::Viewer;
-use duck_engine_viewer::operator::{NavigationOperator, SelectionOperator, SelectionMode, TransformMode};
+use duck_engine_viewer::operator::{NavigationOperator, SelectionOperator, TransformMode};
 use duck_engine_viewer::common::{
     Vector3, InnerSpace
 };
@@ -88,7 +88,7 @@ impl ViewerState<'static> {
         let construction_options = Rc::new(RefCell::new(ConstructionOptions::new()));
         let document = Arc::new(Mutex::new(Document::new(viewer.scene())));
 
-        let sel_op = Arc::new(Mutex::new(SelectionOperator::with_mode(SelectionMode::SubGeometry)));
+        let sel_op = Arc::new(Mutex::new(SelectionOperator::new()));
         viewer.dispatcher_mut().push_back(sel_op.clone());
         viewer.dispatcher_mut().push_back(Arc::new(Mutex::new(NavigationOperator::new())));
 

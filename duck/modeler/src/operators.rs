@@ -55,6 +55,7 @@ impl ConstructionOptions {
                 .with_flags(MaterialFlags::DOUBLE_SIDED),
             line_material: LineMaterial::new(RgbaColor { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }),
             include_edges: true,
+            include_points: true,
         };
         let construction_plane = Plane::xz();
         let grid = GridConfig::default();

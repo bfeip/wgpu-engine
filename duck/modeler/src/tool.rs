@@ -47,7 +47,7 @@ pub trait ModelingTool: Operator {
     /// Selection granularity the always-on `SelectionOperator` should use
     /// while this tool is active.
     fn selection_mode(&self) -> SelectionMode {
-        SelectionMode::SubGeometry
+        SelectionMode::default()
     }
 
     /// Per-frame egui panel for the active tool. Default: no panel.

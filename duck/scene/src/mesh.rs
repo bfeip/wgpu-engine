@@ -121,13 +121,13 @@ pub struct Topology {
     pub edge_ranges: Vec<SubMeshRange>,
     /// One entry per point element.
     /// Indexes into the mesh's first `PointList` primitive's indices.
-    pub point_ranges: Vec<SubMeshRange>,
+    pub pointset_ranges: Vec<SubMeshRange>,
 }
 
 impl Topology {
     /// Returns `true` if there are no face, edge, or point ranges.
     pub fn is_empty(&self) -> bool {
-        self.face_ranges.is_empty() && self.edge_ranges.is_empty() && self.point_ranges.is_empty()
+        self.face_ranges.is_empty() && self.edge_ranges.is_empty() && self.pointset_ranges.is_empty()
     }
 }
 
@@ -616,6 +616,18 @@ impl Mesh {
             .map(|i| i as u32)
     }
 
+    /// Returns the pointset index that contains `point_index` (counting individual
+    /// points in the first `PointList` primitive).
+    ///
+    /// Returns `None` if this mesh has no topology or `point_index` is out of range.
+    pub fn pointset_for_point(&self, point_index: u32) -> Option<u32> {
+        let topo = self.topology.as_ref()?;
+        topo.pointset_ranges
+            .iter()
+            .position(|r| point_index >= r.start && point_index < r.start + r.count)
+            .map(|i| i as u32)
+    }
+
 }
 
 impl Default for Mesh {
@@ -802,5 +814,32 @@ mod tests {
             vec![MeshPrimitive { primitive_type: PrimitiveType::TriangleList, indices: vec![0, 1, 2] }],
         );
         assert_eq!(mesh.segments().count(), 0);
+    }
+
+    // ========== point_for_vertex ==========
+
+    #[test]
+    fn point_for_vertex_resolves_ranges() {
+        let mut mesh = make_mixed_mesh();
+        // Two logical points: point 0 spans the first 2 vertices, point 1 the last 2.
+        mesh.set_topology(Topology {
+            face_ranges: vec![],
+            edge_ranges: vec![],
+            pointset_ranges: vec![
+                SubMeshRange { start: 0, count: 2 },
+                SubMeshRange { start: 2, count: 2 },
+            ],
+        });
+        assert_eq!(mesh.pointset_for_point(0), Some(0));
+        assert_eq!(mesh.pointset_for_point(1), Some(0));
+        assert_eq!(mesh.pointset_for_point(2), Some(1));
+        assert_eq!(mesh.pointset_for_point(3), Some(1));
+        assert_eq!(mesh.pointset_for_point(4), None); // out of range
+    }
+
+    #[test]
+    fn point_for_vertex_none_without_topology() {
+        let mesh = make_mixed_mesh();
+        assert_eq!(mesh.pointset_for_point(0), None);
     }
 }

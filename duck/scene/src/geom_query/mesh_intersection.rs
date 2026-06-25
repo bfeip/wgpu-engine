@@ -1,4 +1,4 @@
-use duck_engine_common::Point3;
+use duck_engine_common::{InnerSpace, Point3};
 
 use crate::common::{ConvexPolyhedron, Ray};
 use crate::Mesh;
@@ -27,6 +27,19 @@ pub struct LineMeshHit {
     pub distance_to_ray: f32,
     /// Index of the segment (0-based pair index into the mesh's line index buffer)
     pub segment_index: usize,
+}
+
+/// Result of a ray-point closest-approach test in local mesh space.
+#[derive(Debug, Clone)]
+pub struct PointMeshHit {
+    /// Parameter along the ray at the closest approach point (in local space)
+    pub t: f32,
+    /// The point's position in local mesh space (the closest point on the point to the ray)
+    pub closest_point: Point3,
+    /// Minimum distance between the ray and the point
+    pub distance_to_ray: f32,
+    /// Index of the point (0-based index into the mesh's point list)
+    pub point_index: usize,
 }
 
 /// Result of a volume-mesh intersection test in local mesh space.
@@ -87,6 +100,38 @@ pub fn intersect_ray_with_lines(mesh: &Mesh, ray: &Ray, tolerance: f32) -> Vec<L
                 closest_point: approach.closest_on_segment,
                 distance_to_ray: approach.distance,
                 segment_index,
+            });
+        }
+    }
+
+    hits
+}
+
+/// Tests a ray against all points in a mesh using closest-approach distance.
+///
+/// The ray should be in local mesh space. Returns all points whose distance to
+/// the ray is within `tolerance`. Results are unsorted (caller sorts if needed).
+pub fn intersect_ray_with_points(mesh: &Mesh, ray: &Ray, tolerance: f32) -> Vec<PointMeshHit> {
+    let mut hits = Vec::new();
+
+    for (point_index, vertex) in mesh.points().enumerate() {
+        let p = Point3::from(vertex.position);
+
+        // Project the point onto the ray. `direction` is normalized, so `t` is the
+        // signed distance along the ray to the projection.
+        let t = (p - ray.origin).dot(ray.direction);
+        if t < 0.0 {
+            continue; // behind the ray origin
+        }
+        let on_ray = ray.point_at(t);
+        let distance_to_ray = (p - on_ray).magnitude();
+
+        if distance_to_ray <= tolerance {
+            hits.push(PointMeshHit {
+                t,
+                closest_point: p,
+                distance_to_ray,
+                point_index,
             });
         }
     }
@@ -169,7 +214,15 @@ mod tests {
     use crate::common::{Aabb, ConvexPolyhedron, Ray};
     use crate::{Mesh, MeshPrimitive, PrimitiveType, Vertex};
 
-    use super::{intersect_ray_with_lines, intersect_volume};
+    use super::{intersect_ray_with_lines, intersect_ray_with_points, intersect_volume};
+
+    fn make_point_mesh(vertices: Vec<Vertex>) -> Mesh {
+        let indices: Vec<u32> = (0..vertices.len() as u32).collect();
+        Mesh::from_raw(
+            vertices,
+            vec![MeshPrimitive { primitive_type: PrimitiveType::PointList, indices }],
+        )
+    }
 
     fn make_vertex(x: f32, y: f32, z: f32) -> Vertex {
         Vertex { position: [x, y, z], tex_coords: [0.0; 3], normal: [0.0, 1.0, 0.0] }
@@ -241,6 +294,62 @@ mod tests {
         );
         let ray = Ray::new(Point3::new(0.5, 0.5, -1.0), Vector3::new(0.0, 0.0, 1.0));
         let hits = intersect_ray_with_lines(&mesh, &ray, 10.0);
+        assert!(hits.is_empty());
+    }
+
+    // ===== intersect_ray_with_points =====
+
+    #[test]
+    fn ray_hits_point_within_tolerance() {
+        // Point on the ray's axis at z=5; ray along +Z — distance = 0
+        let mesh = make_point_mesh(vec![make_vertex(0.0, 0.0, 5.0)]);
+        let ray = Ray::new(Point3::new(0.0, 0.0, 0.0), Vector3::new(0.0, 0.0, 1.0));
+        let hits = intersect_ray_with_points(&mesh, &ray, 0.1);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].point_index, 0);
+        assert!(hits[0].distance_to_ray < 0.01);
+    }
+
+    #[test]
+    fn ray_misses_point_outside_tolerance() {
+        // Point 2 units off the ray axis — outside a 0.1 tolerance
+        let mesh = make_point_mesh(vec![make_vertex(2.0, 0.0, 5.0)]);
+        let ray = Ray::new(Point3::new(0.0, 0.0, 0.0), Vector3::new(0.0, 0.0, 1.0));
+        let hits = intersect_ray_with_points(&mesh, &ray, 0.1);
+        assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn ray_ignores_point_behind_origin() {
+        // Point behind the ray origin (z = -5) must not be picked
+        let mesh = make_point_mesh(vec![make_vertex(0.0, 0.0, -5.0)]);
+        let ray = Ray::new(Point3::new(0.0, 0.0, 0.0), Vector3::new(0.0, 0.0, 1.0));
+        let hits = intersect_ray_with_points(&mesh, &ray, 0.1);
+        assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn ray_hits_points_sortable_by_t() {
+        let mesh = make_point_mesh(vec![
+            make_vertex(0.0, 0.0, 10.0),
+            make_vertex(0.0, 0.0, 3.0),
+        ]);
+        let ray = Ray::new(Point3::new(0.0, 0.0, 0.0), Vector3::new(0.0, 0.0, 1.0));
+        let mut hits = intersect_ray_with_points(&mesh, &ray, 0.1);
+        hits.sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap());
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].point_index, 1); // point at z=3
+        assert_eq!(hits[1].point_index, 0); // point at z=10
+    }
+
+    #[test]
+    fn no_point_primitives_returns_empty() {
+        let mesh = Mesh::from_raw(
+            vec![make_vertex(0.0, 0.0, 0.0), make_vertex(1.0, 0.0, 0.0), make_vertex(0.0, 1.0, 0.0)],
+            vec![MeshPrimitive { primitive_type: PrimitiveType::TriangleList, indices: vec![0, 1, 2] }],
+        );
+        let ray = Ray::new(Point3::new(0.0, 0.0, -1.0), Vector3::new(0.0, 0.0, 1.0));
+        let hits = intersect_ray_with_points(&mesh, &ray, 10.0);
         assert!(hits.is_empty());
     }
 

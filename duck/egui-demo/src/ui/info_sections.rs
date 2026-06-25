@@ -53,6 +53,7 @@ fn selection_item_label(item: SelectionItem, viewer: &Viewer) -> String {
         SelectionItem::Node(_) => node_label,
         SelectionItem::Face { face_index, .. } => format!("Face #{} ({})", face_index, node_label),
         SelectionItem::Edge { edge_index, .. } => format!("Edge #{} ({})", edge_index, node_label),
+        SelectionItem::Pointset { pointset_index, .. } => format!("Point #{} ({})", pointset_index, node_label),
     }
 }
 

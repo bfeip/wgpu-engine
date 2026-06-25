@@ -601,16 +601,14 @@ struct SubGeomHighlights {
     secondary: Vec<SubGeomBatch>,
 }
 
-/// Builds sub-geometry draw calls for all highlighted faces and edges in the
-/// current frame.
+/// Builds sub-geometry draw calls for all highlighted faces, edges, and pointsets
+/// in the current frame.
 ///
-/// For each node with highlighted faces/edges, looks up the instance's mesh
-/// topology and converts each highlighted face/edge index into a `SubGeomBatch`
-/// targeting that element's index range. The single primary element (if it is a
-/// face or edge) is sorted into the primary tier; everything else is secondary.
-///
-/// Points have a topology slot (`point_ranges`) but no selection path yet, so no
-/// point batches are produced; the renderer pass is nonetheless ready for them.
+/// For each node with highlighted sub-geometry, looks up the instance's mesh
+/// topology and converts each highlighted face/edge/pointset index into a
+/// `SubGeomBatch` targeting that element's index range. The single primary
+/// element (whatever its kind) is sorted into the primary tier; everything else
+/// is secondary.
 fn collect_highlight_sub_geom_batches(
     batches: &[DrawBatch],
     scene: &Scene,
@@ -625,6 +623,7 @@ fn collect_highlight_sub_geom_batches(
 
     let primary_face = highlight.primary_face();
     let primary_edge = highlight.primary_edge();
+    let primary_pointset = highlight.primary_pointset();
 
     let mut out = SubGeomHighlights::default();
 
@@ -669,6 +668,30 @@ fn collect_highlight_sub_geom_batches(
                 index_count: range.count * 2,
             };
             if primary_edge == Some((node_id, edge_index)) {
+                out.primary.push(batch);
+            } else {
+                out.secondary.push(batch);
+            }
+        }
+    }
+
+    // Points → PointList ranges (1 index per point).
+    for node_id in highlight.nodes_with_highlighted_pointsets() {
+        let Some(it) = instance_by_node.get(&node_id) else { continue };
+        let Some(instance) = scene.get_instance(it.instance_id) else { continue };
+        let Some(mesh) = scene.get_mesh(instance.mesh()) else { continue };
+        let Some(topology) = mesh.topology() else { continue };
+
+        for pointset_index in highlight.highlighted_pointsets_for_node(node_id) {
+            let Some(range) = topology.pointset_ranges.get(pointset_index as usize) else { continue };
+            let batch = SubGeomBatch {
+                mesh_id: instance.mesh(),
+                instance_transform: (*it).clone(),
+                primitive_type: PrimitiveType::PointList,
+                first_index: range.start,
+                index_count: range.count,
+            };
+            if primary_pointset == Some((node_id, pointset_index)) {
                 out.primary.push(batch);
             } else {
                 out.secondary.push(batch);
@@ -1248,6 +1271,10 @@ mod tests {
             Vec::new()
         }
 
+        fn highlighted_pointsets_for_node(&self, _node_id: NodeId) -> Vec<u32> {
+            Vec::new()
+        }
+
         fn nodes_with_highlighted_faces(&self) -> Vec<NodeId> {
             Vec::new()
         }
@@ -1256,11 +1283,19 @@ mod tests {
             Vec::new()
         }
 
+        fn nodes_with_highlighted_pointsets(&self) -> Vec<NodeId> {
+            Vec::new()
+        }
+
         fn primary_face(&self) -> Option<(NodeId, u32)> {
             None
         }
 
         fn primary_edge(&self) -> Option<(NodeId, u32)> {
+            None
+        }
+
+        fn primary_pointset(&self) -> Option<(NodeId, u32)> {
             None
         }
 

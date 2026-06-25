@@ -10,6 +10,9 @@ use crate::{
 /// Options controlling tessellation and presentation when producing scene geometry from CAD data.
 ///
 /// Used for both file import and programmatic authoring via [`tessellate_into`].
+// TODO: It's odd to have `include_edges` and `include_points` here _and_ a material for each.
+// if someone is't interesting in edges or points and doesn't include them they
+// still have to provide a material.
 #[derive(Clone)]
 pub struct CadTessellationOptions {
     /// Tolerance used for OCCT incremental mesh tessellation. Lower values
@@ -26,6 +29,10 @@ pub struct CadTessellationOptions {
     pub line_material: LineMaterial,
     /// Whether to include wireframe edges as `LineList` meshes.
     pub include_edges: bool,
+    /// Whether to include B-Rep vertices as a `PointList` mesh. Points are not
+    /// drawn unless the instance carries a point material, but they are required
+    /// for point picking/selection.
+    pub include_points: bool,
 }
 
 impl Default for CadTessellationOptions {
@@ -37,6 +44,7 @@ impl Default for CadTessellationOptions {
                 .with_base_color_factor(RgbaColor { r: 0.8, g: 0.8, b: 0.8, a: 1.0 }),
             line_material: LineMaterial::new(RgbaColor { r: 0.15, g: 0.15, b: 0.15, a: 1.0 }),
             include_edges: true,
+            include_points: true,
         }
     }
 }
@@ -51,6 +59,7 @@ pub fn tessellate_occ_shape(
     tolerance: f64,
     scale_factor: f32,
     include_edges: bool,
+    include_points: bool,
 ) -> Result<Mesh> {
     let s = scale_factor;
 
@@ -117,6 +126,28 @@ pub fn tessellate_occ_shape(
         }
     }
 
+    // --- Points ---
+    // One point is emitted per `shape.vertices()` entry, in iteration order, so a
+    // `point_index` resolves back to its OCCT vertex by plain position (mirroring
+    // how faces and edges work). Point vertices are appended after face/edge
+    // vertices and referenced by absolute index.
+    let mut point_indices: Vec<u32> = Vec::new();
+    let mut point_ranges: Vec<SubMeshRange> = Vec::new();
+
+    if include_points {
+        for vertex in shape.vertices() {
+            let p = vertex.point();
+            let base = vertices.len() as u32;
+            vertices.push(Vertex {
+                position: [p.x as f32 * s, p.y as f32 * s, p.z as f32 * s],
+                normal: [0.0, 0.0, 0.0],
+                tex_coords: [0.0, 0.0, 0.0],
+            });
+            point_ranges.push(SubMeshRange { start: point_indices.len() as u32, count: 1 });
+            point_indices.push(base);
+        }
+    }
+
     // --- Assemble mesh ---
     let mut primitives = Vec::new();
     if !face_indices.is_empty() {
@@ -131,9 +162,15 @@ pub fn tessellate_occ_shape(
             indices: edge_indices,
         });
     }
+    if !point_indices.is_empty() {
+        primitives.push(MeshPrimitive {
+            primitive_type: PrimitiveType::PointList,
+            indices: point_indices,
+        });
+    }
 
     let mut mesh = Mesh::from_raw(vertices, primitives);
-    mesh.set_topology(Topology { face_ranges, edge_ranges, point_ranges: Vec::new() });
+    mesh.set_topology(Topology { face_ranges, edge_ranges, pointset_ranges: point_ranges });
 
     Ok(mesh)
 }
@@ -153,6 +190,7 @@ pub fn tessellate_into(
         options.tessellation_tolerance,
         options.scale_factor,
         options.include_edges,
+        options.include_points,
     )?;
     let face_mat = scene.add_face_material(options.face_material.clone().with_fresh_id());
     let line_mat = scene.add_line_material(options.line_material.clone().with_fresh_id());
@@ -201,6 +239,7 @@ pub fn retessellate_node(
         options.tessellation_tolerance,
         options.scale_factor,
         options.include_edges,
+        options.include_points,
     )?;
     let mesh_id = scene.add_mesh(mesh);
 
