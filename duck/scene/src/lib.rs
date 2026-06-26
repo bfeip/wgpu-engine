@@ -44,7 +44,7 @@ pub use material::{
     AlphaMode, FaceMaterial, LineMaterial, MaterialFlags, MaterialProperties, PointMaterial,
     DEFAULT_METALLIC, DEFAULT_ROUGHNESS,
 };
-pub use mesh::{Mesh, MeshDescriptor, MeshIndex, MeshPrimitive, ObjMesh, PrimitiveType, SubMeshRange, Topology, Vertex};
+pub use mesh::{Mesh, MeshDescriptor, MeshIndex, MeshPrimitive, ObjMesh, PrimitiveType, SubGeometryElement, SubGeometryKind, SubMeshRange, Topology, Vertex};
 pub use node::{CustomNodePayload, EffectiveVisibility, Node, NodePayload, Visibility, NodeFlags};
 pub use sub_view::{SubView, SubViewId, ViewportRect};
 pub use texture::{Texture, TextureFormat};

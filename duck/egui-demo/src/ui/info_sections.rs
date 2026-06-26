@@ -1,3 +1,4 @@
+use duck_engine_viewer::scene::SubGeometryKind;
 use duck_engine_viewer::selection::SelectionItem;
 use duck_engine_viewer::Viewer;
 
@@ -51,9 +52,14 @@ fn selection_item_label(item: SelectionItem, viewer: &Viewer) -> String {
 
     match item {
         SelectionItem::Node(_) => node_label,
-        SelectionItem::Face { face_index, .. } => format!("Face #{} ({})", face_index, node_label),
-        SelectionItem::Edge { edge_index, .. } => format!("Edge #{} ({})", edge_index, node_label),
-        SelectionItem::Pointset { pointset_index, .. } => format!("Point #{} ({})", pointset_index, node_label),
+        SelectionItem::SubGeometry { element, .. } => {
+            let kind = match element.kind {
+                SubGeometryKind::Face => "Face",
+                SubGeometryKind::Edge => "Edge",
+                SubGeometryKind::Pointset => "Point",
+            };
+            format!("{} #{} ({})", kind, element.index, node_label)
+        }
     }
 }
 

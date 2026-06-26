@@ -5,7 +5,7 @@
 
 use std::collections::HashSet;
 
-use crate::scene::NodeId;
+use crate::scene::{NodeId, SubGeometryElement, SubGeometryKind};
 use crate::renderer::{HighlightQuery, HighlightConfig};
 
 /// Configuration for selection visual feedback.
@@ -43,12 +43,8 @@ impl Default for SelectionConfig {
 pub enum SelectionItem {
     /// A complete scene node.
     Node(NodeId),
-    /// A single face within a node's mesh topology.
-    Face { node_id: NodeId, face_index: u32 },
-    /// A single edge within a node's mesh topology.
-    Edge { node_id: NodeId, edge_index: u32 },
-    /// A single point within a node's mesh topology.
-    Pointset { node_id: NodeId, pointset_index: u32 },
+    /// A single face, edge, or point within a node's mesh topology.
+    SubGeometry { node_id: NodeId, element: SubGeometryElement },
 }
 
 impl SelectionItem {
@@ -56,9 +52,7 @@ impl SelectionItem {
     pub fn node_id(&self) -> NodeId {
         match self {
             SelectionItem::Node(id) => *id,
-            SelectionItem::Face { node_id, .. } => *node_id,
-            SelectionItem::Edge { node_id, .. } => *node_id,
-            SelectionItem::Pointset { node_id, .. } => *node_id,
+            SelectionItem::SubGeometry { node_id, .. } => *node_id,
         }
     }
 }
@@ -150,51 +144,25 @@ impl SelectionManager {
             .collect()
     }
 
-    /// Returns true if the given face is selected.
-    pub fn is_face_selected(&self, node_id: NodeId, face_index: u32) -> bool {
-        self.selected.contains(&SelectionItem::Face { node_id, face_index })
+    /// Returns true if the given sub-geometry element is selected on `node_id`.
+    pub fn is_sub_geometry_selected(&self, node_id: NodeId, element: SubGeometryElement) -> bool {
+        self.selected.contains(&SelectionItem::SubGeometry { node_id, element })
     }
 
-    /// Returns true if the given edge is selected.
-    pub fn is_edge_selected(&self, node_id: NodeId, edge_index: u32) -> bool {
-        self.selected.contains(&SelectionItem::Edge { node_id, edge_index })
-    }
-
-    /// Returns true if the given pointset is selected.
-    pub fn is_pointset_selected(&self, node_id: NodeId, pointset_index: u32) -> bool {
-        self.selected.contains(&SelectionItem::Pointset { node_id, pointset_index })
-    }
-
-    /// Returns an iterator over face indices currently selected on `node_id`.
-    pub fn selected_faces_for_node(&self, node_id: NodeId) -> impl Iterator<Item = u32> + '_ {
-        self.selection_order.iter().filter_map(move |item| {
-            if let SelectionItem::Face { node_id: nid, face_index } = item {
-                if *nid == node_id { Some(*face_index) } else { None }
-            } else {
-                None
+    /// Returns an iterator over indices of sub-geometry of `kind` currently
+    /// selected on `node_id`.
+    pub fn selected_sub_geometry_for_node(
+        &self,
+        node_id: NodeId,
+        kind: SubGeometryKind,
+    ) -> impl Iterator<Item = u32> + '_ {
+        self.selection_order.iter().filter_map(move |item| match item {
+            SelectionItem::SubGeometry { node_id: nid, element }
+                if *nid == node_id && element.kind == kind =>
+            {
+                Some(element.index)
             }
-        })
-    }
-
-    /// Returns an iterator over edge indices currently selected on `node_id`.
-    pub fn selected_edges_for_node(&self, node_id: NodeId) -> impl Iterator<Item = u32> + '_ {
-        self.selection_order.iter().filter_map(move |item| {
-            if let SelectionItem::Edge { node_id: nid, edge_index } = item {
-                if *nid == node_id { Some(*edge_index) } else { None }
-            } else {
-                None
-            }
-        })
-    }
-
-    /// Returns an iterator over pointset indices currently selected on `node_id`.
-    pub fn selected_pointsets_for_node(&self, node_id: NodeId) -> impl Iterator<Item = u32> + '_ {
-        self.selection_order.iter().filter_map(move |item| {
-            if let SelectionItem::Pointset { node_id: nid, pointset_index } = item {
-                if *nid == node_id { Some(*pointset_index) } else { None }
-            } else {
-                None
-            }
+            _ => None,
         })
     }
 
@@ -295,24 +263,19 @@ impl HighlightQuery for SelectionManager {
         }
     }
 
-    fn highlighted_faces_for_node(&self, node_id: NodeId) -> Vec<u32> {
-        self.selected_faces_for_node(node_id).collect()
+    fn highlighted_for_node(&self, node_id: NodeId, kind: SubGeometryKind) -> Vec<u32> {
+        self.selected_sub_geometry_for_node(node_id, kind).collect()
     }
 
-    fn highlighted_edges_for_node(&self, node_id: NodeId) -> Vec<u32> {
-        self.selected_edges_for_node(node_id).collect()
-    }
-
-    fn highlighted_pointsets_for_node(&self, node_id: NodeId) -> Vec<u32> {
-        self.selected_pointsets_for_node(node_id).collect()
-    }
-
-    fn nodes_with_highlighted_faces(&self) -> Vec<NodeId> {
+    fn nodes_with_highlighted(&self, kind: SubGeometryKind) -> Vec<NodeId> {
         let mut nodes: Vec<NodeId> = self
             .selected
             .iter()
-            .filter_map(|item| {
-                if let SelectionItem::Face { node_id, .. } = item { Some(*node_id) } else { None }
+            .filter_map(|item| match item {
+                SelectionItem::SubGeometry { node_id, element } if element.kind == kind => {
+                    Some(*node_id)
+                }
+                _ => None,
             })
             .collect();
         nodes.sort_unstable();
@@ -320,49 +283,9 @@ impl HighlightQuery for SelectionManager {
         nodes
     }
 
-    fn nodes_with_highlighted_edges(&self) -> Vec<NodeId> {
-        let mut nodes: Vec<NodeId> = self
-            .selected
-            .iter()
-            .filter_map(|item| {
-                if let SelectionItem::Edge { node_id, .. } = item { Some(*node_id) } else { None }
-            })
-            .collect();
-        nodes.sort_unstable();
-        nodes.dedup();
-        nodes
-    }
-
-    fn nodes_with_highlighted_pointsets(&self) -> Vec<NodeId> {
-        let mut nodes: Vec<NodeId> = self
-            .selected
-            .iter()
-            .filter_map(|item| {
-                if let SelectionItem::Pointset { node_id, .. } = item { Some(*node_id) } else { None }
-            })
-            .collect();
-        nodes.sort_unstable();
-        nodes.dedup();
-        nodes
-    }
-
-    fn primary_face(&self) -> Option<(NodeId, u32)> {
+    fn primary_sub_geometry(&self) -> Option<(NodeId, SubGeometryElement)> {
         match self.primary {
-            Some(SelectionItem::Face { node_id, face_index }) => Some((node_id, face_index)),
-            _ => None,
-        }
-    }
-
-    fn primary_edge(&self) -> Option<(NodeId, u32)> {
-        match self.primary {
-            Some(SelectionItem::Edge { node_id, edge_index }) => Some((node_id, edge_index)),
-            _ => None,
-        }
-    }
-
-    fn primary_pointset(&self) -> Option<(NodeId, u32)> {
-        match self.primary {
-            Some(SelectionItem::Pointset { node_id, pointset_index: point_index }) => Some((node_id, point_index)),
+            Some(SelectionItem::SubGeometry { node_id, element }) => Some((node_id, element)),
             _ => None,
         }
     }

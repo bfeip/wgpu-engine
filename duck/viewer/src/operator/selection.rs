@@ -3,10 +3,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::bindings::{InputBinding, InputMap};
 use crate::event::{AppEvent, DeviceEvent, Event, EventContext};
-use crate::geom_query::{RayHit, RayPickQuery, RayPickResult, pick_all_from_ray};
+use crate::geom_query::{RayPickQuery, RayPickResult, pick_all_from_ray};
 use crate::input::{Modifiers, MouseButton};
 use crate::operator::Operator;
-use crate::scene::Scene;
+use crate::scene::{Scene, SubGeometryElement, SubGeometryKind};
 use crate::selection::SelectionItem;
 use duck_engine_common::InnerSpace;
 
@@ -39,6 +39,16 @@ impl SelectionKinds {
     /// All sub-geometry kinds (everything except [`NODE`](Self::NODE)).
     pub fn sub_geometry() -> Self {
         Self::FACE | Self::EDGE | Self::POINT
+    }
+}
+
+impl From<SubGeometryKind> for SelectionKinds {
+    fn from(kind: SubGeometryKind) -> Self {
+        match kind {
+            SubGeometryKind::Face => SelectionKinds::FACE,
+            SubGeometryKind::Edge => SelectionKinds::EDGE,
+            SubGeometryKind::Pointset => SelectionKinds::POINT,
+        }
     }
 }
 
@@ -213,28 +223,19 @@ fn resolve_sub_geometry(
     sub_kinds: SelectionKinds,
 ) -> Option<SelectionItem> {
     for hit in results {
+        let kind = hit.hit.kind();
+        if !sub_kinds.contains(SelectionKinds::from(kind)) {
+            continue;
+        }
         let mesh = scene
             .get_instance(hit.instance_id)
             .and_then(|inst| scene.get_mesh(inst.mesh()));
 
-        let item = match hit.hit {
-            RayHit::Triangle { triangle_index, .. } if sub_kinds.contains(SelectionKinds::FACE) => {
-                mesh.and_then(|m| m.face_for_triangle(triangle_index as u32))
-                    .map(|face_index| SelectionItem::Face { node_id: hit.node_id, face_index })
-            }
-            RayHit::Segment { segment_index, .. } if sub_kinds.contains(SelectionKinds::EDGE) => {
-                mesh.and_then(|m| m.edge_for_segment(segment_index as u32))
-                    .map(|edge_index| SelectionItem::Edge { node_id: hit.node_id, edge_index })
-            }
-            RayHit::Point { point_index, .. } if sub_kinds.contains(SelectionKinds::POINT) => {
-                mesh.and_then(|m| m.pointset_for_point(point_index as u32))
-                    .map(|point_index| SelectionItem::Pointset { node_id: hit.node_id, pointset_index: point_index })
-            }
-            _ => None,
-        };
-
-        if item.is_some() {
-            return item;
+        if let Some(index) = mesh.and_then(|m| m.sub_geometry_for_primitive(kind, hit.hit.primitive_index())) {
+            return Some(SelectionItem::SubGeometry {
+                node_id: hit.node_id,
+                element: SubGeometryElement::new(kind, index),
+            });
         }
     }
     None

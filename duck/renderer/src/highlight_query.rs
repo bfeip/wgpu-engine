@@ -3,7 +3,7 @@
 //! This trait decouples the renderer from any specific highlight implementation,
 //! allowing it to query which nodes are highlighted for outline rendering.
 
-use crate::scene::NodeId;
+use crate::scene::{NodeId, SubGeometryElement, SubGeometryKind};
 
 /// Configuration for highlight rendering: whole-node outlines and sub-geometry
 /// (face overlay / edge & point recolor) highlights share these settings.
@@ -50,33 +50,15 @@ pub trait HighlightQuery {
     /// no selection. Used to partition primary vs secondary outlines.
     fn primary_outlined_node(&self) -> Option<NodeId>;
 
-    /// Returns the face indices highlighted on `node_id`, if any.
-    fn highlighted_faces_for_node(&self, node_id: NodeId) -> Vec<u32>;
+    /// Returns the indices of sub-geometry of `kind` highlighted on `node_id`, if any.
+    fn highlighted_for_node(&self, node_id: NodeId, kind: SubGeometryKind) -> Vec<u32>;
 
-    /// Returns the edge indices highlighted on `node_id`, if any.
-    fn highlighted_edges_for_node(&self, node_id: NodeId) -> Vec<u32>;
+    /// Returns all nodes that have at least one element of `kind` highlighted.
+    fn nodes_with_highlighted(&self, kind: SubGeometryKind) -> Vec<NodeId>;
 
-    /// Returns the pointset indices highlighted on `node_id`, if any.
-    fn highlighted_pointsets_for_node(&self, node_id: NodeId) -> Vec<u32>;
-
-    /// Returns all nodes that have at least one face highlighted.
-    fn nodes_with_highlighted_faces(&self) -> Vec<NodeId>;
-
-    /// Returns all nodes that have at least one edge highlighted.
-    fn nodes_with_highlighted_edges(&self) -> Vec<NodeId>;
-
-    /// Returns all nodes that have at least one pointset highlighted.
-    fn nodes_with_highlighted_pointsets(&self) -> Vec<NodeId>;
-
-    /// Returns the `(node, face)` of the primary selection iff it is a face.
+    /// Returns the node and element of the primary selection iff it is sub-geometry.
     /// Used to color the primary sub-element with the primary tier.
-    fn primary_face(&self) -> Option<(NodeId, u32)>;
-
-    /// Returns the `(node, edge)` of the primary selection iff it is an edge.
-    fn primary_edge(&self) -> Option<(NodeId, u32)>;
-
-    /// Returns the `(node, pointset)` of the primary selection iff it is a point.
-    fn primary_pointset(&self) -> Option<(NodeId, u32)>;
+    fn primary_sub_geometry(&self) -> Option<(NodeId, SubGeometryElement)>;
 
     /// Returns the highlight configuration for the primary selection.
     fn highlight_config(&self) -> HighlightConfig;

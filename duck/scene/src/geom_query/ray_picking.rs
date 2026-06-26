@@ -1,7 +1,7 @@
 use duck_engine_common::{transform_point, InnerSpace, Matrix4, Point3};
 
 use crate::common::{Aabb, Ray};
-use crate::{InstanceId, Mesh, NodeId, Scene};
+use crate::{InstanceId, Mesh, NodeId, Scene, SubGeometryKind};
 
 use super::mesh_intersection;
 use super::pick_query::{pick_all, PickQuery};
@@ -30,6 +30,26 @@ pub enum RayHit {
         /// World-space distance from the ray to the point
         distance_to_ray: f32,
     },
+}
+
+impl RayHit {
+    /// The sub-geometry kind of the hit primitive.
+    pub fn kind(&self) -> SubGeometryKind {
+        match self {
+            RayHit::Triangle { .. } => SubGeometryKind::Face,
+            RayHit::Segment { .. } => SubGeometryKind::Edge,
+            RayHit::Point { .. } => SubGeometryKind::Pointset,
+        }
+    }
+
+    /// The 0-based index of the hit primitive within its primitive list.
+    pub fn primitive_index(&self) -> u32 {
+        match self {
+            RayHit::Triangle { triangle_index, .. } => *triangle_index as u32,
+            RayHit::Segment { segment_index, .. } => *segment_index as u32,
+            RayHit::Point { point_index, .. } => *point_index as u32,
+        }
+    }
 }
 
 /// Result of a ray pick query against a scene instance.

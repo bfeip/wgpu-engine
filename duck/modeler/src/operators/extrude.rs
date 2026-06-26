@@ -3,7 +3,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use duck_engine_common::{Point3, Ray};
-use duck_engine_scene::{NodeId, Visibility};
+use duck_engine_scene::{NodeId, SubGeometryKind, Visibility};
 use duck_engine_viewer::{
     event::{DeviceEvent, Event, EventContext},
     input::{ElementState, Key, MouseButton, NamedKey},
@@ -67,13 +67,16 @@ impl ExtrudeOperator {
     /// The face/edge currently chosen as the primary selection, if any.
     fn selected_target(selection: &SelectionManager) -> Option<ExtrudeTarget> {
         match selection.primary()? {
-            SelectionItem::Face { node_id, face_index } => {
-                Some(ExtrudeTarget::Face { node: node_id, face_index })
-            }
-            SelectionItem::Edge { node_id, edge_index } => {
-                Some(ExtrudeTarget::Edge { node: node_id, edge_index })
-            }
-            SelectionItem::Node(_) | SelectionItem::Pointset { .. } => None,
+            SelectionItem::SubGeometry { node_id, element } => match element.kind {
+                SubGeometryKind::Face => {
+                    Some(ExtrudeTarget::Face { node: node_id, face_index: element.index })
+                }
+                SubGeometryKind::Edge => {
+                    Some(ExtrudeTarget::Edge { node: node_id, edge_index: element.index })
+                }
+                SubGeometryKind::Pointset => None,
+            },
+            SelectionItem::Node(_) => None,
         }
     }
 

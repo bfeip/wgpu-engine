@@ -7,7 +7,7 @@ use duck_engine_common::{
 use crate::scene::{
     AlphaMode, DisplayBehavior, FaceMaterialId, Instance, InstanceId, Light, LineMaterialId,
     MaterialProperties, MeshId, NodeId, NodePayload, PointMaterialId, PositionedCamera,
-    PrimitiveType, RenderLayer, Scene, ViewportRect, Visibility,
+    PrimitiveType, RenderLayer, Scene, SubGeometryElement, SubGeometryKind, ViewportRect, Visibility,
 };
 use crate::scene::common;
 use crate::highlight_query::HighlightQuery;
@@ -621,80 +621,36 @@ fn collect_highlight_sub_geom_batches(
         .map(|it| (it.node_id, it))
         .collect();
 
-    let primary_face = highlight.primary_face();
-    let primary_edge = highlight.primary_edge();
-    let primary_pointset = highlight.primary_pointset();
+    let primary = highlight.primary_sub_geometry();
 
     let mut out = SubGeomHighlights::default();
 
-    // Faces → TriangleList ranges (3 indices per triangle).
-    for node_id in highlight.nodes_with_highlighted_faces() {
-        let Some(it) = instance_by_node.get(&node_id) else { continue };
-        let Some(instance) = scene.get_instance(it.instance_id) else { continue };
-        let Some(mesh) = scene.get_mesh(instance.mesh()) else { continue };
-        let Some(topology) = mesh.topology() else { continue };
+    // Each kind maps to a primitive type whose ranges are counted in primitives
+    // (triangles/segments/points), so scale by the primitive's index stride.
+    for kind in SubGeometryKind::ALL {
+        let primitive_type = kind.primitive_type();
+        let stride = primitive_type.indices_per_primitive();
 
-        for face_index in highlight.highlighted_faces_for_node(node_id) {
-            let Some(range) = topology.face_ranges.get(face_index as usize) else { continue };
-            let batch = SubGeomBatch {
-                mesh_id: instance.mesh(),
-                instance_transform: (*it).clone(),
-                primitive_type: PrimitiveType::TriangleList,
-                first_index: range.start * 3,
-                index_count: range.count * 3,
-            };
-            if primary_face == Some((node_id, face_index)) {
-                out.primary.push(batch);
-            } else {
-                out.secondary.push(batch);
-            }
-        }
-    }
+        for node_id in highlight.nodes_with_highlighted(kind) {
+            let Some(it) = instance_by_node.get(&node_id) else { continue };
+            let Some(instance) = scene.get_instance(it.instance_id) else { continue };
+            let Some(mesh) = scene.get_mesh(instance.mesh()) else { continue };
+            let Some(topology) = mesh.topology() else { continue };
 
-    // Edges → LineList ranges (2 indices per segment).
-    for node_id in highlight.nodes_with_highlighted_edges() {
-        let Some(it) = instance_by_node.get(&node_id) else { continue };
-        let Some(instance) = scene.get_instance(it.instance_id) else { continue };
-        let Some(mesh) = scene.get_mesh(instance.mesh()) else { continue };
-        let Some(topology) = mesh.topology() else { continue };
-
-        for edge_index in highlight.highlighted_edges_for_node(node_id) {
-            let Some(range) = topology.edge_ranges.get(edge_index as usize) else { continue };
-            let batch = SubGeomBatch {
-                mesh_id: instance.mesh(),
-                instance_transform: (*it).clone(),
-                primitive_type: PrimitiveType::LineList,
-                first_index: range.start * 2,
-                index_count: range.count * 2,
-            };
-            if primary_edge == Some((node_id, edge_index)) {
-                out.primary.push(batch);
-            } else {
-                out.secondary.push(batch);
-            }
-        }
-    }
-
-    // Points → PointList ranges (1 index per point).
-    for node_id in highlight.nodes_with_highlighted_pointsets() {
-        let Some(it) = instance_by_node.get(&node_id) else { continue };
-        let Some(instance) = scene.get_instance(it.instance_id) else { continue };
-        let Some(mesh) = scene.get_mesh(instance.mesh()) else { continue };
-        let Some(topology) = mesh.topology() else { continue };
-
-        for pointset_index in highlight.highlighted_pointsets_for_node(node_id) {
-            let Some(range) = topology.pointset_ranges.get(pointset_index as usize) else { continue };
-            let batch = SubGeomBatch {
-                mesh_id: instance.mesh(),
-                instance_transform: (*it).clone(),
-                primitive_type: PrimitiveType::PointList,
-                first_index: range.start,
-                index_count: range.count,
-            };
-            if primary_pointset == Some((node_id, pointset_index)) {
-                out.primary.push(batch);
-            } else {
-                out.secondary.push(batch);
+            for index in highlight.highlighted_for_node(node_id, kind) {
+                let Some(range) = topology.ranges(kind).get(index as usize) else { continue };
+                let batch = SubGeomBatch {
+                    mesh_id: instance.mesh(),
+                    instance_transform: (*it).clone(),
+                    primitive_type,
+                    first_index: range.start * stride,
+                    index_count: range.count * stride,
+                };
+                if primary == Some((node_id, SubGeometryElement { kind, index })) {
+                    out.primary.push(batch);
+                } else {
+                    out.secondary.push(batch);
+                }
             }
         }
     }
@@ -1263,39 +1219,15 @@ mod tests {
             self.highlighted_nodes.first().copied()
         }
 
-        fn highlighted_faces_for_node(&self, _node_id: NodeId) -> Vec<u32> {
+        fn highlighted_for_node(&self, _node_id: NodeId, _kind: SubGeometryKind) -> Vec<u32> {
             Vec::new()
         }
 
-        fn highlighted_edges_for_node(&self, _node_id: NodeId) -> Vec<u32> {
+        fn nodes_with_highlighted(&self, _kind: SubGeometryKind) -> Vec<NodeId> {
             Vec::new()
         }
 
-        fn highlighted_pointsets_for_node(&self, _node_id: NodeId) -> Vec<u32> {
-            Vec::new()
-        }
-
-        fn nodes_with_highlighted_faces(&self) -> Vec<NodeId> {
-            Vec::new()
-        }
-
-        fn nodes_with_highlighted_edges(&self) -> Vec<NodeId> {
-            Vec::new()
-        }
-
-        fn nodes_with_highlighted_pointsets(&self) -> Vec<NodeId> {
-            Vec::new()
-        }
-
-        fn primary_face(&self) -> Option<(NodeId, u32)> {
-            None
-        }
-
-        fn primary_edge(&self) -> Option<(NodeId, u32)> {
-            None
-        }
-
-        fn primary_pointset(&self) -> Option<(NodeId, u32)> {
+        fn primary_sub_geometry(&self) -> Option<(NodeId, SubGeometryElement)> {
             None
         }
 

@@ -22,6 +22,60 @@ pub enum PrimitiveType {
     PointList,
 }
 
+impl PrimitiveType {
+    /// Number of vertex indices consumed by one primitive of this type:
+    /// 3 for triangles, 2 for line segments, 1 for points. Used to convert
+    /// element-counted [`SubMeshRange`]s into raw index offsets.
+    pub fn indices_per_primitive(self) -> u32 {
+        match self {
+            PrimitiveType::TriangleList => 3,
+            PrimitiveType::LineList => 2,
+            PrimitiveType::PointList => 1,
+        }
+    }
+}
+
+/// A kind of mesh sub-geometry that can be selected or highlighted independently.
+///
+/// Each kind maps 1:1 to a [`PrimitiveType`] and to one of [`Topology`]'s range
+/// lists, letting selection/highlight code be written once and parametrized by kind
+/// rather than triplicated across faces, edges, and points.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum SubGeometryKind {
+    Face,
+    Edge,
+    Pointset,
+}
+
+impl SubGeometryKind {
+    /// All sub-geometry kinds, for iterating over every kind.
+    pub const ALL: [SubGeometryKind; 3] =
+        [SubGeometryKind::Face, SubGeometryKind::Edge, SubGeometryKind::Pointset];
+
+    /// The mesh primitive type this kind is built from.
+    pub fn primitive_type(self) -> PrimitiveType {
+        match self {
+            SubGeometryKind::Face => PrimitiveType::TriangleList,
+            SubGeometryKind::Edge => PrimitiveType::LineList,
+            SubGeometryKind::Pointset => PrimitiveType::PointList,
+        }
+    }
+}
+
+/// A single sub-geometry element within a mesh: a [`SubGeometryKind`] plus the
+/// element's index into that kind's [`Topology`] range list.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub struct SubGeometryElement {
+    pub kind: SubGeometryKind,
+    pub index: u32,
+}
+
+impl SubGeometryElement {
+    pub fn new(kind: SubGeometryKind, index: u32) -> Self {
+        Self { kind, index }
+    }
+}
+
 /// A collection of indices representing a single primitive type in a mesh
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -128,6 +182,15 @@ impl Topology {
     /// Returns `true` if there are no face, edge, or point ranges.
     pub fn is_empty(&self) -> bool {
         self.face_ranges.is_empty() && self.edge_ranges.is_empty() && self.pointset_ranges.is_empty()
+    }
+
+    /// Returns the range list for the given sub-geometry kind.
+    pub fn ranges(&self, kind: SubGeometryKind) -> &[SubMeshRange] {
+        match kind {
+            SubGeometryKind::Face => &self.face_ranges,
+            SubGeometryKind::Edge => &self.edge_ranges,
+            SubGeometryKind::Pointset => &self.pointset_ranges,
+        }
     }
 }
 
@@ -592,42 +655,22 @@ impl Mesh {
         self.topology = Some(topology);
     }
 
-    /// Returns the face index that contains `triangle_index` (counting individual
-    /// triangles in the first `TriangleList` primitive).
+    /// Returns the sub-geometry element of `kind` that contains `primitive_index`
+    /// (counting individual primitives — triangles, segments, or points — in the
+    /// matching primitive list).
     ///
-    /// Returns `None` if this mesh has no topology or `triangle_index` is out of range.
-    pub fn face_for_triangle(&self, triangle_index: u32) -> Option<u32> {
+    /// Returns `None` if this mesh has no topology or `primitive_index` is out of range.
+    pub fn sub_geometry_for_primitive(
+        &self,
+        kind: SubGeometryKind,
+        primitive_index: u32,
+    ) -> Option<u32> {
         let topo = self.topology.as_ref()?;
-        topo.face_ranges
+        topo.ranges(kind)
             .iter()
-            .position(|r| triangle_index >= r.start && triangle_index < r.start + r.count)
+            .position(|r| primitive_index >= r.start && primitive_index < r.start + r.count)
             .map(|i| i as u32)
     }
-
-    /// Returns the edge index that contains `segment_index` (counting individual
-    /// 2-vertex segments in the first `LineList` primitive).
-    ///
-    /// Returns `None` if this mesh has no topology or `segment_index` is out of range.
-    pub fn edge_for_segment(&self, segment_index: u32) -> Option<u32> {
-        let topo = self.topology.as_ref()?;
-        topo.edge_ranges
-            .iter()
-            .position(|r| segment_index >= r.start && segment_index < r.start + r.count)
-            .map(|i| i as u32)
-    }
-
-    /// Returns the pointset index that contains `point_index` (counting individual
-    /// points in the first `PointList` primitive).
-    ///
-    /// Returns `None` if this mesh has no topology or `point_index` is out of range.
-    pub fn pointset_for_point(&self, point_index: u32) -> Option<u32> {
-        let topo = self.topology.as_ref()?;
-        topo.pointset_ranges
-            .iter()
-            .position(|r| point_index >= r.start && point_index < r.start + r.count)
-            .map(|i| i as u32)
-    }
-
 }
 
 impl Default for Mesh {
@@ -830,16 +873,16 @@ mod tests {
                 SubMeshRange { start: 2, count: 2 },
             ],
         });
-        assert_eq!(mesh.pointset_for_point(0), Some(0));
-        assert_eq!(mesh.pointset_for_point(1), Some(0));
-        assert_eq!(mesh.pointset_for_point(2), Some(1));
-        assert_eq!(mesh.pointset_for_point(3), Some(1));
-        assert_eq!(mesh.pointset_for_point(4), None); // out of range
+        assert_eq!(mesh.sub_geometry_for_primitive(SubGeometryKind::Pointset, 0), Some(0));
+        assert_eq!(mesh.sub_geometry_for_primitive(SubGeometryKind::Pointset, 1), Some(0));
+        assert_eq!(mesh.sub_geometry_for_primitive(SubGeometryKind::Pointset, 2), Some(1));
+        assert_eq!(mesh.sub_geometry_for_primitive(SubGeometryKind::Pointset, 3), Some(1));
+        assert_eq!(mesh.sub_geometry_for_primitive(SubGeometryKind::Pointset, 4), None); // out of range
     }
 
     #[test]
     fn point_for_vertex_none_without_topology() {
         let mesh = make_mixed_mesh();
-        assert_eq!(mesh.pointset_for_point(0), None);
+        assert_eq!(mesh.sub_geometry_for_primitive(SubGeometryKind::Pointset, 0), None);
     }
 }
