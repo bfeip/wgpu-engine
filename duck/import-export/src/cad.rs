@@ -163,7 +163,7 @@ fn import_leaf_part(
 ) -> Result<()> {
     let t = &options.tessellation;
     let mesh =
-        tessellate_occ_shape(shape, t.tessellation_tolerance, t.scale_factor, t.include_edges)?;
+        tessellate_occ_shape(shape, t.tessellation_tolerance, t.scale_factor, t.include_edges, t.include_points)?;
     // Start from the configured material template; honor the file's per-part
     // color override when present, keeping the template's other PBR properties.
     let mut face_material = t.face_material.clone().with_fresh_id();
