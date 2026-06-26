@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use duck_engine_scene::{Id, NodeId, Scene};
 use duck_engine_scene::cad::{CadTessellationOptions, retessellate_node, tessellate_into};
 use duck_engine_scene::common::{matrix4_to_row_major_f64, Matrix4, Transform};
-use opencascade::primitives::{Edge, Face, Shape};
+use opencascade::primitives::{Edge, Face, Shape, Wire};
 
 pub type PartId = Id;
 
@@ -135,5 +135,17 @@ impl Document {
     pub fn edge_subshape(&self, node: NodeId, edge_index: u32) -> Option<Edge> {
         let part = self.part_for_node(node).and_then(|id| self.get_part(id))?;
         part.shape.edges().nth(edge_index as usize)
+    }
+
+    /// Resolve a picked edge to the [`Wire`] that contains it in the part's B-Rep.
+    ///
+    /// A loft profile is a wire, but the selection system reports the individual
+    /// edge the user clicked; this finds the wire that edge belongs to (the first
+    /// wire containing a topologically-identical edge), so one click selects a
+    /// whole multi-edge profile.
+    pub fn wire_for_edge(&self, node: NodeId, edge_index: u32) -> Option<Wire> {
+        let part = self.part_for_node(node).and_then(|id| self.get_part(id))?;
+        let target = part.shape.edges().nth(edge_index as usize)?;
+        part.shape.wires().find(|wire| wire.edges().any(|e| e.is_same(&target)))
     }
 }

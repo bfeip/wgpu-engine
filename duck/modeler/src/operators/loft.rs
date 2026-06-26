@@ -1,0 +1,269 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::sync::{Arc, Mutex};
+
+use duck_engine_scene::{NodeId, SubGeometryKind};
+use duck_engine_viewer::{
+    event::{DeviceEvent, Event, EventContext},
+    input::{ElementState, Key, NamedKey},
+    operator::{Operator, SelectionKinds, SelectionMode},
+    selection::{SelectionItem, SelectionManager},
+};
+
+use crate::document::Document;
+use crate::loft::{execute_loft, preview_loft, LoftKind, LoftProfile};
+use crate::tool::{ModelingTool, PanelContext, ToolInfo};
+use super::ConstructionOptions;
+
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+enum LoftPhase {
+    #[default]
+    Configuring,
+    Done,
+    Cancelled,
+}
+
+pub struct LoftOperator {
+    kind: LoftKind,
+    phase: LoftPhase,
+
+    preview_node: Option<NodeId>,
+    /// Profiles and kind the current preview was built from, so we only rebuild on change.
+    preview_profiles: Vec<LoftProfile>,
+    last_kind: LoftKind,
+
+    document: Arc<Mutex<Document>>,
+    construction_options: Rc<RefCell<ConstructionOptions>>,
+}
+
+impl LoftOperator {
+    pub fn new(
+        construction_options: Rc<RefCell<ConstructionOptions>>,
+        document: Arc<Mutex<Document>>,
+    ) -> Self {
+        Self {
+            kind: LoftKind::default(),
+            phase: LoftPhase::default(),
+            preview_node: None,
+            preview_profiles: Vec::new(),
+            last_kind: LoftKind::default(),
+            document,
+            construction_options,
+        }
+    }
+
+    /// The selected edges, in click order, as loft profiles.
+    fn selection_snapshot(selection: &SelectionManager) -> Vec<LoftProfile> {
+        selection
+            .iter()
+            .filter_map(|item| match item {
+                SelectionItem::SubGeometry { node_id, element }
+                    if element.kind == SubGeometryKind::Edge =>
+                {
+                    Some(LoftProfile { node: *node_id, edge_index: element.index })
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Remove the current preview node, if any. Takes the fields directly (rather
+    /// than `&mut self`) so it can run while `doc` borrows `self.document`.
+    fn clear_preview(preview_node: &mut Option<NodeId>, doc: &Document) {
+        if let Some(node) = preview_node.take() {
+            doc.scene().lock().unwrap().remove_node(node);
+        }
+    }
+
+    fn refresh_preview(&mut self, selection: &SelectionManager) {
+        let doc = self.document.lock().unwrap();
+        Self::clear_preview(&mut self.preview_node, &doc);
+
+        let profiles = Self::selection_snapshot(selection);
+        self.preview_profiles = profiles.clone();
+        self.last_kind = self.kind;
+
+        if profiles.len() < 2 {
+            return;
+        }
+
+        let options = self.construction_options.borrow().preview_options();
+        match preview_loft(&doc, &profiles, self.kind, &options) {
+            Ok(node) => self.preview_node = Some(node),
+            Err(e) => log::warn!("Loft preview failed: {e}"),
+        }
+    }
+
+    /// Execute the loft and clean up preview state. On success sets phase = Done;
+    /// on failure stays in Configuring so the user can retry (e.g. toggle to surface).
+    fn apply(&mut self) -> anyhow::Result<()> {
+        let profiles = self.preview_profiles.clone();
+        let options = self.construction_options.borrow().geometry_options.clone();
+        let mut doc = self.document.lock().unwrap();
+
+        Self::clear_preview(&mut self.preview_node, &doc);
+        execute_loft(&mut doc, &profiles, self.kind, &options)?;
+
+        self.preview_profiles.clear();
+        self.phase = LoftPhase::Done;
+        Ok(())
+    }
+
+    /// Apply and, on success, clear the selection. Shared by the Enter key handler
+    /// and the panel's Apply button.
+    pub fn apply_and_clear(&mut self, selection: &mut SelectionManager) {
+        if let Err(e) = self.apply() {
+            log::error!("Loft failed: {e}");
+        } else {
+            selection.clear();
+        }
+    }
+
+    /// Abort: drop the preview (profiles are construction curves, never hidden).
+    pub fn cancel(&mut self) {
+        let doc = self.document.lock().unwrap();
+        Self::clear_preview(&mut self.preview_node, &doc);
+        drop(doc);
+        self.preview_profiles.clear();
+        self.phase = LoftPhase::Cancelled;
+    }
+
+    /// The loft configuration window (output kind, ordered profile list, Apply/Cancel).
+    fn render_panel(&mut self, ctx: &egui::Context, panel: &mut PanelContext) {
+        let mut apply_clicked = false;
+        let mut cancel_clicked = false;
+
+        // Snapshot profile names under the document lock so the egui closure holds none.
+        let profiles = Self::selection_snapshot(panel.selection);
+        let entries: Vec<(SelectionItem, String)> = {
+            let doc = self.document.lock().unwrap();
+            profiles
+                .iter()
+                .map(|p| {
+                    let name = doc
+                        .part_for_node(p.node)
+                        .and_then(|id| doc.get_part(id).map(|part| part.name.clone()))
+                        .unwrap_or_else(|| "Unknown".to_owned());
+                    let item = SelectionItem::SubGeometry {
+                        node_id: p.node,
+                        element: duck_engine_scene::SubGeometryElement::new(
+                            SubGeometryKind::Edge,
+                            p.edge_index,
+                        ),
+                    };
+                    (item, format!("{name} · edge {}", p.edge_index))
+                })
+                .collect()
+        };
+
+        egui::Window::new("Loft")
+            .anchor(egui::Align2::RIGHT_TOP, [-8.0, 8.0])
+            .resizable(false)
+            .collapsible(false)
+            .show(ctx, |ui| {
+                ui.label("Output");
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut self.kind, LoftKind::Surface, "Surface");
+                    ui.selectable_value(&mut self.kind, LoftKind::Solid, "Solid");
+                });
+
+                ui.separator();
+
+                ui.label("Profiles");
+                if entries.is_empty() {
+                    ui.label("(click an edge per profile)");
+                } else {
+                    for (idx, (item, name)) in entries.iter().enumerate() {
+                        ui.horizontal(|ui| {
+                            ui.label(format!("{}. {name}", idx + 1));
+                            if ui.small_button("×").clicked() {
+                                panel.selection.remove(item);
+                            }
+                        });
+                    }
+                }
+
+                ui.separator();
+
+                ui.horizontal(|ui| {
+                    if ui.button("Cancel").clicked() {
+                        cancel_clicked = true;
+                    }
+                    if ui.button("Apply  ⏎").clicked() {
+                        apply_clicked = true;
+                    }
+                });
+            });
+
+        // Act after the closure so we don't call &mut self methods while it borrows self.
+        if apply_clicked {
+            self.apply_and_clear(panel.selection);
+        } else if cancel_clicked {
+            self.cancel();
+        }
+    }
+}
+
+impl ModelingTool for LoftOperator {
+    fn info(&self) -> ToolInfo {
+        ToolInfo {
+            id: "loft",
+            icon_uri: "bytes://loft.svg",
+            icon: include_bytes!("../../../../assets/svg/loft.svg"),
+        }
+    }
+
+    fn deactivate(&mut self) {
+        self.cancel();
+        self.phase = LoftPhase::Configuring;
+    }
+
+    fn is_finished(&self) -> bool {
+        matches!(self.phase, LoftPhase::Done | LoftPhase::Cancelled)
+    }
+
+    // Loft skins through profile edges, so select at edge granularity.
+    fn selection_mode(&self) -> SelectionMode {
+        SelectionMode::SubGeometry(SelectionKinds::EDGE)
+    }
+
+    fn panel_ui(&mut self, ctx: &egui::Context, panel: &mut PanelContext) {
+        self.render_panel(ctx, panel);
+    }
+}
+
+impl Operator for LoftOperator {
+    fn dispatch(&mut self, event: &Event, ctx: &mut EventContext) -> bool {
+        let Event::Device(event) = event else { return false };
+        match event {
+            DeviceEvent::Update { .. } => {
+                let profiles = Self::selection_snapshot(ctx.selection);
+                if profiles != self.preview_profiles || self.kind != self.last_kind {
+                    self.refresh_preview(ctx.selection);
+                }
+                false
+            }
+            DeviceEvent::KeyboardInput { event: key_event, .. } => {
+                if key_event.state != ElementState::Pressed || key_event.repeat {
+                    return false;
+                }
+                match key_event.logical_key {
+                    Key::Named(NamedKey::Enter) => {
+                        self.apply_and_clear(ctx.selection);
+                        true
+                    }
+                    Key::Named(NamedKey::Escape) => {
+                        self.cancel();
+                        true
+                    }
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
+    }
+
+    fn name(&self) -> &str {
+        "Loft"
+    }
+}

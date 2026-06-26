@@ -3,6 +3,7 @@ mod cursor;
 mod document;
 mod extrude;
 mod grid;
+mod loft;
 mod operators;
 mod snap;
 mod tool;
@@ -32,8 +33,8 @@ use duck_engine_viewer::scene::{
 
 use crate::operators::{
     BooleanOperator, BoxOperator, CircleOperator, ConstructionOptions, CurveOperator,
-    CylinderOperator, ExtrudeOperator, LineOperator, RectangleOperator, SphereOperator,
-    TransformTool,
+    CylinderOperator, ExtrudeOperator, LineOperator, LoftOperator, RectangleOperator,
+    SphereOperator, TransformTool,
 };
 use crate::tool_manager::ToolManager;
 
@@ -106,6 +107,7 @@ impl ViewerState<'static> {
         tools.register(CylinderOperator::new(Rc::clone(&construction_options), Arc::clone(&document)));
         tools.register(BooleanOperator::new(Rc::clone(&construction_options), Arc::clone(&document)));
         tools.register(ExtrudeOperator::new(Rc::clone(&construction_options), Arc::clone(&document)));
+        tools.register(LoftOperator::new(Rc::clone(&construction_options), Arc::clone(&document)));
 
         Self {
             egui_renderer,
