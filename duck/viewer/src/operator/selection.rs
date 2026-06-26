@@ -62,8 +62,6 @@ pub enum SelectionMode {
     /// when no sub-geometry kinds are allowed).
     ///
     /// e.g. `SubGeometry(FACE)` = faces only; `SubGeometry(FACE | EDGE)` = either.
-    ///
-    /// [`NODE`]: SelectionKinds::NODE
     SubGeometry(SelectionKinds),
     /// Node first; a second click on an already-selected node drills into the
     /// closest allowed sub-geometry.
