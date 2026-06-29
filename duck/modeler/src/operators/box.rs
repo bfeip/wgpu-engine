@@ -303,7 +303,7 @@ impl ModelingTool for BoxOperator {
         ToolInfo {
             id: "box",
             icon_uri: "bytes://box.svg",
-            icon: include_bytes!("../../../../assets/svg/cube-svgrepo-com.svg"),
+            icon: include_bytes!("../../../../assets/svg/cube.svg"),
         }
     }
 
