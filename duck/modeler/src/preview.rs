@@ -14,10 +14,6 @@ use crate::document::Document;
 /// sources back to the caller to delete. After either — and on drop — the
 /// session is inert. Previews are removed with [`Scene::cleanup_node`] so their
 /// meshes and materials are freed too.
-///
-/// The session resolves the document's current scene on every operation rather
-/// than caching it, since the scene is swapped on new-document / file-load
-/// ([`Document::set_scene`]).
 pub struct PreviewSession {
     document: Arc<Mutex<Document>>,
     previews: Vec<NodeId>,
