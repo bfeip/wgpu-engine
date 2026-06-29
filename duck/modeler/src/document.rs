@@ -2,17 +2,60 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
-use duck_engine_scene::{Id, NodeId, Scene};
+use duck_engine_scene::{Id, NodeId, Scene, Visibility};
 use duck_engine_scene::cad::{CadTessellationOptions, retessellate_node, tessellate_into};
 use duck_engine_scene::common::{matrix4_to_row_major_f64, Matrix4, Transform};
-use opencascade::primitives::{Edge, Face, Shape, Wire};
+use opencascade::primitives::{Edge, Face, Shape, ShapeType, Wire};
 
 pub type PartId = Id;
+
+/// Topological classification of a part, derived from its B-Rep shape type.
+/// A presentation-level version of OCCT [`ShapeType`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PartKind {
+    Solid,
+    Shell,
+    Face,
+    Wire,
+    Point,
+    Compound,
+    Other,
+}
+
+impl PartKind {
+    /// Short uppercase badge label, e.g. "SOLID".
+    pub fn label(self) -> &'static str {
+        match self {
+            PartKind::Solid => "SOLID",
+            PartKind::Shell => "SHELL",
+            PartKind::Face => "FACE",
+            PartKind::Wire => "WIRE",
+            PartKind::Point => "POINT",
+            PartKind::Compound => "COMPOUND",
+            PartKind::Other => "SHAPE",
+        }
+    }
+}
 
 pub struct CadPart {
     pub id: PartId,
     pub name: String,
     pub shape: Shape,
+}
+
+impl CadPart {
+    /// Classify the part by its top-level B-Rep shape type.
+    pub fn kind(&self) -> PartKind {
+        match self.shape.shape_type() {
+            ShapeType::Solid | ShapeType::CompoundSolid => PartKind::Solid,
+            ShapeType::Shell => PartKind::Shell,
+            ShapeType::Face => PartKind::Face,
+            ShapeType::Wire | ShapeType::Edge => PartKind::Wire,
+            ShapeType::Vertex => PartKind::Point,
+            ShapeType::Compound => PartKind::Compound,
+            ShapeType::Shape => PartKind::Other,
+        }
+    }
 }
 
 pub struct Document {
@@ -76,6 +119,20 @@ impl Document {
 
     pub fn get_part_mut(&mut self, id: PartId) -> Option<&mut CadPart> {
         self.parts.iter_mut().find(|p| p.id == id)
+    }
+
+    /// Current visibility of the part's scene node, or `None` if the part is unknown.
+    pub fn part_visibility(&self, id: PartId) -> Option<Visibility> {
+        let node = self.node_for_part(id)?;
+        let scene = self.scene.lock().unwrap();
+        scene.get_node(node).map(|n| n.visibility())
+    }
+
+    /// Set the visibility of the part's scene node. No-op for an unknown part.
+    pub fn set_part_visibility(&mut self, id: PartId, visibility: Visibility) {
+        if let Some(node) = self.node_for_part(id) {
+            self.scene.lock().unwrap().set_node_visibility(node, visibility);
+        }
     }
 
     /// Bake a transform into the part's CAD geometry via an affine GTransform then

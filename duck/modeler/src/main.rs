@@ -9,6 +9,7 @@ mod preview;
 mod snap;
 mod tool;
 mod tool_manager;
+mod ui;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -38,6 +39,7 @@ use crate::operators::{
     SphereOperator, TransformTool,
 };
 use crate::tool_manager::ToolManager;
+use crate::ui::ModelerUi;
 
 use document::Document;
 
@@ -50,6 +52,7 @@ struct ViewerState<'a> {
     egui_renderer: egui_wgpu::Renderer,
     egui_winit: egui_winit::State,
     egui_ctx: egui::Context,
+    ui: ModelerUi,
     viewer: Viewer<'a>,
     window: Arc<Window>,
 
@@ -114,6 +117,7 @@ impl ViewerState<'static> {
             egui_renderer,
             egui_winit,
             egui_ctx,
+            ui: ModelerUi::default(),
             viewer,
             window,
             construction_options,
@@ -189,6 +193,10 @@ impl<'a> ViewerState<'a> {
         let egui_ctx = self.egui_ctx.clone();
         let full_output = egui_ctx.run(raw_input, |ctx| {
             self.tools.palette_ui(ctx);
+            {
+                let mut document = self.document.lock().unwrap();
+                self.ui.show(ctx, &mut document, self.viewer.selection_mut());
+            }
             self.tools.panel_ui(ctx, self.viewer.selection_mut());
         });
         self.egui_winit.handle_platform_output(&self.window, full_output.platform_output.clone());
