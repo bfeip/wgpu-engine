@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
-use duck_engine_scene::{NodeId, SubGeometryKind};
+use duck_engine_scene::SubGeometryKind;
 use duck_engine_viewer::{
     event::{DeviceEvent, Event, EventContext},
     input::{ElementState, Key, NamedKey},
@@ -12,6 +12,7 @@ use duck_engine_viewer::{
 
 use crate::document::Document;
 use crate::loft::{execute_loft, preview_loft, LoftKind, LoftProfile};
+use crate::preview::PreviewSession;
 use crate::tool::{ModelingTool, PanelContext, ToolInfo};
 use super::ConstructionOptions;
 
@@ -27,7 +28,7 @@ pub struct LoftOperator {
     kind: LoftKind,
     phase: LoftPhase,
 
-    preview_node: Option<NodeId>,
+    preview: PreviewSession,
     /// Profiles and kind the current preview was built from, so we only rebuild on change.
     preview_profiles: Vec<LoftProfile>,
     last_kind: LoftKind,
@@ -41,10 +42,11 @@ impl LoftOperator {
         construction_options: Rc<RefCell<ConstructionOptions>>,
         document: Arc<Mutex<Document>>,
     ) -> Self {
+        let preview = PreviewSession::new(Arc::clone(&document));
         Self {
             kind: LoftKind::default(),
             phase: LoftPhase::default(),
-            preview_node: None,
+            preview,
             preview_profiles: Vec::new(),
             last_kind: LoftKind::default(),
             document,
@@ -67,17 +69,8 @@ impl LoftOperator {
             .collect()
     }
 
-    /// Remove the current preview node, if any. Takes the fields directly (rather
-    /// than `&mut self`) so it can run while `doc` borrows `self.document`.
-    fn clear_preview(preview_node: &mut Option<NodeId>, doc: &Document) {
-        if let Some(node) = preview_node.take() {
-            doc.scene().lock().unwrap().remove_node(node);
-        }
-    }
-
     fn refresh_preview(&mut self, selection: &SelectionManager) {
-        let doc = self.document.lock().unwrap();
-        Self::clear_preview(&mut self.preview_node, &doc);
+        self.preview.clear_previews();
 
         let profiles = Self::selection_snapshot(selection);
         self.preview_profiles = profiles.clone();
@@ -88,8 +81,12 @@ impl LoftOperator {
         }
 
         let options = self.construction_options.borrow().preview_options();
-        match preview_loft(&doc, &profiles, self.kind, &options) {
-            Ok(node) => self.preview_node = Some(node),
+        let result = {
+            let doc = self.document.lock().unwrap();
+            preview_loft(&doc, &profiles, self.kind, &options)
+        };
+        match result {
+            Ok(node) => self.preview.add_preview_node(node),
             Err(e) => log::warn!("Loft preview failed: {e}"),
         }
     }
@@ -99,10 +96,12 @@ impl LoftOperator {
     fn apply(&mut self) -> anyhow::Result<()> {
         let profiles = self.preview_profiles.clone();
         let options = self.construction_options.borrow().geometry_options.clone();
-        let mut doc = self.document.lock().unwrap();
 
-        Self::clear_preview(&mut self.preview_node, &doc);
+        let _ = self.preview.commit();
+
+        let mut doc = self.document.lock().unwrap();
         execute_loft(&mut doc, &profiles, self.kind, &options)?;
+        drop(doc);
 
         self.preview_profiles.clear();
         self.phase = LoftPhase::Done;
@@ -121,9 +120,7 @@ impl LoftOperator {
 
     /// Abort: drop the preview (profiles are construction curves, never hidden).
     pub fn cancel(&mut self) {
-        let doc = self.document.lock().unwrap();
-        Self::clear_preview(&mut self.preview_node, &doc);
-        drop(doc);
+        self.preview.cancel();
         self.preview_profiles.clear();
         self.phase = LoftPhase::Cancelled;
     }

@@ -3,8 +3,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use duck_engine_common::{matrix4_to_row_major_f64, InnerSpace, Plane, Point3, Vector3};
-use duck_engine_scene::cad::tessellate_into;
-use duck_engine_scene::{NodeId, Visibility};
+use duck_engine_scene::Visibility;
 use duck_engine_viewer::{
     bindings::{InputBinding, InputMap},
     common::Transform,
@@ -16,6 +15,7 @@ use log::warn;
 use opencascade::primitives::{Face, Shape, Wire};
 
 use crate::document::Document;
+use crate::preview::PreviewSession;
 use crate::tool::{ModelingTool, ToolInfo};
 use super::ConstructionOptions;
 
@@ -32,13 +32,14 @@ enum RectangleAction {
 enum Phase {
     Idle,
     /// Center placed; the cursor drives the footprint. Preview is a flat rectangle face.
-    Defining { center: Point3, preview_node: NodeId },
+    Defining { center: Point3 },
 }
 
 pub struct RectangleOperator {
     phase: Phase,
     construction_options: Rc<RefCell<ConstructionOptions>>,
     document: Arc<Mutex<Document>>,
+    preview: PreviewSession,
     bindings: InputMap<RectangleAction>,
     cursor_target: Option<Point3>,
 }
@@ -57,10 +58,12 @@ impl RectangleOperator {
                 InputBinding::MouseClick { button: MouseButton::Right, modifiers: Modifiers::default() },
                 RectangleAction::Cancel,
             );
+        let preview = PreviewSession::new(Arc::clone(&document));
         Self {
             phase: Phase::Idle,
             construction_options,
             document,
+            preview,
             bindings,
             cursor_target: None,
         }
@@ -117,41 +120,25 @@ impl RectangleOperator {
             return false;
         };
 
-        let preview_node = {
-            let coptions = self.construction_options.borrow();
-            let mut scene = ctx.scene.lock().unwrap();
-            // A single unit face, scaled each move; preview detail is irrelevant for a flat quad.
-            let Ok(node) = tessellate_into(
-                &preview_shape,
-                &mut *scene,
-                &coptions.geometry_options,
-                None,
-                Some("rectangle preview"),
-            ) else {
-                return false;
-            };
-            // Hidden until the cursor defines a non-degenerate footprint.
-            scene.set_node_visibility(node, Visibility::Invisible);
-            node
-        };
-        self.phase = Phase::Defining { center, preview_node };
+        // A single unit face, scaled each move; preview detail is irrelevant for a flat quad.
+        let options = self.construction_options.borrow().geometry_options.clone();
+        if self.preview.add_preview_from_shape(&preview_shape, &options, "rectangle preview").is_none() {
+            return false;
+        }
+        // Hidden until the cursor defines a non-degenerate footprint.
+        self.preview.set_preview_visibility(Visibility::Invisible);
+        self.phase = Phase::Defining { center };
         true
     }
 
-    fn on_place_corner(
-        &mut self,
-        center: Point3,
-        preview_node: NodeId,
-        position: (f32, f32),
-        ctx: &mut EventContext,
-    ) -> bool {
+    fn on_place_corner(&mut self, center: Point3, position: (f32, f32), ctx: &mut EventContext) -> bool {
         let camera = ctx.camera();
         let plane = self.construction_options.borrow().construction_plane;
         // Exclude the preview so the footprint can snap through it.
         let Some(corner) = self
             .construction_options
             .borrow()
-            .resolve_snap(position, &[preview_node], &camera, ctx, &[])
+            .resolve_snap(position, self.preview.preview_nodes(), &camera, ctx, &[])
             .map(|s| s.position)
         else {
             return false;
@@ -175,7 +162,7 @@ impl RectangleOperator {
         };
 
         // Discard the preview, then commit the world-space shape as a registered part.
-        ctx.scene.lock().unwrap().cleanup_node(preview_node);
+        let _ = self.preview.commit();
 
         let committed = {
             let coptions = self.construction_options.borrow();
@@ -189,43 +176,41 @@ impl RectangleOperator {
     }
 
     pub fn cancel(&mut self) {
-        if let Phase::Defining { preview_node, .. } = self.phase {
-            let scene_arc = self.document.lock().unwrap().scene().clone();
-            scene_arc.lock().unwrap().cleanup_node(preview_node);
-            self.phase = Phase::Idle;
-        }
+        self.preview.cancel();
+        self.phase = Phase::Idle;
     }
 
     fn on_cursor_moved(&mut self, position: (f64, f64), ctx: &mut EventContext) {
         let cursor = (position.0 as f32, position.1 as f32);
         let plane = self.construction_options.borrow().construction_plane;
-        // While defining, exclude our own preview so snapping doesn't lock onto it.
-        let exclude: Vec<NodeId> = match self.phase {
-            Phase::Defining { preview_node, .. } => vec![preview_node],
-            Phase::Idle => Vec::new(),
-        };
 
         let camera = ctx.camera();
-        let snap = self
-            .construction_options
-            .borrow()
-            .resolve_snap(cursor, &exclude, &camera, ctx, &[]);
+        // While defining, exclude our own preview so snapping doesn't lock onto it.
+        let snap = self.construction_options.borrow().resolve_snap(
+            cursor,
+            self.preview.preview_nodes(),
+            &camera,
+            ctx,
+            &[],
+        );
 
         self.cursor_target = snap.map(|s| s.position);
 
-        if let Phase::Defining { center, preview_node } = self.phase {
+        if let Phase::Defining { center } = self.phase {
             let dims = snap.map(|s| Self::footprint_dims(center, s.position, &plane));
-            let mut scene = ctx.scene.lock().unwrap();
-            match dims {
-                Some((width, depth)) if Self::footprint_valid(width, depth) => {
-                    scene.set_node_visibility(preview_node, Visibility::Visible);
-                    scene.set_node_transform(
-                        preview_node,
-                        Self::footprint_transform(center, width, depth, &plane),
-                    );
+            if let Some(preview_node) = self.preview.preview_node() {
+                let mut scene = ctx.scene.lock().unwrap();
+                match dims {
+                    Some((width, depth)) if Self::footprint_valid(width, depth) => {
+                        scene.set_node_visibility(preview_node, Visibility::Visible);
+                        scene.set_node_transform(
+                            preview_node,
+                            Self::footprint_transform(center, width, depth, &plane),
+                        );
+                    }
+                    // No snap, or a degenerate footprint: nothing to draw.
+                    _ => scene.set_node_visibility(preview_node, Visibility::Invisible),
                 }
-                // No snap, or a degenerate footprint: nothing to draw.
-                _ => scene.set_node_visibility(preview_node, Visibility::Invisible),
             }
         }
     }
@@ -263,9 +248,7 @@ impl Operator for RectangleOperator {
                     handled |= match action {
                         RectangleAction::Place => match self.phase {
                             Phase::Idle => self.on_place_center(*position, ctx),
-                            Phase::Defining { center, preview_node } => {
-                                self.on_place_corner(center, preview_node, *position, ctx)
-                            }
+                            Phase::Defining { center } => self.on_place_corner(center, *position, ctx),
                         },
                         RectangleAction::Cancel => {
                             let was_defining = matches!(self.phase, Phase::Defining { .. });

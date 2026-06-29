@@ -5,6 +5,7 @@ mod extrude;
 mod grid;
 mod loft;
 mod operators;
+mod preview;
 mod snap;
 mod tool;
 mod tool_manager;

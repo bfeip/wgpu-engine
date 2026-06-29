@@ -3,8 +3,6 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use duck_engine_common::{MetricSpace, Point3, Quaternion, Vector3};
-use duck_engine_scene::NodeId;
-use duck_engine_scene::cad::tessellate_into;
 use duck_engine_viewer::{
     bindings::{InputBinding, InputMap},
     common::Transform,
@@ -16,6 +14,7 @@ use glam::dvec3;
 use opencascade::primitives::Shape;
 
 use crate::document::Document;
+use crate::preview::PreviewSession;
 use crate::tool::{ModelingTool, ToolInfo};
 use super::ConstructionOptions;
 
@@ -27,13 +26,14 @@ enum SphereAction {
 
 enum Phase {
     Idle,
-    Defining { center: Point3, preview_node: NodeId },
+    Defining { center: Point3 },
 }
 
 pub struct SphereOperator {
     phase: Phase,
     construction_options: Rc<RefCell<ConstructionOptions>>,
     document: Arc<Mutex<Document>>,
+    preview: PreviewSession,
     bindings: InputMap<SphereAction>,
     /// Where the modeler's 3D cursor should sit (the latest snap point), or
     /// `None` to hide it. Read by the modeler via [`ModelingTool::cursor_target`].
@@ -54,10 +54,12 @@ impl SphereOperator {
                 InputBinding::MouseClick { button: MouseButton::Right, modifiers: Modifiers::default() },
                 SphereAction::Cancel,
             );
+        let preview = PreviewSession::new(Arc::clone(&document));
         Self {
             phase: Phase::Idle,
             construction_options,
             document,
+            preview,
             bindings,
             cursor_target: None,
         }
@@ -81,42 +83,29 @@ impl SphereOperator {
         else {
             return false;
         };
+        // Does not need preview tessellation detail because we only make the
+        // sphere once, and then scale it.
         let preview_shape = Shape::sphere(1.0).build();
-        let preview_node = {
-            let coptions = self.construction_options.borrow();
-            let mut scene = ctx.scene.lock().unwrap();
-            // Does not need preview tesselation detail because we only make the
-            // sphere once, and then scale it.
-            let Ok(node) = tessellate_into(
-                &preview_shape,
-                &mut *scene,
-                &coptions.geometry_options,
-                None,
-                Some("sphere"),
-            ) else {
-                return false;
-            };
-            scene.set_node_transform(node, Self::preview_transform(center, 0.01));
-            node
+        let options = self.construction_options.borrow().geometry_options.clone();
+        let Some(node) = self.preview.add_preview_from_shape(&preview_shape, &options, "sphere") else {
+            return false;
         };
-        self.phase = Phase::Defining { center, preview_node };
+        ctx.scene
+            .lock()
+            .unwrap()
+            .set_node_transform(node, Self::preview_transform(center, 0.01));
+        self.phase = Phase::Defining { center };
         true
     }
 
-    fn on_place_outer(
-        &mut self,
-        center: Point3,
-        preview_node: NodeId,
-        position: (f32, f32),
-        ctx: &mut EventContext,
-    ) -> bool {
+    fn on_place_outer(&mut self, center: Point3, position: (f32, f32), ctx: &mut EventContext) -> bool {
         let camera = ctx.camera();
         // Exclude the preview so the radius can snap through a corner, not to the
         // preview's own geometry.
         let radius = self
             .construction_options
             .borrow()
-            .resolve_snap(position, &[preview_node], &camera, ctx, &[])
+            .resolve_snap(position, self.preview.preview_nodes(), &camera, ctx, &[])
             .map(|s| center.distance(s.position).max(0.01))
             .unwrap_or(0.01);
 
@@ -125,7 +114,7 @@ impl SphereOperator {
             .build();
 
         // Discard the preview node, then commit the world-space shape as a registered part.
-        ctx.scene.lock().unwrap().remove_node(preview_node);
+        let _ = self.preview.commit();
 
         let committed = {
             let coptions = self.construction_options.borrow();
@@ -143,33 +132,29 @@ impl SphereOperator {
     }
 
     pub fn cancel(&mut self) {
-        if let Phase::Defining { preview_node, .. } = self.phase {
-            let scene_arc = self.document.lock().unwrap().scene().clone();
-            scene_arc.lock().unwrap().remove_node(preview_node);
-            self.phase = Phase::Idle;
-        }
+        self.preview.cancel();
+        self.phase = Phase::Idle;
     }
 
     fn on_cursor_moved(&mut self, position: (f64, f64), ctx: &mut EventContext) {
         let cursor = (position.0 as f32, position.1 as f32);
-        // While defining, exclude our own preview so the radius doesn't snap to it.
-        let exclude: Vec<NodeId> = match self.phase {
-            Phase::Defining { preview_node, .. } => vec![preview_node],
-            Phase::Idle => Vec::new(),
-        };
 
         let camera = ctx.camera();
-        let snap = self
-            .construction_options
-            .borrow()
-            .resolve_snap(cursor, &exclude, &camera, ctx, &[]);
+        // While defining, exclude our own preview so the radius doesn't snap to it.
+        let snap = self.construction_options.borrow().resolve_snap(
+            cursor,
+            self.preview.preview_nodes(),
+            &camera,
+            ctx,
+            &[],
+        );
 
         // Record where the modeler should draw the 3D cursor
         self.cursor_target = snap.map(|s| s.position);
 
         // Drive the preview radius from the snapped point while defining.
-        if let Phase::Defining { center, preview_node } = self.phase {
-            if let Some(snap) = snap {
+        if let Phase::Defining { center } = self.phase {
+            if let (Some(snap), Some(preview_node)) = (snap, self.preview.preview_node()) {
                 let radius = center.distance(snap.position).max(0.01);
                 ctx.scene
                     .lock()
@@ -211,8 +196,8 @@ impl Operator for SphereOperator {
                 for action in actions {
                     handled |= match action {
                         SphereAction::Place => {
-                            if let Phase::Defining { center, preview_node } = self.phase {
-                                self.on_place_outer(center, preview_node, *position, ctx)
+                            if let Phase::Defining { center } = self.phase {
+                                self.on_place_outer(center, *position, ctx)
                             } else {
                                 self.on_place_center(*position, ctx)
                             }

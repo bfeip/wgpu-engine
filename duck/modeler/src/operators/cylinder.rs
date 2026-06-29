@@ -3,8 +3,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use duck_engine_common::{MetricSpace, Plane, Point3, Ray, Vector3};
-use duck_engine_scene::{NodeId, Visibility};
-use duck_engine_scene::cad::tessellate_into;
+use duck_engine_scene::Visibility;
 use duck_engine_viewer::{
     bindings::{InputBinding, InputMap},
     common::Transform,
@@ -16,6 +15,7 @@ use glam::{dvec3, DVec3};
 use opencascade::primitives::Shape;
 
 use crate::document::Document;
+use crate::preview::PreviewSession;
 use crate::tool::{ModelingTool, ToolInfo};
 use super::ConstructionOptions;
 
@@ -36,15 +36,16 @@ enum CylinderAction {
 enum Phase {
     Idle,
     /// Center placed; the cursor drives the radius. Preview is a thin base disk.
-    Radius { center: Point3, preview_node: NodeId },
+    Radius { center: Point3 },
     /// Radius fixed; the cursor drives the height. Preview is the 3D cylinder.
-    Height { center: Point3, radius: f32, preview_node: NodeId },
+    Height { center: Point3, radius: f32 },
 }
 
 pub struct CylinderOperator {
     phase: Phase,
     construction_options: Rc<RefCell<ConstructionOptions>>,
     document: Arc<Mutex<Document>>,
+    preview: PreviewSession,
     bindings: InputMap<CylinderAction>,
     cursor_target: Option<Point3>,
 }
@@ -71,10 +72,12 @@ impl CylinderOperator {
                 InputBinding::MouseClick { button: MouseButton::Right, modifiers: Modifiers::default() },
                 CylinderAction::Cancel,
             );
+        let preview = PreviewSession::new(Arc::clone(&document));
         Self {
             phase: Phase::Idle,
             construction_options,
             document,
+            preview,
             bindings,
             cursor_target: None,
         }
@@ -129,47 +132,31 @@ impl CylinderOperator {
 
         // A single unit cylinder, scaled each move; preview detail is irrelevant here.
         let preview_shape = Shape::cylinder_radius_height(1.0, 1.0);
-        let preview_node = {
-            let coptions = self.construction_options.borrow();
-            let mut scene = ctx.scene.lock().unwrap();
-            let Ok(node) = tessellate_into(
-                &preview_shape,
-                &mut *scene,
-                &coptions.geometry_options,
-                None,
-                Some("cylinder preview"),
-            ) else {
-                return false;
-            };
-            // Hidden until the cursor defines a non-degenerate radius.
-            scene.set_node_visibility(node, Visibility::Invisible);
-            node
-        };
-        self.phase = Phase::Radius { center, preview_node };
+        let options = self.construction_options.borrow().geometry_options.clone();
+        if self.preview.add_preview_from_shape(&preview_shape, &options, "cylinder preview").is_none() {
+            return false;
+        }
+        // Hidden until the cursor defines a non-degenerate radius.
+        self.preview.set_preview_visibility(Visibility::Invisible);
+        self.phase = Phase::Radius { center };
         true
     }
 
-    fn on_place_radius(
-        &mut self,
-        center: Point3,
-        preview_node: NodeId,
-        position: (f32, f32),
-        ctx: &mut EventContext,
-    ) -> bool {
+    fn on_place_radius(&mut self, center: Point3, position: (f32, f32), ctx: &mut EventContext) -> bool {
         let camera = ctx.camera();
         // Exclude the preview so the radius can snap through a corner, not to the
         // preview's own geometry.
         let radius = self
             .construction_options
             .borrow()
-            .resolve_snap(position, &[preview_node], &camera, ctx, &[])
+            .resolve_snap(position, self.preview.preview_nodes(), &camera, ctx, &[])
             .map(|s| center.distance(s.position))
             .unwrap_or(0.0);
         // A degenerate radius can't be committed; stay in the radius stage.
         if !Self::radius_valid(radius) {
             return false;
         }
-        self.phase = Phase::Height { center, radius, preview_node };
+        self.phase = Phase::Height { center, radius };
         true
     }
 
@@ -177,7 +164,6 @@ impl CylinderOperator {
         &mut self,
         center: Point3,
         radius: f32,
-        preview_node: NodeId,
         position: (f32, f32),
         ctx: &mut EventContext,
     ) -> bool {
@@ -203,7 +189,7 @@ impl CylinderOperator {
         );
 
         // Discard the preview, then commit the world-space shape as a registered part.
-        ctx.scene.lock().unwrap().cleanup_node(preview_node);
+        let _ = self.preview.commit();
 
         let committed = {
             let coptions = self.construction_options.borrow();
@@ -217,65 +203,61 @@ impl CylinderOperator {
     }
 
     pub fn cancel(&mut self) {
-        let preview = match self.phase {
-            Phase::Radius { preview_node, .. } | Phase::Height { preview_node, .. } => Some(preview_node),
-            Phase::Idle => None,
-        };
-        if let Some(preview_node) = preview {
-            let scene_arc = self.document.lock().unwrap().scene().clone();
-            scene_arc.lock().unwrap().cleanup_node(preview_node);
-            self.phase = Phase::Idle;
-        }
+        self.preview.cancel();
+        self.phase = Phase::Idle;
     }
 
     fn on_cursor_moved(&mut self, position: (f64, f64), ctx: &mut EventContext) {
         let cursor = (position.0 as f32, position.1 as f32);
         let plane = self.construction_options.borrow().construction_plane;
-        // While defining, exclude our own preview so snapping doesn't lock onto it.
-        let exclude: Vec<NodeId> = match self.phase {
-            Phase::Radius { preview_node, .. } | Phase::Height { preview_node, .. } => vec![preview_node],
-            Phase::Idle => Vec::new(),
-        };
 
         let camera = ctx.camera();
-        let snap = self
-            .construction_options
-            .borrow()
-            .resolve_snap(cursor, &exclude, &camera, ctx, &[]);
+        // While defining, exclude our own preview so snapping doesn't lock onto it.
+        let snap = self.construction_options.borrow().resolve_snap(
+            cursor,
+            self.preview.preview_nodes(),
+            &camera,
+            ctx,
+            &[],
+        );
 
         match self.phase {
             Phase::Idle => {
                 self.cursor_target = snap.map(|s| s.position);
             }
-            Phase::Radius { center, preview_node } => {
+            Phase::Radius { center } => {
                 self.cursor_target = snap.map(|s| s.position);
                 let radius = snap.map(|s| center.distance(s.position));
-                let mut scene = ctx.scene.lock().unwrap();
-                match radius {
-                    Some(radius) if Self::radius_valid(radius) => {
+                if let Some(preview_node) = self.preview.preview_node() {
+                    let mut scene = ctx.scene.lock().unwrap();
+                    match radius {
+                        Some(radius) if Self::radius_valid(radius) => {
+                            scene.set_node_visibility(preview_node, Visibility::Visible);
+                            scene.set_node_transform(
+                                preview_node,
+                                Self::cylinder_transform(center, radius, DISK_PREVIEW_HEIGHT, &plane),
+                            );
+                        }
+                        // No snap, or a degenerate radius: nothing to draw.
+                        _ => scene.set_node_visibility(preview_node, Visibility::Invisible),
+                    }
+                }
+            }
+            Phase::Height { center, radius } => {
+                let height = Self::height_from_cursor(center, &plane, cursor, ctx);
+                self.cursor_target = Some(center + plane.normal * height);
+                if let Some(preview_node) = self.preview.preview_node() {
+                    let mut scene = ctx.scene.lock().unwrap();
+                    if Self::cylinder_valid(radius, height) {
                         scene.set_node_visibility(preview_node, Visibility::Visible);
                         scene.set_node_transform(
                             preview_node,
-                            Self::cylinder_transform(center, radius, DISK_PREVIEW_HEIGHT, &plane),
+                            Self::cylinder_transform(center, radius, height, &plane),
                         );
+                    } else {
+                        // Degenerate height: nothing to draw.
+                        scene.set_node_visibility(preview_node, Visibility::Invisible);
                     }
-                    // No snap, or a degenerate radius: nothing to draw.
-                    _ => scene.set_node_visibility(preview_node, Visibility::Invisible),
-                }
-            }
-            Phase::Height { center, radius, preview_node } => {
-                let height = Self::height_from_cursor(center, &plane, cursor, ctx);
-                self.cursor_target = Some(center + plane.normal * height);
-                let mut scene = ctx.scene.lock().unwrap();
-                if Self::cylinder_valid(radius, height) {
-                    scene.set_node_visibility(preview_node, Visibility::Visible);
-                    scene.set_node_transform(
-                        preview_node,
-                        Self::cylinder_transform(center, radius, height, &plane),
-                    );
-                } else {
-                    // Degenerate height: nothing to draw.
-                    scene.set_node_visibility(preview_node, Visibility::Invisible);
                 }
             }
         }
@@ -314,11 +296,9 @@ impl Operator for CylinderOperator {
                     handled |= match action {
                         CylinderAction::Place => match self.phase {
                             Phase::Idle => self.on_place_center(*position, ctx),
-                            Phase::Radius { center, preview_node } => {
-                                self.on_place_radius(center, preview_node, *position, ctx)
-                            }
-                            Phase::Height { center, radius, preview_node } => {
-                                self.on_place_height(center, radius, preview_node, *position, ctx)
+                            Phase::Radius { center } => self.on_place_radius(center, *position, ctx),
+                            Phase::Height { center, radius } => {
+                                self.on_place_height(center, radius, *position, ctx)
                             }
                         },
                         CylinderAction::Cancel => {

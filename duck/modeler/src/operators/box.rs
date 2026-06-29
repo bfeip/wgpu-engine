@@ -5,8 +5,7 @@ use std::rc::Rc;
 use duck_engine_common::{
     matrix4_to_row_major_f64, InnerSpace, Plane, Point3, Ray, Vector3,
 };
-use duck_engine_scene::{NodeId, Visibility};
-use duck_engine_scene::cad::tessellate_into;
+use duck_engine_scene::Visibility;
 use duck_engine_viewer::{
     bindings::{InputBinding, InputMap},
     common::Transform,
@@ -18,6 +17,7 @@ use glam::dvec3;
 use opencascade::primitives::{Face, Shape, Wire};
 
 use crate::document::Document;
+use crate::preview::PreviewSession;
 use crate::tool::{ModelingTool, ToolInfo};
 use super::ConstructionOptions;
 
@@ -34,15 +34,16 @@ enum BoxAction {
 enum Phase {
     Idle,
     /// Center placed; the cursor drives the footprint. Preview is a flat rectangle face.
-    Base { center: Point3, preview_node: NodeId },
+    Base { center: Point3 },
     /// Footprint fixed; the cursor drives the height. Preview is the 3D box.
-    Height { center: Point3, width: f32, depth: f32, preview_node: NodeId },
+    Height { center: Point3, width: f32, depth: f32 },
 }
 
 pub struct BoxOperator {
     phase: Phase,
     construction_options: Rc<RefCell<ConstructionOptions>>,
     document: Arc<Mutex<Document>>,
+    preview: PreviewSession,
     bindings: InputMap<BoxAction>,
     cursor_target: Option<Point3>,
 }
@@ -61,10 +62,12 @@ impl BoxOperator {
                 InputBinding::MouseClick { button: MouseButton::Right, modifiers: Modifiers::default() },
                 BoxAction::Cancel,
             );
+        let preview = PreviewSession::new(Arc::clone(&document));
         Self {
             phase: Phase::Idle,
             construction_options,
             document,
+            preview,
             bindings,
             cursor_target: None,
         }
@@ -154,41 +157,25 @@ impl BoxOperator {
             return false;
         };
 
-        let preview_node = {
-            let coptions = self.construction_options.borrow();
-            let mut scene = ctx.scene.lock().unwrap();
-            // A single unit face, scaled each move; preview detail is irrelevant for a flat quad.
-            let Ok(node) = tessellate_into(
-                &preview_shape,
-                &mut *scene,
-                &coptions.geometry_options,
-                None,
-                Some("box plane preview"),
-            ) else {
-                return false;
-            };
-            // Hidden until the cursor defines a non-degenerate footprint.
-            scene.set_node_visibility(node, Visibility::Invisible);
-            node
-        };
-        self.phase = Phase::Base { center, preview_node };
+        // A single unit face, scaled each move; preview detail is irrelevant for a flat quad.
+        let options = self.construction_options.borrow().geometry_options.clone();
+        if self.preview.add_preview_from_shape(&preview_shape, &options, "box plane preview").is_none() {
+            return false;
+        }
+        // Hidden until the cursor defines a non-degenerate footprint.
+        self.preview.set_preview_visibility(Visibility::Invisible);
+        self.phase = Phase::Base { center };
         true
     }
 
-    fn on_place_corner(
-        &mut self,
-        center: Point3,
-        face_node: NodeId,
-        position: (f32, f32),
-        ctx: &mut EventContext,
-    ) -> bool {
+    fn on_place_corner(&mut self, center: Point3, position: (f32, f32), ctx: &mut EventContext) -> bool {
         let camera = ctx.camera();
         let plane = self.construction_options.borrow().construction_plane;
         // Exclude the preview so the footprint can snap through it.
         let Some(corner) = self
             .construction_options
             .borrow()
-            .resolve_snap(position, &[face_node], &camera, ctx, &[])
+            .resolve_snap(position, self.preview.preview_nodes(), &camera, ctx, &[])
             .map(|s| s.position)
         else {
             return false;
@@ -201,24 +188,13 @@ impl BoxOperator {
 
         // Swap the flat footprint preview for the 3D box preview.
         let preview_shape = Self::reference_box();
-        let preview_node = {
-            let coptions = self.construction_options.borrow();
-            let mut scene = ctx.scene.lock().unwrap();
-            scene.cleanup_node(face_node);
-            let Ok(node) = tessellate_into(
-                &preview_shape,
-                &mut *scene,
-                &coptions.geometry_options,
-                None,
-                Some("box preview"),
-            ) else {
-                return false;
-            };
-            // Hidden until the cursor defines a non-zero height.
-            scene.set_node_visibility(node, Visibility::Invisible);
-            node
-        };
-        self.phase = Phase::Height { center, width, depth, preview_node };
+        let options = self.construction_options.borrow().geometry_options.clone();
+        if self.preview.try_replace_preview(&preview_shape, &options, "box preview").is_none() {
+            return false;
+        }
+        // Hidden until the cursor defines a non-zero height.
+        self.preview.set_preview_visibility(Visibility::Invisible);
+        self.phase = Phase::Height { center, width, depth };
         true
     }
 
@@ -227,7 +203,6 @@ impl BoxOperator {
         center: Point3,
         width: f32,
         depth: f32,
-        preview_node: NodeId,
         position: (f32, f32),
         ctx: &mut EventContext,
     ) -> bool {
@@ -248,7 +223,7 @@ impl BoxOperator {
         };
 
         // Discard the preview, then commit the world-space shape as a registered part.
-        ctx.scene.lock().unwrap().cleanup_node(preview_node);
+        let _ = self.preview.commit();
 
         let committed = {
             let coptions = self.construction_options.borrow();
@@ -262,65 +237,61 @@ impl BoxOperator {
     }
 
     pub fn cancel(&mut self) {
-        let preview = match self.phase {
-            Phase::Base { preview_node, .. } | Phase::Height { preview_node, .. } => Some(preview_node),
-            Phase::Idle => None,
-        };
-        if let Some(preview_node) = preview {
-            let scene_arc = self.document.lock().unwrap().scene().clone();
-            scene_arc.lock().unwrap().cleanup_node(preview_node);
-            self.phase = Phase::Idle;
-        }
+        self.preview.cancel();
+        self.phase = Phase::Idle;
     }
 
     fn on_cursor_moved(&mut self, position: (f64, f64), ctx: &mut EventContext) {
         let cursor = (position.0 as f32, position.1 as f32);
         let plane = self.construction_options.borrow().construction_plane;
-        // While defining, exclude our own preview so snapping doesn't lock onto it.
-        let exclude: Vec<NodeId> = match self.phase {
-            Phase::Base { preview_node, .. } | Phase::Height { preview_node, .. } => vec![preview_node],
-            Phase::Idle => Vec::new(),
-        };
 
         let camera = ctx.camera();
-        let snap = self
-            .construction_options
-            .borrow()
-            .resolve_snap(cursor, &exclude, &camera, ctx, &[]);
+        // While defining, exclude our own preview so snapping doesn't lock onto it.
+        let snap = self.construction_options.borrow().resolve_snap(
+            cursor,
+            self.preview.preview_nodes(),
+            &camera,
+            ctx,
+            &[],
+        );
 
         match self.phase {
             Phase::Idle => {
                 self.cursor_target = snap.map(|s| s.position);
             }
-            Phase::Base { center, preview_node } => {
+            Phase::Base { center } => {
                 self.cursor_target = snap.map(|s| s.position);
                 let dims = snap.map(|s| Self::footprint_dims(center, s.position, &plane));
-                let mut scene = ctx.scene.lock().unwrap();
-                match dims {
-                    Some((width, depth)) if Self::footprint_valid(width, depth) => {
+                if let Some(preview_node) = self.preview.preview_node() {
+                    let mut scene = ctx.scene.lock().unwrap();
+                    match dims {
+                        Some((width, depth)) if Self::footprint_valid(width, depth) => {
+                            scene.set_node_visibility(preview_node, Visibility::Visible);
+                            scene.set_node_transform(
+                                preview_node,
+                                Self::footprint_transform(center, width, depth, &plane),
+                            );
+                        }
+                        // No snap, or a degenerate footprint: nothing to draw.
+                        _ => scene.set_node_visibility(preview_node, Visibility::Invisible),
+                    }
+                }
+            }
+            Phase::Height { center, width, depth } => {
+                let height = Self::height_from_cursor(center, &plane, cursor, ctx);
+                self.cursor_target = Some(center + plane.normal * height);
+                if let Some(preview_node) = self.preview.preview_node() {
+                    let mut scene = ctx.scene.lock().unwrap();
+                    if Self::box_valid(width, depth, height) {
                         scene.set_node_visibility(preview_node, Visibility::Visible);
                         scene.set_node_transform(
                             preview_node,
-                            Self::footprint_transform(center, width, depth, &plane),
+                            Self::box_transform(center, width, depth, height, &plane),
                         );
+                    } else {
+                        // Degenerate height: nothing to draw.
+                        scene.set_node_visibility(preview_node, Visibility::Invisible);
                     }
-                    // No snap, or a degenerate footprint: nothing to draw.
-                    _ => scene.set_node_visibility(preview_node, Visibility::Invisible),
-                }
-            }
-            Phase::Height { center, width, depth, preview_node } => {
-                let height = Self::height_from_cursor(center, &plane, cursor, ctx);
-                self.cursor_target = Some(center + plane.normal * height);
-                let mut scene = ctx.scene.lock().unwrap();
-                if Self::box_valid(width, depth, height) {
-                    scene.set_node_visibility(preview_node, Visibility::Visible);
-                    scene.set_node_transform(
-                        preview_node,
-                        Self::box_transform(center, width, depth, height, &plane),
-                    );
-                } else {
-                    // Degenerate height: nothing to draw.
-                    scene.set_node_visibility(preview_node, Visibility::Invisible);
                 }
             }
         }
@@ -359,11 +330,9 @@ impl Operator for BoxOperator {
                     handled |= match action {
                         BoxAction::Place => match self.phase {
                             Phase::Idle => self.on_place_center(*position, ctx),
-                            Phase::Base { center, preview_node } => {
-                                self.on_place_corner(center, preview_node, *position, ctx)
-                            }
-                            Phase::Height { center, width, depth, preview_node } => {
-                                self.on_place_height(center, width, depth, preview_node, *position, ctx)
+                            Phase::Base { center } => self.on_place_corner(center, *position, ctx),
+                            Phase::Height { center, width, depth } => {
+                                self.on_place_height(center, width, depth, *position, ctx)
                             }
                         },
                         BoxAction::Cancel => {

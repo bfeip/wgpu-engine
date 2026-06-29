@@ -4,7 +4,6 @@ use std::sync::{Arc, Mutex};
 
 use duck_engine_common::Point3;
 use duck_engine_scene::NodeId;
-use duck_engine_scene::cad::tessellate_into;
 use duck_engine_viewer::{
     bindings::{InputBinding, InputMap},
     event::{DeviceEvent, Event, EventContext},
@@ -17,6 +16,7 @@ use log::warn;
 use opencascade::primitives::{Edge, Shape, Wire};
 
 use crate::document::Document;
+use crate::preview::PreviewSession;
 use crate::snap::{Snap, SnapKind, SnapProvider, WireStartSnap};
 use crate::tool::{ModelingTool, ToolInfo};
 use super::ConstructionOptions;
@@ -31,12 +31,10 @@ enum LineAction {
 
 enum Phase {
     Idle,
-    /// Building a polyline: `points` are the placed vertices, `preview_node` is the
-    /// transient preview geometry (rebuilt each cursor move), and `closing` records
+    /// Building a polyline: `points` are the placed vertices and `closing` records
     /// whether the cursor is currently snapped onto the start point.
     Building {
         points: Vec<Point3>,
-        preview_node: Option<NodeId>,
         closing: bool,
     },
 }
@@ -45,6 +43,7 @@ pub struct LineOperator {
     phase: Phase,
     construction_options: Rc<RefCell<ConstructionOptions>>,
     document: Arc<Mutex<Document>>,
+    preview: PreviewSession,
     bindings: InputMap<LineAction>,
     /// Where the modeler's 3D cursor should sit (the latest snap point), or `None`
     /// to hide it. Read by the modeler via [`ModelingTool::cursor_target`].
@@ -114,10 +113,12 @@ impl LineOperator {
                 InputBinding::MouseClick { button: MouseButton::Right, modifiers: Modifiers::default() },
                 LineAction::Finish,
             );
+        let preview = PreviewSession::new(Arc::clone(&document));
         Self {
             phase: Phase::Idle,
             construction_options,
             document,
+            preview,
             bindings,
             cursor_target: None,
             finished: false,
@@ -150,19 +151,10 @@ impl LineOperator {
             .resolve_snap(cursor, exclude, camera, ctx, &extra)
     }
 
-    /// Removes the transient preview node, if any, using the supplied scene lock.
-    fn remove_preview(&mut self, ctx: &mut EventContext) {
-        if let Phase::Building { preview_node, .. } = &mut self.phase {
-            if let Some(node) = preview_node.take() {
-                ctx.scene.lock().unwrap().remove_node(node);
-            }
-        }
-    }
-
     /// Rebuilds the preview geometry. `cursor_point` is the live (snapped) cursor
     /// position to draw a rubber-band segment to, or `None` to show only the placed
     /// points. When `closing` is set, shows a filled face preview instead.
-    fn rebuild_preview(&mut self, cursor_point: Option<Point3>, closing: bool, ctx: &mut EventContext) {
+    fn rebuild_preview(&mut self, cursor_point: Option<Point3>, closing: bool) {
         let points = match &self.phase {
             Phase::Building { points, .. } => points.clone(),
             Phase::Idle => return,
@@ -179,34 +171,22 @@ impl LineOperator {
             open_wire_shape(&all)
         };
 
-        let new_node = shape.and_then(|s| {
-            let coptions = self.construction_options.borrow();
-            let preview = coptions.preview_options();
-            let mut scene = ctx.scene.lock().unwrap();
-            tessellate_into(&s, &mut *scene, &preview, None, Some("line")).ok()
-        });
-
-        // Only swap out the existing preview once we have new geometry. If
-        // construction failed (e.g. a snap produced a degenerate point), keep the
-        // last valid preview so the line doesn't momentarily disappear.
-        if new_node.is_some() {
-            self.remove_preview(ctx);
-            if let Phase::Building { preview_node, closing: c, .. } = &mut self.phase {
-                *preview_node = new_node;
-                *c = closing;
-            }
+        // `rebuild` keeps the last valid preview if construction fails (e.g. a snap
+        // produced a degenerate point), so the line doesn't momentarily disappear.
+        let Some(shape) = shape else { return };
+        let preview_options = self.construction_options.borrow().preview_options();
+        if self.preview.try_replace_preview(&shape, &preview_options, "line").is_some()
+            && let Phase::Building { closing: c, .. } = &mut self.phase
+        {
+            *c = closing;
         }
     }
 
     /// Adds a point to the wire or starts building a wire if there were no previous points.
     /// Returns true if a point was successfully added.
     fn on_add_point(&mut self, position: (f32, f32), ctx: &mut EventContext) -> bool {
-        let exclude: Vec<NodeId> = match &self.phase {
-            Phase::Building { preview_node: Some(n), .. } => vec![*n],
-            _ => Vec::new(),
-        };
         let camera = ctx.camera();
-        let Some(snap) = self.snapped_point(position, &exclude, &camera, ctx) else {
+        let Some(snap) = self.snapped_point(position, self.preview.preview_nodes(), &camera, ctx) else {
             return false;
         };
         let point = snap.position;
@@ -214,17 +194,17 @@ impl LineOperator {
 
         match &mut self.phase {
             Phase::Idle => {
-                self.phase = Phase::Building { points: vec![point], preview_node: None, closing: false };
+                self.phase = Phase::Building { points: vec![point], closing: false };
             }
             Phase::Building { .. } => {
                 if closing {
-                    self.commit_closed(ctx);
+                    self.commit_closed();
                 } else {
                     if let Phase::Building { points, .. } = &mut self.phase {
                         points.push(point);
                     }
                     // Show the placed polyline; the next cursor move adds the rubber band.
-                    self.rebuild_preview(None, false, ctx);
+                    self.rebuild_preview(None, false);
                 }
             }
         }
@@ -233,12 +213,12 @@ impl LineOperator {
     }
 
     /// Commits the placed points as a closed planar region and ends the tool.
-    fn commit_closed(&mut self, ctx: &mut EventContext) {
+    fn commit_closed(&mut self) {
         let points = match &self.phase {
             Phase::Building { points, .. } => points.clone(),
             Phase::Idle => return,
         };
-        self.remove_preview(ctx);
+        let _ = self.preview.commit();
 
         if let Some(shape) = closed_face_shape(&points).or_else(|| closed_wire_shape(&points)) {
             let coptions = self.construction_options.borrow();
@@ -262,12 +242,12 @@ impl LineOperator {
 
     /// Commits the placed points as an open polyline wire and ends the tool. Does
     /// nothing if fewer than one segment has been defined.
-    fn finish(&mut self, ctx: &mut EventContext) -> bool {
+    fn finish(&mut self) -> bool {
         let points = match &self.phase {
             Phase::Building { points, .. } => points.clone(),
             Phase::Idle => return false,
         };
-        self.remove_preview(ctx);
+        let _ = self.preview.commit();
 
         let mut committed = false;
         if let Some(shape) = open_wire_shape(&points) {
@@ -288,24 +268,16 @@ impl LineOperator {
         committed
     }
 
-    /// Discards the in-progress line, removing its preview. Self-sources the scene
-    /// so it can run without an [`EventContext`] (e.g. from `deactivate`).
+    /// Discards the in-progress line, removing its preview.
     pub fn cancel(&mut self) {
-        if let Phase::Building { preview_node: Some(node), .. } = &self.phase {
-            let scene_arc = self.document.lock().unwrap().scene().clone();
-            scene_arc.lock().unwrap().remove_node(*node);
-        }
+        self.preview.cancel();
         self.phase = Phase::Idle;
     }
 
     fn on_cursor_moved(&mut self, position: (f64, f64), ctx: &mut EventContext) {
         let cursor = (position.0 as f32, position.1 as f32);
-        let exclude: Vec<NodeId> = match &self.phase {
-            Phase::Building { preview_node: Some(n), .. } => vec![*n],
-            _ => Vec::new(),
-        };
         let camera = ctx.camera();
-        let snapped = self.snapped_point(cursor, &exclude, &camera, ctx);
+        let snapped = self.snapped_point(cursor, self.preview.preview_nodes(), &camera, ctx);
 
         // Record where the 3D cursor should sit
         self.cursor_target = snapped.map(|s| s.position);
@@ -313,7 +285,7 @@ impl LineOperator {
         if matches!(self.phase, Phase::Building { .. }) {
             if let Some(snap) = snapped {
                 let closing = snap.kind == SnapKind::WireStart;
-                self.rebuild_preview(Some(snap.position), closing, ctx);
+                self.rebuild_preview(Some(snap.position), closing);
             }
         }
     }
@@ -353,7 +325,7 @@ impl Operator for LineOperator {
                 for action in actions {
                     handled |= match action {
                         LineAction::AddPoint => self.on_add_point(*position, ctx),
-                        LineAction::Finish => self.finish(ctx),
+                        LineAction::Finish => self.finish(),
                     };
                 }
                 handled
@@ -367,7 +339,7 @@ impl Operator for LineOperator {
                     return false;
                 }
                 match key_event.logical_key {
-                    Key::Named(NamedKey::Enter) => self.finish(ctx),
+                    Key::Named(NamedKey::Enter) => self.finish(),
                     Key::Named(NamedKey::Escape) => {
                         let was_building = matches!(self.phase, Phase::Building { .. });
                         if was_building {

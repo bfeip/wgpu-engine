@@ -3,7 +3,6 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use duck_engine_scene::NodeId;
-use duck_engine_scene::Visibility;
 use duck_engine_viewer::{
     event::{DeviceEvent, Event, EventContext},
     input::{ElementState, Key, NamedKey},
@@ -13,6 +12,7 @@ use duck_engine_viewer::{
 
 use crate::boolean::{execute_boolean, preview_boolean, BooleanKind};
 use crate::document::Document;
+use crate::preview::PreviewSession;
 use crate::tool::{ModelingTool, PanelContext, ToolInfo};
 use super::ConstructionOptions;
 
@@ -28,8 +28,7 @@ pub struct BooleanOperator {
     pub kind: BooleanKind,
     phase: BooleanPhase,
 
-    preview_node: Option<NodeId>,
-    hidden_nodes: Vec<NodeId>,
+    preview: PreviewSession,
 
     preview_target: Option<NodeId>,
     preview_tools: Vec<NodeId>,
@@ -44,11 +43,11 @@ impl BooleanOperator {
         construction_options: Rc<RefCell<ConstructionOptions>>,
         document: Arc<Mutex<Document>>,
     ) -> Self {
+        let preview = PreviewSession::new(Arc::clone(&document));
         Self {
             kind: BooleanKind::default(),
             phase: BooleanPhase::default(),
-            preview_node: None,
-            hidden_nodes: Vec::new(),
+            preview,
             preview_target: None,
             preview_tools: Vec::new(),
             last_kind: BooleanKind::default(),
@@ -67,15 +66,14 @@ impl BooleanOperator {
         let tools = self.preview_tools.clone();
 
         let options = self.construction_options.borrow().geometry_options.clone();
+
+        // Remove the preview; the hidden originals are handed to execute_boolean,
+        // which deletes them (target + tools), so they stay hidden meanwhile.
+        let _ = self.preview.commit();
+
         let mut doc = self.document.lock().unwrap();
-
-        // Remove preview node; originals stay hidden — execute_boolean will delete them.
-        if let Some(node) = self.preview_node.take() {
-            doc.scene().lock().unwrap().remove_node(node);
-        }
-        self.hidden_nodes.clear();
-
         execute_boolean(self.kind, target, &tools, &mut *doc, &options)?;
+        drop(doc);
 
         self.preview_target = None;
         self.preview_tools.clear();
@@ -95,17 +93,7 @@ impl BooleanOperator {
 
     /// Abort the operation, restoring the visibility of all hidden original parts.
     pub fn cancel(&mut self) {
-        let doc = self.document.lock().unwrap();
-        let mut scene = doc.scene().lock().unwrap();
-        if let Some(node) = self.preview_node.take() {
-            scene.remove_node(node);
-        }
-        for &node in &self.hidden_nodes {
-            scene.set_node_visibility(node, Visibility::Visible);
-        }
-        drop(scene);
-        drop(doc);
-        self.hidden_nodes.clear();
+        self.preview.cancel();
         self.preview_target = None;
         self.preview_tools.clear();
         self.phase = BooleanPhase::Cancelled;
@@ -128,19 +116,8 @@ impl BooleanOperator {
     }
 
     fn refresh_preview(&mut self, selection: &SelectionManager) {
-        let doc = self.document.lock().unwrap();
-
-        // Tear down old preview.
-        {
-            let mut scene = doc.scene().lock().unwrap();
-            if let Some(node) = self.preview_node.take() {
-                scene.remove_node(node);
-            }
-            for &node in &self.hidden_nodes {
-                scene.set_node_visibility(node, Visibility::Visible);
-            }
-        }
-        self.hidden_nodes.clear();
+        // Drop the old preview and re-show last pass's hidden sources.
+        self.preview.clear_previews();
 
         let (target, tools) = Self::selection_snapshot(selection);
         self.preview_target = target;
@@ -150,16 +127,18 @@ impl BooleanOperator {
         let Some(target_node) = target else { return };
 
         let options = self.construction_options.borrow().preview_options();
+        let result = {
+            let doc = self.document.lock().unwrap();
+            preview_boolean(self.kind, target_node, &tools, &*doc, &options)
+        };
 
-        match preview_boolean(self.kind, target_node, &tools, &*doc, &options) {
+        match result {
             Ok(preview) => {
-                self.preview_node = Some(preview);
-                let mut scene = doc.scene().lock().unwrap();
-                scene.set_node_visibility(target_node, Visibility::Invisible);
-                for &tool in &tools {
-                    scene.set_node_visibility(tool, Visibility::Invisible);
+                self.preview.add_preview_node(preview);
+                self.preview.hide_source_node(target_node);
+                for tool in tools {
+                    self.preview.hide_source_node(tool);
                 }
-                self.hidden_nodes = std::iter::once(target_node).chain(tools).collect();
             }
             Err(e) => log::warn!("Boolean preview failed: {e}"),
         }

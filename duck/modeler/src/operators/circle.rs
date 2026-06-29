@@ -3,8 +3,6 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use duck_engine_common::{MetricSpace, Point3, Vector3};
-use duck_engine_scene::NodeId;
-use duck_engine_scene::cad::tessellate_into;
 use duck_engine_viewer::{
     bindings::{InputBinding, InputMap},
     event::{DeviceEvent, Event, EventContext},
@@ -16,6 +14,7 @@ use log::warn;
 use opencascade::primitives::{Edge, Shape, Wire};
 
 use crate::document::Document;
+use crate::preview::PreviewSession;
 use crate::tool::{ModelingTool, ToolInfo};
 use super::ConstructionOptions;
 
@@ -27,13 +26,14 @@ enum CircleAction {
 
 enum Phase {
     Idle,
-    Defining { center: Point3, preview_node: NodeId },
+    Defining { center: Point3 },
 }
 
 pub struct CircleOperator {
     phase: Phase,
     construction_options: Rc<RefCell<ConstructionOptions>>,
     document: Arc<Mutex<Document>>,
+    preview: PreviewSession,
     bindings: InputMap<CircleAction>,
     cursor_target: Option<Point3>,
 }
@@ -79,23 +79,21 @@ impl CircleOperator {
                 InputBinding::MouseClick { button: MouseButton::Right, modifiers: Modifiers::default() },
                 CircleAction::Cancel,
             );
+        let preview = PreviewSession::new(Arc::clone(&document));
         Self {
             phase: Phase::Idle,
             construction_options,
             document,
+            preview,
             bindings,
             cursor_target: None,
         }
     }
 
-    /// Tessellates a preview disk into the scene and returns its node. Uses the
-    /// coarser preview tolerance since the preview is rebuilt on every move.
-    fn make_preview(&self, center: Point3, radius: f64, ctx: &mut EventContext) -> Option<NodeId> {
+    /// The filled preview disk for `center`/`radius` on the construction plane.
+    fn make_shape(&self, center: Point3, radius: f64) -> Option<Shape> {
         let coptions = self.construction_options.borrow();
-        let shape = circle_shape(center, coptions.construction_plane.normal, radius)?;
-        let preview = coptions.preview_options();
-        let mut scene = ctx.scene.lock().unwrap();
-        tessellate_into(&shape, &mut *scene, &preview, None, Some("circle")).ok()
+        circle_shape(center, coptions.construction_plane.normal, radius)
     }
 
     fn on_place_center(&mut self, position: (f32, f32), ctx: &mut EventContext) -> bool {
@@ -108,37 +106,33 @@ impl CircleOperator {
         else {
             return false;
         };
-        let Some(preview_node) = self.make_preview(center, 0.01, ctx) else {
+        let Some(shape) = self.make_shape(center, 0.01) else {
             return false;
         };
-        self.phase = Phase::Defining { center, preview_node };
+        // Coarser preview tolerance since the preview is rebuilt on every move.
+        let preview_options = self.construction_options.borrow().preview_options();
+        if self.preview.add_preview_from_shape(&shape, &preview_options, "circle").is_none() {
+            return false;
+        }
+        self.phase = Phase::Defining { center };
         true
     }
 
-    fn on_place_outer(
-        &mut self,
-        center: Point3,
-        preview_node: NodeId,
-        position: (f32, f32),
-        ctx: &mut EventContext,
-    ) -> bool {
+    fn on_place_outer(&mut self, center: Point3, position: (f32, f32), ctx: &mut EventContext) -> bool {
         let camera = ctx.camera();
         // Exclude the preview so the radius can snap through a corner, not to the
         // preview's own geometry.
         let radius = self
             .construction_options
             .borrow()
-            .resolve_snap(position, &[preview_node], &camera, ctx, &[])
+            .resolve_snap(position, self.preview.preview_nodes(), &camera, ctx, &[])
             .map(|s| center.distance(s.position).max(0.01) as f64)
             .unwrap_or(0.01);
 
-        let shape = {
-            let coptions = self.construction_options.borrow();
-            circle_shape(center, coptions.construction_plane.normal, radius)
-        };
+        let shape = self.make_shape(center, radius);
 
         // Discard the preview node, then commit the world-space shape as a part.
-        ctx.scene.lock().unwrap().remove_node(preview_node);
+        let _ = self.preview.commit();
 
         let committed = if let Some(shape) = shape {
             let coptions = self.construction_options.borrow();
@@ -155,26 +149,22 @@ impl CircleOperator {
     }
 
     pub fn cancel(&mut self) {
-        if let Phase::Defining { preview_node, .. } = self.phase {
-            let scene_arc = self.document.lock().unwrap().scene().clone();
-            scene_arc.lock().unwrap().remove_node(preview_node);
-            self.phase = Phase::Idle;
-        }
+        self.preview.cancel();
+        self.phase = Phase::Idle;
     }
 
     fn on_cursor_moved(&mut self, position: (f64, f64), ctx: &mut EventContext) {
         let cursor = (position.0 as f32, position.1 as f32);
-        // While defining, exclude our own preview so the radius doesn't snap to it.
-        let exclude: Vec<NodeId> = match self.phase {
-            Phase::Defining { preview_node, .. } => vec![preview_node],
-            Phase::Idle => Vec::new(),
-        };
 
         let camera = ctx.camera();
-        let snap = self
-            .construction_options
-            .borrow()
-            .resolve_snap(cursor, &exclude, &camera, ctx, &[]);
+        // While defining, exclude our own preview so the radius doesn't snap to it.
+        let snap = self.construction_options.borrow().resolve_snap(
+            cursor,
+            self.preview.preview_nodes(),
+            &camera,
+            ctx,
+            &[],
+        );
 
         // Record where the modeler should draw the 3D cursor.
         self.cursor_target = snap.map(|s| s.position);
@@ -182,12 +172,12 @@ impl CircleOperator {
         // Rebuild the preview disk from the snapped radius while defining. A flat
         // disk's orientation depends on the plane normal, so we re-tessellate
         // rather than scaling a unit mesh.
-        if let Phase::Defining { center, preview_node } = self.phase {
+        if let Phase::Defining { center } = self.phase {
             if let Some(snap) = snap {
                 let radius = center.distance(snap.position).max(0.01) as f64;
-                if let Some(new_node) = self.make_preview(center, radius, ctx) {
-                    ctx.scene.lock().unwrap().remove_node(preview_node);
-                    self.phase = Phase::Defining { center, preview_node: new_node };
+                if let Some(shape) = self.make_shape(center, radius) {
+                    let preview_options = self.construction_options.borrow().preview_options();
+                    self.preview.try_replace_preview(&shape, &preview_options, "circle");
                 }
             }
         }
@@ -225,8 +215,8 @@ impl Operator for CircleOperator {
                 for action in actions {
                     handled |= match action {
                         CircleAction::Place => {
-                            if let Phase::Defining { center, preview_node } = self.phase {
-                                self.on_place_outer(center, preview_node, *position, ctx)
+                            if let Phase::Defining { center } = self.phase {
+                                self.on_place_outer(center, *position, ctx)
                             } else {
                                 self.on_place_center(*position, ctx)
                             }

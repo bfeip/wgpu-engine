@@ -3,7 +3,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use duck_engine_common::{Point3, Ray};
-use duck_engine_scene::{NodeId, SubGeometryKind, Visibility};
+use duck_engine_scene::SubGeometryKind;
 use duck_engine_viewer::{
     event::{DeviceEvent, Event, EventContext},
     input::{ElementState, Key, MouseButton, NamedKey},
@@ -13,6 +13,7 @@ use duck_engine_viewer::{
 
 use crate::document::Document;
 use crate::extrude::{execute_extrude, preview_extrude, ExtrudeFrame, ExtrudeTarget};
+use crate::preview::PreviewSession;
 use crate::tool::{ModelingTool, ToolInfo};
 use super::ConstructionOptions;
 
@@ -35,10 +36,9 @@ pub struct ExtrudeOperator {
     /// Signed length along `frame.axis`, driven by the cursor.
     length: f64,
 
-    /// Transient preview geometry, rebuilt as the length changes.
-    preview_node: Option<NodeId>,
-    /// The source node, hidden while its preview is shown.
-    hidden_node: Option<NodeId>,
+    /// Transient preview geometry (rebuilt as the length changes) and the source
+    /// node hidden while the preview stands in for it.
+    preview: PreviewSession,
 
     cursor_target: Option<Point3>,
 
@@ -51,13 +51,13 @@ impl ExtrudeOperator {
         construction_options: Rc<RefCell<ConstructionOptions>>,
         document: Arc<Mutex<Document>>,
     ) -> Self {
+        let preview = PreviewSession::new(Arc::clone(&document));
         Self {
             phase: ExtrudePhase::AwaitingSelection,
             target: None,
             frame: None,
             length: 0.0,
-            preview_node: None,
-            hidden_node: None,
+            preview,
             cursor_target: None,
             document,
             construction_options,
@@ -121,27 +121,21 @@ impl ExtrudeOperator {
     fn refresh_preview(&mut self) {
         let (Some(target), Some(frame)) = (self.target, self.frame) else { return };
         let options = self.construction_options.borrow().preview_options();
-        let doc = self.document.lock().unwrap();
 
-        {
-            let mut scene = doc.scene().lock().unwrap();
-            if let Some(node) = self.preview_node.take() {
-                scene.remove_node(node);
-            }
-            if let Some(node) = self.hidden_node.take() {
-                scene.set_node_visibility(node, Visibility::Visible);
-            }
-        }
+        // Drop the old preview and re-show the source before rebuilding.
+        self.preview.clear_previews();
 
-        match preview_extrude(&doc, target, &frame, self.length, &options) {
+        let result = {
+            let doc = self.document.lock().unwrap();
+            preview_extrude(&doc, target, &frame, self.length, &options)
+        };
+        match result {
             Ok(preview) => {
-                self.preview_node = Some(preview.node);
+                self.preview.add_preview_node(preview.node);
                 // Only hide the source when the result stands in for it, so a degenerate
                 // preview can never make unrelated geometry vanish.
                 if preview.hide_source {
-                    let source = target.node();
-                    doc.scene().lock().unwrap().set_node_visibility(source, Visibility::Invisible);
-                    self.hidden_node = Some(source);
+                    self.preview.hide_source_node(target.node());
                 }
             }
             // A zero/degenerate length simply yields no preview; not worth surfacing.
@@ -153,14 +147,11 @@ impl ExtrudeOperator {
     fn apply(&mut self) -> anyhow::Result<()> {
         let (Some(target), Some(frame)) = (self.target, self.frame) else { return Ok(()) };
         let options = self.construction_options.borrow().geometry_options.clone();
+
+        // Drop the preview; the source stays hidden — execute_extrude may delete it.
+        let _ = self.preview.commit();
+
         let mut doc = self.document.lock().unwrap();
-
-        // Drop the preview node; the source stays hidden — execute_extrude may delete it.
-        if let Some(node) = self.preview_node.take() {
-            doc.scene().lock().unwrap().remove_node(node);
-        }
-        self.hidden_node = None;
-
         execute_extrude(&mut doc, target, &frame, self.length, &options)?;
         drop(doc);
 
@@ -170,16 +161,7 @@ impl ExtrudeOperator {
 
     /// Abort, restoring the source node's visibility.
     fn cancel(&mut self) {
-        let doc = self.document.lock().unwrap();
-        let mut scene = doc.scene().lock().unwrap();
-        if let Some(node) = self.preview_node.take() {
-            scene.remove_node(node);
-        }
-        if let Some(node) = self.hidden_node.take() {
-            scene.set_node_visibility(node, Visibility::Visible);
-        }
-        drop(scene);
-        drop(doc);
+        self.preview.cancel();
         self.reset(ExtrudePhase::Cancelled);
     }
 
