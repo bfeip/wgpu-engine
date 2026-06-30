@@ -3,9 +3,6 @@
 //! Icons are authored white-filled so they can be tinted per use site.
 //!
 
-// TODO: Tool palette icons still live on each tool's `ToolInfo`; folding them in here is
-// a worthwhile future cleanup.
-
 use crate::document::PartKind;
 
 /// An embedded SVG: `(cache uri, bytes)`.
@@ -23,6 +20,22 @@ macro_rules! icon {
 
 pub const EYE: Icon = icon!("eye.svg");
 pub const EYE_OFF: Icon = icon!("eye-off.svg");
+
+// Tool palette icons. The Select button plus one per registered tool.
+pub const CURSOR: Icon = icon!("cursor-svgrepo-com.svg");
+pub const MOVE: Icon = icon!("move-arrows-svgrepo-com.svg");
+pub const ROTATE: Icon = icon!("rotate-arrow.svg");
+pub const SCALE: Icon = icon!("scale-arrows.svg");
+pub const SPHERE: Icon = icon!("sphere-svgrepo-com.svg");
+pub const BOX: Icon = icon!("cube.svg");
+pub const RECTANGLE: Icon = icon!("rectangle.svg");
+pub const LINE: Icon = icon!("line-tool-svgrepo-com.svg");
+pub const CURVE: Icon = icon!("spline-svgrepo-com.svg");
+pub const CIRCLE: Icon = icon!("circle-svgrepo-com.svg");
+pub const CYLINDER: Icon = icon!("cylinder-svgrepo-com.svg");
+pub const BOOLEAN: Icon = icon!("boolean-and.svg");
+pub const EXTRUDE: Icon = icon!("expand-up-svgrepo-com.svg");
+pub const LOFT: Icon = icon!("loft.svg");
 
 pub const KIND_SOLID: Icon = icon!("kind-solid.svg");
 pub const KIND_FACE: Icon = icon!("kind-face.svg");

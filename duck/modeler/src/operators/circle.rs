@@ -16,6 +16,7 @@ use opencascade::primitives::{Edge, Shape, Wire};
 use crate::document::Document;
 use crate::preview::PreviewSession;
 use crate::tool::{ModelingTool, ToolInfo};
+use crate::ui::icons;
 use super::ConstructionOptions;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -186,11 +187,7 @@ impl CircleOperator {
 
 impl ModelingTool for CircleOperator {
     fn info(&self) -> ToolInfo {
-        ToolInfo {
-            id: "circle",
-            icon_uri: "bytes://circle.svg",
-            icon: include_bytes!("../../../../assets/svg/circle-svgrepo-com.svg"),
-        }
+        ToolInfo { id: "circle", icon: icons::CIRCLE }
     }
 
     fn deactivate(&mut self) {

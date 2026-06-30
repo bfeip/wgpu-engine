@@ -16,6 +16,7 @@ use opencascade::primitives::Shape;
 use crate::document::Document;
 use crate::preview::PreviewSession;
 use crate::tool::{ModelingTool, ToolInfo};
+use crate::ui::icons;
 use super::ConstructionOptions;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -167,11 +168,7 @@ impl SphereOperator {
 
 impl ModelingTool for SphereOperator {
     fn info(&self) -> ToolInfo {
-        ToolInfo {
-            id: "sphere",
-            icon_uri: "bytes://sphere.svg",
-            icon: include_bytes!("../../../../assets/svg/sphere-svgrepo-com.svg"),
-        }
+        ToolInfo { id: "sphere", icon: icons::SPHERE }
     }
 
     fn deactivate(&mut self) {

@@ -17,6 +17,7 @@ use opencascade::primitives::{Face, Shape, Wire};
 use crate::document::Document;
 use crate::preview::PreviewSession;
 use crate::tool::{ModelingTool, ToolInfo};
+use crate::ui::icons;
 use super::ConstructionOptions;
 
 /// A dimension at or below this is degenerate: the preview is hidden and the pick
@@ -218,11 +219,7 @@ impl RectangleOperator {
 
 impl ModelingTool for RectangleOperator {
     fn info(&self) -> ToolInfo {
-        ToolInfo {
-            id: "rectangle",
-            icon_uri: "bytes://rectangle.svg",
-            icon: include_bytes!("../../../../assets/svg/rectangle.svg"),
-        }
+        ToolInfo { id: "rectangle", icon: icons::RECTANGLE }
     }
 
     fn deactivate(&mut self) {

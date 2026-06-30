@@ -7,6 +7,7 @@ use duck_engine_viewer::operator::{Operator, SelectionMode, TransformMode, Trans
 
 use crate::document::Document;
 use crate::tool::{ModelingTool, ToolInfo};
+use crate::ui::icons;
 use super::ConstructionOptions;
 
 /// CAD-aware transform tool for one operation (move, rotate, *or* scale) of
@@ -88,21 +89,9 @@ impl Operator for TransformTool {
 impl ModelingTool for TransformTool {
     fn info(&self) -> ToolInfo {
         match self.mode {
-            TransformMode::Translate => ToolInfo {
-                id: "move",
-                icon_uri: "bytes://move-arrows.svg",
-                icon: include_bytes!("../../../../assets/svg/move-arrows-svgrepo-com.svg"),
-            },
-            TransformMode::Rotate => ToolInfo {
-                id: "rotate",
-                icon_uri: "bytes://rotate-arrow.svg",
-                icon: include_bytes!("../../../../assets/svg/rotate-arrow.svg"),
-            },
-            TransformMode::Scale => ToolInfo {
-                id: "scale",
-                icon_uri: "bytes://scale-arrows.svg",
-                icon: include_bytes!("../../../../assets/svg/scale-arrows.svg"),
-            },
+            TransformMode::Translate => ToolInfo { id: "move", icon: icons::MOVE },
+            TransformMode::Rotate => ToolInfo { id: "rotate", icon: icons::ROTATE },
+            TransformMode::Scale => ToolInfo { id: "scale", icon: icons::SCALE },
         }
     }
 

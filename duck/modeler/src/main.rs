@@ -192,12 +192,7 @@ impl<'a> ViewerState<'a> {
         let raw_input = self.egui_winit.take_egui_input(&self.window);
         let egui_ctx = self.egui_ctx.clone();
         let full_output = egui_ctx.run(raw_input, |ctx| {
-            self.tools.palette_ui(ctx);
-            {
-                let mut document = self.document.lock().unwrap();
-                self.ui.show(ctx, &mut document, self.viewer.selection_mut());
-            }
-            self.tools.panel_ui(ctx, self.viewer.selection_mut());
+            self.ui.show(ctx, &self.document, self.viewer.selection_mut(), &mut self.tools);
         });
         self.egui_winit.handle_platform_output(&self.window, full_output.platform_output.clone());
 

@@ -17,6 +17,7 @@ use opencascade::primitives::Shape;
 use crate::document::Document;
 use crate::preview::PreviewSession;
 use crate::tool::{ModelingTool, ToolInfo};
+use crate::ui::icons;
 use super::ConstructionOptions;
 
 /// A dimension at or below this is degenerate: the preview is hidden and the pick
@@ -266,11 +267,7 @@ impl CylinderOperator {
 
 impl ModelingTool for CylinderOperator {
     fn info(&self) -> ToolInfo {
-        ToolInfo {
-            id: "cylinder",
-            icon_uri: "bytes://cylinder.svg",
-            icon: include_bytes!("../../../../assets/svg/cylinder-svgrepo-com.svg"),
-        }
+        ToolInfo { id: "cylinder", icon: icons::CYLINDER }
     }
 
     fn deactivate(&mut self) {

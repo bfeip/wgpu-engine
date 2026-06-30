@@ -15,6 +15,7 @@ use crate::document::Document;
 use crate::extrude::{execute_extrude, preview_extrude, ExtrudeFrame, ExtrudeTarget};
 use crate::preview::PreviewSession;
 use crate::tool::{ModelingTool, ToolInfo};
+use crate::ui::icons;
 use super::ConstructionOptions;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -176,11 +177,7 @@ impl ExtrudeOperator {
 
 impl ModelingTool for ExtrudeOperator {
     fn info(&self) -> ToolInfo {
-        ToolInfo {
-            id: "extrude",
-            icon_uri: "bytes://expand-up.svg",
-            icon: include_bytes!("../../../../assets/svg/expand-up-svgrepo-com.svg"),
-        }
+        ToolInfo { id: "extrude", icon: icons::EXTRUDE }
     }
 
     fn deactivate(&mut self) {

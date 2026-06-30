@@ -2,16 +2,16 @@ use duck_engine_viewer::common::Point3;
 use duck_engine_viewer::operator::{Operator, SelectionMode};
 use duck_engine_viewer::selection::SelectionManager;
 
+use crate::ui::icons::Icon;
+
 /// Static palette identity for a tool. All fields are `'static` so the
 /// palette can render without holding tool locks.
 #[derive(Clone, Copy)]
 pub struct ToolInfo {
     /// Stable identifier ("sphere", "boolean", ...), for debugging and UI keys.
     pub id: &'static str,
-    /// Unique egui image URI, e.g. "bytes://sphere.svg" (egui caches by URI).
-    pub icon_uri: &'static str,
-    /// SVG icon bytes for the palette button.
-    pub icon: &'static [u8],
+    /// Palette button icon, from [`crate::ui::icons`].
+    pub icon: Icon,
 }
 
 /// External state a tool panel may need beyond what the tool already owns
@@ -50,8 +50,14 @@ pub trait ModelingTool: Operator {
         SelectionMode::default()
     }
 
-    /// Per-frame egui panel for the active tool. Default: no panel.
+    /// Title of the tool's options window, or `None` if the tool has no panel.
+    fn panel_title(&self) -> Option<&str> {
+        None
+    }
+
+    /// Fill the body of the tool's options window. Called only when
+    /// `panel_title()` is `Some`; the `ui` module owns the window chrome.
     /// The tool's mutex is held for the duration of this call — do not
     /// trigger anything that re-dispatches events back into the tool.
-    fn panel_ui(&mut self, _ctx: &egui::Context, _panel: &mut PanelContext) {}
+    fn panel_ui(&mut self, _ui: &mut egui::Ui, _panel: &mut PanelContext) {}
 }

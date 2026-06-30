@@ -14,6 +14,7 @@ use crate::document::Document;
 use crate::loft::{execute_loft, preview_loft, LoftKind, LoftProfile};
 use crate::preview::PreviewSession;
 use crate::tool::{ModelingTool, PanelContext, ToolInfo};
+use crate::ui::icons;
 use super::ConstructionOptions;
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -125,12 +126,12 @@ impl LoftOperator {
         self.phase = LoftPhase::Cancelled;
     }
 
-    /// The loft configuration window (output kind, ordered profile list, Apply/Cancel).
-    fn render_panel(&mut self, ctx: &egui::Context, panel: &mut PanelContext) {
+    /// The loft configuration panel body (output kind, ordered profile list, Apply/Cancel).
+    fn render_panel(&mut self, ui: &mut egui::Ui, panel: &mut PanelContext) {
         let mut apply_clicked = false;
         let mut cancel_clicked = false;
 
-        // Snapshot profile names under the document lock so the egui closure holds none.
+        // Snapshot profile names under the document lock so the body holds none.
         let profiles = Self::selection_snapshot(panel.selection);
         let entries: Vec<(SelectionItem, String)> = {
             let doc = self.document.lock().unwrap();
@@ -153,46 +154,41 @@ impl LoftOperator {
                 .collect()
         };
 
-        egui::Window::new("Loft")
-            .anchor(egui::Align2::RIGHT_TOP, [-8.0, 8.0])
-            .resizable(false)
-            .collapsible(false)
-            .show(ctx, |ui| {
-                ui.label("Output");
+        ui.label("Output");
+        ui.horizontal(|ui| {
+            ui.selectable_value(&mut self.kind, LoftKind::Surface, "Surface");
+            ui.selectable_value(&mut self.kind, LoftKind::Solid, "Solid");
+        });
+
+        ui.separator();
+
+        ui.label("Profiles");
+        if entries.is_empty() {
+            ui.label("(click an edge per profile)");
+        } else {
+            for (idx, (item, name)) in entries.iter().enumerate() {
                 ui.horizontal(|ui| {
-                    ui.selectable_value(&mut self.kind, LoftKind::Surface, "Surface");
-                    ui.selectable_value(&mut self.kind, LoftKind::Solid, "Solid");
-                });
-
-                ui.separator();
-
-                ui.label("Profiles");
-                if entries.is_empty() {
-                    ui.label("(click an edge per profile)");
-                } else {
-                    for (idx, (item, name)) in entries.iter().enumerate() {
-                        ui.horizontal(|ui| {
-                            ui.label(format!("{}. {name}", idx + 1));
-                            if ui.small_button("×").clicked() {
-                                panel.selection.remove(item);
-                            }
-                        });
-                    }
-                }
-
-                ui.separator();
-
-                ui.horizontal(|ui| {
-                    if ui.button("Cancel").clicked() {
-                        cancel_clicked = true;
-                    }
-                    if ui.button("Apply  ⏎").clicked() {
-                        apply_clicked = true;
+                    ui.label(format!("{}. {name}", idx + 1));
+                    if ui.small_button("×").clicked() {
+                        panel.selection.remove(item);
                     }
                 });
-            });
+            }
+        }
 
-        // Act after the closure so we don't call &mut self methods while it borrows self.
+        ui.separator();
+
+        ui.horizontal(|ui| {
+            if ui.button("Cancel").clicked() {
+                cancel_clicked = true;
+            }
+            if ui.button("Apply  ⏎").clicked() {
+                apply_clicked = true;
+            }
+        });
+
+        // Act after rendering the body so we don't call &mut self methods while
+        // the widgets above still borrow self.
         if apply_clicked {
             self.apply_and_clear(panel.selection);
         } else if cancel_clicked {
@@ -203,11 +199,7 @@ impl LoftOperator {
 
 impl ModelingTool for LoftOperator {
     fn info(&self) -> ToolInfo {
-        ToolInfo {
-            id: "loft",
-            icon_uri: "bytes://loft.svg",
-            icon: include_bytes!("../../../../assets/svg/loft.svg"),
-        }
+        ToolInfo { id: "loft", icon: icons::LOFT }
     }
 
     fn deactivate(&mut self) {
@@ -224,8 +216,12 @@ impl ModelingTool for LoftOperator {
         SelectionMode::SubGeometry(SelectionKinds::EDGE)
     }
 
-    fn panel_ui(&mut self, ctx: &egui::Context, panel: &mut PanelContext) {
-        self.render_panel(ctx, panel);
+    fn panel_title(&self) -> Option<&str> {
+        Some("Loft")
+    }
+
+    fn panel_ui(&mut self, ui: &mut egui::Ui, panel: &mut PanelContext) {
+        self.render_panel(ui, panel);
     }
 }
 

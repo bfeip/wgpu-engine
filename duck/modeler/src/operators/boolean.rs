@@ -14,6 +14,7 @@ use crate::boolean::{execute_boolean, preview_boolean, BooleanKind};
 use crate::document::Document;
 use crate::preview::PreviewSession;
 use crate::tool::{ModelingTool, PanelContext, ToolInfo};
+use crate::ui::icons;
 use super::ConstructionOptions;
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -144,10 +145,9 @@ impl BooleanOperator {
         }
     }
 
-    /// The boolean configuration window (operation kind, target/tool parts,
-    /// Apply/Cancel). Part names are snapshotted under the document lock before
-    /// rendering so the egui closure holds no locks.
-    fn render_panel(&mut self, ctx: &egui::Context, panel: &mut PanelContext) {
+    /// The boolean configuration panel body (operation kind, target/tool parts,
+    /// Apply/Cancel).
+    fn render_panel(&mut self, ui: &mut egui::Ui, panel: &mut PanelContext) {
         let mut apply_clicked = false;
         let mut cancel_clicked = false;
 
@@ -184,53 +184,47 @@ impl BooleanOperator {
             (target_name, tool_entries)
         };
 
-        egui::Window::new("Boolean Operation")
-            .anchor(egui::Align2::RIGHT_TOP, [-8.0, 8.0])
-            .resizable(false)
-            .collapsible(false)
-            .show(ctx, |ui| {
-                ui.label("Operation");
+        ui.label("Operation");
+        ui.horizontal(|ui| {
+            ui.selectable_value(&mut self.kind, BooleanKind::Subtract, "Subtract");
+            ui.selectable_value(&mut self.kind, BooleanKind::Union, "Union");
+            ui.selectable_value(&mut self.kind, BooleanKind::Intersect, "Intersect");
+        });
+
+        ui.separator();
+
+        ui.label("Target");
+        ui.label(&target_name);
+
+        ui.separator();
+
+        ui.label("Tools");
+        if tool_entries.is_empty() {
+            ui.label("(shift-click parts to add tools)");
+        } else {
+            for (item, name) in &tool_entries {
                 ui.horizontal(|ui| {
-                    ui.selectable_value(&mut self.kind, BooleanKind::Subtract, "Subtract");
-                    ui.selectable_value(&mut self.kind, BooleanKind::Union, "Union");
-                    ui.selectable_value(&mut self.kind, BooleanKind::Intersect, "Intersect");
-                });
-
-                ui.separator();
-
-                ui.label("Target");
-                ui.label(&target_name);
-
-                ui.separator();
-
-                ui.label("Tools");
-                if tool_entries.is_empty() {
-                    ui.label("(shift-click parts to add tools)");
-                } else {
-                    for (item, name) in &tool_entries {
-                        ui.horizontal(|ui| {
-                            ui.label(name);
-                            if ui.small_button("×").clicked() {
-                                panel.selection.remove(item);
-                            }
-                        });
-                    }
-                }
-
-                ui.separator();
-
-                ui.horizontal(|ui| {
-                    if ui.button("Cancel").clicked() {
-                        cancel_clicked = true;
-                    }
-                    if ui.button("Apply  ⏎").clicked() {
-                        apply_clicked = true;
+                    ui.label(name);
+                    if ui.small_button("×").clicked() {
+                        panel.selection.remove(item);
                     }
                 });
-            });
+            }
+        }
 
-        // Act after the window closure so we don't call &mut self methods
-        // while it still borrows self.
+        ui.separator();
+
+        ui.horizontal(|ui| {
+            if ui.button("Cancel").clicked() {
+                cancel_clicked = true;
+            }
+            if ui.button("Apply  ⏎").clicked() {
+                apply_clicked = true;
+            }
+        });
+
+        // Act after rendering the body so we don't call &mut self methods
+        // while the widgets above still borrow self.
         if apply_clicked {
             self.apply_and_clear(panel.selection);
         } else if cancel_clicked {
@@ -241,11 +235,7 @@ impl BooleanOperator {
 
 impl ModelingTool for BooleanOperator {
     fn info(&self) -> ToolInfo {
-        ToolInfo {
-            id: "boolean",
-            icon_uri: "bytes://boolean-and.svg",
-            icon: include_bytes!("../../../../assets/svg/boolean-and.svg"),
-        }
+        ToolInfo { id: "boolean", icon: icons::BOOLEAN }
     }
 
     fn deactivate(&mut self) {
@@ -263,8 +253,12 @@ impl ModelingTool for BooleanOperator {
         SelectionMode::Node
     }
 
-    fn panel_ui(&mut self, ctx: &egui::Context, panel: &mut PanelContext) {
-        self.render_panel(ctx, panel);
+    fn panel_title(&self) -> Option<&str> {
+        Some("Boolean Operation")
+    }
+
+    fn panel_ui(&mut self, ui: &mut egui::Ui, panel: &mut PanelContext) {
+        self.render_panel(ui, panel);
     }
 }
 
